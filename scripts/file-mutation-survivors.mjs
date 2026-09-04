@@ -35,11 +35,16 @@
 //
 // Usage (from the repo root or anywhere — paths are resolved as given):
 //   node scripts/file-mutation-survivors.mjs \
-//     --rust-missed <path to cargo-mutants missed.txt> \
-//     --frontend-dir <dir to search recursively for Stryker mutation.json> \
-//     [--require-rust]              (#3364: FAIL if missed.txt is absent)
-//     [--require-frontend]          (#3364: FAIL if the frontend dir holds no
-//                                    mutation.json at all)
+//     --lane rust|frontend          (REQUIRED: which lane's tracking issue this
+//                                    run owns. Each lane has its own; without
+//                                    this the script would have to guess which
+//                                    one to rewrite.)
+//     --rust-missed <path to cargo-mutants missed.txt>        (--lane rust)
+//     --frontend-dir <dir to search recursively for Stryker mutation.json>
+//                                                             (--lane frontend)
+//     [--require-input]             (#3364: FAIL if THIS lane's input is
+//                                    absent. Says nothing about the other
+//                                    lane, which this run does not read.)
 //     [--children]                  (also open/update/close ONE child issue per
 //                                    AREA — see § Parent/child below)
 //     [--max-children N]            (blast-radius cap on child CREATES in a
@@ -69,19 +74,22 @@
 //
 // #3364: visibility of a lane failure is NOT the same as integrity of this
 // script's state. The lane going red does not stop this job — it runs under
-// `if: always()` — so a dead lane still contributes `[]`, and if the other
-// lane contributes one new survivor the rewritten body DELETES the dead
-// lane's survivors from the marker block (the filer's only cross-run memory)
-// and re-reports them as "new" next week. `--require-rust` /
-// `--require-frontend`, which the workflow now passes, turn a MISSING lane
-// input into a hard error so it stays distinguishable from an EMPTY one. The
-// resulting red filer job is itself reported by #3359's
-// `report-scheduled-failures`, which `needs:` this job.
+// `if: always()` — so a dead lane still contributes `[]`.
+//
+// That USED to be able to delete the other lane's survivors, because one body
+// held both. It cannot now: each lane owns its own issue and a run reads only
+// its own lane's input, so a dead lane can only ever empty ITS OWN block. That
+// is still wrong, and `--require-input` still turns a MISSING input into a
+// hard error so it stays distinguishable from an EMPTY one — the blast radius
+// is just one lane instead of two. The resulting red filer job is itself
+// reported by #3359's `report-scheduled-failures`, which `needs:` this job.
 //
 // Issue-body shape (#3245/#3257): the body carries exactly ONE deduped
 // survivor list — the machine-readable marker block. Per-run deltas ("new
-// this run") go in the per-run comment, not the persistent body, so no
-// survivor is ever listed twice and no stale snapshot masquerades as "new".
+// this run") are carried by each entry's first-seen date, not by a second
+// section, so no survivor is ever listed twice and no stale snapshot
+// masquerades as "new". They used to go in a per-run comment; this job no
+// longer comments at all.
 // The rendered body is clamped to MAX_BODY_CHARS so a large survivor batch
 // cannot 422 `gh issue edit` and wedge this weekly job red indefinitely.
 //
@@ -196,8 +204,7 @@
 // Note the premise re-anchoring shares with the survivor block: it reads the
 // OBSERVED set, so a lane that silently contributed nothing would drop that
 // lane's accepted entries along with its survivors. That is the #3364 hazard
-// exactly, and `--require-rust` / `--require-frontend` are its guard for both
-// blocks.
+// exactly, and `--require-input` is its guard for both blocks.
 //
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
 // (bad args, a `gh` call failing).
@@ -218,10 +225,33 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-// Stable title: the ONLY thing the find-or-file logic matches on. Never
-// rename an existing issue with this title — the script would stop finding
+// One PARENT PER LANE, selected by `--lane`.
+//
+// A single parent spanning both lanes made every partial run dangerous: the
+// body is one set, so rewriting it from the lane that ran deletes the lane
+// that did not and re-reports it the following week (#3364). `--require-*`
+// existed only to turn that into a loud failure rather than silent damage.
+// With one parent per lane there is nothing to protect — a lane writes its
+// own issue and cannot see the other's — so a single-lane dispatch can write
+// for real instead of dry-running, which is the whole point of the `lanes`
+// input in `scheduled-deep-checks.yml`.
+//
+// Stable titles: the ONLY thing the find-or-file logic matches on. Never
+// rename an existing issue with one of these — the script would stop finding
 // it and file a duplicate.
-export const TRACKING_ISSUE_TITLE = 'Mutation testing: survivor triage (auto-filed, do not rename)'
+//
+// Keyed by `--lane`, not by the `[lane]` tag ids carry. An earlier draft held
+// the tag here too, to filter a mixed id set; `main` reads only the lane's own
+// input now, so nothing ever needed it.
+export const LANES = {
+  rust: {
+    title: 'Mutation testing: rust survivor triage (auto-filed, do not rename)',
+  },
+  frontend: {
+    title: 'Mutation testing: frontend survivor triage (auto-filed, do not rename)',
+  },
+}
+export const LANE_NAMES = Object.keys(LANES)
 export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
 
 const MARKER_START = '<!-- mutation-survivors:begin -->'
@@ -403,8 +433,17 @@ function isUsableCount(n) {
   return Number.isInteger(n) && n > 0
 }
 
-export async function computeDefaultMaxChildren() {
-  let frontendCount
+/**
+ * The area universe, derived ONCE: `{ frontend, rust }`, or `null` when either
+ * half could not be worked out.
+ *
+ * Three constants below are projections of this pair. They used to derive it
+ * three times over — two of them running `countRustAreaFiles()`, a full
+ * `globSync` of the rust workspace, at module load — for numbers that cannot
+ * differ between the calls.
+ */
+async function deriveAreaUniverse() {
+  let frontend
   try {
     // Relative to THIS module's URL (not cwd); same file as
     // `STRYKER_MODULES_PATH` by construction, since `REPO_ROOT` is `../`.
@@ -414,34 +453,76 @@ export async function computeDefaultMaxChildren() {
     // wrong), neither of which throws.
     if (!Array.isArray(MODULE_NAMES)) {
       warnDerivationFailed('stryker.modules.mjs did not export MODULE_NAMES as an array')
-      return FALLBACK_MAX_CHILDREN
+      return null
     }
-    frontendCount = MODULE_NAMES.length
+    frontend = MODULE_NAMES.length
   } catch (err) {
     warnDerivationFailed(`could not import ${STRYKER_MODULES_PATH}: ${err.message}`)
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  let rustCount
+  let rust
   try {
-    rustCount = await countRustAreaFiles()
+    rust = await countRustAreaFiles()
   } catch (err) {
     warnDerivationFailed(`could not enumerate the rust lane's area files: ${err.message}`)
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  if (!isUsableCount(frontendCount)) {
-    warnDerivationFailed(`the frontend half derived to ${frontendCount}`)
-    return FALLBACK_MAX_CHILDREN
+  if (!isUsableCount(frontend)) {
+    warnDerivationFailed(`the frontend half derived to ${frontend}`)
+    return null
   }
-  if (!isUsableCount(rustCount)) {
+  if (!isUsableCount(rust)) {
     warnDerivationFailed(
-      `the rust half derived to ${rustCount} — examine_globs in ${MUTANTS_TOML_PATH} matched no non-excluded .rs file`,
+      `the rust half derived to ${rust} — examine_globs in ${MUTANTS_TOML_PATH} matched no non-excluded .rs file`,
     )
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  return frontendCount + rustCount
+  return { frontend, rust }
 }
 
-export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
+const AREA_UNIVERSE = await deriveAreaUniverse()
+
+/** Both lanes' areas together. `FALLBACK_MAX_CHILDREN` if either half failed. */
+export const DEFAULT_MAX_CHILDREN =
+  AREA_UNIVERSE === null ? FALLBACK_MAX_CHILDREN : AREA_UNIVERSE.frontend + AREA_UNIVERSE.rust
+
+/**
+ * The child-creation cap PER LANE, because one invocation covers one lane.
+ *
+ * `DEFAULT_MAX_CHILDREN` is the whole universe, frontend + rust — the right
+ * blast radius when a single run filed for both. Since the split it is twice
+ * the reachable number for whichever lane is running, and a cap set to double
+ * the real universe cannot catch `survivorArea()` fragmenting rather than
+ * grouping (#3667), which is the only thing it exists for.
+ *
+ * Falls back to `DEFAULT_MAX_CHILDREN` when the universe could not be derived
+ * — same posture as that constant's own fallback: too loose beats refusing to
+ * run, and `deriveAreaUniverse` has already said why on stderr.
+ */
+export const LANE_MAX_CHILDREN =
+  AREA_UNIVERSE === null
+    ? { frontend: DEFAULT_MAX_CHILDREN, rust: DEFAULT_MAX_CHILDREN }
+    : { frontend: AREA_UNIVERSE.frontend, rust: AREA_UNIVERSE.rust }
+
+/**
+ * How many Stryker `mutation.json` reports a COMPLETE frontend run produces —
+ * one per enrolled module.
+ *
+ * Used to gate the CLOSE, and only the close. The rust lane already refuses to
+ * write from a partial set: a merge that reassembled fewer than its 21 shards
+ * forces `--dry-run`. The frontend lane has no such signal, and
+ * `--require-input` passes on a SINGLE report, so a Stryker run that lost a
+ * module's report rewrites the frontend issue from partial data.
+ *
+ * That rewrite is pre-existing (#3364 — the marker block is the only cross-run
+ * memory) and deliberately left alone here. What this PR adds is the OUTCOME:
+ * the parent now closes when its set empties, so a partial run could close the
+ * issue outright, and a closed issue is one nobody re-reads.
+ *
+ * `undefined` when the universe could not be derived, in which case the close
+ * is not gated rather than gated on an invented threshold.
+ */
+export const EXPECTED_FRONTEND_REPORTS = AREA_UNIVERSE?.frontend
 
 // #3257 — a GitHub issue body maxes out at 65536 characters; past that
 // `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
@@ -468,9 +549,20 @@ export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 // not truncate, because the block is the filer's only cross-run memory and a
 // short block silently shrinks the tracked set. That red weekly job is the
 // designed outcome, not a bug to be patched by raising this number; the fix is
-// a per-outcome cap or a spill-to-child strategy. The COMMENT bodies, which
-// hold no state, do truncate — at a line boundary and labelled with the count
-// dropped (`clampCommentLines`).
+// a per-outcome cap or a spill-to-child strategy. Comment bodies used to
+// truncate instead, holding no state; the CI job no longer comments at all.
+// CHILD bodies truncate their FINDING lists, and may: a child carries no
+// marker block, so it is a projection of the parent's state rather than
+// state itself. The parent body is the one render that must never lose a
+// line.
+//
+// One gap, stated rather than fixed: the accepted-equivalent note a close
+// writes goes into the child's HEAD, which the truncation path does not cut
+// — an area holding roughly 700+ accepted ids would 422 `gh issue edit` on
+// close. `buildChildCloseComment` used to clamp exactly that list, and went
+// with the other comment builders. Today's whole accepted set is 155 across
+// every area, so this is a claim being half-true rather than a live failure;
+// fixing it now would be engineering for a case 4x away.
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
@@ -905,7 +997,7 @@ function recordedFirstSeen(firstSeen, id) {
  * A child's title is a PURE FUNCTION of its area and is the tier-2 dedup key
  * (see § Parent/child in the header): the run that cannot find a recorded
  * number for an area searches for this exact string before it files anything.
- * Same contract as the parent's `TRACKING_ISSUE_TITLE`, and the same warning —
+ * Same contract as the parent's title in `LANES`, and the same warning —
  * rename one and the next run adopts-or-files a fresh child.
  */
 export function childIssueTitle(area) {
@@ -1158,7 +1250,8 @@ export function appendReanchorNote(notes, stale, today) {
  *   'sync'   — the area is unchanged or only shrank: re-render the body, do not
  *              comment, do not reopen. A partial recovery is not news, exactly
  *              as in the sibling reporter.
- *   'close'  — the area has no REPORTABLE finding left: comment and close.
+ *   'close'  — the area has no REPORTABLE finding left: rewrite the body
+ *              (so it says WHICH kind of close this is) and close.
  *
  * `maxChildren` caps CREATES only. An update or a close cannot run away — they
  * are bounded by what is already recorded — so capping the total would just
@@ -1168,7 +1261,9 @@ export function appendReanchorNote(notes, stale, today) {
  * carried through to the close action for exactly one reason: an area whose
  * remaining findings are ALL accepted is absent from `groups`, so it closes on
  * the same branch as an area that was genuinely cleaned up, and the two must
- * not be told to the reader the same way. See `buildChildCloseComment`.
+ * not be told to the reader the same way. The close writes the child BODY
+ * first and says which kind it is — that used to be a close comment, and the
+ * CI job no longer comments.
  */
 export function decideChildActions({
   groups,
@@ -1209,7 +1304,7 @@ export function decideChildActions({
       `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). ${
         maxChildrenIsFallback
           ? `The area universe could not be derived, so DEFAULT_MAX_CHILDREN fell back to FALLBACK_MAX_CHILDREN = ${DEFAULT_MAX_CHILDREN}`
-          : `DEFAULT_MAX_CHILDREN is the derived area universe of both lanes, ${DEFAULT_MAX_CHILDREN}`
+          : `the cap is a derived area universe — one lane's when \`main\` sets it (${LANE_MAX_CHILDREN.frontend} frontend / ${LANE_MAX_CHILDREN.rust} rust), both lanes' ${DEFAULT_MAX_CHILDREN} on this function's own default`
       }, so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
     )
   }
@@ -1229,9 +1324,45 @@ export function decideChildActions({
  * parent cannot repeat the split as a list (#3245 forbids any finding appearing
  * twice in that body); it carries the split as counts in its area table.
  */
-export function buildChildBody({ area, members, firstSeen = new Map(), parentNumber, runUrl }) {
-  const parentRef = parentNumber ? `#${parentNumber}` : `"${TRACKING_ISSUE_TITLE}"`
+export function buildChildBody({
+  area,
+  members,
+  firstSeen = new Map(),
+  parentNumber,
+  parentTitle,
+  accepted = [],
+  runUrl,
+}) {
+  // A child filed BEFORE its lane parent exists has no number, so the title is
+  // the only reference it can carry — and rendering `"undefined"` into a real
+  // filed issue is worse than failing. That is not hypothetical: it is the
+  // state every lane is in on its first run.
+  //
+  // No throw guards it. All three `applyChildActions` call sites pass
+  // `parentTitle: args.title`, so the both-absent case is unreachable, and a
+  // guard for an unreachable state needs a test that pins the unreachable
+  // state — the shape AGENTS.md calls out. What actually protects this is the
+  // call sites: reverting the `create` one reddens three bootstrap tests.
+  const parentRef = parentNumber ? `#${parentNumber}` : `"${parentTitle}"`
   const { survived, noCoverage } = partitionByOutcome(members)
+  // The two kinds of close read identically from the outside — no findings
+  // left — and they mean opposite things: one area is genuinely clean, the
+  // other is clean only because every finding in it was proven equivalent and
+  // is still surviving. That distinction used to live in the close COMMENT.
+  // The CI job does not comment, so it lives here, in the body, where it also
+  // outlives the run log that would otherwise be its only record (#4173).
+  const acceptedNote =
+    accepted.length === 0
+      ? []
+      : [
+          `**This is not an all-clear.** The ${accepted.length} finding(s) still present in **${area}** are recorded in the parent as **accepted as equivalent** — triage proved them unkillable (#4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears here, the next run reopens this issue rather than filing a new one.`,
+          '',
+          `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
+          '```',
+          ...accepted,
+          '```',
+          '',
+        ]
   const head = [
     `Mutation findings in **${area}** from the weekly \`scheduled-deep-checks.yml\` mutation lanes: **${noCoverage.length} with no coverage** (no test executed the mutated code at all) and **${survived.length} survivor(s)** (a test ran and did not fail).`,
     '',
@@ -1240,6 +1371,7 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
     `Start with the no-coverage list: those mutants are unkillable by construction until a test exercises the code, so no amount of strengthening an existing test touches them. Survivors are the opposite — the test exists and is too weak. Either way, fix it the way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The lists below are re-rendered from the parent's machine-readable block on every run and hold no state of their own — remove a line **in the parent**, not here. This issue closes itself once ${area} has no findings left.`,
     '',
   ]
+  head.push(...acceptedNote)
   const tail = []
   if (runUrl) tail.push('', `_Last updated by [this run](${runUrl})._`)
 
@@ -1308,122 +1440,6 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
   return render(withNote(datedNc, keptNc), withNote(datedSv, keptSv))
 }
 
-/**
- * #3257/#4032 — clamp a rendered COMMENT to `MAX_BODY_CHARS`.
- *
- * Comments carry no state (the parent's marker block is the only tracked set),
- * so cutting one is safe — but the pre-#4032 cut was
- * `text.slice(0, MAX_BODY_CHARS - footer.length) + footer`, and a raw character
- * slice fails three ways at once, every one of them quiet. Measured on 2000
- * rust-shaped findings against `buildNewSurvivorComment` before this change:
- *
- *   - the cut landed mid-id, so the last rendered line was
- *     `[rust] src/reverse/batch.rs:1657:18: replace ` — a truncated mutant that
- *     reads as a complete finding, and would be searched for as one;
- *   - the ``` fence was left unterminated (odd fence count: 1), so the
- *     "truncated" footer was swallowed INTO the code block instead of reading
- *     as a note about it;
- *   - the footer named no number, so a reader could not tell whether 3 findings
- *     were missing or 1 200. It was 1 200.
- *
- * The result was a 60 000-char comment that looked like a complete report. That
- * is the fail-open shape: a report that has dropped most of its content must
- * say so louder than one that has not.
- *
- * So: cut at a LINE boundary, re-close the fence, and state the exact count
- * omitted against the total. A comment that already fits is returned
- * byte-for-byte unchanged and carries no note at all — a truncation label that
- * is always present says nothing.
- *
- * `noteFor(omitted, total)` returns the footer LINES. It is called once with
- * the worst case (everything omitted) to size the reservation, so the space set
- * aside never depends on the cut it is paying for.
- */
-function clampCommentLines(lines, noteFor) {
-  const full = lines.join('\n')
-  if (full.length <= MAX_BODY_CHARS) return full
-
-  // Findings are exactly the fenced lines: every builder here renders ids
-  // inside ``` blocks and prose outside them, so fence parity is the count.
-  let total = 0
-  let fenced = false
-  for (const line of lines) {
-    if (line === '```') fenced = !fenced
-    else if (fenced) total += 1
-  }
-
-  const reserve = ['```', ...noteFor(total, total)].join('\n').length + 1
-  const budget = MAX_BODY_CHARS - reserve
-  const kept = []
-  let used = 0
-  let keptFindings = 0
-  let inFence = false
-  for (const line of lines) {
-    if (used + line.length + 1 > budget) break
-    kept.push(line)
-    used += line.length + 1
-    if (line === '```') inFence = !inFence
-    else if (inFence) keptFindings += 1
-  }
-  // The cut can land inside a code block; close it so the note below renders as
-  // a note rather than as one more line of monospace mutant id.
-  if (inFence) kept.push('```')
-  kept.push(...noteFor(total - keptFindings, total))
-  return kept.join('\n')
-}
-
-export function buildChildComment({ area, newMembers, runUrl }) {
-  const { survived, noCoverage } = partitionByOutcome(newMembers)
-  const lines = [
-    `${newMembers.length} new mutation finding${newMembers.length === 1 ? '' : 's'} in **${area}** this run — ${noCoverage.length} with no coverage, ${survived.length} survivor(s):`,
-  ]
-  if (noCoverage.length > 0)
-    lines.push('', `**No coverage (${noCoverage.length})**`, '```', ...noCoverage, '```')
-  if (survived.length > 0)
-    lines.push('', `**Survivors (${survived.length})**`, '```', ...survived, '```')
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in this issue's body._`,
-  ])
-}
-
-/**
- * #4173 residual — a child closes for TWO different reasons and they are not
- * interchangeable.
- *
- * The area drops out of `groupByArea(all)` both when its last mutant was
- * actually killed AND when every finding left in it was accepted as
- * equivalent, because accepted ids are subtracted from the observed set before
- * the grouping (see `applyAcceptedGaps`). The single unqualified "no mutants
- * survive or go uncovered in X any more" was therefore a FALSE ALL-CLEAR on
- * the second path: those mutants do survive, every one of them, and the only
- * thing that changed is that triage ruled them unkillable and the filer stopped
- * saying so. A closing comment claiming the tests now kill them is a lie of the
- * #3245 family — the report telling a reader the opposite of the truth — and it
- * is worse than the noise it replaced, because a closed issue is not re-read.
- */
-export function buildChildCloseComment({ area, runUrl, accepted = [] }) {
-  const lines =
-    accepted.length > 0
-      ? [
-          `Nothing left to triage in **${area}** — closing. **This is not an all-clear**: the ${accepted.length} finding(s) still there are recorded in the parent as **accepted as equivalent** (triage proved them unkillable, #4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears in ${area}, the next run reopens this issue rather than filing a new one.`,
-          '',
-          `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
-          '```',
-          ...accepted,
-          '```',
-        ]
-      : [
-          `No mutants survive or go uncovered in **${area}** any more — closing. If a finding reappears there, the next run reopens this issue rather than filing a new one.`,
-        ]
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} accepted entries are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the parent's accepted-equivalent block._`,
-  ])
-}
-
 // ---------------------------------------------------------------------------
 // Issue body / comment rendering
 // ---------------------------------------------------------------------------
@@ -1443,9 +1459,9 @@ export function buildChildCloseComment({ area, runUrl, accepted = [] }) {
  * precisely the distinction the issue's triage convention depends on.
  *
  * The body is now ONE deduped list — the state block — and cannot drift.
- * "New this run" lives where a per-run snapshot belongs: in the per-run
- * comment (`buildNewSurvivorComment`), which is timestamped by its own
- * position in the thread and carries the run URL.
+ * "New this run" was a per-run comment; the CI job no longer comments, so the
+ * per-run snapshot lives only in the run log and the run's own counts. The
+ * body stays state, which is the half that had to be durable anyway.
  *
  * `resolvedOnes` is NOT part of `all` (it is the complement), so it
  * duplicates nothing; it stays as the one presentational section, and is the
@@ -1467,7 +1483,7 @@ export function buildIssueBody({
   const { survived, noCoverage } = partitionByOutcome(all)
   const head = []
   head.push(
-    'This issue tracks mutation-testing findings (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
+    'This issue tracks the mutation-testing findings for ONE lane, surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
   )
   head.push('')
   head.push(
@@ -1486,7 +1502,7 @@ export function buildIssueBody({
   )
   head.push('')
   head.push(
-    "The list below is the single deduped source of truth (#3245): mutants that are NEW in a given run are reported in that run's comment on this issue, never re-listed here — including the no-coverage ones, which is why they are not repeated as a section of their own here. The per-area split lives in the table below, and the per-area child issues render the two lists separately.",
+    "The list below is the single deduped source of truth (#3245): every tracked mutant appears exactly once, including the no-coverage ones, which is why they are not repeated as a section of their own here. A finding first seen in the latest run carries that run's date in the leading first-seen column — there is no per-run comment; this job only ever edits bodies. The per-area split lives in the table below, and the per-area child issues render the two lists separately.",
   )
   head.push('')
 
@@ -1657,55 +1673,6 @@ export function buildIssueBody({
   )
 }
 
-export function buildNewSurvivorComment({ newOnes, runUrl }) {
-  const lines = []
-  const groups = groupByArea(newOnes)
-  const totals = partitionByOutcome(newOnes)
-  lines.push(
-    `${newOnes.length} new mutation finding${newOnes.length === 1 ? '' : 's'} this run, in ${groups.length} area${groups.length === 1 ? '' : 's'} — ${totals.noCoverage.length} with no coverage, ${totals.survived.length} survivor(s):`,
-  )
-  lines.push('')
-  // #3350 — grouped and ranked rather than one flat block. A 200-line
-  // undifferentiated paste is read as "the mutation thing is noisy again";
-  // "page-blocks-move: 40" is read as a place to go. The per-area counts also
-  // make an ENROLMENT spike (one brand-new area contributing everything)
-  // visually distinct from a REGRESSION (a handful of new lines spread across
-  // areas that were already being tracked), which is the difference between
-  // "expected" and "someone weakened a test".
-  // #3788 — the per-area block is split by outcome for the same reason the
-  // child bodies are: "3 new" that are all no-coverage is a different piece of
-  // news from "3 new" survivors, and the merged wording told the second story
-  // for both.
-  for (const g of groups) {
-    lines.push(
-      `**${g.area}** — ${g.members.length} (${g.noCoverage.length} no coverage, ${g.survived.length} survived)`,
-    )
-    if (g.noCoverage.length > 0) {
-      lines.push('```')
-      lines.push(...g.noCoverage)
-      lines.push('```')
-    }
-    if (g.survived.length > 0) {
-      lines.push('```')
-      lines.push(...g.survived)
-      lines.push('```')
-    }
-  }
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  // #3257 — a comment body hits the same 65536 limit as an issue body, and
-  // this is the call the SAME large-batch run makes right after the edit, so
-  // capping only the body would just move the 422 one line down. A comment
-  // carries no state, so truncation is safe here — see `clampCommentLines` for
-  // why it is not a `slice`, and #4032 for the run that made it matter: the
-  // first `NoCoverage`-admitting run announces its whole newly-visible
-  // no-coverage set as new in ONE comment, which is the largest single artifact
-  // this script has ever rendered.
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the issue body${runUrl ? `, and this run is [here](${runUrl})` : ''}._`,
-  ])
-}
-
 // ---------------------------------------------------------------------------
 // `gh` plumbing
 // ---------------------------------------------------------------------------
@@ -1716,14 +1683,14 @@ function ghJson(args) {
 }
 
 /** Finds the single tracking issue by exact title, preferring an OPEN match over a CLOSED one (so a triaged-and-closed issue gets reopened rather than duplicated). */
-function findTrackingIssue(repo) {
+function findTrackingIssue(repo, title) {
   const results = ghJson([
     'issue',
     'list',
     '--repo',
     repo,
     '--search',
-    `in:title "${TRACKING_ISSUE_TITLE}"`,
+    `in:title "${title}"`,
     '--state',
     'all',
     '--json',
@@ -1731,7 +1698,7 @@ function findTrackingIssue(repo) {
     '--limit',
     '20',
   ])
-  const exact = results.filter((i) => i.title === TRACKING_ISSUE_TITLE)
+  const exact = results.filter((i) => i.title === title)
   if (exact.length === 0) return null
   const open = exact.find((i) => i.state === 'OPEN')
   if (open) return open
@@ -1816,7 +1783,7 @@ function createChild(repo, title, body) {
  * this throws half-way, the parent keeps the previous (smaller) block and the
  * orphaned children are adopted by title next run — the reason tier 2 exists.
  */
-function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, newSet }) {
+function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, parentTitle }) {
   const links = new Map()
   for (const a of actions) {
     let { number, action } = a
@@ -1827,7 +1794,7 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
         const created = createChild(
           repo,
           title,
-          buildChildBody({ ...a, firstSeen, parentNumber, runUrl }),
+          buildChildBody({ ...a, firstSeen, parentNumber, parentTitle, runUrl }),
         )
         links.set(a.area, created)
         console.log(`  child #${created} filed for ${a.area} (${a.members.length} finding(s))`)
@@ -1853,8 +1820,23 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
     }
     if (action === 'close') {
       const acceptedHere = a.accepted ?? []
-      withTempFile(buildChildCloseComment({ area: a.area, runUrl, accepted: acceptedHere }), (f) =>
-        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
+      // EDIT then close, never a close comment: the CI job does not comment.
+      // The edit is not cosmetic — it is what makes the close honest. An area
+      // closed because everything in it is accepted-equivalent looks exactly
+      // like a clean one, and the difference used to be stated only in the
+      // comment. Writing the body first puts it somewhere durable (#4173).
+      withTempFile(
+        buildChildBody({
+          // `members` is already `[]` on every close action from
+          // `decideChildActions`, and `...a` carries it.
+          ...a,
+          firstSeen,
+          parentNumber,
+          parentTitle,
+          accepted: acceptedHere,
+          runUrl,
+        }),
+        (f) => gh(['issue', 'edit', String(number), '--repo', repo, '--body-file', f]),
       )
       if (state !== 'CLOSED') gh(['issue', 'close', String(number), '--repo', repo])
       console.log(
@@ -1870,15 +1852,11 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
     if (action === 'notify' && state === 'CLOSED') {
       gh(['issue', 'reopen', String(number), '--repo', repo])
     }
-    withTempFile(buildChildBody({ ...a, firstSeen, parentNumber, runUrl }), (f) =>
+    withTempFile(buildChildBody({ ...a, firstSeen, parentNumber, parentTitle, runUrl }), (f) =>
       gh(['issue', 'edit', String(number), '--repo', repo, '--body-file', f]),
     )
-    if (action === 'notify') {
-      const newMembers = a.members.filter((m) => newSet.has(m))
-      withTempFile(buildChildComment({ area: a.area, newMembers, runUrl }), (f) =>
-        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
-      )
-    }
+    // The reopen above is the whole notification. A comment naming the new
+    // members used to follow it; the body it just wrote already lists them.
     links.set(a.area, number)
   }
   return links
@@ -1891,10 +1869,8 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
 function parseArgs(argv) {
   const args = {
     dryRun: false,
-    requireRust: false,
-    requireFrontend: false,
+    requireInput: false,
     children: false,
-    maxChildren: DEFAULT_MAX_CHILDREN,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -1907,12 +1883,12 @@ function parseArgs(argv) {
         args.frontendDir = argv[++i]
         break
       }
-      case '--require-rust': {
-        args.requireRust = true
+      case '--lane': {
+        args.lane = argv[++i]
         break
       }
-      case '--require-frontend': {
-        args.requireFrontend = true
+      case '--require-input': {
+        args.requireInput = true
         break
       }
       case '--children': {
@@ -1926,6 +1902,7 @@ function parseArgs(argv) {
           throw new Error(`--max-children expects a non-negative integer, got "${raw}"`)
         }
         args.maxChildren = n
+        args.maxChildrenExplicit = true
         break
       }
       case '--repo': {
@@ -1984,14 +1961,15 @@ function defaultRunUrl() {
  * (`check-mutation-reports.mjs`) fails on a module that produced none.
  */
 function assertLaneInputsPresent(args) {
-  if (args.requireRust && !existsSync(args.rustMissed ?? '')) {
+  if (!args.requireInput) return
+  if (args.lane === 'rust' && !existsSync(args.rustMissed ?? '')) {
     throw new Error(
-      `--require-rust: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
+      `--require-input: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the rust tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
     )
   }
-  if (args.requireFrontend && frontendReportCount(args.frontendDir ?? '') === 0) {
+  if (args.lane === 'frontend' && frontendReportCount(args.frontendDir ?? '') === 0) {
     throw new Error(
-      `--require-frontend: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
+      `--require-input: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the frontend tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
     )
   }
 }
@@ -2074,6 +2052,14 @@ function announceReanchoring({ stale, willWrite, dryRun }) {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
+  if (!LANE_NAMES.includes(args.lane)) {
+    throw new Error(
+      `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
+    )
+  }
+  args.title = LANES[args.lane].title
+  // Per-lane blast radius unless the caller pinned one explicitly.
+  if (!args.maxChildrenExplicit) args.maxChildren = LANE_MAX_CHILDREN[args.lane]
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
 
@@ -2082,13 +2068,24 @@ export function main(argv = process.argv.slice(2)) {
   // the tracking issue's state.
   assertLaneInputsPresent(args)
 
-  const rustSurvivors = args.rustMissed ? parseRustSurvivors(args.rustMissed) : []
-  const frontendSurvivors = args.frontendDir ? parseFrontendSurvivors(args.frontendDir) : []
-  const current = [...rustSurvivors, ...frontendSurvivors]
+  // Only the lane's OWN input is read. An earlier draft parsed both and
+  // filtered by tag; review correctly called that dead weight, since the two
+  // sources are already tag-pure and the filter could never drop anything.
+  // Not reading the other lane's input at all is simpler AND strictly safer:
+  // passing `--frontend-dir` with `--lane rust` now cannot contribute an id,
+  // rather than contributing ids a filter is trusted to remove.
+  const current =
+    args.lane === 'rust'
+      ? args.rustMissed
+        ? parseRustSurvivors(args.rustMissed)
+        : []
+      : args.frontendDir
+        ? parseFrontendSurvivors(args.frontendDir)
+        : []
 
   const { survived, noCoverage } = partitionByOutcome(current)
   console.log(
-    `mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived (rust: ${rustSurvivors.length}, frontend: ${frontendSurvivors.length})`,
+    `${args.lane} mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived`,
   )
 
   // --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
@@ -2104,7 +2101,7 @@ export function main(argv = process.argv.slice(2)) {
       throw new Error(
         '--repo (or $GITHUB_REPOSITORY) is required outside of --known-body-file test mode',
       )
-    existingIssue = findTrackingIssue(repo)
+    existingIssue = findTrackingIssue(repo, args.title)
   }
 
   // #4173 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
@@ -2134,6 +2131,21 @@ export function main(argv = process.argv.slice(2)) {
   // reason to act: an area whose LAST survivor was killed leaves a child issue
   // standing that claims mutants survive there, and that is the same lie
   // `file-scheduled-failures.mjs` refuses to leave open on the lane tracker.
+  // Is this lane's input COMPLETE, not merely present? `--require-input` only
+  // proves the frontend lane produced something; a run that lost a module's
+  // report empties that module's share of the set. Closing anything on that
+  // basis loses an issue, so it gates BOTH closes below — the parent's and
+  // the children's.
+  //
+  // The rewrite-from-partial-data underneath is pre-existing (#3364) and left
+  // alone; widening `--require-input` would be a different fix. The rust lane
+  // needs no equivalent: a short merge already forces `--dry-run`, so it never
+  // reaches a write.
+  const frontendComplete =
+    args.lane !== 'frontend' ||
+    EXPECTED_FRONTEND_REPORTS === undefined ||
+    frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
+
   const childActions = args.children
     ? decideChildActions({
         groups: groupByArea(all),
@@ -2148,9 +2160,36 @@ export function main(argv = process.argv.slice(2)) {
     : []
   // A 'sync' re-renders a child body that is identical to what is already
   // there, so an unchanged week still writes nothing and never spams.
-  const childWork = childActions.filter((a) => a.action !== 'sync')
+  // A `close` from an incomplete set would rewrite a child to "0 findings"
+  // and close it while its survivors are live — the same lost issue the
+  // parent gate prevents, on the issues a maintainer actually works from.
+  // Dropping the action leaves the child untouched until a complete run.
+  const gatedChildActions = frontendComplete
+    ? childActions
+    : childActions.filter((a) => a.action !== 'close')
+  // The suppressed closes' `area -> #number` records, carried forward
+  // separately. `applyChildActions` builds `childLinks` from the actions it is
+  // GIVEN, so dropping a close also drops its link: the parent body would be
+  // re-rendered without that area while its child stayed open, and if the area
+  // is genuinely empty by the next complete run no close is ever generated
+  // again — the child sits open forever listing killed mutants, which is the
+  // stale-open state the parent close exists to prevent.
+  const suppressedChildLinks = frontendComplete
+    ? []
+    : childActions.filter((a) => a.action === 'close').map((a) => [a.area, a.number])
+  const childWork = gatedChildActions.filter((a) => a.action !== 'sync')
 
-  const willWrite = newOnes.length > 0 || childWork.length > 0
+  // An open issue with nothing left to track is itself a reason to act: the
+  // close would otherwise depend on child bookkeeping happening to land in the
+  // SAME run. It usually does — the last survivor resolving also closes its
+  // area's child — but "usually" leaves the issue open forever in every case
+  // where it does not, and a quiet week is precisely when nobody looks.
+  const needsClose =
+    all.length === 0 &&
+    existingIssue !== null &&
+    existingIssue.state !== 'CLOSED' &&
+    frontendComplete
+  const willWrite = newOnes.length > 0 || childWork.length > 0 || needsClose
   announceReanchoring({ stale, willWrite, dryRun: args.dryRun })
 
   if (!willWrite) {
@@ -2168,8 +2207,6 @@ export function main(argv = process.argv.slice(2)) {
   // from the body that is being replaced.
   const reanchored = appendReanchorNote(parseReanchorNotes(existingIssue?.body), stale, today)
 
-  const comment = buildNewSurvivorComment({ newOnes, runUrl })
-
   if (args.dryRun) {
     // Rendered against the ALREADY-RECORDED links only: a dry run files no
     // child, so no new number exists, and inventing one would misdescribe what
@@ -2186,7 +2223,16 @@ export function main(argv = process.argv.slice(2)) {
       acceptedOn,
       reanchored,
     })
-    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, comment, childActions })
+    printDryRun({
+      args,
+      existingIssue,
+      newOnes,
+      resolvedOnes,
+      all,
+      body,
+      childActions: gatedChildActions,
+      needsClose,
+    })
     return
   }
 
@@ -2194,14 +2240,17 @@ export function main(argv = process.argv.slice(2)) {
 
   // Children FIRST — the parent records their numbers, so they have to exist.
   const childLinks = args.children
-    ? applyChildActions({
-        actions: childActions,
-        repo,
-        runUrl,
-        firstSeen,
-        parentNumber: existingIssue?.number,
-        newSet: new Set(newOnes),
-      })
+    ? new Map([
+        ...applyChildActions({
+          actions: gatedChildActions,
+          repo,
+          runUrl,
+          firstSeen,
+          parentNumber: existingIssue?.number,
+          parentTitle: args.title,
+        }),
+        ...suppressedChildLinks,
+      ])
     : knownChildren
 
   const body = buildIssueBody({
@@ -2216,19 +2265,30 @@ export function main(argv = process.argv.slice(2)) {
     acceptedOn,
     reanchored,
   })
-  writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
+  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork, needsClose })
 }
 
 /**
- * The parent write. Split from `main` both for its cyclomatic complexity and
- * because it now has two callers' worth of policy in it: a run with NEW
- * survivors notifies (reopen + comment), while a run that only had CHILD work
- * to do — an area resolved, a child adopted — syncs the body silently. That is
- * the same "an edit is state, a comment is news" split the sibling reporter's
- * `sync` branch makes, and it is what keeps the child bookkeeping from turning
- * every quiet week into a notification.
+ * The parent write. Split from `main` for its cyclomatic complexity, and
+ * because it carries three branches' worth of policy: a run with NEW
+ * survivors reopens a closed issue, a run with only CHILD work syncs the body
+ * silently, and a run whose lane has emptied closes it. Reopening is the only
+ * notification left — this job never comments — so the "quiet week writes
+ * nothing" rule that keeps child bookkeeping from becoming a weekly
+ * notification now rests entirely on the sync branch being silent.
+ *
+ * Close when there is nothing left to act on; reopen when something new
+ * arises. The children have always done this; the parent only ever reopened,
+ * so a lane that got to zero left its parent standing with an empty survivor
+ * block — indistinguishable, at a glance, from a lane nobody had triaged.
+ *
+ * "Nothing to act on" is `all.length === 0`: every tracked finding is gone or
+ * accepted-equivalent. Accepted entries deliberately do NOT keep it open —
+ * they are recorded, unkillable and not work — which is the same rule the
+ * child close already uses, and why that close writes the not-an-all-clear
+ * note into its body first.
  */
-function writeParent({ existingIssue, repo, body, comment, newOnes, childWork }) {
+function writeParent({ existingIssue, repo, title, body, newOnes, childWork, needsClose }) {
   if (existingIssue === null) {
     withTempFile(body, (bodyFile) => {
       const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
@@ -2238,7 +2298,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
         '--repo',
         repo,
         '--title',
-        TRACKING_ISSUE_TITLE,
+        title,
         '--body-file',
         bodyFile,
         ...labelArgs,
@@ -2251,8 +2311,15 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
   const number = String(existingIssue.number)
   if (newOnes.length === 0) {
     withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
+    // Body first, then close: the body is the record of WHY it closed, and a
+    // close that raced ahead of it would leave the old survivor list showing.
+    if (needsClose) {
+      gh(['issue', 'close', number, '--repo', repo])
+      console.log(`closed tracking issue #${number} — nothing left to act on in this lane`)
+      return
+    }
     console.log(
-      `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings, so no comment — a partial recovery is not news)`,
+      `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings)`,
     )
     return
   }
@@ -2261,7 +2328,6 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
     gh(['issue', 'reopen', number, '--repo', repo])
   }
   withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
-  withTempFile(comment, (f) => gh(['issue', 'comment', number, '--repo', repo, '--body-file', f]))
   console.log(`updated tracking issue #${number} (${newOnes.length} new finding(s))`)
 }
 
@@ -2272,8 +2338,8 @@ function printDryRun({
   resolvedOnes,
   all,
   body,
-  comment,
   childActions,
+  needsClose,
 }) {
   // Compare to null explicitly — issue #0 is not a real GitHub issue
   // number, but the `--known-body-file` test stub uses 0 as a placeholder
@@ -2283,8 +2349,18 @@ function printDryRun({
     console.log(
       `[dry-run] would ${existingIssue.state === 'CLOSED' && newOnes.length > 0 ? 'REOPEN + ' : ''}edit issue #${existingIssue.number}`,
     )
+    // The close is the branch a smoke dispatch most needs previewed: it is
+    // the only one that changes the issue's STATE, and a lane reaching zero
+    // is exactly when someone runs a dry run to see what would happen.
+    // `needsClose` already implies `newOnes.length === 0`: it requires
+    // `all.length === 0`, and `newOnes` is a filter of the same set.
+    if (needsClose) {
+      console.log(
+        `[dry-run] would CLOSE issue #${existingIssue.number} — nothing left to act on in this lane`,
+      )
+    }
   } else {
-    console.log(`[dry-run] would CREATE a new issue titled "${TRACKING_ISSUE_TITLE}"`)
+    console.log(`[dry-run] would CREATE a new issue titled "${args.title}"`)
   }
   console.log(
     `[dry-run] new findings: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
@@ -2309,8 +2385,6 @@ function printDryRun({
   }
   console.log('[dry-run] --- issue body ---')
   console.log(body)
-  console.log('[dry-run] --- new-survivor comment ---')
-  console.log(comment)
 }
 
 // ---------------------------------------------------------------------------
@@ -2544,18 +2618,14 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     const ids = [...few, ...many]
     const groups = groupByArea(ids)
     const body = buildIssueBody({ all: ids, resolvedOnes: [], today: '2026-07-31' })
-    const comment = buildNewSurvivorComment({ newOnes: ids, runUrl: undefined })
     const bodyRustFirst =
       body.indexOf('| rust: agaric-store/src/op.rs |') < body.indexOf('| frontend: glob-validate |')
-    const commentRustFirst =
-      comment.indexOf('**rust: agaric-store/src/op.rs**') <
-      comment.indexOf('**frontend: glob-validate**')
-    if (groups[0].members.length === 5 && bodyRustFirst && commentRustFirst)
-      ok('the worst area is ranked first in both body and comment (#3350)')
+    if (groups[0].members.length === 5 && bodyRustFirst)
+      ok('the worst area is ranked first in the body (#3350)')
     else
       fail(
-        'the worst area is ranked first in both body and comment (#3350)',
-        `first=${groups[0].area} body=${bodyRustFirst} comment=${commentRustFirst}`,
+        'the worst area is ranked first in the body (#3350)',
+        `first=${groups[0].area} body=${bodyRustFirst}`,
       )
   }
 
@@ -2644,6 +2714,9 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
 }
 
 function selfTestLaneInputGuards({ ok, fail, survivor }) {
+  // Tracked by the fixture body below and NOT present in `fullDir`, so the
+  // lane observes nothing and the issue's set empties.
+  const STALE_ONLY_ID = '[rust] agaric-store/src/op.rs:4242:9: replace x with ()'
   // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
   //    one. First, the damage the guards prevent, demonstrated on the pure
   //    functions: a dead frontend lane contributes `[]`, and one new rust
@@ -2694,18 +2767,46 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
 
     const cases = [
       [
-        'an ABSENT frontend dir fails --require-frontend (#3364)',
-        [...base, '--frontend-dir', absent, '--require-frontend'],
+        'an ABSENT frontend dir fails --require-input (#3364)',
+        [...base, '--lane', 'frontend', '--frontend-dir', absent, '--require-input'],
         /no Stryker mutation\.json/,
       ],
       [
-        'an EMPTY frontend dir fails --require-frontend too — empty artifact is still no data (#3364)',
-        [...base, '--frontend-dir', emptyDir, '--require-frontend'],
+        'an EMPTY frontend dir fails --require-input too — empty artifact is still no data (#3364)',
+        [...base, '--lane', 'frontend', '--frontend-dir', emptyDir, '--require-input'],
         /no Stryker mutation\.json/,
       ],
       [
-        'an absent missed.txt fails --require-rust (#3364)',
-        [...base, '--rust-missed', absent, '--require-rust'],
+        'an absent missed.txt fails --require-input (#3364)',
+        [...base, '--lane', 'rust', '--rust-missed', absent, '--require-input'],
+        /no cargo-mutants missed\.txt/,
+      ],
+      [
+        'an unknown --lane is refused rather than guessing which issue to rewrite',
+        [...base, '--lane', 'bogus', '--rust-missed', missed],
+        /--lane is required and must be one of/,
+      ],
+      [
+        'a missing --lane is refused for the same reason',
+        [...base, '--rust-missed', missed],
+        /--lane is required and must be one of/,
+      ],
+      [
+        // The guard is per-lane now: --require-input on the rust lane says
+        // nothing about the frontend dir, so the OTHER lane's absent input
+        // must not fail it. Under the old cross-lane pair this was the
+        // failure that made a single-lane run impossible (#4685 review).
+        "--require-input on one lane ignores the other lane's absent input",
+        [
+          ...base,
+          '--lane',
+          'rust',
+          '--rust-missed',
+          absent,
+          '--frontend-dir',
+          absent,
+          '--require-input',
+        ],
         /no cargo-mutants missed\.txt/,
       ],
     ]
@@ -2720,22 +2821,188 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
     // writes one when nothing survived) — only an ABSENT one is "no data".
     const okCases = [
       [
-        'a populated frontend dir passes --require-frontend',
-        [...base, '--frontend-dir', fullDir, '--require-frontend'],
+        'a populated frontend dir passes --require-input',
+        [...base, '--lane', 'frontend', '--frontend-dir', fullDir, '--require-input'],
       ],
       [
-        'an empty-but-present missed.txt passes --require-rust',
-        [...base, '--rust-missed', missed, '--require-rust'],
+        'an empty-but-present missed.txt passes --require-input',
+        [...base, '--lane', 'rust', '--rust-missed', missed, '--require-input'],
       ],
       [
-        'the guards are opt-in: an absent dir is still tolerated without the flag',
-        [...base, '--frontend-dir', absent, '--rust-missed', absent],
+        'the guard is opt-in: an absent dir is still tolerated without the flag',
+        [...base, '--lane', 'frontend', '--frontend-dir', absent, '--rust-missed', absent],
+      ],
+      [
+        // The frontend lane's own input is absent, but it is the RUST lane
+        // running: its input is present, so this run is fine. The old paired
+        // flags made this combination a hard error.
+        "the frontend lane's absent input does not block the rust lane",
+        [
+          ...base,
+          '--lane',
+          'rust',
+          '--rust-missed',
+          missed,
+          '--frontend-dir',
+          absent,
+          '--require-input',
+        ],
       ],
     ]
     for (const [name, argv] of okCases) {
       const err = runQuiet(argv)
       if (err === null) ok(name)
       else fail(name, err.message)
+    }
+
+    // A CLOSE-ONLY RUN. The lane observes nothing and its issue still tracks
+    // one entry, with no child work to do. `willWrite` used to be
+    // `newOnes || childWork`, so this returned at the no-op branch and the
+    // issue stayed open forever — the close only ever fired when the last
+    // child's close happened to land in the SAME run. Both halves are pinned:
+    // it must NOT no-op, and the dry run must say it would close, because a
+    // dry run that hides the one state-changing branch is why this was missed.
+    {
+      const trackedBody = join(root, 'close-only-body.md')
+      writeFileSync(
+        trackedBody,
+        [
+          'Tracking issue.',
+          '',
+          MARKER_START,
+          '```',
+          `2026-08-01\t${STALE_ONLY_ID}`,
+          '```',
+          MARKER_END,
+        ].join('\n'),
+        'utf8',
+      )
+      // The RUST lane, deliberately: an empty-but-present missed.txt is a
+      // complete run that found nothing, so the close is not gated. The
+      // frontend equivalent is the case immediately below, which must NOT
+      // close.
+      const { out, err } = captureMain([
+        '--dry-run',
+        '--lane',
+        'rust',
+        '--rust-missed',
+        missed,
+        '--known-body-file',
+        trackedBody,
+      ])
+      const problems = []
+      if (err) problems.push(`threw: ${err.message}`)
+      if (/no-op \(tracking issue left untouched\)/.test(out))
+        problems.push('took the no-op branch, so the issue would stay open')
+      if (!/would CLOSE issue #\d+ — nothing left to act on/.test(out))
+        problems.push('the dry run did not preview the close')
+      if (problems.length === 0)
+        ok('a lane whose last finding is gone closes, with no child work to trigger it')
+      else
+        fail(
+          'a lane whose last finding is gone closes, with no child work to trigger it',
+          problems.join('; '),
+        )
+
+      // THE SAME STATE, ON A SHORT FRONTEND REPORT SET. `fullDir` holds ONE
+      // module's mutation.json while a complete run writes one per module, so
+      // the emptied set is an artifact of the missing reports, not a lane that
+      // got clean. Rewriting from partial data is pre-existing (#3364); what
+      // this PR added is that the same partial data could CLOSE the issue,
+      // which is the one outcome nobody re-reads. It must not.
+      //
+      // `--children` AND a recorded child link are both load-bearing here.
+      // Without them this ran through the `no-op` branch and never reached
+      // the close guard — it asserted "did not close" about a run that was
+      // never going to write at all, the vacuous shape AGENTS.md names. With
+      // them the emptied set makes `decideChildActions` emit a close for the
+      // recorded area, so `childWork > 0` and `willWrite` is true on its own,
+      // leaving the close guard as the only thing between a partial report
+      // set and a closed issue.
+      // A SECOND module that still reports, carrying a survivor the tracked
+      // body does not know. Without it `willWrite` is false and the run
+      // no-ops, so the parent is never rewritten and the link can't be lost —
+      // the defect needs a reason to write, which is the other half of the
+      // reported scenario ("date-utils gains a new survivor").
+      mkdirSync(join(fullDir, 'date-utils'), { recursive: true })
+      writeFileSync(
+        join(fullDir, 'date-utils', 'mutation.json'),
+        JSON.stringify({
+          schemaVersion: '1',
+          thresholds: { high: 80, low: 60 },
+          files: {
+            'src/lib/date-utils.ts': {
+              language: 'typescript',
+              source: 'x',
+              mutants: [
+                {
+                  id: '1',
+                  mutatorName: 'ConditionalExpression',
+                  status: 'Survived',
+                  location: { start: { line: 7, column: 7 }, end: { line: 7, column: 9 } },
+                },
+              ],
+            },
+          },
+        }),
+        'utf8',
+      )
+      const feTracked = join(root, 'close-only-frontend-body.md')
+      writeFileSync(
+        feTracked,
+        [
+          'Tracking issue.',
+          '',
+          MARKER_START,
+          '```',
+          `2026-08-01\t${survivor(4242)}`,
+          '```',
+          MARKER_END,
+          CHILD_MARKER_START,
+          '```',
+          `#101\t${survivorArea(survivor(4242))}`,
+          '```',
+          CHILD_MARKER_END,
+        ].join('\n'),
+        'utf8',
+      )
+      const short = captureMain([
+        '--dry-run',
+        '--children',
+        '--lane',
+        'frontend',
+        '--frontend-dir',
+        fullDir,
+        '--known-body-file',
+        feTracked,
+      ])
+      // Only meaningful when the expected count could be derived. The #3373
+      // guard runs this self-test from a DETACHED copy, where
+      // `../stryker.modules.mjs` is not importable and
+      // `EXPECTED_FRONTEND_REPORTS` is `undefined` — the gate then disables
+      // itself by design (documented on the constant), so asserting it holds
+      // there asserts the opposite of the intended behaviour.
+      const NAME = 'a short frontend report set closes neither the lane issue nor its children'
+      if (EXPECTED_FRONTEND_REPORTS === undefined) {
+        ok(`${NAME} (skipped: count not derivable here)`)
+      } else {
+        const bad = []
+        if (/would CLOSE issue/.test(short.out)) bad.push('would close the PARENT')
+        // The child close matters more: a child rewritten to "0 findings" and
+        // closed while its survivors are live is the issue a maintainer works
+        // from. `printDryRun` lists planned actions as `close  #N area`, so
+        // the absence of a close line is the assertion.
+        if (/\[dry-run\]\s+close\s+#/.test(short.out)) bad.push('would close a CHILD')
+        // NOT asserted here: that the suppressed close keeps its `area ->
+        // #number` record. That only happens on the REAL path —
+        // `applyChildActions` builds the link map from the actions it is
+        // given, while a dry run renders from `knownChildren` regardless. An
+        // assertion here passes with or without the fix, so it would be
+        // vacuous. Covering it needs a `gh`-stubbed frontend driver; this
+        // harness is rust-only. See `suppressedChildLinks` in `main`.
+        if (bad.length === 0) ok(NAME)
+        else fail(NAME, `${bad.join('; ')} — out=${short.out.slice(0, 320)}`)
+      }
     }
   }
 }
@@ -2941,69 +3208,28 @@ function selfTestChildPlanning({ check, survivor }) {
       'a small child body is not truncated',
       small,
     )
-  }
 
-  selfTestChildCloseWording({ check, FE, RS, survivor })
-}
-
-/**
- * #4173 residual — the wording of a CLOSE, split out of `selfTestChildPlanning`
- * only to keep that function under the repo's cyclomatic-complexity budget.
- */
-function selfTestChildCloseWording({ check, FE, RS, survivor }) {
-  // 10h. #4173 residual — THE TWO KINDS OF CLOSE, and the whole point is that a
-  //      test which passes on both is worthless here. An area leaves
-  //      `groupByArea(all)` for two unrelated reasons: its mutants were killed,
-  //      or every one of them was accepted as equivalent and subtracted from
-  //      the observed set. Both reach the SAME close branch, so before this
-  //      both closed with "No mutants survive or go uncovered in X any more" —
-  //      a flat falsehood in the second case, on an issue nobody reopens to
-  //      re-read. #3751/#3760/#3763/#3764 were the four standing instances.
-  //
-  //      Pinned as a pair: the clean close must keep the all-clear AND not
-  //      mention acceptance, the accepted close must say the count AND NOT
-  //      claim the all-clear. Assert only one arm and the "fix" of always
-  //      qualifying the wording passes while lying the other way round.
-  {
-    const acceptedHere = [survivor(1), survivor(2)]
-    const plan = decideChildActions({
-      groups: [],
-      newOnes: [],
-      knownChildren: new Map([
-        [FE, 41],
-        [RS, 42],
-      ]),
-      accepted: acceptedHere,
-    })
-    const byArea = new Map(plan.map((a) => [a.area, a]))
-    check(
-      byArea.get(FE).accepted.length === 2 &&
-        byArea.get(RS).accepted.length === 0 &&
-        acceptedHere.every((id) => byArea.get(FE).accepted.includes(id)),
-      'a close carries the accepted-equivalent ids of ITS area, and only those',
-      plan.map((a) => `${a.area}=[${(a.accepted ?? []).length}]`).join(' '),
-    )
-
-    const acceptedClose = buildChildCloseComment({
+    // THE FIRST RUN OF A LANE. `findTrackingIssue` returns null, so there is
+    // no parent NUMBER and the title is the only reference the child can
+    // carry. Review caught the `create` call site not passing it, which
+    // rendered a literal `Parent: "undefined"` into a real filed issue — and
+    // that is the state every lane is in on its first run, i.e. the next real
+    // run. Before the split this could not happen: the fallback was a module
+    // constant. What is pinned is the render: given the lane's title it must
+    // name that title. The both-absent case is NOT pinned — every production
+    // call site passes `parentTitle`, so a guard for it would need a test for
+    // an unreachable state. The `create` call site is covered where it
+    // matters: reverting it reddens three bootstrap tests.
+    const firstRun = buildChildBody({
       area: FE,
-      accepted: byArea.get(FE).accepted,
-      runUrl: 'https://example/run',
+      members: [survivor(1)],
+      parentNumber: undefined,
+      parentTitle: LANES.frontend.title,
     })
-    const cleanClose = buildChildCloseComment({ area: RS, runUrl: 'https://example/run' })
     check(
-      !acceptedClose.includes('No mutants survive or go uncovered') &&
-        acceptedClose.includes('not an all-clear') &&
-        acceptedClose.includes('Accepted as equivalent (2)') &&
-        acceptedHere.every((id) => acceptedClose.includes(id)),
-      'an all-accepted area closes WITHOUT claiming an all-clear, and names the survivors (#4173)',
-      acceptedClose,
-    )
-    check(
-      cleanClose.includes('No mutants survive or go uncovered') &&
-        !/accepted as equivalent/i.test(cleanClose) &&
-        !cleanClose.includes('not an all-clear'),
-      'a genuinely cleaned-up area still closes with the plain all-clear (#4173)',
-      cleanClose,
+      firstRun.includes(`Parent: "${LANES.frontend.title}"`) && !firstRun.includes('undefined'),
+      "a child filed before its lane parent exists names that lane's parent by title",
+      firstRun.split('\n').find((l) => l.startsWith('Parent:')) ?? '(no Parent line)',
     )
   }
 }
@@ -3086,6 +3312,8 @@ function selfTestChildGh({ check }) {
     let threw = null
     try {
       main([
+        '--lane',
+        'rust',
         '--rust-missed',
         missed,
         '--children',
@@ -3148,6 +3376,18 @@ function selfTestChildGh({ check }) {
       'bootstrap files one child per area, under the derived titles',
       created.map((c) => c.title).join(' | '),
     )
+    // …and each names its LANE's parent. On a bootstrap there is no parent
+    // NUMBER (the stub's issue is 0, which the ref ternary treats as absent),
+    // so the title is the only reference the child can carry — and the
+    // `create` call site was the one that did not pass it, filing
+    // `Parent: "undefined"` into a real issue. This is what covers that:
+    // reverting the fix reddens this assertion. It replaces an earlier
+    // `buildChildBody` throw, which pinned a state no call site can reach.
+    check(
+      created.every((c) => (c.body ?? '').includes(`Parent: "${LANES.rust.title}"`)),
+      "a bootstrapped child names its lane's parent by title, not `undefined`",
+      created.map((c) => (c.body ?? '').split('\n')[2] ?? '(no body)').join(' | '),
+    )
     check(
       recorded.get(OP) === 101 && recorded.get(REV) === 102,
       'the parent body main() writes records every child number (tier-1 dedup)',
@@ -3189,18 +3429,27 @@ function selfTestChildGh({ check }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     check(
-      seq === 'view,comment,close,edit' &&
-        closeComment.includes(OP) &&
-        // This area really was cleaned up — the missed.txt is empty and nothing
-        // is accepted — so the unqualified all-clear is the TRUE thing to say,
-        // and 11i is the same sequence where it would be false. The pair is
-        // what makes either assertion mean anything.
-        closeComment.includes('No mutants survive or go uncovered') &&
-        !/accepted as equivalent/i.test(closeComment),
-      'a resolved area comments on and closes its child, then syncs the parent',
-      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
+      // ...,edit,close: the PARENT closes too, because this lane now has
+      // nothing left to act on. The child close is the first `close` (target
+      // 101), the parent's is the second — asserted by target below so the
+      // two cannot be confused for one repeated call.
+      seq === 'view,edit,close,edit,close' &&
+        calls
+          .filter((c) => c.sub === 'close')
+          .map((c) => c.target)
+          .join(',') === '101,0' &&
+        closeBody.includes(OP) &&
+        // This area really was cleaned up — the missed.txt is empty and
+        // nothing is accepted — so the child body must carry NO
+        // not-an-all-clear caveat, and 11i is the same sequence where it must.
+        // The pair is what makes either assertion mean anything. The claim
+        // moved from the close comment to the body the close writes first.
+        !/not an all-clear/i.test(closeBody) &&
+        !/accepted as equivalent/i.test(closeBody),
+      'a resolved area edits its child body, closes it, then syncs the parent',
+      `gh sequence was: ${seq || '(no gh calls at all)'} — body: ${closeBody.slice(0, 200)}`,
     )
     check(
       parseChildLinks(calls.findLast((c) => c.sub === 'edit')?.body ?? '').size === 0,
@@ -3240,10 +3489,13 @@ function selfTestChildGh({ check }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const childComment = calls.find((c) => c.sub === 'comment' && c.target === '101')
+    const childEdit = calls.find((c) => c.sub === 'edit' && c.target === '101')
     check(
-      seq === 'view,edit,comment,edit,comment' && (childComment?.body ?? '').includes('op.rs:99:9'),
-      'a new survivor comments on its child and on the parent',
+      // Two edits, no comments: the CI job never comments. The child's own
+      // body is what names the new survivor, so asserting on it keeps this
+      // test meaningful rather than reducing it to a call count.
+      seq === 'view,edit,edit' && (childEdit?.body ?? '').includes('op.rs:99:9'),
+      'a new survivor is written into its child body and the parent body',
       `gh sequence was: ${seq || '(no gh calls at all)'}`,
     )
   }
@@ -3263,7 +3515,7 @@ function selfTestChildGh({ check }) {
       state: 'CLOSED',
     })
     check(
-      relapse.map((c) => c.sub).join(',') === 'view,reopen,edit,comment,edit,comment',
+      relapse.map((c) => c.sub).join(',') === 'view,reopen,edit,edit',
       'a closed child reopens when its area gains a survivor',
       relapse.map((c) => c.sub).join(','),
     )
@@ -3290,8 +3542,7 @@ function selfTestChildGh({ check }) {
     check(
       !calls.some((c) => c.target === '101' && c.sub !== 'view') &&
         parentEdit !== undefined &&
-        parseChildLinks(parentEdit.body).size === 0 &&
-        calls.some((c) => c.sub === 'comment'),
+        parseChildLinks(parentEdit.body).size === 0,
       'a vanished child is dropped from the record, and the parent is still updated',
       calls.map((c) => `${c.sub}${c.target ? `#${c.target}` : ''}`).join(','),
     )
@@ -3310,7 +3561,16 @@ function selfTestChildGh({ check }) {
     process.env.PATH = `${dir}:${prevPath}`
     console.log = () => {}
     try {
-      main(['--rust-missed', missed, '--known-body-file', knownBody, '--repo', 'owner/repo'])
+      main([
+        '--lane',
+        'rust',
+        '--rust-missed',
+        missed,
+        '--known-body-file',
+        knownBody,
+        '--repo',
+        'owner/repo',
+      ])
     } finally {
       console.log = prevLog
       process.env.PATH = prevPath
@@ -3350,16 +3610,18 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     const parentEdit = calls.findLast((c) => c.sub === 'edit')
     check(
-      seq === 'view,comment,close,edit' &&
-        !closeComment.includes('No mutants survive or go uncovered') &&
-        closeComment.includes('not an all-clear') &&
-        closeComment.includes('Accepted as equivalent (1)') &&
-        closeComment.includes(opId),
+      // Same trailing parent close as 11e: an area whose every finding is
+      // accepted-equivalent leaves nothing to act on, so the lane's parent
+      // closes — and the child body says why it is not an all-clear.
+      seq === 'view,edit,close,edit,close' &&
+        closeBody.includes('not an all-clear') &&
+        closeBody.includes('Accepted as equivalent (1)') &&
+        closeBody.includes(opId),
       'an area that is clean ONLY because everything in it was accepted does not close with an all-clear (#4173)',
-      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
+      `gh sequence was: ${seq || '(no gh calls at all)'} — body: ${closeBody.slice(0, 200)}`,
     )
     check(
       parseAcceptedSurvivors(parentEdit?.body ?? '').has(opId) &&
@@ -3532,17 +3794,6 @@ function selfTestNoCoverage({ ok, fail }) {
         'the child body renders no-coverage and survivors as separate sections (#3788)',
         `nc@${ncAt} sv@${svAt} ncId@${child.indexOf(NC_ID)}`,
       )
-
-    // 12d. THE PER-RUN COMMENT carries the split too, or the notification says
-    //      "3 new survivors" for a run whose news was an untested function.
-    const comment = buildNewSurvivorComment({ newOnes: all, runUrl: undefined })
-    if (
-      comment.includes('1 with no coverage, 2 survivor(s)') &&
-      comment.includes('(1 no coverage, 2 survived)') &&
-      comment.includes(NC_ID)
-    )
-      ok('the per-run comment counts no-coverage separately (#3788)')
-    else fail('the per-run comment counts no-coverage separately (#3788)', comment)
   }
 
   // 12e. RANKING. An area with untested code outranks a bigger survivor-only
@@ -3592,7 +3843,9 @@ function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
       join(dir, 'no-such-body.md'),
       '--frontend-dir',
       dir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
     if (
       found.length === 0 &&
@@ -3619,7 +3872,9 @@ function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
       join(mixedDir, 'no-such-body.md'),
       '--frontend-dir',
       mixedDir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
     if (
       mixed.err === null &&
@@ -3718,50 +3973,6 @@ function selfTestBodyCap({ ok, fail }) {
     `[frontend] date-utils: src/lib/date-utils.ts:${1000 + i}:${(i % 40) + 1} [BooleanLiteral]${NO_COVERAGE_SUFFIX}`
   const RUN = 'https://github.com/o/r/actions/runs/1234567890'
 
-  // ── over-cap comment: cut at a line boundary, fence closed, count exact ──
-  {
-    const newOnes = Array.from({ length: 2000 }, (_, i) => rust(i)).toSorted()
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
-    const shown = newOnes.filter((id) => comment.includes(id)).length
-    const m = /_\*\*Truncated\*\* — (\d+) of these (\d+) findings are not shown/.exec(comment)
-    const fences = (comment.match(/```/g) ?? []).length
-    // Every id that appears must appear WHOLE: the pre-#4032 slice left a
-    // partial id as the last line, which reads as a finding and is not one.
-    const lastFinding = comment.split('\n').findLast((l) => l.startsWith('[rust] '))
-    const problems = []
-    if (comment.length > MAX_BODY_CHARS) problems.push(`len=${comment.length}`)
-    if (!m) problems.push('no truncation label')
-    else if (Number(m[1]) !== 2000 - shown)
-      problems.push(`label says ${m[1]}, dropped ${2000 - shown}`)
-    else if (Number(m[2]) !== 2000) problems.push(`label total ${m[2]} != 2000`)
-    if (fences % 2 !== 0) problems.push(`unbalanced fences (${fences})`)
-    if (!newOnes.includes(lastFinding))
-      problems.push(`last finding line is partial: ${lastFinding}`)
-    if (problems.length === 0)
-      ok(
-        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
-      )
-    else
-      fail(
-        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
-        problems.join('; '),
-      )
-  }
-
-  // ── under-cap comment: whole, and NOT labelled ──
-  {
-    const newOnes = Array.from({ length: 20 }, (_, i) => rust(i)).toSorted()
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
-    const allPresent = newOnes.every((id) => comment.includes(id))
-    if (allPresent && !/Truncated/.test(comment) && !/not shown/.test(comment))
-      ok('under-cap comment is posted whole and carries no truncation label (#4032)')
-    else
-      fail(
-        'under-cap comment is posted whole and carries no truncation label (#4032)',
-        `len=${comment.length} allPresent=${allPresent}`,
-      )
-  }
-
   // ── child body: the note counts PER SECTION, not the whole area, twice ──
   {
     const members = [
@@ -3856,7 +4067,9 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
       path,
       '--frontend-dir',
       root,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
 
   // 14a. SUPPRESSED. The accepted mutant is observed by the lane this run;
@@ -3935,20 +4148,21 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
     )
     const { out, err } = runDry(path)
     const bodyAt = out.indexOf('[dry-run] --- issue body ---')
-    const commentAt = out.indexOf('[dry-run] --- new-survivor comment ---')
-    const body = out.slice(bodyAt, commentAt)
-    // A predicate rather than a `const comment` the assertions only ever call
-    // `.includes()` on: oxlint's `unicorn/prefer-set-has` reads that shape as
-    // an array membership test and errors on it.
-    const announced = (id) => out.slice(commentAt).includes(id)
+    // The body block is the LAST thing the dry run prints now that there is
+    // no comment section after it — the CI job never comments.
+    const body = out.slice(bodyAt)
+    // "Announced as new" used to mean "named in the per-run comment". The CI
+    // job does not comment, so the claim is carried by the tracked set plus
+    // the exact new/resolved counts asserted at the bottom of this block —
+    // 3 observed, 1 accepted, so exactly 2 new and 0 resolved. That pair is
+    // strictly stronger than the old per-id comment check: it fails if the
+    // accepted id leaks into EITHER side.
     const tracked = parseKnownSurvivors(body)
     const acceptedBack = parseAcceptedSurvivors(body)
     const problems = []
     if (err) problems.push(`threw: ${err.message}`)
     if (!tracked.has(SV_COL24)) problems.push('the same-line sibling was suppressed too')
-    if (!announced(SV_COL24)) problems.push('the sibling was not announced as new')
     if (tracked.has(SV_COL7)) problems.push('the accepted mutant entered the tracked set')
-    if (announced(SV_COL7)) problems.push('the accepted mutant was announced as new')
     // THE `known` SIDE OF THE SUBTRACTION, and this is the fixture that
     // exercises it (14a cannot: its accepted id is not in its tracked block, so
     // the filter there is a no-op). Here SV_COL7 IS tracked and IS accepted, so
@@ -4125,8 +4339,9 @@ function selfTestAcceptedReanchorTrace({ ok, fail }) {
   const STALE = '[frontend] date-utils: src/lib/date-utils.ts:12:1 [BooleanLiteral]'
   const root = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
   const HEAD = '[dry-run] --- issue body ---\n'
-  const TAIL = '[dry-run] --- new-survivor comment ---'
-  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length, out.indexOf(TAIL))
+  // Runs to the end: the comment section that used to terminate the body
+  // block is gone, because the CI job never comments.
+  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length)
   const bodyFile = (name, body) => {
     const path = join(root, name)
     writeFileSync(path, body)
@@ -4140,7 +4355,9 @@ function selfTestAcceptedReanchorTrace({ ok, fail }) {
       path,
       '--frontend-dir',
       dir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
 
   // 14f. THE QUIET WEEK. Everything observed is already tracked and nothing is
@@ -4489,7 +4706,7 @@ function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
  * silently wrong from 2026-08-16 on, once `agaric-store/src/op_log/high_water.rs`
  * landed in #4016 and nobody had reason to revisit this constant).
  *
- * This recomputes both halves independently of `computeDefaultMaxChildren`
+ * This recomputes both halves independently of `deriveAreaUniverse`
  * — reading `stryker.modules.mjs` and `mutants.toml` itself rather than
  * calling that function again — so a bug that makes the derivation drop or
  * miscount one half is actually caught here instead of the test and the
@@ -4614,12 +4831,6 @@ async function runSelfTest() {
     if (reparsed.size === 3 && current.every((s) => reparsed.has(s)))
       ok('deduped body round-trips through parseKnownSurvivors')
     else fail('deduped body round-trips through parseKnownSurvivors', `size=${reparsed.size}`)
-
-    // The per-run comment is where "new this run" lives now.
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
-    if (current.every((s) => comment.includes(s)))
-      ok('per-run comment still carries the new survivors')
-    else fail('per-run comment still carries the new survivors', comment)
   }
 
   // 2. #3245 — the incremental case: a genuinely new survivor must not
@@ -4694,18 +4905,6 @@ async function runSelfTest() {
         'clamp drops the presentational section and keeps the state block whole (#3257)',
         `len=${body.length} markers=${body.includes(MARKER_START)}/${body.includes(MARKER_END)} reparsed=${reparsed.size}`,
       )
-  }
-
-  // 6. #3257 — the comment is the very next `gh` call the same oversized run
-  //    makes, so capping only the body would move the 422 one line down.
-  {
-    const newOnes = Array.from({ length: 800 }, (_, i) => survivor(i))
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
-    // #4032 — the label moved from a bare "truncated" to one carrying the count
-    // dropped; `selfTestBodyCap` checks that count is the true one.
-    if (comment.length <= MAX_BODY_CHARS && /\*\*Truncated\*\* — \d+ of these \d+/.test(comment))
-      ok('oversized new-survivor comment is truncated (#3257)')
-    else fail('oversized new-survivor comment is truncated (#3257)', `len=${comment.length}`)
   }
 
   // 7. A body that comfortably fits is left completely alone.

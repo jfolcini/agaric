@@ -37,7 +37,7 @@
 //      `missed.txt` FLAT off the download directory. Two independent values
 //      have to agree for that to work — the download step's `path:` and the
 //      filer's `--rust-missed` argument — and nothing checked they did. When
-//      they disagree, `--require-rust` throws and the RED lands on the filer
+//      they disagree, `--require-input` throws and the RED lands on the filer
 //      lane with a message about the filer, while the `mutants` lane it is
 //      actually reporting on stays green (run 30794686024, 2026-08-03, is
 //      what that looks like). Checked here because it is the same plumbing,
@@ -448,7 +448,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   if (uploads.length === 0) {
     push(
       'artifact-upload-missing',
-      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-rust\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
+      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-input\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
     )
   }
   for (const upload of uploads) {
@@ -462,7 +462,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
     if (normalizeUploadPath(upload.path) !== writeDir) {
       push(
         'artifact-path-mismatch',
-        `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-rust throws (#3387).`,
+        `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-input throws (#3387).`,
       )
     }
   }
@@ -540,14 +540,14 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
   if (upload === undefined) {
     push(
       'merge-upload-missing',
-      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-rust\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
+      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-input\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
     )
     return
   }
   if (normalizeUploadPath(upload.path) !== writeDir) {
     push(
       'merge-upload-path-mismatch',
-      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
+      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-input\` throws (#3387).`,
     )
   }
 }
@@ -557,7 +557,7 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  * downloads this lane's artifact and reads `missed.txt` FLAT off the download
  * directory, so the download step's `path:` and the filer's `--rust-missed`
  * argument are two independent values that must agree. Nothing checked that
- * they did, and when they disagree the symptom is misleading: `--require-rust`
+ * they did, and when they disagree the symptom is misleading: `--require-input`
  * throws, the FILER lane goes red with a message about the filer, and the
  * `mutants` lane it reports on stays green.
  *
@@ -571,16 +571,26 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     #3394 kept listing this lane as failing for a week after #3392 fixed its
  *     upstream.
  *   * …and BECAUSE it is reachable from a dispatch, the step must select
- *     `--dry-run` unless `CRON_EQUIVALENT` (the workflow-level env that names
- *     the cron and its default-input `main` dispatch) holds. Otherwise a
- *     smoke run rewrites the real tracking issue — the #2947 rule the
- *     schedule gate used to enforce.
+ *     `--dry-run` unless a named AUTHORITY env holds. Otherwise a smoke run
+ *     rewrites the real tracking issue — the #2947 rule the schedule gate
+ *     used to enforce.
+ *
+ *     The env is `LANE_AUTHORITATIVE`: the workflow-wide `CRON_EQUIVALENT`
+ *     minus its `lanes == 'all'` clause, because each lane now writes its OWN
+ *     issue and a lane subset is therefore complete data about everything
+ *     this job touches. Requiring `CRON_EQUIVALENT` here would force the
+ *     filer to dry-run on exactly the single-lane re-run the `lanes` input
+ *     exists to make cheap.
+ *
+ *     What is NOT relaxed: the `--dry-run` must still be selected from that
+ *     name. A bare `--dry-run`, or one keyed off something else, still fails
+ *     here.
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */
 /**
  * The `run:` block of the filer's own step — the only lines where a
- * `--dry-run` selected from `CRON_EQUIVALENT` counts. The sentinel also
+ * `--dry-run` selected from an authority env counts. The sentinel also
  * appears in the job's prose comments, and a comment forty lines up is not
  * what keeps a dispatch from writing.
  */
@@ -609,10 +619,15 @@ export function checkFilerPlumbing({ lines, push }) {
     )
   } else {
     const run = filerRunLines(lines)
-    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => /CRON_EQUIVALENT/.test(l)))) {
+    // `LANE_AUTHORITATIVE` only. This guard's single subject is the mutation
+    // filer, which since the per-lane split does not read `CRON_EQUIVALENT`
+    // at all — accepting it too left an alternative with no caller, i.e. one
+    // more spelling that could silently satisfy the check.
+    const AUTHORITY_ENV = /LANE_AUTHORITATIVE/
+    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => AUTHORITY_ENV.test(l)))) {
       push(
         'filer-dispatch-writes',
-        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$CRON_EQUIVALENT\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
+        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from the per-lane \`$LANE_AUTHORITATIVE\` env, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
       )
     }
   }
@@ -637,7 +652,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (!download) {
     push(
       'filer-download-missing',
-      `the \`${FILER_JOB_ID}\` job downloads no \`${ARTIFACT_NAME}\` artifact, so it can never see this lane's survivors. With \`--require-rust\` it throws every run; without it, it silently reports "no rust survivors" and deletes every tracked one (#3364).`,
+      `the \`${FILER_JOB_ID}\` job downloads no \`${ARTIFACT_NAME}\` artifact, so it can never see this lane's survivors. With \`--require-input\` it throws every run; without it, it silently reports "no rust survivors" and deletes every tracked one (#3364).`,
     )
     return
   }
@@ -653,7 +668,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (read === undefined) {
     push(
       'filer-input-missing',
-      `the \`${FILER_JOB_ID}\` job passes no \`--rust-missed\`, so the rust half of the survivor set is dropped without \`--require-rust\` ever being able to notice (#3364).`,
+      `the \`${FILER_JOB_ID}\` job passes no \`--rust-missed\`, so the rust half of the survivor set is dropped without \`--require-input\` ever being able to notice (#3364).`,
     )
     return
   }
@@ -661,7 +676,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (read !== expected) {
     push(
       'filer-input-mismatch',
-      `the \`${FILER_JOB_ID}\` job downloads \`${ARTIFACT_NAME}\` into '${download.path}' but reads \`--rust-missed ${read}\`; the artifact is cargo-mutants' output directory itself, so missed.txt sits flat at '${expected}'. A mismatch makes \`--require-rust\` throw and reds the FILER lane with a message about the filer, while the \`${JOB_ID}\` lane it reports on stays green (#3387/#3394).`,
+      `the \`${FILER_JOB_ID}\` job downloads \`${ARTIFACT_NAME}\` into '${download.path}' but reads \`--rust-missed ${read}\`; the artifact is cargo-mutants' output directory itself, so missed.txt sits flat at '${expected}'. A mismatch makes \`--require-input\` throw and reds the FILER lane with a message about the filer, while the \`${JOB_ID}\` lane it reports on stays green (#3387/#3394).`,
     )
   }
 }
@@ -996,7 +1011,7 @@ function selfTestFilerPlumbing(ok, fail) {
     '        run: |',
     '          extra=()',
     ...(dryRun
-      ? ['          if [ "$CRON_EQUIVALENT" != \'true\' ]; then extra=(--dry-run); fi']
+      ? ['          if [ "$LANE_AUTHORITATIVE" != \'true\' ]; then extra=(--dry-run); fi']
       : []),
     ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
   ]
@@ -1042,7 +1057,7 @@ function selfTestFilerPlumbing(ok, fail) {
   // The sentinel in a prose comment above the step, with the `elif` itself
   // deleted, is the #4645 review's hole: only the run block counts.
   const commentOnly = kinds([
-    '        # dry-runs unless `CRON_EQUIVALENT` holds; a --dry-run still reads.',
+    '        # dry-runs unless `LANE_AUTHORITATIVE` holds; a --dry-run still reads.',
     ...job({ read: 'mutants-artifact/missed.txt', dryRun: false }),
   ])
   if (commentOnly.includes('filer-dispatch-writes'))

@@ -41,14 +41,16 @@ name: Scheduled deep checks
 #                    tree-utils — never components or Tauri IPC).
 #                    Non-blocking, same triage-signal posture as `mutants`.
 #   file-mutation-survivors — #2947: push-based triage loop for the two
-#                    mutants lanes above. Diffs their combined survivor list
-#                    against a single open tracking issue's last-known set
-#                    and files/updates that ONE issue only on genuinely NEW
-#                    survivors (see `scripts/file-mutation-survivors.mjs`).
-#                    Since #3667 it also keeps one CHILD issue per AREA under
-#                    that parent (`--children`), so the individual fixes are
+#                    mutants lanes above. Runs the filer ONCE PER LANE that
+#                    ran: each lane owns its own tracking issue, and a run
+#                    diffs only that lane's survivors against only that
+#                    issue's last-known set (see
+#                    `scripts/file-mutation-survivors.mjs`). Since #3667 it
+#                    also keeps one CHILD issue per AREA under that lane's
+#                    parent (`--children`), so the individual fixes are
 #                    assignable/closable work items rather than lines in a
-#                    40 KB body. Scheduled-event-only; needs `issues: write`.
+#                    40 KB body. Reachable on any event (#3394); writes only
+#                    when `LANE_AUTHORITATIVE` holds. Needs `issues: write`.
 #   fuzz           — #650/#2590/#2945: short coverage-guided fuzz runs over
 #                    the raw-input parsers (snapshot decode, deeplink parse,
 #                    Markdown/Obsidian import parse, FTS strip/sanitize, HTML
@@ -121,9 +123,13 @@ on:
           Which lanes to run: `all`, or a comma-separated subset of
           clippy-clean, bench-smoke, bench-slo, mutants, mutants-frontend,
           fuzz, type-aware-lint, full-suite. Re-running one lane after a fix
-          costs that lane instead of the whole ~4 h matrix. Any subset makes
-          the run a smoke run (see `CRON_EQUIVALENT`), because the tracking
-          issues span lanes and a partial set must not rewrite them.
+          costs that lane instead of the whole ~4 h matrix.
+
+          A subset still WRITES for the two mutation lanes: each owns its own
+          tracking issue, so running one alone is complete data about the
+          issue it updates. It is a smoke run for the fuzz and
+          scheduled-failure trackers, which span the whole run — those
+          `--dry-run` on any subset (see `CRON_EQUIVALENT`).
         required: false
         default: 'all'
 
@@ -160,9 +166,15 @@ env:
   # branch's lane health is not the repository's) or a changed input (a
   # shortened budget can report a still-broken lane as recovered, and a lane
   # subset reports the lanes it did not run as skipped) is a smoke run: the
-  # writers still perform every read and `--dry-run` the `gh` writes. The
-  # three steps read this one value instead of re-deriving it; every declared
-  # input appears in it, at its declared default.
+  # writers still perform every read and `--dry-run` the `gh` writes. Every
+  # declared input appears in it, at its declared default.
+  #
+  # TWO of the three writers read this value directly. `file-mutation-survivors`
+  # derives a narrower `LANE_AUTHORITATIVE` from it: since its tracking issue
+  # was split per lane, `lanes == 'all'` is no longer part of ITS authority,
+  # because a lane subset is complete data about every issue it writes. The
+  # clause is still right for the other two, whose trackers span the whole run.
+  # See that job for the full reasoning.
   CRON_EQUIVALENT: >-
     ${{ github.event_name == 'schedule'
       || (github.ref == 'refs/heads/main'
@@ -1156,7 +1168,7 @@ jobs:
         # `src-tauri/mutants-out/mutants.out/`, while the guard, the summary
         # and the `file-mutation-survivors` filer all read `mutants-out/…`.
         # Every one of them was reading a path that never existed (#3386),
-        # which is why `--require-rust` in the filer (#3387) could never see a
+        # which is why `--require-input` in the filer (#3387) could never see a
         # `missed.txt`. The default location, `src-tauri/mutants.out/`, is
         # what the steps below read.
         #
@@ -1367,7 +1379,7 @@ jobs:
             echo "expected=$expected"
           } >> "$GITHUB_OUTPUT"
           if [ "$merged" -eq 0 ]; then
-            echo "::error::no shard produced usable results (${#outcomes[@]} of $expected uploaded an outcomes.json, none of them with a successful baseline). Nothing to merge; the filer's \`--require-rust\` will red rather than read an empty missed.txt as 'no rust survivors' (#3364)."
+            echo "::error::no shard produced usable results (${#outcomes[@]} of $expected uploaded an outcomes.json, none of them with a successful baseline). Nothing to merge; the filer's \`--require-input\` will red rather than read an empty missed.txt as 'no rust survivors' (#3364)."
             exit 1
           fi
           if [ "$merged" -lt "$expected" ]; then
@@ -1574,11 +1586,13 @@ jobs:
   # and `mutants-frontend` above only ever surface survivors in THIS run's step
   # summary, so nobody is notified unless someone remembers to open it. This
   # job downloads both lanes' survivor output (cargo-mutants' `missed.txt`,
-  # StrykerJS's per-module `mutation.json`), diffs the combined set against
-  # the SINGLE open tracking issue's last-known set (via
-  # `scripts/file-mutation-survivors.mjs`), and files/updates that ONE issue
-  # only when a genuinely NEW survivor appears — a no-op otherwise, so this
-  # never spams a new issue weekly. State lives in the tracking issue's body
+  # StrykerJS's per-module `mutation.json`) and runs the filer once per lane
+  # that ran. Each lane has its OWN tracking issue, so a run diffs that lane's
+  # survivors against that issue's last-known set (via
+  # `scripts/file-mutation-survivors.mjs`) and updates it only when a
+  # genuinely NEW survivor appears, or closes it when the lane empties — a
+  # no-op otherwise, so this never spams weekly. State lives in each tracking
+  # issue's body
   # (a marked, machine-readable block), not a committed baseline file, so
   # this job needs `issues: write` only — never `contents: write`.
   #
@@ -1592,8 +1606,8 @@ jobs:
   # hand it a `missed.txt`, run 30794686024), so a job-level gate meant a
   # `mutants` fix could not be confirmed to have un-blocked it until the next
   # cron. The job runs on every event; the step dry-runs unless
-  # `CRON_EQUIVALENT` holds, so a smoke dispatch exercises the whole path
-  # (artifact download, both `--require-*` gates, the `gh issue list` lookup,
+  # `LANE_AUTHORITATIVE` holds, so a smoke dispatch exercises the whole path
+  # (artifact download, its `--require-input` gate, the `gh issue list` lookup,
   # the body render) and writes nothing (#2947), while a default-input
   # dispatch on `main` files exactly what the cron would.
   # ---------------------------------------------------------------------------
@@ -1601,19 +1615,13 @@ jobs:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
     # is the merged one, and `mutants` is now 21 shard jobs.
     needs: [mutants-merge, mutants-frontend, select-lanes]
-    # BOTH mutants lanes, not either: the step below passes `--require-rust`
-    # AND `--require-frontend` unconditionally, and `assertLaneInputsPresent`
-    # throws on a missing one. Under `||`, a `lanes=mutants` run reached this
-    # job with no `mutation-frontend-report` to download and exited 1 — a red
-    # run for a mutants lane that was green, in exactly the re-run-one-lane
-    # case the `lanes` input exists to serve.
-    #
-    # `&&` costs nothing: any subset dry-runs (`CRON_EQUIVALENT` is false for
-    # one), so the job can only ever do something useful when both lanes ran.
-    # `lanes=mutants,mutants-frontend` still reaches it and still dry-runs,
-    # which keeps the #3364 rule intact — the tracking issue spans both lanes,
-    # so rewriting it from one lane's data deletes the other's.
-    if: always() && needs.select-lanes.outputs.mutants == 'true' && needs.select-lanes.outputs.mutants_frontend == 'true'
+    # EITHER lane, and safely so since the split: each lane owns its own
+    # tracking issue and the step below runs the filer once per lane that
+    # actually ran, requiring only that lane's artifact. The `&&` this briefly
+    # carried existed because a single shared issue plus unconditional
+    # `--require-rust --require-frontend` made a one-lane run exit 1 (#4685
+    # review); per-lane issues remove the cause rather than working around it.
+    if: always() && (needs.select-lanes.outputs.mutants == 'true' || needs.select-lanes.outputs.mutants_frontend == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1646,34 +1654,46 @@ jobs:
           name: mutation-frontend-report
           path: mutation-artifact
 
-      - name: File or update the single mutation-survivor tracking issue
-        # `--require-rust` / `--require-frontend` (#3364): a lane that produced
-        # NO data must not be read as "that lane has no survivors". Without
-        # them, a dead frontend lane contributes `[]`, and one new rust
-        # survivor is enough to rewrite the issue body from the rust half
-        # alone — DELETING every frontend survivor from the marker block,
-        # which is this filer's only cross-run memory, and re-reporting them
-        # as "new" the following week. #3330's liveness guard makes the LANE
-        # red but does not stop this job, which runs under `if: always()`.
+      - name: File or update each lane's mutation-survivor tracking issue
+        # `--require-input` (#3364): a lane that produced NO data must not be
+        # read as "that lane has no survivors" — an absent artifact would
+        # otherwise empty that lane's marker block, this filer's only
+        # cross-run memory, and re-report every entry as "new" the following
+        # week. #3330's liveness guard makes the LANE red but does not stop
+        # this job, which runs under `if: always()`.
+        #
+        # The flag is now PER LANE, and so is the blast radius: since the
+        # split each invocation reads only its own lane's input and writes
+        # only its own lane's issue, so a dead rust artifact can no longer
+        # take the frontend lane's survivors with it. That cross-lane
+        # deletion is what the old `--require-rust` / `--require-frontend`
+        # pair existed to make loud.
         #
         # This deliberately turns a dead lane into a RED filer job rather than
         # a skipped one (`needs.<lane>.result == 'success'` would skip it):
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
         #
-        # `--dry-run` unless `CRON_EQUIVALENT` (workflow `env`) holds. The dry
+        # `--dry-run` unless `LANE_AUTHORITATIVE` (below) holds. The dry
         # run still performs every read — including the real `gh issue list`
         # lookup (only `--known-body-file` stubs that out, and this never
-        # passes it) — and only skips the `gh issue edit` / `gh issue comment`
-        # writes.
+        # passes it) — and only skips the `gh issue edit` / `close` / `reopen`
+        # writes. There are no comment writes: this job never comments.
         #
-        # `--children`: the rolling parent is the notification, not the
-        # worktop. Measured 2026-08-09, it carried 261 survivors across 9
-        # areas in one 40 756-character body that nothing could assign, close
-        # or reference from a PR. `--children` adds one CHILD issue per area
-        # carrying that area's survivors — the unit a maintainer actually
-        # fixes — while all state stays single-copy in the parent's marker
-        # blocks. Dedup is the parent's recorded `area -> #number` block
+        # `--children`: the rolling parent is the index, not the worktop.
+        # Measured 2026-08-09, it carried 261 survivors across 9 areas in one
+        # 40 756-character body that nothing could assign, close or reference
+        # from a PR. `--children` adds one CHILD issue per area carrying that
+        # area's survivors — the unit a maintainer actually fixes — while all
+        # state stays single-copy in the parent's marker blocks.
+        #
+        # The parent is no longer much of a NOTIFICATION either. With the
+        # comment writes gone, only `create` and `reopen` reach anyone: a new
+        # survivor in an area whose child is already OPEN lands as a body
+        # edit, which GitHub does not notify on. That narrows #2947's push
+        # loop to new and previously-closed areas — deliberate, since the job
+        # never comments, but worth knowing before relying on this lane to
+        # tell you something. Dedup is the parent's recorded `area -> #number` block
         # first, a verbatim-title lookup second, so repeated weekly runs
         # update the same children instead of filing new ones. See the
         # § Parent/child section in the script header.
@@ -1681,14 +1701,36 @@ jobs:
         # `--dry-run` ALSO on a short merge (#3393 review): with 21 shards the
         # realistic failure is a handful of dead ones, and their survivors are
         # then absent from `missed.txt` — present-and-shorter, which
-        # `--require-rust` cannot tell from real data. Rewriting the body from
+        # `--require-input` cannot tell from real data. Rewriting the body from
         # that set would report them resolved, drop them from the marker block
         # and re-report them as new next week (#3364). Dry-run performs every
         # read and skips only the `gh` writes, so a short week still renders
-        # its body and comment into the log. Fails CLOSED: `mutants-merge`
+        # its body into the log (there is no comment — this job never
+        # comments). Fails CLOSED: `mutants-merge`
         # dying outright leaves both counts empty, which counts as short.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAN_RUST: ${{ needs.select-lanes.outputs.mutants }}
+          RAN_FRONTEND: ${{ needs.select-lanes.outputs.mutants_frontend }}
+          # PER-LANE authority, deliberately not `CRON_EQUIVALENT`.
+          #
+          # That value folds in `lanes == 'all'` because the fuzz and
+          # scheduled-failure trackers span the WHOLE run: a subset there
+          # really is partial data about what they report. Since the split
+          # this filer is not — each lane writes its OWN issue and cannot see
+          # the other's, so a lane subset is complete data about every issue
+          # this job touches. Without this the split would be pointless: a
+          # `lanes=mutants-frontend` re-run would reach the filer and then
+          # write nothing.
+          #
+          # Every OTHER clause of `CRON_EQUIVALENT` is kept — the ref, and the
+          # one declared input that changes what the mutants lane measures.
+          # `fuzz_seconds` and `slo_include_problem` cannot affect either
+          # mutation lane, so they are not part of this lane's authority.
+          LANE_AUTHORITATIVE: >-
+            ${{ github.event_name == 'schedule'
+              || (github.ref == 'refs/heads/main'
+                  && (github.event.inputs.mutants_timeout || '900') == '900') }}
           SHORT_MERGE: >-
             ${{ needs.mutants-merge.outputs.shards_merged == ''
               || needs.mutants-merge.outputs.shards_merged
@@ -1696,19 +1738,49 @@ jobs:
         run: |
           set -euo pipefail
           extra=()
-          if [ "$SHORT_MERGE" = 'true' ]; then
-            echo "::warning::running --dry-run: mutants-merge reported a short merge, so the tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
-            extra=(--dry-run)
-          elif [ "$CRON_EQUIVALENT" != 'true' ]; then
+          if [ "$LANE_AUTHORITATIVE" != 'true' ]; then
             extra=(--dry-run)
           fi
-          node scripts/file-mutation-survivors.mjs \
-            --rust-missed mutants-artifact/missed.txt \
-            --frontend-dir mutation-artifact \
-            --require-rust \
-            --require-frontend \
-            --children \
-            "${extra[@]}"
+          # The two invocations must fail INDEPENDENTLY. Under `set -e` a
+          # non-zero rust exit aborts the step before the frontend one runs,
+          # and `assertLaneInputsPresent` throws before the --dry-run branch
+          # is even consulted — so a dead `mutants-out` (the only red this
+          # lane has ever had: run 30794686024) would stop the FRONTEND issue
+          # being written that week, with `mutants-frontend` green and its
+          # artifact complete. `|| rc=1` keeps each lane's failure its own
+          # while still reddening the step.
+          rc=0
+          # ONE INVOCATION PER LANE (#3364 superseded): each lane has its own
+          # tracking issue, so a lane that did not run is simply not filed for
+          # — no cross-lane `--require-*` pair, and no way for one lane's data
+          # to rewrite the other's issue.
+          if [ "$RAN_RUST" = 'true' ]; then
+            # SHORT_MERGE counts the 21 cargo-mutants shards that reached the
+            # merged artifact, so it is a RUST signal and is consulted only
+            # here. Evaluating it outside this branch also warned about
+            # dry-running a rust lane that never ran, on every frontend-only
+            # dispatch (`mutants-merge` skipped => `shards_merged` empty).
+            rust_extra=("${extra[@]}")
+            if [ "$SHORT_MERGE" = 'true' ]; then
+              echo "::warning::running --dry-run for the RUST lane: mutants-merge reported a short merge, so the rust tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
+              rust_extra=(--dry-run)
+            fi
+            node scripts/file-mutation-survivors.mjs \
+              --lane rust \
+              --rust-missed mutants-artifact/missed.txt \
+              --require-input \
+              --children \
+              "${rust_extra[@]}" || rc=1
+          fi
+          if [ "$RAN_FRONTEND" = 'true' ]; then
+            node scripts/file-mutation-survivors.mjs \
+              --lane frontend \
+              --frontend-dir mutation-artifact \
+              --require-input \
+              --children \
+              "${extra[@]}" || rc=1
+          fi
+          exit "$rc"
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
