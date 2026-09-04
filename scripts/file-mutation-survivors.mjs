@@ -2901,7 +2901,17 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         '--known-body-file',
         feTracked,
       ])
-      if (!/would CLOSE issue/.test(short.out))
+      // Only meaningful when the expected count could be derived. The #3373
+      // guard runs this self-test from a DETACHED copy, where
+      // `../stryker.modules.mjs` is not importable and
+      // `EXPECTED_FRONTEND_REPORTS` is `undefined` — the gate then disables
+      // itself by design (documented on the constant), so asserting it holds
+      // there asserts the opposite of the intended behaviour.
+      if (EXPECTED_FRONTEND_REPORTS === undefined)
+        ok(
+          'a short frontend report set does not close the lane issue (skipped: count not derivable here)',
+        )
+      else if (!/would CLOSE issue/.test(short.out))
         ok('a short frontend report set does not close the lane issue')
       else
         fail(
