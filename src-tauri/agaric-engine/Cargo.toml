@@ -35,11 +35,10 @@ test-util = ["dep:proptest"]
 # the sibling block in `src-tauri/Cargo.toml`.
 [package.metadata.cargo-machete]
 ignored = [
-    # Declaration-only, and deliberately so: it exists to pin `loro-internal`
-    # exactly, because `loro = "=1.13.6"` leaves it free to float to 1.13.9 and
-    # that is the crate #3161's quadratic `find_common_ancestor` lives in.
-    # There is no `use loro_internal` anywhere in this workspace and there
-    # should not be — the `loro` facade is the API we consume.
+    # Declaration-only, to pin the crate #3161's regression lives in; the
+    # reason is on the dependency itself. There is no `use loro_internal`
+    # anywhere in this workspace and there should not be — `loro` is the API
+    # we consume.
     "loro-internal",
 ]
 
@@ -75,15 +74,11 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # Re-measured 2026-09-04 against 1.13.9, the newest release: still quadratic,
 # 192x slower than 1.13.6 at 1000 rounds (5.7ms -> 10466ms). Not fixed.
 #
-# Both crates are pinned exactly, and that is load-bearing rather than
-# belt-and-braces: `loro = "=1.13.6"` ALONE still resolves `loro-internal` to
-# 1.13.9, because loro 1.13.6 itself requires only `loro-internal = "^1.13.6"`.
-# The regression lives in `loro-internal/src/dag.rs`, so a float there ships it
-# with the facade pinned. Verified by observation, not inference: a bare
-# `cargo generate-lockfile` under an exact `loro` pin produced loro-internal
-# 1.13.9. The previous note here reasoned from that same fact to "pin nothing,
-# the lockfile is the real hold"; pinning BOTH closes the hole instead of
-# conceding it, and cargo then refuses the bad resolution outright.
+# Both crates are pinned exactly, and the second pin is load-bearing: loro
+# 1.13.6 requires only `loro-internal = "^1.13.6"`, so `loro = "=1.13.6"` alone
+# still resolves loro-internal to 1.13.9 — observed, not inferred. The
+# regression lives in `loro-internal/src/dag.rs`, so that float ships it with
+# the facade pinned. With both pinned, cargo refuses the bad resolution.
 #
 # Do not lift either pin without re-running the width-2 reproducer (2 peers,
 # alternating commit + cross-import, N rounds, under `subscribe_root` so the
@@ -92,8 +87,10 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # parity on every version.
 loro = "=1.13.6"
 # Not used in our source — declared solely to pin the crate the #3161
-# regression actually lives in. See the loro note above for why the facade pin
-# cannot do this on its own. cargo-machete allowlisted below.
+# regression actually lives in (see the loro note above). Its default feature
+# set is empty, so a bare declaration adds no features: loro-internal 1.13.6
+# has no `default` feature at all. Allowlisted in the cargo-machete block
+# above.
 loro-internal = "=1.13.6"
 # `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
 # Version/features mirror the app crate exactly.
