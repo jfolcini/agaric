@@ -423,6 +423,11 @@ export function PairingDialog({
   useEffect(() => {
     if (!open) return
     setPairingInfo(null)
+    // A scan belongs to one joiner attempt. Every place that clears the typed
+    // words has to clear this too, or the previous attempt's host rides along
+    // into the next one and the daemon dials a device the user is not pairing
+    // with, for the whole pairing window.
+    scannedPeerRef.current = null
     setWords(['', '', '', ''])
     setPeers([])
     setError(null)
@@ -977,6 +982,7 @@ export function PairingDialog({
     }
     setPairingInfo(null)
     setCountdown(null)
+    scannedPeerRef.current = null
     setWords(['', '', '', ''])
     setEntryMode('manual')
     setError(null)
@@ -988,6 +994,7 @@ export function PairingDialog({
   // Reversible: switching back to the host path re-initialises a fresh
   // host session (this device had none while it was a joiner).
   const handleSwitchToHost = useCallback(async () => {
+    scannedPeerRef.current = null
     setWords(['', '', '', ''])
     setEntryMode('manual')
     setJoinerPhase('entry')

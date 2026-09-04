@@ -3479,6 +3479,51 @@ describe('PairingDialog', () => {
       })
     })
 
+    it('drops a scanned host when the user leaves and re-enters the joiner path', async () => {
+      // #4037 review: `scannedPeerRef` is a ref, so nothing about switching
+      // roles clears it on its own. Scan A, go to host, come back, pair with B
+      // — without the clears this sends A, and the daemon dials a device the
+      // user is not pairing with for the whole pairing window.
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'start_pairing') return mockPairingInfo
+        return undefined
+      })
+      const deviceA = {
+        device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+        endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+        addrs: ['192.168.1.42:59553'],
+      }
+
+      // Scan only — pairing would move the dialog into its waiting phase, where
+      // the switch-to-host link is not rendered.
+      await scan(
+        user,
+        JSON.stringify({ v: 2, passphrase: 'alpha bravo charlie delta', ...deviceA }),
+      )
+
+      // Real labels, read from `src/lib/i18n/sync.ts` rather than guessed.
+      await user.click(await screen.findByRole('button', { name: /Show my code instead/i }))
+      await selectJoinerRole(user)
+
+      const inputs = await screen.findAllByRole('textbox')
+      await user.type(inputs[0] as HTMLElement, 'echo')
+      await user.type(inputs[1] as HTMLElement, 'foxtrot')
+      await user.type(inputs[2] as HTMLElement, 'golf')
+      await user.type(inputs[3] as HTMLElement, 'hotel')
+      mockedInvoke.mockClear()
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'echo foxtrot golf hotel',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
     it('the scan view is accessible', async () => {
       const user = userEvent.setup()
       scannedPayload.current = ''
