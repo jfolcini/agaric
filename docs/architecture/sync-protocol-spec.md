@@ -94,7 +94,7 @@ transport owns, in `src-tauri/agaric-sync/src/transport/`:
 | `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes (= `LORO_INLINE_MAX_BYTES`) | Same story for `OpLogBatchChunked` (#2593). The threshold still gates whether an oversized batch is *skipped* when the peer lacks the capability, but the chunked frame it would have gated is no longer emitted. |
 | `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` | 256 MB | Batches serialising larger than this are dropped from the reply entirely (state still converges via `LoroSync`). |
 | `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | The crate's answer to "the largest protocol payload we will allocate for before we have seen the bytes"; `MAX_FRAME_SIZE` is deliberately this value rather than a new number. |
-| `MAX_SNAPSHOT_SIZE` | 256 MB | Cap the initiator applies to `SnapshotOffer.size_bytes` (defined in `sync_daemon/snapshot_transfer.rs`). |
+| `MAX_SNAPSHOT_SIZE` | 256 MB | Snapshot-blob ceiling defined in `sync_daemon/snapshot_transfer.rs`. Its wire consumer went with the CBOR offer (#3487); the constant remains as the documented blob ceiling and in the `CatchupOutcome::Rejected` message. |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget, applied by `SessionLimits::dispatch` in `transport/driver.rs`. |
 | `transport::session::RECV_TIMEOUT` | 180 s | Per-awaited-message receive guard, applied by `recv_sync_message_within`. Carried across from `SyncConnection::RECV_TIMEOUT` by value, restated rather than imported because `sync_net` is retired. |
 | `transport::driver::RECV_TIMEOUT` (private) | 180 s | **A second, same-named constant** — this is the one that feeds `SessionLimits::recv`, i.e. the session driver's default. Same value and same provenance as `session::RECV_TIMEOUT`, but a different item: retuning one does not move the other. Disambiguated here because the name alone does not. |
@@ -612,14 +612,13 @@ per-session orchestrator (which explicitly errors if they reach
 `handle_message`):
 
 ```text
-SnapshotOffer { size_bytes: u64, blob_blake3: String }  // responder → initiator
 SnapshotAccept                                          // initiator → responder
 SnapshotReject                                          // initiator → responder
 ```
 
-`size_bytes` is the length of the compressed snapshot blob and `blob_blake3`
-its digest, checked after the transfer; the initiator caps `size_bytes` at
-`MAX_SNAPSHOT_SIZE` (256 MB) before reading any frame.
+Both are vestigial: the CBOR `SnapshotOffer` they answered was deleted
+in #3487 (see § Wire compatibility below), so nothing sends or receives them. The
+catch-up itself is a one-way stream of `LoroSync { Snapshot }` messages.
 
 ### Attachment sub-flow variants
 
@@ -708,7 +707,7 @@ of `SyncOrchestrator::handle_message`. Notable rules:
   same states as `LoroSync`, since it rides the tail of the same stream — and
   is ingested by the dispatch body (`dag::insert_replicated_op`), unlike the
   snapshot / file-transfer variants below.
-- The `SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` and the four
+- The `SnapshotAccept` / `SnapshotReject` and the four
   file-transfer variants pass state validation but are rejected by the
   dispatch body — they are handled by the daemon-layer sub-flows, never the
   orchestrator. Implementation detail in
@@ -889,35 +888,29 @@ Notes:
 - No `op_log` wipe, no engine registry reload, no peer-epoch bump: the merge
   is applied against the live engines in place.
 
-#### Wire compatibility (send-new / accept-old)
+#### Wire compatibility
 
-`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` are **retained** as wire
-variants for one-sided back-compat, but production **never sends** a
-`SnapshotOffer`:
+The catch-up is Loro-only in both directions. A responder always streams
+`LoroSync { Snapshot }`; `try_receive_snapshot_catchup` accepts that and
+nothing else.
 
-- **New responder → any initiator**: always streams `LoroSync { Snapshot }`.
-  A pre-#2503 initiator expecting a `SnapshotOffer` fails the catch-up and
-  retries (**forward-incompatible**, documented deprecation — resolves once
-  both devices upgrade).
-- **Old responder → new initiator**: an old peer still offers a CBOR
-  `SnapshotOffer`; `try_receive_snapshot_catchup` peeks the first message and
-  routes a `SnapshotOffer` into the legacy `apply_snapshot` wipe-and-replace
-  path (**accept-old**), preserving convergence during a rolling upgrade.
-
-The legacy CBOR `apply_snapshot` RESET (and its #2474 data-loss contract) thus
-survives only on the accept-old receive branch and as the compaction artifact;
-it is no longer reachable from the production *offer* path. The offer-side CBOR
-helpers (`try_offer_snapshot_catchup`, the `snapshot_covers_remote_heads`
-covering check) are retained `#[cfg(test)]` only, to simulate a legacy peer.
+The pre-#2503 CBOR `SnapshotOffer` sub-flow that this replaced was deleted
+in #3487, receive side included. The accept-old branch it provided expired at the
+iroh cutover: `SYNC_ALPN` is negotiated before any application byte moves, so a
+build predating the port cannot open a session at all, never mind offer a CBOR
+snapshot. `SnapshotAccept` / `SnapshotReject` remain as wire variants with no
+producer or consumer.
 
 #### Fate of the initiator's local state (#2474)
 
-The loss below applies **only to the legacy CBOR accept-old branch** (#2503).
-On the Loro-merge path the initiator's unsynced local content is preserved by
-Loro's merge semantics and its history is re-pulled per #2481 phase 3.
+On the Loro-merge path — the only catch-up path since #3487 — the initiator's
+unsynced local content is preserved by Loro's merge semantics and its history
+is re-pulled per #2481 phase 3. Nothing below happens on it.
 
-Under the legacy CBOR `apply_snapshot` RESET, it wipes the initiator's
-`op_log` (and Loro sidecar state) wholesale, so on the caught-up device
+The paragraphs that follow describe the deleted CBOR RESET, and are kept
+because `apply_snapshot` itself survives as the on-disk restore used by
+disaster recovery and the compaction artifact. Under that RESET it wipes a
+device's `op_log` (and Loro sidecar state) wholesale, so on the caught-up device
 **content converges to the snapshot but the local paper trail — page history,
 activity feed, undo/redo, per-op origin/`is_undo` attribution — is destroyed**
 (see [crdt-and-recovery.md](crdt-and-recovery.md) § "What a catch-up RESET

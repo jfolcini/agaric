@@ -667,10 +667,6 @@ fn sync_message_serde_roundtrip() {
         SyncMessage::ResetRequired {
             reason: "compacted".into(),
         },
-        SyncMessage::SnapshotOffer {
-            size_bytes: 1024,
-            blob_blake3: "deadbeef".into(),
-        },
         SyncMessage::SnapshotAccept,
         SyncMessage::SnapshotReject,
         SyncMessage::SyncComplete {
@@ -950,64 +946,10 @@ async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
 
 // ── State validation tests ──────────────────────────────────────────
 
-/// Regression test for `handle_message` must not silently
-/// reject stray `SnapshotOffer` messages. The snapshot catch-up
-/// sub-flow runs at the daemon layer (`sync_daemon::snapshot_transfer`)
-/// after the main loop exits with `ResetRequired`. If `SnapshotOffer`
-/// ever reaches `handle_message`, the daemon-layer interception has
-/// regressed — surface that as `AppError::InvalidOperation` so the
-/// caller cannot paper over the bug.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(
-        pool,
-        "local-dev".into(),
-        std::sync::Arc::new(materializer.clone()),
-    );
-
-    // Drive to ExchangingHeads so state-validation passes SnapshotOffer
-    // through and we hit the handler body (not the terminal-state reject).
-    let _start = orch.start().await.unwrap();
-    assert_eq!(
-        orch.session().state,
-        SyncState::ExchangingHeads,
-        "start() must transition to ExchangingHeads"
-    );
-
-    let result = orch
-        .handle_message(SyncMessage::SnapshotOffer {
-            size_bytes: 1024,
-            blob_blake3: "deadbeef".into(),
-        })
-        .await;
-
-    let err = match result {
-        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
-        other => panic!(
-            "SnapshotOffer routed through handle_message must return \
-             AppError::InvalidOperation — the daemon layer's \
-             snapshot_transfer sub-flow is the only reachable path. got: {other:?}"
-        ),
-    };
-    assert!(
-        err.contains("SnapshotOffer"),
-        "error message must name the offending variant, got: {err}"
-    );
-    assert!(
-        err.contains("snapshot_transfer"),
-        "error message must point callers at the daemon sub-flow, got: {err}"
-    );
-
-    materializer.shutdown();
-}
-
 /// #611: `LoroSyncChunked` is a transport-internal encoding with no producer
 /// since the iroh port (#3464) removed the chunking layer. One reaching
 /// `handle_message` means a chunking-era peer sent it, or a dispatch
-/// regression; either way surface it as `AppError::InvalidOperation` (same
-/// contract as a stray `SnapshotOffer`).
+/// regression; either way surface it as `AppError::InvalidOperation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
     use crate::sync_protocol::loro_sync_types::{
@@ -1065,9 +1007,8 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
 /// I-Sync-1: `SnapshotAccept` and `SnapshotReject` belong to the
 /// `snapshot_transfer` sub-flow at the sync-daemon layer, not the
 /// orchestrator state machine. If either ever reaches `handle_message`,
-/// it is the same kind of routing regression as a stray `SnapshotOffer`
-/// — surface it as `AppError::InvalidOperation` instead of silently
-/// returning `Ok(None)`.
+/// that is a routing regression — surface it as `AppError::InvalidOperation`
+/// instead of silently returning `Ok(None)`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
     let (pool, _dir) = test_pool().await;
@@ -1295,18 +1236,13 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         "state must remain unchanged (no transition) after a terminal-state reject"
     );
 
-    // SnapshotOffer is otherwise accepted in any non-terminal state; in a
+    // SnapshotAccept is otherwise accepted in any non-terminal state; in a
     // terminal state it too must be rejected by the same arm. This pins
     // the arm's "reject everything" contract for a second message kind.
-    let result2 = orch
-        .handle_message(SyncMessage::SnapshotOffer {
-            size_bytes: 1024,
-            blob_blake3: "deadbeef".into(),
-        })
-        .await;
+    let result2 = orch.handle_message(SyncMessage::SnapshotAccept).await;
     assert!(
         matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
-        "SnapshotOffer in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
+        "SnapshotAccept in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
     );
     assert_eq!(
         orch.state, failed_state,
@@ -1989,17 +1925,6 @@ fn serde_roundtrip_sync_message_reset_required() {
 }
 
 #[test]
-fn serde_roundtrip_sync_message_snapshot_offer() {
-    let msg = SyncMessage::SnapshotOffer {
-        size_bytes: 1_048_576,
-        blob_blake3: "abc123".into(),
-    };
-    let json = serde_json::to_string(&msg).expect("serialize SnapshotOffer");
-    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotOffer");
-    assert_eq!(deser, msg, "SnapshotOffer must survive serde roundtrip");
-}
-
-#[test]
 fn serde_roundtrip_sync_message_snapshot_accept() {
     let msg = SyncMessage::SnapshotAccept;
     let json = serde_json::to_string(&msg).expect("serialize SnapshotAccept");
@@ -2199,13 +2124,6 @@ fn json_shape_all_variants_have_type_tag() {
             "ResetRequired",
             SyncMessage::ResetRequired { reason: "r".into() },
         ),
-        (
-            "SnapshotOffer",
-            SyncMessage::SnapshotOffer {
-                size_bytes: 0,
-                blob_blake3: String::new(),
-            },
-        ),
         ("SnapshotAccept", SyncMessage::SnapshotAccept),
         ("SnapshotReject", SyncMessage::SnapshotReject),
         (
@@ -2231,23 +2149,6 @@ fn json_shape_all_variants_have_type_tag() {
             "variant {expected_tag} must have correct 'type' tag in JSON"
         );
     }
-}
-
-#[test]
-fn json_shape_snapshot_offer_has_size_bytes() {
-    let msg = SyncMessage::SnapshotOffer {
-        size_bytes: 999_999,
-        blob_blake3: "abc123".into(),
-    };
-    let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SnapshotOffer");
-    assert_eq!(
-        json["type"], "SnapshotOffer",
-        "SnapshotOffer must have correct type tag"
-    );
-    assert_eq!(
-        json["size_bytes"], 999_999,
-        "SnapshotOffer must contain size_bytes field"
-    );
 }
 
 #[test]
@@ -2433,36 +2334,6 @@ fn serde_roundtrip_sync_complete_hash_lengths() {
         let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SyncComplete");
         assert_eq!(deser, msg, "SyncComplete roundtrip failed for hash: {hash}");
     }
-}
-
-#[test]
-fn serde_roundtrip_zero_size_snapshot_offer() {
-    let msg = SyncMessage::SnapshotOffer {
-        size_bytes: 0,
-        blob_blake3: String::new(),
-    };
-    let json = serde_json::to_string(&msg).expect("serialize zero-size SnapshotOffer");
-    let deser: SyncMessage =
-        serde_json::from_str(&json).expect("deserialize zero-size SnapshotOffer");
-    assert_eq!(
-        deser, msg,
-        "SnapshotOffer with size_bytes=0 must survive roundtrip"
-    );
-}
-
-#[test]
-fn serde_roundtrip_max_u64_snapshot_offer() {
-    let msg = SyncMessage::SnapshotOffer {
-        size_bytes: u64::MAX,
-        blob_blake3: "f".repeat(64),
-    };
-    let json = serde_json::to_string(&msg).expect("serialize max-u64 SnapshotOffer");
-    let deser: SyncMessage =
-        serde_json::from_str(&json).expect("deserialize max-u64 SnapshotOffer");
-    assert_eq!(
-        deser, msg,
-        "SnapshotOffer with u64::MAX must survive roundtrip"
-    );
 }
 
 /// Sending a HeadExchange while the orchestrator is in StreamingOps state
@@ -5882,8 +5753,7 @@ async fn head_exchange_refuses_a_display_hostile_head_derived_id_4451() {
 
 /// #4638: a file-transfer message reaching the orchestrator is a daemon
 /// dispatch regression (`sync_files` reads them off the wire after
-/// `SyncComplete`). It is refused in every build — same contract as a stray
-/// `SnapshotOffer` — instead of being ignored.
+/// `SyncComplete`). It is refused in every build, instead of being ignored.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_file_transfer_messages_as_unreachable_protocol_state_4638() {
     let (pool, _dir) = test_pool().await;

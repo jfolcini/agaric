@@ -467,13 +467,12 @@ impl From<OpTransfer> for OpRecord {
 ///    the per-session state machine never accepts another delta
 ///    message after this point.
 ///
-/// 5. **`SnapshotOffer` → `SnapshotAccept` | `SnapshotReject`**
-///    (post-`ResetRequired` only) — driven by
+/// 5. **Snapshot catch-up** (post-`ResetRequired` only) — driven by
 ///    [`crate::sync_daemon::snapshot_transfer`], not the per-session
-///    state machine. Responder offers; initiator accepts (and then
-///    receives the blob in binary frames) or rejects (and the session
-///    closes). `SnapshotOffer` arriving outside this sub-flow is a
-///    protocol error.
+///    state machine. The responder streams full per-space
+///    `LoroSync { LoroSyncMessage::Snapshot, .. }` messages and the
+///    initiator merges them; a `LoroSync` arriving outside the
+///    streaming phase or this sub-flow is a protocol error.
 ///
 /// 6. **`FileRequest` → (`FileOffer` + binary frames + `FileReceived`)*
 ///    → `FileTransferComplete`** (post-`SyncComplete` only) — driven
@@ -717,7 +716,7 @@ pub enum SyncMessage {
     /// [`SyncMessage::LoroSync`]. The variant stays on the wire so a peer
     /// still running the chunking build is decoded and rejected explicitly
     /// rather than as an unknown `type` tag — reaching `handle_message` fails
-    /// the session loudly (same contract as `SnapshotOffer`).
+    /// the session loudly.
     ///
     /// Position in the message sequence: identical to `LoroSync`
     /// (step 2 above) — it *is* a `LoroSync`, merely re-encoded for
@@ -826,27 +825,12 @@ pub enum SyncMessage {
     /// initiator's heads, so a delta replay is impossible. Triggers
     /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].
     ResetRequired { reason: String },
-    /// Snapshot sub-flow only (post-`ResetRequired`). Responder offers
-    /// the latest local snapshot blob's size + integrity hash; initiator
-    /// decides.
-    ///
-    /// `blob_blake3` (#706 item 2) is the hex blake3 of the *compressed*
-    /// snapshot blob, mirroring [`FileOffer`](SyncMessage::FileOffer)'s
-    /// `blake3_hash`. The transfer
-    /// already rides authenticated mTLS and an atomic decode-or-rollback
-    /// apply, so this guards the one remaining gap: responder-side disk
-    /// corruption of the blob between read and send. The initiator
-    /// re-hashes the received bytes and rejects on mismatch before the
-    /// expensive decode/apply, so a corrupted blob fails fast and loud
-    /// instead of surfacing as an opaque CBOR/zstd decode error.
-    SnapshotOffer {
-        size_bytes: u64,
-        blob_blake3: String,
-    },
-    /// Initiator accepts the offered snapshot; responder follows up with
-    /// `size_bytes` of binary frames.
+    /// Vestigial. Answered the CBOR `SnapshotOffer` deleted in #3487; nothing
+    /// sends or receives either of these any more. Kept on the wire so a
+    /// build that still emits one is decoded and rejected explicitly rather
+    /// than as an unknown `type` tag.
     SnapshotAccept,
-    /// Initiator declines (size cap, integrity check, etc.). Session ends.
+    /// Vestigial — see [`SnapshotAccept`](SyncMessage::SnapshotAccept).
     SnapshotReject,
     /// Per-side terminal: this side has finished sending and bookmarks
     /// `last_hash` as its new frontier-of-record in `peer_refs`.
