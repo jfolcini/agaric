@@ -147,8 +147,18 @@ The active `.cargo/config.toml` is gitignored, so it never leaks into the tree â
 npx vitest run                                   # frontend
 cd src-tauri && cargo nextest run --workspace    # backend (bare form is package-scoped only, #3212)
 npx playwright test                              # e2e (chromium)
+just test-be-release                             # backend under RELEASE semantics (#4677)
 cargo bench --bench interactive_slo              # warm latency mean budgets at 100K blocks
 ```
+
+- **`just test-be-release`** runs the backend suite with `debug_assertions` OFF and
+  `overflow-checks` ON, via `[profile.release-test]`. Use it after promoting a
+  `debug_assert!` to `assert!` or auditing arithmetic on a trust boundary: the dev profile
+  keeps assertions the shipped binary drops, so it cannot show whether the check survives
+  release. `cargo test --profile release` cannot be used for this â€” `panic = "abort"` plus
+  the `agaric` self dev-dependency (#4499) builds two copies of every dependency and the
+  test targets do not link against them (#4677). It is slower than `just test-be` and is
+  not a per-change gate.
 
 - **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.

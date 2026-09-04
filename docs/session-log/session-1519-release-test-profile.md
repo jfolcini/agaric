@@ -80,5 +80,16 @@ An earlier release-profile attempt in this session listed four failures. Two of 
 promoted those sites to `assert!` / `return Err` and they now hold in release. That claim had
 only ever been asserted; this is the first time it has been run.
 
+## Giving it an invocation
+
+A profile nothing calls is a capability, not a check. `just test-be-release` runs it, and
+`docs/BUILD.md` § Testing says when to reach for it: after promoting a `debug_assert!` or
+auditing arithmetic on a trust boundary. Without that the only record would be this session
+log, which is immutable after merge — so the next such change would be verified against
+release semantics only if someone happened to remember the flag.
+
+Deliberately NOT a CI lane: `scheduled-deep-checks.yml` already blew its time cap (#4675), so
+adding a ~25-minute optimised build there is a separate decision, not a drive-by.
+
 Releases themselves were never broken: `[profile.release]` bundles build, and CI's `build` job
 was green throughout. The failure was confined to `cargo test --profile release`.

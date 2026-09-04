@@ -73,6 +73,17 @@ test-fe:
 test-be:
     cd src-tauri && cargo nextest run --workspace
 
+# How an `assert!` promotion (#4638) or an arithmetic audit (#4640) is CHECKED
+# rather than asserted: the dev profile keeps every `debug_assert!` the shipped
+# binary drops, so only this run exercises what release actually executes.
+# `[profile.release]` cannot run tests at all — `panic = "abort"` plus the
+# `agaric` self dev-dependency builds two copies of each dep and they do not
+# link (#4677). Slower than `test-be`; not a per-change gate.
+# Backend tests with RELEASE semantics: `debug_assertions` off, `overflow-checks` on.
+[group('test')]
+test-be-release:
+    cd src-tauri && cargo nextest run --workspace --cargo-profile release-test
+
 # Re-run frontend tests on change.
 [group('test')]
 test-watch:

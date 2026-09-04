@@ -495,18 +495,6 @@ overflow-checks = true
 # build per platform; not worth it on a 5-10% binary-size delta).
 panic = "abort"
 
-# Dev-build link-time trim (PEND-37, local dev speed). The link step is the
-# long pole of incremental compiles on this graph (see docs/BUILD.md §"Speed
-# up Rust builds" — 200K LOC + the Tauri/sqlx/Loro/OTel/rustls/reqwest tree);
-# the default dev profile emits full `debug = 2` debuginfo for EVERY crate,
-# most of which is dependency code we never step into. Dropping debuginfo for
-# third-party crates only shrinks what the linker (mold, when active) has to
-# process, cutting cold + incremental link time, while our own crate keeps
-# full `debug = 2` (this override applies to dependencies, not the workspace
-# members). Complementary to mold, not a replacement. First-party
-# debuggability (breakpoints, variable inspection, backtraces in agaric_lib /
-# the bins) is unchanged. Reversible with zero runtime effect — dev profile
-# never ships.
 # #4677 — the profile the workspace's TESTS run under when the point is release
 # SEMANTICS: `debug_assertions` OFF and `overflow-checks` ON, i.e. exactly the
 # code a shipped binary keeps and the checks it emits. That is what makes an
@@ -535,6 +523,18 @@ panic = "unwind"
 lto = false
 codegen-units = 16
 
+# Dev-build link-time trim (PEND-37, local dev speed). The link step is the
+# long pole of incremental compiles on this graph (see docs/BUILD.md §"Speed
+# up Rust builds" — 200K LOC + the Tauri/sqlx/Loro/OTel/rustls/reqwest tree);
+# the default dev profile emits full `debug = 2` debuginfo for EVERY crate,
+# most of which is dependency code we never step into. Dropping debuginfo for
+# third-party crates only shrinks what the linker (mold, when active) has to
+# process, cutting cold + incremental link time, while our own crate keeps
+# full `debug = 2` (this override applies to dependencies, not the workspace
+# members). Complementary to mold, not a replacement. First-party
+# debuggability (breakpoints, variable inspection, backtraces in agaric_lib /
+# the bins) is unchanged. Reversible with zero runtime effect — dev profile
+# never ships.
 [profile.dev.package."*"]
 debug = false
 
