@@ -133,54 +133,76 @@ fn sync_start_pairing_returns_passphrase_and_qr() {
         "qr_svg must contain an SVG tag"
     );
 
-    // PairingInfo no longer carries host/port — mDNS owns
-    // discovery + address resolution end-to-end. Asserted here as a
-    // compile-time + structural check via the new test below.
+    // PairingInfo carries the passphrase and the rendered QR, never an
+    // address of its own — where this device is reachable rides inside the QR
+    // payload (#4037). Asserted structurally by the test below.
 
     // Session should be stored in state
     let session = pairing_state.lock().unwrap();
     assert!(session.is_some(), "pairing session must be stored in state");
 }
 
-/// Parse the QR JSON embedded in the pairing flow and assert the
-/// payload shape is exactly `{"v": 1, "passphrase": "..."}` — no `host`
-/// and no `port`. Locks down the wire format on the orchestration side
-/// (the unit-level encoder/parser test lives in `pairing.rs`).
+/// `start_pairing_inner` has nothing to advertise, so its QR is the
+/// passphrase-only v1 payload.
+///
+/// This is the *orchestration-side* pin: the unit-level shape assertions live
+/// in `pairing.rs`. It is not redundant with them, because it is the only
+/// place that ties the SVG a command actually returns to a payload — the two
+/// are compared as rendered bytes, so a command that stopped encoding what it
+/// claims to encode fails here even though `pairing_qr_payload` is fine.
+///
+/// #4037: `start_pairing_inner` is the variant that does NOT arm the pairing
+/// window. Arming is what wakes a dormant daemon into binding an endpoint, so
+/// this variant has no address to resolve and passes `None` by construction.
+/// The command the frontend actually calls is `start_pairing_armed_inner`,
+/// whose addressed and degraded paths are covered in `pairing.rs`.
 #[test]
-fn start_pairing_qr_payload_carries_only_passphrase_m34() {
+fn start_pairing_inner_qr_is_the_passphrase_only_payload_4037() {
     let pairing_state = Mutex::new(None);
     let info =
         start_pairing_inner(&pairing_state, "device-A").expect("start_pairing_inner must succeed");
 
-    // Re-derive the exact JSON the QR encodes (the SVG is opaque
-    // bytes, but `pairing_qr_payload` is what was rendered).
-    let payload = agaric_sync::pairing::pairing_qr_payload(&info.passphrase);
+    let payload = agaric_sync::pairing::pairing_qr_payload(&info.passphrase, None);
+    // `assert!`, not `assert_eq!`: a rendered QR is tens of kilobytes of path
+    // data and printing two of them on failure helps nobody.
+    assert!(
+        info.qr_svg
+            == agaric_sync::pairing::generate_qr_svg(&payload).expect("the payload renders"),
+        "the returned SVG must be the render of the payload asserted below, or the \
+         rest of this test says nothing about what the command emitted"
+    );
+
     let parsed: serde_json::Value =
         serde_json::from_str(&payload).expect("QR payload must be valid JSON");
     let object = parsed
         .as_object()
         .expect("QR payload must be a JSON object");
 
-    // Exact-count assertion: only `v` (schema version) and `passphrase`.
     assert_eq!(
         object.len(),
         2,
-        "QR payload must contain exactly two keys (v, passphrase), got: {:?}",
+        "the passphrase-only payload must contain exactly two keys (v, passphrase), \
+         got: {:?}",
         object.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        object.get("v").and_then(serde_json::Value::as_u64),
+        Some(u64::from(
+            agaric_sync::pairing::PAIRING_QR_VERSION_PASSPHRASE_ONLY
+        )),
+        "a payload with no endpoint declares v1, not the current version"
     );
     assert_eq!(
         object.get("passphrase").and_then(|v| v.as_str()),
         Some(info.passphrase.as_str()),
         "'passphrase' field must round-trip"
     );
-    assert!(
-        !object.contains_key("host"),
-        "QR payload must not contain 'host' — mDNS owns discovery"
-    );
-    assert!(
-        !object.contains_key("port"),
-        "QR payload must not contain 'port' — mDNS owns address resolution"
-    );
+    for absent in ["endpoint_id", "addrs", "host", "port"] {
+        assert!(
+            !object.contains_key(absent),
+            "a device with no bound endpoint must not advertise '{absent}'"
+        );
+    }
 }
 
 #[test]

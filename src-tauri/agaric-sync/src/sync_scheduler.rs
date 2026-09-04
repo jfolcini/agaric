@@ -128,6 +128,38 @@ pub struct SyncScheduler {
 
     /// Interval for periodic resync.
     pub resync_interval: Duration,
+
+    /// This device's own dialable coordinates, published by the daemon the
+    /// moment its QUIC endpoint is bound (#4037).
+    ///
+    /// The scheduler is the only thing `daemon_loop` and the pairing commands
+    /// both already hold, which is the whole reason the slot is here rather
+    /// than somewhere more obviously about endpoints: the alternative is
+    /// handing `pairing::start_pairing_armed` an `iroh::Endpoint`, and the
+    /// endpoint does not exist yet on the one flow that needs this — a
+    /// first-ever pair starts with the daemon dormant.
+    ///
+    /// A `watch` rather than a `Mutex<Option<_>>` because the reader has to be
+    /// able to *wait*: arming the pairing marker is what wakes the dormant
+    /// daemon, so the QR's address is published a moment after the command
+    /// that needs it starts running. See [`Self::await_local_endpoint`].
+    local_endpoint: watch::Sender<Option<LocalEndpointAdvert>>,
+}
+
+/// Where a peer can dial this device, as the pairing QR advertises it (#4037).
+///
+/// Both fields are read back from the bound endpoint, never derived
+/// independently: an advertised key nobody is listening on, or a port nothing
+/// is bound to, costs the peer a dial and tells it nothing — the same reason
+/// `SyncService::endpoint_id`'s docs give for the mDNS announce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalEndpointAdvert {
+    /// The `EndpointId` a peer dials, rendered as iroh renders it.
+    pub endpoint_id: String,
+    /// Every socket the endpoint is bound to. All of them, because iroh races
+    /// candidate paths itself and a multi-homed host has no way to know which
+    /// one the joiner shares a link with.
+    pub addrs: Vec<std::net::SocketAddr>,
 }
 
 /// #4385 — the eviction discriminator: is this peer one this vault has a
@@ -560,6 +592,7 @@ impl SyncScheduler {
             debounced_through: AtomicU64::new(0),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
+            local_endpoint: watch::Sender::new(None),
         }
     }
 
@@ -983,6 +1016,44 @@ impl SyncScheduler {
     /// or command handlers) invoke this after writing ops.
     pub fn notify_change(&self) {
         self.change_count.send_modify(|count| *count += 1);
+    }
+
+    /// Publish this device's dialable coordinates (#4037). Called by
+    /// `daemon_loop` once — and only once — the QUIC endpoint is bound.
+    pub fn publish_local_endpoint(&self, advert: LocalEndpointAdvert) {
+        self.local_endpoint.send_replace(Some(advert));
+    }
+
+    /// This device's dialable coordinates, waiting up to `budget` for the
+    /// daemon to publish them.
+    ///
+    /// Returns immediately when they are already known, which is every case
+    /// except the one this budget exists for: on a first-ever pair the daemon
+    /// is dormant and has bound no endpoint, and the caller's own act of
+    /// arming the pairing marker is what wakes it. So the wait covers a
+    /// dormant→active transition, and the caller sizes `budget` from
+    /// [`Self::debounce_window`], which is what that transition costs.
+    ///
+    /// `None` on timeout is a legitimate answer, not an error: a device with
+    /// no bound endpoint has no address to advertise, and the QR degrades to
+    /// the passphrase-only shape that mDNS has always been enough for.
+    pub async fn await_local_endpoint(&self, budget: Duration) -> Option<LocalEndpointAdvert> {
+        let mut rx = self.local_endpoint.subscribe();
+        if let Some(advert) = rx.borrow_and_update().clone() {
+            return Some(advert);
+        }
+        // `self` owns the sender, so `changed()` cannot fail while this borrow
+        // is alive; a timeout is the only way out other than a publish.
+        let waited = tokio::time::timeout(budget, async {
+            while rx.changed().await.is_ok() {
+                if let Some(advert) = rx.borrow_and_update().clone() {
+                    return Some(advert);
+                }
+            }
+            None
+        })
+        .await;
+        waited.ok().flatten()
     }
 
     /// Wait for a debounced change signal.  Returns after `debounce_window`
@@ -2323,6 +2394,73 @@ mod tests {
         assert!(
             take(&sched),
             "#3547: a pairing act is new information about every peer"
+        );
+    }
+
+    // -- The local-endpoint slot (#4037) -------------------------------------
+
+    fn test_advert() -> LocalEndpointAdvert {
+        LocalEndpointAdvert {
+            endpoint_id: crate::mdns::test_endpoint_id("QR_HOST_4037").to_string(),
+            addrs: vec![
+                "192.168.1.42:59553"
+                    .parse()
+                    .expect("a valid socket address"),
+            ],
+        }
+    }
+
+    /// The case the budget exists for: nothing is published when the wait
+    /// starts, and the publish lands while it is in flight.
+    ///
+    /// This is the dormant→active shape. A slot that only answered values
+    /// published *before* the read would leave a first-ever pair with no
+    /// address, which is precisely the pair #4037 is about.
+    #[tokio::test]
+    async fn await_local_endpoint_returns_a_value_published_while_it_waits() {
+        let sched = Arc::new(SyncScheduler::new());
+        let publisher = tokio::spawn({
+            let sched = Arc::clone(&sched);
+            async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                sched.publish_local_endpoint(test_advert());
+            }
+        });
+
+        let got = sched.await_local_endpoint(Duration::from_secs(5)).await;
+
+        publisher.await.expect("the publishing task does not panic");
+        assert_eq!(
+            got,
+            Some(test_advert()),
+            "a publish during the wait must resolve it"
+        );
+    }
+
+    /// An already-published value resolves without waiting — every pair after
+    /// the first, where the daemon has been active all along.
+    #[tokio::test]
+    async fn await_local_endpoint_returns_an_already_published_value_immediately() {
+        let sched = SyncScheduler::new();
+        sched.publish_local_endpoint(test_advert());
+
+        // A zero budget cannot elapse into a successful wait, so passing here
+        // means the value came from the initial borrow and not from a race.
+        assert_eq!(
+            sched.await_local_endpoint(Duration::ZERO).await,
+            Some(test_advert()),
+            "a value already in the slot must not cost a wait"
+        );
+    }
+
+    /// Nothing published inside the budget is `None`, not a hang.
+    #[tokio::test]
+    async fn await_local_endpoint_times_out_to_none() {
+        let sched = SyncScheduler::new();
+        assert_eq!(
+            sched.await_local_endpoint(Duration::from_millis(30)).await,
+            None,
+            "a device with no bound endpoint must answer, not block the caller"
         );
     }
 }

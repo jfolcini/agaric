@@ -2400,7 +2400,7 @@ async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
 
     // The joiner's dialog mints a competing passphrase of its own (#3463's root
     // cause), but the user types the host's.
-    crate::pairing::start_pairing(&joiner_state, "JOINING_DEV").unwrap();
+    crate::pairing::start_pairing(&joiner_state, "JOINING_DEV", None).unwrap();
     crate::pairing::confirm_pairing(&joiner_pool, &joiner_state, &joiner_sched, host_passphrase)
         .await
         .expect("#3463: the joiner accepts the host's passphrase");
@@ -4732,6 +4732,77 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     .expect("daemon must shut down cleanly even when backgrounded at start");
 
     mat.shutdown();
+}
+
+/// #4037 — the daemon publishes where it bound, and publishes the truth.
+///
+/// This is the one line that turns the QR feature on in production, and it is
+/// the only place the two halves meet: everything downstream (the payload, the
+/// wait in `start_pairing_armed`) is exercised against a fixture advert, so a
+/// daemon that published an empty address list, or a key it had derived rather
+/// than read back from the bound endpoint, would leave every other test green
+/// and the feature dead.
+///
+/// Both fields are checked against something the *test* knows independently:
+/// the endpoint id against the public half of the secret handed in, and the
+/// addresses against non-emptiness plus a port the OS actually assigned. That
+/// is what stops it passing on a placeholder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_publishes_its_bound_endpoint_for_the_pairing_qr_4037() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let endpoint_secret = SecretKey::generate();
+    let expected_id = endpoint_secret.public().to_string();
+
+    let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
+        pool: pool.clone(),
+        device_id: "DEV_QR_ADVERT".into(),
+        materializer: std::sync::Arc::new(mat.clone()),
+        scheduler: Arc::clone(&scheduler),
+        endpoint_secret,
+        event_sink: sink,
+        cancel,
+        lifecycle: crate::foreground::LifecycleHooks::new(),
+    })
+    .await
+    .expect("the daemon starts");
+
+    let advert = scheduler
+        .await_local_endpoint(std::time::Duration::from_secs(10))
+        .await
+        .expect("the daemon publishes its bound endpoint within the budget");
+
+    daemon.shutdown();
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect("the daemon shuts down cleanly");
+    mat.shutdown();
+
+    assert_eq!(
+        advert.endpoint_id, expected_id,
+        "the advertised key must be the public half of the secret the daemon was \
+         given — a peer that dials anything else reaches nobody"
+    );
+    assert!(
+        !advert.addrs.is_empty(),
+        "an advert with no candidates is the same as no advert: the QR would carry \
+         a key with no path to it, which fails in microseconds"
+    );
+    assert!(
+        advert.addrs.iter().all(|a| a.port() != 0),
+        "the bind requests port 0 and the OS assigns a real one; publishing the \
+         request rather than the assignment would advertise an unreachable socket. \
+         Got {:?}",
+        advert.addrs
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -10538,7 +10609,7 @@ async fn drive_two_device_pairing_windowed_3507(
     let joiner_sched = Arc::new(SyncScheduler::new());
     let joiner_sink = Arc::new(RecordingEventSink::new());
     let joiner_slot = std::sync::Mutex::new(None);
-    crate::pairing::start_pairing(&joiner_slot, JOINER_DEV_3507)
+    crate::pairing::start_pairing(&joiner_slot, JOINER_DEV_3507, None)
         .expect("the joiner's dialog opens a session of its own");
 
     // A mistype is derived from the real passphrase rather than invented, so

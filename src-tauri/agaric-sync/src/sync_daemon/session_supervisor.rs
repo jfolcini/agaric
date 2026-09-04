@@ -299,6 +299,21 @@ pub(crate) async fn daemon_loop(
     //     only exists once the endpoint is up — the bind requests port 0.
     handle_internet_facing_bind(&bind_decision, port, &event_sink);
 
+    // 2c. Publish where a peer can dial us, so the pairing QR can carry it and a
+    //     first-ever pair stops depending on multicast (#4037).
+    //
+    //     Same sourcing rule as the mDNS announce below, for the same reason:
+    //     both fields are read back from the service that is actually accepting.
+    //     Every bound socket goes in, not just `lan_ip` — iroh races candidate
+    //     paths, and unlike the mDNS record (which #3853 narrowed to the one
+    //     address the endpoint bound, because a record naming an unbound address
+    //     is indistinguishable from a sleeping device) a QR candidate that leads
+    //     nowhere is refused in under a millisecond, not a dial budget.
+    scheduler.publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
+        endpoint_id: endpoint_id.to_string(),
+        addrs: service.addr().ip_addrs().copied().collect(),
+    });
+
     // #1605: clone the daemon's shared cancel flag into the accept loop so every
     // spawned responder session observes the SAME shutdown/user-cancel signal the
     // initiator path uses. A flipped flag aborts an in-progress responder within one
