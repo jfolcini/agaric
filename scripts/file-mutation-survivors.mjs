@@ -1871,7 +1871,6 @@ function parseArgs(argv) {
     dryRun: false,
     requireInput: false,
     children: false,
-    maxChildren: DEFAULT_MAX_CHILDREN,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -2132,6 +2131,21 @@ export function main(argv = process.argv.slice(2)) {
   // reason to act: an area whose LAST survivor was killed leaves a child issue
   // standing that claims mutants survive there, and that is the same lie
   // `file-scheduled-failures.mjs` refuses to leave open on the lane tracker.
+  // Is this lane's input COMPLETE, not merely present? `--require-input` only
+  // proves the frontend lane produced something; a run that lost a module's
+  // report empties that module's share of the set. Closing anything on that
+  // basis loses an issue, so it gates BOTH closes below — the parent's and
+  // the children's.
+  //
+  // The rewrite-from-partial-data underneath is pre-existing (#3364) and left
+  // alone; widening `--require-input` would be a different fix. The rust lane
+  // needs no equivalent: a short merge already forces `--dry-run`, so it never
+  // reaches a write.
+  const frontendComplete =
+    args.lane !== 'frontend' ||
+    EXPECTED_FRONTEND_REPORTS === undefined ||
+    frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
+
   const childActions = args.children
     ? decideChildActions({
         groups: groupByArea(all),
@@ -2146,31 +2160,20 @@ export function main(argv = process.argv.slice(2)) {
     : []
   // A 'sync' re-renders a child body that is identical to what is already
   // there, so an unchanged week still writes nothing and never spams.
-  const childWork = childActions.filter((a) => a.action !== 'sync')
+  // A `close` from an incomplete set would rewrite a child to "0 findings"
+  // and close it while its survivors are live — the same lost issue the
+  // parent gate prevents, on the issues a maintainer actually works from.
+  // Dropping the action leaves the child untouched until a complete run.
+  const gatedChildActions = frontendComplete
+    ? childActions
+    : childActions.filter((a) => a.action !== 'close')
+  const childWork = gatedChildActions.filter((a) => a.action !== 'sync')
 
   // An open issue with nothing left to track is itself a reason to act: the
   // close would otherwise depend on child bookkeeping happening to land in the
   // SAME run. It usually does — the last survivor resolving also closes its
   // area's child — but "usually" leaves the issue open forever in every case
   // where it does not, and a quiet week is precisely when nobody looks.
-  // …and gated on the lane's input looking COMPLETE, not merely present.
-  // `--require-input` only proves the frontend lane produced something; a run
-  // that lost a module's report empties that module's share of the set, and
-  // closing on that is the one NEW way this PR could lose an issue. The
-  // rewrite-from-partial-data underneath is pre-existing (#3364) and left
-  // alone: widening `--require-input` would be a different fix wearing this
-  // PR's clothes. The rust lane needs no equivalent — a short merge already
-  // forces `--dry-run`, so it never reaches a write at all.
-  const frontendComplete =
-    args.lane !== 'frontend' ||
-    EXPECTED_FRONTEND_REPORTS === undefined ||
-    frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
-  // Computed ONCE and threaded into every site that acts on it. It was
-  // spelled three times — here, in `writeParent`, and in `printDryRun` — and
-  // only this copy carried `frontendComplete`, so the gate did not gate the
-  // close it was added for: with `--children`, a partial frontend run's
-  // child-closes make `willWrite` true on their own and `writeParent` then
-  // closed on its own un-gated copy of the condition.
   const needsClose =
     all.length === 0 &&
     existingIssue !== null &&
@@ -2210,7 +2213,16 @@ export function main(argv = process.argv.slice(2)) {
       acceptedOn,
       reanchored,
     })
-    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions, needsClose })
+    printDryRun({
+      args,
+      existingIssue,
+      newOnes,
+      resolvedOnes,
+      all,
+      body,
+      childActions: gatedChildActions,
+      needsClose,
+    })
     return
   }
 
@@ -2219,7 +2231,7 @@ export function main(argv = process.argv.slice(2)) {
   // Children FIRST — the parent records their numbers, so they have to exist.
   const childLinks = args.children
     ? applyChildActions({
-        actions: childActions,
+        actions: gatedChildActions,
         repo,
         runUrl,
         firstSeen,
@@ -2929,17 +2941,20 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
       // `EXPECTED_FRONTEND_REPORTS` is `undefined` — the gate then disables
       // itself by design (documented on the constant), so asserting it holds
       // there asserts the opposite of the intended behaviour.
-      if (EXPECTED_FRONTEND_REPORTS === undefined)
-        ok(
-          'a short frontend report set does not close the lane issue (skipped: count not derivable here)',
-        )
-      else if (!/would CLOSE issue/.test(short.out))
-        ok('a short frontend report set does not close the lane issue')
-      else
-        fail(
-          'a short frontend report set does not close the lane issue',
-          `EXPECTED_FRONTEND_REPORTS=${EXPECTED_FRONTEND_REPORTS}; out=${short.out.slice(0, 200)}`,
-        )
+      const NAME = 'a short frontend report set closes neither the lane issue nor its children'
+      if (EXPECTED_FRONTEND_REPORTS === undefined) {
+        ok(`${NAME} (skipped: count not derivable here)`)
+      } else {
+        const bad = []
+        if (/would CLOSE issue/.test(short.out)) bad.push('would close the PARENT')
+        // The child close matters more: a child rewritten to "0 findings" and
+        // closed while its survivors are live is the issue a maintainer works
+        // from. `printDryRun` lists planned actions as `close  #N area`, so
+        // the absence of a close line is the assertion.
+        if (/\[dry-run\]\s+close\s+#/.test(short.out)) bad.push('would close a CHILD')
+        if (bad.length === 0) ok(NAME)
+        else fail(NAME, `${bad.join('; ')} — out=${short.out.slice(0, 320)}`)
+      }
     }
   }
 }
