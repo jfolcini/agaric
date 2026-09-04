@@ -1,4 +1,4 @@
-# Session 1514 — the mutation backlog, and every rustdoc warning
+# Session 1516 — the mutation backlog, and every rustdoc warning
 
 **Ask:** work the mutation-survivor issues through the `batch-issues` skill, merge the PRs, then dispatch the weekly deep checks so the children close themselves against fresh data. A second agent held the arch issues (#4638, #3443) in parallel, so this session stayed off them. Mid-session the maintainer added: fix all rustdoc warnings too.
 
