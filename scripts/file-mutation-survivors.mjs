@@ -2176,9 +2176,7 @@ export function main(argv = process.argv.slice(2)) {
   // stale-open state the parent close exists to prevent.
   const suppressedChildLinks = frontendComplete
     ? []
-    : childActions
-        .filter((a) => a.action === 'close' && a.number !== undefined)
-        .map((a) => [a.area, a.number])
+    : childActions.filter((a) => a.action === 'close').map((a) => [a.area, a.number])
   const childWork = gatedChildActions.filter((a) => a.action !== 'sync')
 
   // An open issue with nothing left to track is itself a reason to act: the
