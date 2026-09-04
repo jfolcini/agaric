@@ -152,6 +152,7 @@ dependencies = [
  "chrono",
  "insta",
  "loro",
+ "loro-internal",
  "parking_lot",
  "proptest",
  "regex",

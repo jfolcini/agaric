@@ -31,6 +31,18 @@ publish = false
 # rlib a test binary links is built without this package's dev-dependencies.
 test-util = ["dep:proptest"]
 
+# Cargo-machete allowlist — each entry carries a reachability rationale, per
+# the sibling block in `src-tauri/Cargo.toml`.
+[package.metadata.cargo-machete]
+ignored = [
+    # Declaration-only, and deliberately so: it exists to pin `loro-internal`
+    # exactly, because `loro = "=1.13.6"` leaves it free to float to 1.13.9 and
+    # that is the crate #3161's quadratic `find_common_ancestor` lives in.
+    # There is no `use loro_internal` anywhere in this workspace and there
+    # should not be — the `loro` facade is the API we consume.
+    "loro-internal",
+]
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
@@ -58,15 +70,31 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # containers. This is the workspace's owning entry since #3120 (the app crate
 # no longer depends on it); agaric-sync mirrors it. Not part of any coupled
 # dep stack per AGENTS.md §"Coupled Dependency Updates".
-# HELD at 1.13.6 via Cargo.lock + a dependabot `ignore` (#3161). This caret
-# range ALLOWS 1.13.7 — deliberately not tightened to `=1.13.6`, because that
-# still resolves `loro-internal` 1.13.7 transitively, so the lockfile is the
-# real hold either way and a false sense of pinning here would be worse.
-# 1.13.7 makes `find_common_ancestor` quadratic in history at frontier
-# width > 1 (215x at 1000 rounds). Our regression test can no longer detect
-# it — #3187 narrowed it to width 1, dag.rs's fast path. Do not `cargo update`
-# loro without re-measuring at width 2.
-loro = "1.12"
+# HELD at 1.13.6 (#3161). 1.13.7 made `find_common_ancestor` quadratic in
+# history at frontier width > 1 — one user, two devices, one concurrent edit.
+# Re-measured 2026-09-04 against 1.13.9, the newest release: still quadratic,
+# 192x slower than 1.13.6 at 1000 rounds (5.7ms -> 10466ms). Not fixed.
+#
+# Both crates are pinned exactly, and that is load-bearing rather than
+# belt-and-braces: `loro = "=1.13.6"` ALONE still resolves `loro-internal` to
+# 1.13.9, because loro 1.13.6 itself requires only `loro-internal = "^1.13.6"`.
+# The regression lives in `loro-internal/src/dag.rs`, so a float there ships it
+# with the facade pinned. Verified by observation, not inference: a bare
+# `cargo generate-lockfile` under an exact `loro` pin produced loro-internal
+# 1.13.9. The previous note here reasoned from that same fact to "pin nothing,
+# the lockfile is the real hold"; pinning BOTH closes the hole instead of
+# conceding it, and cargo then refuses the bad resolution outright.
+#
+# Do not lift either pin without re-running the width-2 reproducer (2 peers,
+# alternating commit + cross-import, N rounds, under `subscribe_root` so the
+# diff actually fires). CI cannot catch this: #3187 narrowed the regression
+# test to frontier width 1, which is dag.rs's linear fast path and measures at
+# parity on every version.
+loro = "=1.13.6"
+# Not used in our source — declared solely to pin the crate the #3161
+# regression actually lives in. See the loro note above for why the facade pin
+# cannot do this on its own. cargo-machete allowlisted below.
+loro-internal = "=1.13.6"
 # `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
 # Version/features mirror the app crate exactly.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

@@ -129,6 +129,7 @@ dependencies = [
  "agaric-store",
  "chrono",
  "loro",
+ "loro-internal",
  "parking_lot",
  "regex",
  "rustc-hash",
