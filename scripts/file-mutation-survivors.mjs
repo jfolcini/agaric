@@ -497,8 +497,10 @@ export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 // short block silently shrinks the tracked set. That red weekly job is the
 // designed outcome, not a bug to be patched by raising this number; the fix is
 // a per-outcome cap or a spill-to-child strategy. Comment bodies used to
-// truncate instead, holding no state; the CI job no longer comments at all,
-// so every render this cap governs is now state.
+// truncate instead, holding no state; the CI job no longer comments at all.
+// CHILD bodies still truncate, and still may: a child carries no marker
+// block, so it is a projection of the parent's state rather than state
+// itself. The parent body is the one render that must never lose a line.
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
@@ -1766,8 +1768,9 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, par
       // comment. Writing the body first puts it somewhere durable (#4173).
       withTempFile(
         buildChildBody({
+          // `members` is already `[]` on every close action from
+          // `decideChildActions`, and `...a` carries it.
           ...a,
-          members: [],
           firstSeen,
           parentNumber,
           parentTitle,
@@ -2083,7 +2086,13 @@ export function main(argv = process.argv.slice(2)) {
   // there, so an unchanged week still writes nothing and never spams.
   const childWork = childActions.filter((a) => a.action !== 'sync')
 
-  const willWrite = newOnes.length > 0 || childWork.length > 0
+  // An open issue with nothing left to track is itself a reason to act: the
+  // close would otherwise depend on child bookkeeping happening to land in the
+  // SAME run. It usually does — the last survivor resolving also closes its
+  // area's child — but "usually" leaves the issue open forever in every case
+  // where it does not, and a quiet week is precisely when nobody looks.
+  const needsClose = all.length === 0 && existingIssue !== null && existingIssue.state !== 'CLOSED'
+  const willWrite = newOnes.length > 0 || childWork.length > 0 || needsClose
   announceReanchoring({ stale, willWrite, dryRun: args.dryRun })
 
   if (!willWrite) {
@@ -2223,6 +2232,14 @@ function printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, ch
     console.log(
       `[dry-run] would ${existingIssue.state === 'CLOSED' && newOnes.length > 0 ? 'REOPEN + ' : ''}edit issue #${existingIssue.number}`,
     )
+    // The close is the branch a smoke dispatch most needs previewed: it is
+    // the only one that changes the issue's STATE, and a lane reaching zero
+    // is exactly when someone runs a dry run to see what would happen.
+    if (all.length === 0 && newOnes.length === 0 && existingIssue.state !== 'CLOSED') {
+      console.log(
+        `[dry-run] would CLOSE issue #${existingIssue.number} — nothing left to act on in this lane`,
+      )
+    }
   } else {
     console.log(`[dry-run] would CREATE a new issue titled "${args.title}"`)
   }
@@ -2578,6 +2595,9 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
 }
 
 function selfTestLaneInputGuards({ ok, fail, survivor }) {
+  // Tracked by the fixture body below and NOT present in `fullDir`, so the
+  // lane observes nothing and the issue's set empties.
+  const STALE_ONLY_ID = survivor(4242)
   // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
   //    one. First, the damage the guards prevent, demonstrated on the pure
   //    functions: a dead frontend lane contributes `[]`, and one new rust
@@ -2714,6 +2734,52 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
       const err = runQuiet(argv)
       if (err === null) ok(name)
       else fail(name, err.message)
+    }
+
+    // A CLOSE-ONLY RUN. The lane observes nothing and its issue still tracks
+    // one entry, with no child work to do. `willWrite` used to be
+    // `newOnes || childWork`, so this returned at the no-op branch and the
+    // issue stayed open forever — the close only ever fired when the last
+    // child's close happened to land in the SAME run. Both halves are pinned:
+    // it must NOT no-op, and the dry run must say it would close, because a
+    // dry run that hides the one state-changing branch is why this was missed.
+    {
+      const trackedBody = join(root, 'close-only-body.md')
+      writeFileSync(
+        trackedBody,
+        [
+          'Tracking issue.',
+          '',
+          MARKER_START,
+          '```',
+          `2026-08-01\t${STALE_ONLY_ID}`,
+          '```',
+          MARKER_END,
+        ].join('\n'),
+        'utf8',
+      )
+      const { out, err } = captureMain([
+        '--dry-run',
+        '--lane',
+        'frontend',
+        '--frontend-dir',
+        fullDir,
+        '--known-body-file',
+        trackedBody,
+      ])
+      const problems = []
+      if (err) problems.push(`threw: ${err.message}`)
+      if (/no-op \(tracking issue left untouched\)/.test(out))
+        problems.push('took the no-op branch, so the issue would stay open')
+      if (!/would CLOSE issue #\d+ — nothing left to act on/.test(out))
+        problems.push('the dry run did not preview the close')
+      if (problems.length === 0)
+        ok('a lane whose last finding is gone closes, with no child work to trigger it')
+      else
+        fail(
+          'a lane whose last finding is gone closes, with no child work to trigger it',
+          problems.join('; '),
+        )
     }
   }
 }
@@ -3453,6 +3519,55 @@ function selfTestNoCoverage({ ok, fail }) {
   // 12b. THE PARENT BODY. Present AND separated: the counts are split, the
   //      state block says which is which, and the no-coverage entry is not
   //      described as something a test ran over.
+  {
+    const all = [NC_ID, SV_COL7, SV_COL24].toSorted()
+    const body = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      today: '2026-08-16',
+      newOnes: all,
+      runUrl: undefined,
+    })
+    const table = body.slice(body.indexOf('| Area |'), body.indexOf('### All currently-known'))
+    if (
+      body.includes(NC_ID) &&
+      table.includes('| frontend: date-utils | 1 | 2 | 2026-08-16 |') &&
+      body.includes('### All currently-known mutants (1 no coverage, 2 survived)') &&
+      // #3245 still holds across the split: nothing is listed twice.
+      all.every((id) => body.split(id).length - 1 === 1)
+    )
+      ok('the parent body surfaces the NoCoverage mutant with its own count (#3788)')
+    else
+      fail(
+        'the parent body surfaces the NoCoverage mutant with its own count (#3788)',
+        `present=${body.includes(NC_ID)} table=${table.trim()}`,
+      )
+
+    // 12c. THE CHILD BODY — the thing an agent actually works from. Two
+    //      sections, no-coverage first, each id under the right heading.
+    const child = buildChildBody({
+      area: 'frontend: date-utils',
+      members: all,
+      parentNumber: 3142,
+    })
+    const ncAt = child.indexOf('### No coverage')
+    const svAt = child.indexOf('### Survivors')
+    if (
+      ncAt !== -1 &&
+      svAt > ncAt &&
+      child.includes('### No coverage — no test executed this code (1)') &&
+      child.includes('### Survivors — a test ran and did not fail (2)') &&
+      child.indexOf(NC_ID) > ncAt &&
+      child.indexOf(NC_ID) < svAt &&
+      child.indexOf(SV_COL7) > svAt
+    )
+      ok('the child body renders no-coverage and survivors as separate sections (#3788)')
+    else
+      fail(
+        'the child body renders no-coverage and survivors as separate sections (#3788)',
+        `nc@${ncAt} sv@${svAt} ncId@${child.indexOf(NC_ID)}`,
+      )
+  }
 
   // 12e. RANKING. An area with untested code outranks a bigger survivor-only
   //      area — the ordering is the report's whole "look here first" claim, and
@@ -4474,6 +4589,26 @@ async function runSelfTest() {
   // 1. #3245 — the first-fill case: an empty `known` set means EVERY
   //    survivor is "new". The old body listed them under `New this run` AND
   //    under the marker block; the deduped body must list each exactly once.
+  {
+    const current = [survivor(1), survivor(2), survivor(3)]
+    const { newOnes, resolvedOnes, all } = diffSurvivors(current, new Set())
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: 'https://example/run' })
+    const counts = current.map((s) => body.split(s).length - 1)
+    if (newOnes.length === 3 && counts.every((c) => c === 1))
+      ok('first fill lists each survivor exactly once (#3245)')
+    else
+      fail(
+        'first fill lists each survivor exactly once (#3245)',
+        `newOnes=${newOnes.length} per-survivor occurrences=${JSON.stringify(counts)}`,
+      )
+
+    // …and the marker block round-trips to exactly the same set, so the
+    // dedupe did not cost the script its state.
+    const reparsed = parseKnownSurvivors(body)
+    if (reparsed.size === 3 && current.every((s) => reparsed.has(s)))
+      ok('deduped body round-trips through parseKnownSurvivors')
+    else fail('deduped body round-trips through parseKnownSurvivors', `size=${reparsed.size}`)
+  }
 
   // 2. #3245 — the incremental case: a genuinely new survivor must not
   //    duplicate the already-known ones either.
@@ -4548,9 +4683,6 @@ async function runSelfTest() {
         `len=${body.length} markers=${body.includes(MARKER_START)}/${body.includes(MARKER_END)} reparsed=${reparsed.size}`,
       )
   }
-
-  // 6. #3257 — the comment is the very next `gh` call the same oversized run
-  //    makes, so capping only the body would move the 422 one line down.
 
   // 7. A body that comfortably fits is left completely alone.
   {
