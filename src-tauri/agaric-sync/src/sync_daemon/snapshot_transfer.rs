@@ -5,9 +5,9 @@
 //! When a catch-up needs a full-state transfer (the initiator's Loro
 //! version vector is unreachable from the responder's — own-lineage loss
 //! per #2502, or an unbridgeable delta caught by the receiver-side
-//! `apply_remote` reachability gate), the **production** path now ships the
-//! responder's per-space **Loro snapshots** (the engine's truth) and the
-//! initiator *merges* them into its own engine via
+//! `apply_remote` reachability gate), the responder ships its per-space
+//! **Loro snapshots** (the engine's truth) and the initiator *merges*
+//! them into its own engine via
 //! [`crate::sync_protocol::loro_sync::apply_remote`], then reprojects SQL
 //! from the merged engine state. The initiator's unsynced local content
 //! **survives** and syncs back out — inverting the #2474 data-loss
@@ -15,484 +15,58 @@
 //!
 //! * Responder: [`try_offer_loro_snapshot_catchup`] streams
 //!   `SyncMessage::LoroSync { LoroSyncMessage::Snapshot, .. }` per space.
-//! * Initiator: [`try_receive_snapshot_catchup`] dispatches on the first
-//!   post-`ResetRequired` message — a `LoroSync` routes to
-//!   `receive_loro_snapshot_catchup` (merge); a legacy `SnapshotOffer`
-//!   routes to the CBOR wipe-and-replace path below (accept-old back-compat).
-//!
-//! The legacy CBOR `SnapshotOffer`/`SnapshotAccept` **offer** path
-//! (`apply_snapshot` wipe RESET) is retained only to (a) simulate a
-//! pre-#2503 peer in tests and (b) accept an offer from a not-yet-upgraded
-//! peer on the receive side. Production never *sends* a `SnapshotOffer`.
-//! Wire-compat: **send-new / accept-old** — see
-//! `docs/architecture/sync-protocol-spec.md`.
-//!
-//! ## Legacy CBOR flow (still used for accept-old / the compaction artifact)
-//!
-//! When a peer's head-exchange check finds that its local op log cannot
-//! satisfy the remote's advertised heads (typically because the local
-//! log has been compacted past the remote's frontier), the responder
-//! signals [`SyncMessage::ResetRequired`]. Prior to this was a
-//! terminal failure: the initiator would disconnect and retry, and the
-//! session could never make progress once compaction had removed the
-//! ops needed for a delta replay.
-//!
-//! This module wires the existing snapshot machinery — the
-//! [`apply_snapshot`] function, the `log_snapshots` table, and the
-//! pre-existing [`SyncMessage::SnapshotOffer`] / `SnapshotAccept` /
-//! `SnapshotReject` wire variants — into a post-`ResetRequired`
-//! sub-flow that transfers a compressed snapshot blob over the same
-//! QUIC bi-stream the session is already running on (using the bulk
-//! path in [`crate::transport::bulk`], shared with attachments in
-//! [`sync_files`](crate::sync_files)).
+//! * Initiator: [`try_receive_snapshot_catchup`] merges each inbound
+//!   `LoroSync` into the local engine and reprojects SQL.
 //!
 //! ## Protocol
 //!
 //! After the main [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator)
 //! message loop exits with `state == ResetRequired`:
 //!
-//! ### Responder (the peer that issued `ResetRequired`)
+//! 1. The responder exports one full snapshot per registered space and
+//!    writes each as a framed `LoroSync` message on the same QUIC
+//!    bi-stream the session is already running on.
+//! 2. The initiator reads them under an explicit [`RECV_TIMEOUT`] — QUIC
+//!    supplies no receive bound of its own (see
+//!    [`crate::transport::session::RECV_TIMEOUT`]) — merges each into its
+//!    engine, and records the merged frontier in `peer_refs` so the next
+//!    scheduled sync begins a normal delta exchange.
 //!
-//! 1. Look up the most recent complete snapshot in `log_snapshots`.
-//! 2. If present: send [`SyncMessage::SnapshotOffer { size_bytes,
-//!    blob_blake3 }`] with the compressed blob length and its blake3
-//!    integrity hash (#706 item 2).
-//! 3. Await [`SyncMessage::SnapshotAccept`] or
-//!    [`SyncMessage::SnapshotReject`] from the initiator, under an
-//!    explicit [`RECV_TIMEOUT`] — QUIC supplies no receive bound of its
-//!    own (see [`crate::transport::session::RECV_TIMEOUT`]).
-//! 4. On accept: write the blob to the stream as one uninterrupted run
-//!    of bytes via [`send_bulk`](crate::transport::bulk::send_bulk).
-//!    There is no chunking: a QUIC stream has no message boundary, and
-//!    its flow-control window is the backpressure the old frame loop
-//!    was hand-rolling.
-//! 5. On reject or no snapshot available: close the session; the
-//!    initiator falls back to the prior failure mode.
-//!
-//! ### Initiator (the peer that received `ResetRequired`)
-//!
-//! 1. Await [`SyncMessage::SnapshotOffer`] (again under an explicit
-//!    [`RECV_TIMEOUT`]).
-//! 2. Enforce the [`MAX_SNAPSHOT_SIZE`] size cap (256 MB) on the
-//!    advertised `size_bytes`. Over cap → send `SnapshotReject` and
-//!    terminate. This is the PRIMARY cap: it rejects before a byte moves.
-//! 3. Under cap: send `SnapshotAccept`, then read exactly `size_bytes`
-//!    off the stream via [`recv_bulk`], which is handed
-//!    `MAX_SNAPSHOT_SIZE` again as a backstop (the cap now belongs to
-//!    the caller — the transport no longer bounds a per-frame size on
-//!    its behalf).
-//! 4. Call [`apply_snapshot`] to wipe + restore core tables from the
-//!    compressed blob. `apply_snapshot` uses `BEGIN IMMEDIATE` +
-//!    `defer_foreign_keys` so the restore is atomic; a decode or
-//!    integrity failure leaves the DB untouched (rolled back by
-//!    transaction). The same tx wipes the Loro sidecar state
-//!    (`loro_doc_state`, `loro_sync_inbox`, apply cursor — #607/#779).
-//! 5. Drop + reload the in-memory Loro engines
-//!    ([`agaric_engine::loro::snapshot::reload_registry_from_db`]) so the live
-//!    registry matches the post-reset SQL — there is no process
-//!    restart after a catch-up, and stale engines would otherwise be
-//!    re-exported to peers and re-persisted over the wiped
-//!    `loro_doc_state` (#607).
-//! 6. Record the snapshot's `up_to_hash` as the last-received hash in
-//!    `peer_refs` so the next scheduled sync begins a normal delta
-//!    exchange from the new frontier.
-//!
-//! Post-snapshot delta catch-up is intentionally deferred to the next
-//! scheduled sync tick: the initiator's `op_log` is wiped by
-//! `apply_snapshot`, so its next [`SyncMessage::HeadExchange`] will
-//! advertise empty heads and the responder will stream every post-
-//! snapshot op via the normal [`SyncMessage::OpLogBatch`] path. This
-//! keeps the sub-protocol simple (no recursive session restart) and
-//! matches the way normal delta catch-up works when a peer reappears
-//! after a long offline period.
+//! #3487: the pre-#2503 CBOR `SnapshotOffer` / `SnapshotAccept` RESET
+//! sub-flow this replaced is **gone**. The iroh port made it unreachable —
+//! `SYNC_ALPN` is negotiated before any application byte moves, so a build
+//! predating it cannot open a session at all, never mind offer a CBOR
+//! snapshot.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use iroh::endpoint::{RecvStream, SendStream};
 use sqlx::SqlitePool;
-use tokio::io::AsyncWriteExt;
 
 use crate::apply_host::ApplyHost;
-use crate::snapshot::apply_snapshot;
-use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_files::attachment_root;
 use crate::sync_protocol::SyncMessage;
 use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
-use crate::transport::bulk::recv_bulk;
 use crate::transport::session::{RECV_TIMEOUT, recv_sync_message_within, send_sync_message};
 use agaric_core::error::AppError;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_store::peer_refs;
 
-// #2503: the legacy CBOR `SnapshotOffer` catch-up path is retained ONLY to
-// simulate a pre-#2503 peer in tests (production never sends it — the offer
-// side now streams Loro snapshots). These imports back the `#[cfg(any(test, feature = "test-util"))]`
-// offer + covering-check helpers below.
-#[cfg(any(test, feature = "test-util"))]
-use crate::snapshot::get_latest_snapshot_with_frontier;
-#[cfg(any(test, feature = "test-util"))]
-use crate::sync_protocol::DeviceHead;
-// Only the legacy CBOR path *sends* bulk bytes; the production Loro path
-// streams framed `LoroSync` messages instead. Gated with the path it
-// serves, or a default build warns on an unused import.
-#[cfg(any(test, feature = "test-util"))]
-use crate::transport::bulk::send_bulk;
-#[cfg(any(test, feature = "test-util"))]
-use std::collections::BTreeMap;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Maximum snapshot size the initiator will accept (256 MB).
+/// VESTIGIAL since #3487 (256 MB).
 ///
-/// The cap is defensive: a compromised or misconfigured responder
-/// could otherwise advertise a huge `size_bytes` and tie up the
-/// connection streaming a blob the initiator cannot apply. A typical
-/// 100K-block database compresses to well under this cap, so rejecting
-/// anything larger is safe in practice.
+/// It capped the LEGACY CBOR path only — the `size_bytes > MAX_SNAPSHOT_SIZE`
+/// check on a `SnapshotOffer`, and the `recv_bulk` backstop reachable only from
+/// that arm. Both are gone, so nothing reads this. The Loro catch-up is bounded
+/// by `transport::session::MAX_FRAME_SIZE` instead, independently of this value.
+///
+/// Kept because #3487 named it a constraint; #4692 tracks removing it.
 pub const MAX_SNAPSHOT_SIZE: u64 = 256 * 1024 * 1024;
-
-// ---------------------------------------------------------------------------
-// Responder side — offer + send
-// ---------------------------------------------------------------------------
-
-/// Result of a responder-side snapshot offer attempt.
-///
-/// #2503: legacy CBOR offer path, test-only (production streams Loro
-/// snapshots — see [`try_offer_loro_snapshot_catchup`]).
-#[cfg(any(test, feature = "test-util"))]
-#[derive(Debug, PartialEq)]
-pub enum OfferOutcome {
-    /// No complete snapshot was available locally; the responder
-    /// declined to offer and the session terminated without catch-up.
-    NoSnapshot,
-    /// The initiator declined the offer (size cap, user preference,
-    /// etc.). No bytes were transferred.
-    Rejected,
-    /// The snapshot was offered, accepted, and streamed in full.
-    Sent { bytes_sent: u64 },
-    /// The latest local snapshot is BEHIND the remote's
-    /// advertised frontier for at least one device. Sending it would
-    /// silently re-apply older state on the initiator. The responder
-    /// instead sent [`SyncMessage::Error`] so the initiator fails
-    /// loudly and the operator/log can diagnose the retention drift.
-    SnapshotStale { reason: String },
-}
-
-/// Covering check for the responder's snapshot vs. the remote's
-/// advertised heads.
-///
-/// For every `(device_id, remote_seq)` the remote advertised in its
-/// `HeadExchange`, the snapshot's `up_to_seqs[device_id]` must be
-/// **at least** `remote_seq`. If any device's snapshot seq is below
-/// the remote's seq, the snapshot does not cover that device's
-/// frontier and offering it would silently roll the initiator back.
-///
-/// Returns `Ok(())` when the snapshot covers every advertised device
-/// (the empty-heads case is trivially covered). On mismatch returns
-/// `Err(reason)` naming the first device whose seq is below the
-/// remote's claim — used verbatim in the wire-level
-/// [`SyncMessage::Error`] payload so the diagnosis appears in the
-/// initiator's log.
-///
-/// Devices in `snapshot_seqs` that the remote does not mention are
-/// fine: that just means the snapshot saw ops the remote has not yet
-/// observed, which is expected (the post-snapshot delta path will
-/// stream those to the remote on the next session).
-///
-/// # #2481 phase 1 — `snapshot_seqs` provenance caveat (known future risk)
-///
-/// `snapshot_seqs` is `collect_frontier`'s `up_to_seqs`, which is
-/// deliberately unfiltered on `op_log.is_replicated` (see that function's
-/// doc comment in `snapshot::create`) so the compaction purge also ages out
-/// replicated foreign-device audit rows. That means once a production
-/// caller of `dag::insert_replicated_op` exists (none does yet — #2481
-/// phase 1 is ingest-only), a per-device seq in this map is NOT reliably
-/// "this snapshot's materialized state reflects that device's edits up to
-/// this seq" for a *replicated* device — audit-log replication is
-/// explicitly decoupled from Loro state merge by design. Wiring the
-/// send/receive sub-flow that would let replicated rows exist in production
-/// must resolve this before `snapshot_seqs` can be trusted here for a
-/// foreign device (see the TODO in `collect_frontier`).
-///
-/// #2503: test-only (backs the legacy CBOR offer path).
-#[cfg(any(test, feature = "test-util"))]
-pub fn snapshot_covers_remote_heads(
-    snapshot_seqs: &BTreeMap<String, i64>,
-    remote_heads: &[DeviceHead],
-) -> Result<(), String> {
-    for head in remote_heads {
-        let snap_seq = snapshot_seqs.get(&head.device_id).copied().unwrap_or(0);
-        if snap_seq < head.seq {
-            return Err(format!(
-                "snapshot covers device {} only up to seq {} but remote claims seq {}",
-                head.device_id, snap_seq, head.seq
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Attempt to offer and send a snapshot to the initiator after the
-/// responder's main loop reached [`SyncState::ResetRequired`].
-///
-/// Called by [`handle_incoming_sync`](super::server::handle_incoming_sync)
-/// once the main message loop exits with `state == ResetRequired`.
-/// Returns [`OfferOutcome::NoSnapshot`] when `log_snapshots` has no
-/// complete row — in that case the caller should close the session
-/// (matching pre-existing behavior).
-///
-/// #2503: the legacy CBOR offer, retained test-only to simulate a
-/// pre-#2503 responder (production streams Loro snapshots — see
-/// [`try_offer_loro_snapshot_catchup`]).
-#[cfg(any(test, feature = "test-util"))]
-#[allow(clippy::too_many_lines)] // test-only offer path, exempt (AGENTS.md item 6)
-#[tracing::instrument(skip_all, err)]
-pub async fn try_offer_snapshot_catchup(
-    send: &mut SendStream,
-    recv: &mut RecvStream,
-    pool: &SqlitePool,
-    event_sink: &Arc<dyn SyncEventSink>,
-    remote_device_id: &str,
-    remote_heads: &[DeviceHead],
-) -> Result<OfferOutcome, AppError> {
-    let Some((snapshot_id, compressed, snapshot_up_to_seqs)) =
-        get_latest_snapshot_with_frontier(pool).await?
-    else {
-        tracing::info!(
-            peer_id = %remote_device_id,
-            "responder has no snapshot available; cannot offer catch-up"
-        );
-        return Ok(OfferOutcome::NoSnapshot);
-    };
-
-    // u64 cast is safe: compressed snapshot lengths are bounded by disk
-    // and the on-wire size cap; usize→u64 is infallible on every tier-1
-    // target.
-    let size_bytes: u64 = compressed.len() as u64;
-
-    // #706 item 2 — transfer integrity hash. blake3 of the *compressed*
-    // blob, advertised in the offer so the initiator can verify the bytes
-    // it receives match what we read off disk. Catches responder-side disk
-    // corruption between read and send (the one gap left by mTLS +
-    // atomic-apply). Mirrors `FileOffer::blake3_hash`.
-    let blob_blake3 = blake3::hash(&compressed).to_hex().to_string();
-
-    // Defensive covering check.
-    //
-    // `ResetRequired` means our op_log was compacted past the remote's
-    // advertised frontier — so the snapshot we are about to offer
-    // SHOULD have an `up_to_seqs` >= every remote head, by construction
-    // (compaction is bounded by the snapshot's frontier). If retention
-    // policy ever drifts (e.g. compaction window vs. snapshot window),
-    // this invariant could quietly break and we would re-apply an
-    // older snapshot on the initiator — silent data regression.
-    //
-    // Compare the snapshot's frontier against the remote heads we
-    // received in `HeadExchange`. Mismatch → `Error` instead of
-    // `SnapshotOffer` so the initiator fails loudly and the operator
-    // can spot the regression in logs.
-    //
-    // #705: read `up_to_seqs` straight from the `log_snapshots` column
-    // (persisted by `create_snapshot`) instead of zstd+CBOR-decoding the
-    // whole snapshot blob — every table — just to reach the frontier.
-    if let Err(reason) = snapshot_covers_remote_heads(&snapshot_up_to_seqs, remote_heads) {
-        tracing::warn!(
-            peer_id = %remote_device_id,
-            snapshot_id = %snapshot_id,
-            reason = %reason,
-            "responder snapshot does not cover remote frontier; sending Error instead of SnapshotOffer"
-        );
-        let wire_msg = format!("snapshot does not cover remote frontier: {reason}");
-        // Send the wire-level `Error` so the initiator surfaces a
-        // hard failure rather than silently rewinding to an older
-        // snapshot. Best-effort: a send failure here is logged but
-        // does not change the outcome — we still report `SnapshotStale`
-        // so the caller treats this session as a non-progress event.
-        if let Err(e) = send_sync_message(
-            send,
-            &SyncMessage::Error {
-                message: wire_msg.clone(),
-            },
-        )
-        .await
-        {
-            tracing::warn!(
-                peer_id = %remote_device_id,
-                error = %e,
-                "failed to send  stale-snapshot Error to initiator"
-            );
-        }
-        event_sink.on_sync_event(SyncEvent::Error {
-            message: wire_msg,
-            remote_device_id: remote_device_id.to_string(),
-        });
-        return Ok(OfferOutcome::SnapshotStale { reason });
-    }
-
-    tracing::info!(
-        peer_id = %remote_device_id,
-        snapshot_id = %snapshot_id,
-        size_bytes,
-        "responder offering snapshot for catch-up"
-    );
-
-    event_sink.on_sync_event(SyncEvent::Progress {
-        state: "snapshot_offered".into(),
-        remote_device_id: remote_device_id.to_string(),
-        ops_received: 0,
-        ops_sent: 0,
-    });
-
-    send_sync_message(
-        send,
-        &SyncMessage::SnapshotOffer {
-            size_bytes,
-            blob_blake3,
-        },
-    )
-    .await?;
-
-    // Await the initiator's decision, under an EXPLICIT wall-clock bound.
-    //
-    // The old transport supplied this for free: every `SyncConnection`
-    // receive sat inside `SyncConnection::RECV_TIMEOUT`, so this call site
-    // carried no timeout of its own and the comment here only had to say
-    // which of the two nested guards fired first. QUIC has no such guard —
-    // `RecvStream::read_exact` against a peer that simply stops talking
-    // never resolves, and this await holds a responder permit and the
-    // per-peer session lock while it hangs. So the bound is now stated
-    // here, at the call site, rather than inherited: see
-    // `transport::session::RECV_TIMEOUT` for why every post-loop phase
-    // owes it explicitly.
-    let reply: SyncMessage = recv_sync_message_within(recv, RECV_TIMEOUT).await?;
-    match reply {
-        SyncMessage::SnapshotAccept => {
-            tracing::info!(
-                peer_id = %remote_device_id,
-                snapshot_id = %snapshot_id,
-                "initiator accepted snapshot; streaming bytes"
-            );
-            let progress = SnapshotTransferProgress {
-                event_sink,
-                remote_device_id,
-                bytes_total: size_bytes,
-            };
-            send_snapshot_bytes(send, recv, &compressed, &progress).await?;
-            Ok(OfferOutcome::Sent {
-                bytes_sent: size_bytes,
-            })
-        }
-        SyncMessage::SnapshotReject => {
-            tracing::info!(
-                peer_id = %remote_device_id,
-                snapshot_id = %snapshot_id,
-                "initiator rejected snapshot offer"
-            );
-            Ok(OfferOutcome::Rejected)
-        }
-        SyncMessage::Error { message } => {
-            // Initiator surfaced a protocol-level error (e.g. malformed
-            // offer). Treat as rejection so the caller closes cleanly.
-            tracing::warn!(
-                peer_id = %remote_device_id,
-                error = %message,
-                "initiator returned Error in response to snapshot offer"
-            );
-            Ok(OfferOutcome::Rejected)
-        }
-        other => Err(AppError::InvalidOperation(format!(
-            "unexpected message after SnapshotOffer: {:?}",
-            std::mem::discriminant(&other)
-        ))),
-    }
-}
-
-/// Per-buffer snapshot-transfer progress reporting hook.
-///
-/// Mirrors [`FileTransferProgress`](crate::sync_files::FileTransferProgress)
-/// for the snapshot catch-up blob: when threaded into the send/receive
-/// paths, the bulk copy loops emit [`SyncEvent::SnapshotProgress`] after
-/// each [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES)
-/// buffer lands, so the active sync's `Channel<SyncProgressUpdate>`
-/// carries a real bytes-done signal to the UI.
-///
-/// The tick cadence is deliberately unchanged by the QUIC port:
-/// `BULK_COPY_BYTES` is `BINARY_FRAME_CHUNK_SIZE`, which under the old
-/// transport *was* the binary-frame size, so the UI still sees one event
-/// per 5 MB (a 256 MB blob is at most ~52 ticks, well within event-bus
-/// budget). The buffer is no longer a frame — nothing on the wire can
-/// observe it — it is now only a memory bound and a progress
-/// granularity. A terminal `"complete"` tick is emitted once the blob
-/// finishes.
-pub struct SnapshotTransferProgress<'a> {
-    pub event_sink: &'a Arc<dyn SyncEventSink>,
-    pub remote_device_id: &'a str,
-    pub bytes_total: u64,
-}
-
-impl SnapshotTransferProgress<'_> {
-    fn emit(&self, phase: &str, bytes_done: u64) {
-        self.event_sink.on_sync_event(SyncEvent::SnapshotProgress {
-            phase: phase.to_string(),
-            remote_device_id: self.remote_device_id.to_string(),
-            bytes_done,
-            bytes_total: self.bytes_total,
-        });
-    }
-}
-
-/// Write the compressed snapshot bytes onto the already-open bi-stream as
-/// one uninterrupted run of bytes.
-///
-/// Streams via [`send_bulk`](crate::transport::bulk::send_bulk) so each
-/// [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES) buffer
-/// ticks a [`SyncEvent::SnapshotProgress`] with the `"sending"` phase,
-/// mirroring the attachment-transfer path in
-/// [`sync_files`](crate::sync_files). A terminal `"complete"` tick is
-/// emitted once all bytes ship.
-///
-/// # A zero-length snapshot now puts NOTHING on the wire
-///
-/// The old transport sent one empty binary frame for `total == 0`, purely
-/// so the receiver's per-frame accounting had something to terminate on.
-/// Under QUIC there are no frames: an empty payload writes zero bytes, and
-/// [`recv_bulk`](crate::transport::bulk::recv_bulk) correspondingly reads
-/// none. Emitting a sentinel here would desync the stream — the receiver
-/// would consume it as the length prefix of the *next* framed message. The
-/// `on_progress(0)` tick survives inside `send_bulk` so callers can still
-/// paint a 0 % state.
-///
-/// #2503: test-only (backs the legacy CBOR offer path).
-///
-/// `_recv` is unused — this direction only writes. It is taken so every
-/// catch-up entry point in this module has the same `(send, recv)` prefix
-/// and callers do not have to remember which half each phase needs.
-#[cfg(any(test, feature = "test-util"))]
-pub async fn send_snapshot_bytes(
-    send: &mut SendStream,
-    _recv: &mut RecvStream,
-    compressed: &[u8],
-    progress: &SnapshotTransferProgress<'_>,
-) -> Result<(), AppError> {
-    let total = compressed.len() as u64;
-    // `&[u8]` implements `tokio::io::AsyncRead` (+ Unpin), so the
-    // in-memory compressed blob is streamed straight through the shared
-    // bulk sender without an intermediate file, an extra copy, or a sync
-    // `std::io::Cursor` (which is NOT `AsyncRead`). Peak heap during the
-    // send is one `BULK_COPY_BYTES` buffer on top of the blob we were
-    // handed — it does not scale with the payload.
-    send_bulk(send, compressed, total, |bytes_sent| {
-        progress.emit("sending", bytes_sent)
-    })
-    .await?;
-    progress.emit("complete", total);
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // Responder side — Loro-snapshot catch-up (#2503, production path)
@@ -521,11 +95,11 @@ pub struct LoroCatchupSent {
 /// responder's main loop reached [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`
 /// (#2503).
 ///
-/// This replaces the legacy CBOR `SnapshotOffer`/`SnapshotAccept` RESET
-/// sub-flow. Rather than ship a zstd-CBOR blob of SQL tables that the
-/// initiator applied by **wiping + replacing** its core tables — destroying
-/// any unsynced local edits (the #2474 data-loss contract) — the responder
-/// now exports each registered space's `LoroDoc` snapshot
+/// This replaced the legacy CBOR RESET sub-flow (deleted in #3487). Rather
+/// than ship a zstd-CBOR blob of SQL tables that the initiator applied by
+/// **wiping + replacing** its core tables — destroying any unsynced local
+/// edits (the #2474 data-loss contract) — the responder
+/// exports each registered space's `LoroDoc` snapshot
 /// (`ExportMode::Snapshot`, the engine's truth) and streams it over the same
 /// framed transport the normal streaming phase uses
 /// ([`crate::transport::session::send_sync_message`]).
@@ -539,11 +113,6 @@ pub struct LoroCatchupSent {
 /// means the initiator's version vector is unreachable, so an
 /// `ExportMode::updates(from_vv)` delta could not be applied. A full snapshot
 /// merges cleanly against any receiver state.
-///
-/// Wire-compat (#2503): a NEW responder always SENDS Loro snapshots. An OLD
-/// (pre-#2503) initiator expecting a `SnapshotOffer` will fail this catch-up
-/// and retry — see the deprecation note in
-/// `docs/architecture/sync-protocol-spec.md`.
 ///
 /// `_recv` is unused — this phase only writes; the responder streams every
 /// space snapshot and never waits for a reply. It is taken so every catch-up
@@ -638,18 +207,16 @@ pub async fn try_offer_loro_snapshot_catchup(
 }
 
 // ---------------------------------------------------------------------------
-// Initiator side — accept + receive + apply
+// Initiator side — receive + merge
 // ---------------------------------------------------------------------------
 
-/// #607: engine-reload context for the initiator-side catch-up.
+/// Engine context for the initiator-side catch-up.
 ///
 /// Bundles the live engine registry with this device's id so
-/// [`try_receive_snapshot_catchup`] can drop + reload the in-memory
-/// engines right after `apply_snapshot` wipes the Loro sidecar tables
-/// (via [`agaric_engine::loro::snapshot::reload_registry_from_db`]). Callers
-/// without engine state (some unit tests) pass `None` — the snapshot
-/// still applies, with a `warn!` that any live engines keep pre-reset
-/// state until restart.
+/// `receive_loro_snapshot_catchup` can merge the responder's per-space
+/// snapshots into the local engines. `None` is a programmer error on this
+/// path — a merge has nothing to merge into without a registry — and fails
+/// the catch-up.
 pub struct EngineReloadCtx<'a> {
     /// The live registry the session syncs against (override-aware in
     /// tests, process-global in production).
@@ -661,8 +228,10 @@ pub struct EngineReloadCtx<'a> {
 /// Result of an initiator-side snapshot catch-up attempt.
 #[derive(Debug, PartialEq)]
 pub enum CatchupOutcome {
-    /// The initiator declined the offer (over size cap) and sent
-    /// [`SyncMessage::SnapshotReject`]. No DB changes occurred.
+    /// VESTIGIAL since #3487: no longer constructible. It meant the
+    /// initiator declined an over-cap `SnapshotOffer`, and that message no
+    /// longer exists, so the `#2538` arm in `session_supervisor` that reads
+    /// this can never run. #4692 tracks removing both.
     Rejected { size_bytes: u64 },
     /// Snapshot was received, decoded, applied, and the initiator's
     /// frontier advanced to the snapshot's `up_to_hash`.
@@ -678,9 +247,11 @@ pub enum CatchupOutcome {
 /// The pure half of what
 /// [`SyncOrchestrator::resolve_remote_peer_id`](crate::sync_protocol::SyncOrchestrator)
 /// does inside the state machine, extracted (#4097) because the two catch-up
-/// entry points below had grown two hand-rolled copies of the same three-way
-/// choice — one of which logged the *expected* fallback at `warn!` while the
-/// other logged it not at all.
+/// entry points of the time had grown two hand-rolled copies of the same
+/// three-way choice — one of which logged the *expected* fallback at `warn!`
+/// while the other logged it not at all. #3487 deleted the CBOR one, so there
+/// is a single caller now; the extraction stays because it is also what keeps
+/// that caller's identity handling honest, pinned by the #4097 tests.
 ///
 /// `None` means neither source carried an identity; the caller turns that into
 /// a hard error rather than key a `peer_refs` row on the empty string.
@@ -701,30 +272,19 @@ fn catchup_peer_identity<'a>(
     expected_remote_id.filter(|id| !id.is_empty())
 }
 
-/// Attempt to receive + apply a snapshot from the responder after the
+/// Attempt to receive + merge a peer's Loro snapshots after the
 /// initiator's main loop reached
 /// [`SyncState::ResetRequired`](crate::sync_protocol::SyncState::ResetRequired).
 ///
 /// Called by [`run_sync_session`](super::session_supervisor::run_sync_session)
 /// once the main message loop exits with `state == ResetRequired`.
 ///
-/// Behaviour:
-///
-/// - Reads the next message under an explicit [`RECV_TIMEOUT`],
-///   expecting [`SyncMessage::SnapshotOffer`]. Any other variant returns
-///   [`AppError::InvalidOperation`] so the caller records a sync failure
-///   (same treatment as a malformed delta exchange).
-/// - Enforces [`MAX_SNAPSHOT_SIZE`] on the advertised `size_bytes`.
-///   Over cap → send `SnapshotReject` and return
-///   [`CatchupOutcome::Rejected`].
-/// - Under cap → send `SnapshotAccept`, read exactly `size_bytes` off
-///   the stream, call [`apply_snapshot`], and update
-///   [`peer_refs`](agaric_store::peer_refs) with the new `up_to_hash`.
-///
-/// `apply_snapshot` wraps the restore in a single `BEGIN IMMEDIATE`
-/// transaction with `PRAGMA defer_foreign_keys = ON`, so a decode or
-/// integrity failure rolls the DB back; the initiator is never left
-/// in a half-restored state.
+/// Reads the responder's first post-`ResetRequired` message under an explicit
+/// [`RECV_TIMEOUT`] — QUIC gives a receive no clock of its own — and hands a
+/// [`SyncMessage::LoroSync`] to `receive_loro_snapshot_catchup`, which merges
+/// each per-space snapshot into the local engine and reprojects SQL. Any other
+/// variant returns [`AppError::InvalidOperation`] so the caller records a sync
+/// failure (same treatment as a malformed delta exchange).
 ///
 /// # peer_refs bookkeeping
 ///
@@ -733,18 +293,18 @@ fn catchup_peer_identity<'a>(
 /// when `remote_device_id` is empty (a `HeadExchange` that only
 /// carried our own heads), the function falls back to
 /// `expected_remote_id` for the [`peer_refs`] upsert. If both are
-/// empty the function returns
+/// empty the catch-up returns
 /// [`AppError::InvalidOperation`] so the caller records a failed
-/// session instead of silently applying a snapshot whose origin
+/// session instead of silently merging peer state whose origin
 /// peer cannot be remembered (the next sync would treat this peer
 /// as fully unknown again).
 ///
 /// #4097 resolves that choice **once, up front** rather than at the
 /// completion write, so the resolved id is what every `Progress` /
-/// `Error` / `SnapshotProgress` event carries and what every log line
-/// names — the same "make the identity available from frame 0" move
-/// #4085 made in the state machine, where the fix was not cosmetic: a
-/// UI keyed on `remote_device_id` drops an event carrying `""`.
+/// `Error` event carries and what every log line names — the same
+/// "make the identity available from frame 0" move #4085 made in the
+/// state machine, where the fix was not cosmetic: a UI keyed on
+/// `remote_device_id` drops an event carrying `""`.
 ///
 /// Taking the fallback logs at `debug!`, not `warn!`. `HeadExchange`
 /// is initiator-*sent*, so on the initiator — the only role that
@@ -754,29 +314,11 @@ fn catchup_peer_identity<'a>(
 /// readers to ignore the level. The `warn!` moves to the case that is
 /// genuinely surprising: no identity from *either* source, which
 /// fails the session.
-///
-/// # In-process engine reload (#607 / #779)
-///
-/// `apply_snapshot` wipes the Loro sidecar tables (`loro_doc_state`,
-/// `loro_sync_inbox`, the apply cursor) atomically with the core-table
-/// swap, but the in-memory engines still hold the pre-reset CRDT
-/// lineage when it returns — and NO process restart follows this
-/// function (it applies and returns to the daemon loop). Immediately
-/// after the apply succeeds, this function calls
-/// [`agaric_engine::loro::snapshot::reload_registry_from_db`] on
-/// `engine_reload.registry` so the live engines match the post-reset
-/// SQL: stale engines are dropped (they can no longer be exported to
-/// peers or persisted back into `loro_doc_state` by the periodic /
-/// exit-time `save_all_engines`) and the registry rehydrates from the
-/// now-empty table. A `None` `engine_reload` (engine state not
-/// initialised) is logged at `warn!` — the snapshot is still applied,
-/// but any live engines keep pre-reset state until restart.
 #[tracing::instrument(skip_all, err)]
 // One argument over the lint, and the extra one is the receive half of a bi-stream that
 // used to be a single `&mut SyncConnection`. Re-bundling them would cost the disjoint
 // field borrows the call sites depend on.
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn try_receive_snapshot_catchup(
     send: &mut SendStream,
     recv: &mut RecvStream,
@@ -808,362 +350,30 @@ pub async fn try_receive_snapshot_catchup(
     // chunked reassembly step, because there is no message-size cap to
     // chunk around. Bounded by `RECV_TIMEOUT` because this runs AFTER the
     // driver loop, on the same stream, and QUIC gives a receive no clock of
-    // its own. Dispatch on its kind:
-    //   * `LoroSync`      → NEW peer streaming full per-space Loro snapshots;
-    //                       import + MERGE them (unsynced local edits survive)
-    //                       and reproject SQL — the #2503 catch-up.
-    //   * `SnapshotOffer` → legacy (pre-#2503) peer offering a zstd-CBOR SQL
-    //                       snapshot RESET; accepted for back-compat via the
-    //                       wipe-and-replace path below (accept-old).
-    let (size_bytes, expected_blob_blake3) =
-        match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
-            SyncMessage::LoroSync { msg, is_last } => {
-                return receive_loro_snapshot_catchup(
-                    send,
-                    recv,
-                    pool,
-                    materializer,
-                    event_sink,
-                    remote_device_id,
-                    engine_reload,
-                    msg,
-                    is_last,
-                )
-                .await;
-            }
-            SyncMessage::SnapshotOffer {
-                size_bytes,
-                blob_blake3,
-            } => (size_bytes, blob_blake3),
-            SyncMessage::Error { message } => {
-                return Err(AppError::InvalidOperation(format!(
-                    "peer reported error instead of snapshot offer: {message}"
-                )));
-            }
-            other => {
-                return Err(AppError::InvalidOperation(format!(
-                    "expected SnapshotOffer after ResetRequired, got {:?}",
-                    std::mem::discriminant(&other)
-                )));
-            }
-        };
-
-    tracing::info!(
-        peer_id = %remote_device_id,
-        size_bytes,
-        "initiator received snapshot offer"
-    );
-
-    if size_bytes > MAX_SNAPSHOT_SIZE {
-        tracing::warn!(
-            peer_id = %remote_device_id,
-            size_bytes,
-            cap = MAX_SNAPSHOT_SIZE,
-            "snapshot offer exceeds size cap; rejecting"
-        );
-        send_sync_message(send, &SyncMessage::SnapshotReject).await?;
-        event_sink.on_sync_event(SyncEvent::Error {
-            message: format!(
-                "snapshot offer ({size_bytes} bytes) exceeds local cap ({MAX_SNAPSHOT_SIZE} bytes)"
-            ),
-            remote_device_id: remote_device_id.to_string(),
-        });
-        return Ok(CatchupOutcome::Rejected { size_bytes });
-    }
-
-    event_sink.on_sync_event(SyncEvent::Progress {
-        state: "snapshot_accepting".into(),
-        remote_device_id: remote_device_id.to_string(),
-        ops_received: 0,
-        ops_sent: 0,
-    });
-
-    send_sync_message(send, &SyncMessage::SnapshotAccept).await?;
-
-    // Stream the compressed bytes straight to a temp file under
-    // the app data dir instead of accumulating them into a `Vec<u8>`.
-    // Peak Rust-heap during the receive is one `BULK_COPY_BYTES` buffer
-    // (5 MB); a 256 MB compressed snapshot used to live entirely in
-    // memory until `apply_snapshot` returned. The `MAX_SNAPSHOT_SIZE`
-    // cap is enforced on `size_bytes` above — that is the PRIMARY check,
-    // and it fires before a byte moves — so the on-disk temp is bounded
-    // by 256 MB. `receive_snapshot_to_temp` passes the same cap to
-    // `recv_bulk` as a backstop; see there.
-    // `SnapshotTempFile::Drop` unlinks the temp on every exit path
-    // (success, decode failure, panic) — see the type's docs.
-    // #3328: the temp file and the attachments the applied snapshot refers to
-    // must live under the root the app owns, not under whatever directory
-    // happens to contain the database file.
-    let app_data_dir = attachment_root(materializer, pool).await?;
-    let recv_progress = SnapshotTransferProgress {
-        event_sink,
-        remote_device_id,
-        bytes_total: size_bytes,
-    };
-    let temp =
-        receive_snapshot_to_temp(send, recv, &app_data_dir, size_bytes, Some(&recv_progress))
-            .await?;
-    // #2133 — terminal tick: the full blob is now on disk. Emit a
-    // `"complete"` SnapshotProgress so the UI can clear the transfer
-    // affordance before the (potentially slow) decode/apply begins.
-    recv_progress.emit("complete", size_bytes);
-
-    // #706 item 2 — verify the transfer integrity hash BEFORE the
-    // expensive decode/apply. Re-hash the received compressed bytes and
-    // compare against the blake3 the responder advertised in its offer.
-    // A mismatch means the blob was corrupted (responder-side disk error
-    // before send, or a transport defect mTLS didn't catch) — fail fast
-    // and loud here rather than letting it surface as an opaque
-    // CBOR/zstd decode error inside `apply_snapshot`. `temp` drops (and
-    // unlinks) on the early return.
-    let actual_blob_blake3 = blake3_of_file(temp.path()).await?;
-    if actual_blob_blake3 != expected_blob_blake3 {
-        tracing::warn!(
-            peer_id = %remote_device_id,
-            expected = %expected_blob_blake3,
-            actual = %actual_blob_blake3,
-            "received snapshot blob failed blake3 integrity check; rejecting (#706)"
-        );
-        let msg = format!(
-            "snapshot blob integrity check failed: expected blake3 {expected_blob_blake3}, \
-             got {actual_blob_blake3}"
-        );
-        event_sink.on_sync_event(SyncEvent::Error {
-            message: msg.clone(),
-            remote_device_id: remote_device_id.to_string(),
-        });
-        return Err(AppError::Snapshot(msg));
-    }
-
-    event_sink.on_sync_event(SyncEvent::Progress {
-        state: "snapshot_applying".into(),
-        remote_device_id: remote_device_id.to_string(),
-        ops_received: 0,
-        ops_sent: 0,
-    });
-
-    // Open the temp file as a SYNC `std::fs::File` (the
-    // `apply_snapshot` reader bound is `std::io::Read`). The reader
-    // is consumed entirely inside `decode_snapshot` (zstd-streaming
-    // + ciborium) before the SQL transaction begins, so the only
-    // memory in flight from this point on is the parsed
-    // `SnapshotData` itself — never the compressed bytes nor the
-    // decompressed CBOR.
-    //
-    // Atomic apply: `apply_snapshot` wraps the whole wipe+insert in
-    // BEGIN IMMEDIATE + defer_foreign_keys. A decode/integrity
-    // failure propagates without leaving the DB in a half-restored
-    // state, and `temp` drops at the end of this scope so the temp
-    // file is unlinked regardless of which arm we exit through.
-    let temp_file = std::fs::File::open(temp.path()).map_err(|e| {
-        AppError::Io(std::io::Error::new(
-            e.kind(),
-            format!(
-                "opening received snapshot temp {}: {e}",
-                temp.path().display()
-            ),
-        ))
-    })?;
-    // #607 / #779 ordering: flush + drop the in-memory engines BEFORE the
-    // apply commits, not after. If the registry were cleared only after
-    // `apply_snapshot` returns, a `RunEvent::Exit` (or periodic)
-    // `save_all_engines` firing in the commit→clear window would still
-    // see the pre-reset engines and persist them straight into the just-
-    // wiped `loro_doc_state` — resurrecting the old vault at next boot
-    // (the #779 race, merely narrowed). Clearing first makes that save a
-    // no-op by construction:
-    //
-    //  - exit/periodic save before the clear → writes pre-reset blobs
-    //    into the still-pre-reset table (harmless; the apply wipes it);
-    //  - after the clear → empty registry, nothing to write (and
-    //    `save_all_engines`' generation check catches the handles-
-    //    collected-before-clear interleave).
-    //
-    // The `save_all_engines` flush ahead of the clear makes the failure
-    // path lossless: a failed `apply_snapshot` rolls the whole SQL tx
-    // back (loro_doc_state intact), so the reload below restores the
-    // engines exactly as just persisted.
-    if let Some(EngineReloadCtx { registry, .. }) = &engine_reload {
-        let flushed = agaric_engine::loro::snapshot::save_all_engines(pool, registry).await;
-        registry.clear();
-        tracing::info!(
-            flushed,
-            "pre-apply engine flush + clear (#607): registry emptied before \
-             the snapshot RESET commits"
-        );
-    }
-
-    let data = match apply_snapshot(pool, materializer, temp_file).await {
-        Ok(data) => data,
-        Err(e) => {
-            // Apply failed → the SQL tx rolled back and `loro_doc_state`
-            // still holds the rows flushed above. Restore the engines so
-            // the session failure leaves the process exactly as it was.
-            if let Some(EngineReloadCtx {
-                registry,
-                device_id,
-            }) = &engine_reload
-            {
-                // #2023: on the failed-apply path the RESET tx rolled
-                // back, so the persisted epoch is UNCHANGED — a reload
-                // failure here can't fork (it would reload onto the same
-                // original epoch). Log it and still return the original
-                // apply error; we do not want to mask `e` with a reload
-                // error or leave the function without restoring.
-                match agaric_engine::loro::snapshot::reload_registry_from_db(
-                    pool, registry, device_id,
-                )
-                .await
-                {
-                    Ok(rehydrated) => tracing::warn!(
-                        rehydrated,
-                        "apply_snapshot failed after the pre-apply engine clear (#607); \
-                         registry restored from the flushed loro_doc_state rows"
-                    ),
-                    Err(reload_err) => tracing::error!(
-                        error = %reload_err,
-                        "apply_snapshot failed AND the engine restore could not read the \
-                         peer epoch (#2023/#607); registry left cleared — engines will \
-                         lazy-recreate under the (unchanged, rolled-back) epoch"
-                    ),
-                }
-            }
-            return Err(e);
+    // its own.
+    match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
+        SyncMessage::LoroSync { msg, is_last } => {
+            receive_loro_snapshot_catchup(
+                send,
+                recv,
+                pool,
+                materializer,
+                event_sink,
+                remote_device_id,
+                engine_reload,
+                msg,
+                is_last,
+            )
+            .await
         }
-    };
-    drop(temp);
-    let up_to_hash = data.up_to_hash.clone();
-
-    // #607 / #779: the SQL RESET above also wiped `loro_doc_state` /
-    // `loro_sync_inbox` and zeroed the apply cursor — now reload the
-    // in-memory engines so the live registry matches the new SQL.
-    // Without this, stale engines would (a) export pre-reset content
-    // to peers on the next `prepare_outgoing` and (b) be persisted back
-    // over the wiped `loro_doc_state` by the periodic / exit-time
-    // `save_all_engines`, resurrecting the old vault at next boot.
-    // (`reload_registry_from_db` re-clears — dropping any engine a local
-    // edit lazy-created during the apply — then rehydrates from the
-    // now-empty table, so the registry ends up EMPTY by design; see the
-    // function docs for why empty is correct.)
-    match engine_reload {
-        Some(EngineReloadCtx {
-            registry,
-            device_id,
-        }) => {
-            // #2023: the RESET committed, so the persisted epoch was
-            // bumped to >= 1. If the epoch read fails here we must fail
-            // the session CLOSED: proceeding (or letting engines
-            // lazy-recreate) under the wrong epoch would mint ops under
-            // the retired pre-reset PeerID and re-fork the
-            // (peer, counter) space (#792). `reload_registry_from_db`
-            // leaves the registry untouched on this error.
-            let rehydrated =
-                agaric_engine::loro::snapshot::reload_registry_from_db(pool, registry, device_id)
-                    .await?;
-            tracing::info!(
-                rehydrated,
-                "post-snapshot engine reload complete (#607): dropped pre-reset \
-                 engines; registry rehydrated from loro_doc_state"
-            );
-        }
-        None => {
-            tracing::warn!(
-                "no Loro engine registry available at snapshot catch-up (#607); \
-                 any live engines keep pre-reset state until the process restarts"
-            );
-        }
+        SyncMessage::Error { message } => Err(AppError::InvalidOperation(format!(
+            "peer reported error instead of a snapshot catch-up: {message}"
+        ))),
+        other => Err(AppError::InvalidOperation(format!(
+            "expected LoroSync after ResetRequired, got {:?}",
+            std::mem::discriminant(&other)
+        ))),
     }
-
-    tracing::info!(
-        peer_id = %remote_device_id,
-        up_to_hash = %up_to_hash,
-        up_to_seqs = ?data.up_to_seqs,
-        "applied snapshot; frontier advanced"
-    );
-
-    // The identity was resolved (and the fallback logged at `debug!`) at
-    // function entry — #4097. It is empty here only when neither the
-    // session-level id nor the daemon's authenticated peer identity carried
-    // one, and that is the genuinely surprising case that keeps the `warn!`:
-    // refuse to silently complete, because the snapshot is already durable but
-    // a peer_refs row keyed by the empty string would corrupt the bookkeeping
-    // and the next sync would treat this peer as fully unknown again.
-    if remote_device_id.is_empty() {
-        tracing::warn!(
-            "snapshot catch-up applied a snapshot but carried no remote device_id from \
-             either the session or the daemon-supplied peer identity; refusing to key \
-             peer_refs bookkeeping on an empty peer_id"
-        );
-        return Err(AppError::InvalidOperation(
-            "snapshot catch-up completed with empty remote_device_id and no expected_remote_id; \
-             refusing to record peer_refs row keyed by empty string"
-                .into(),
-        ));
-    }
-    let resolved_peer_id: &str = remote_device_id;
-
-    // Update peer_refs so the scheduler's "last synced" bookkeeping
-    // reflects the catch-up. `last_sent_hash` stays empty — we did not
-    // send anything in this session. The next scheduled sync will pick
-    // up any ops the responder wrote after the snapshot was taken.
-    //
-    // Wrap the ensure-row + record-sync pair in a single
-    // `BEGIN IMMEDIATE` transaction so a crash between the two writes
-    // cannot leave a peer row whose `last_hash` is stale relative to
-    // the snapshot frontier just applied. The bookkeeping write is
-    // still treated as non-fatal — the snapshot itself is already
-    // durable, and a failed bookkeeping commit just means the next
-    // scheduler tick will reconsider this peer — but the rollback
-    // ensures we don't leave a half-written peer row behind.
-    let bookkeeping = async {
-        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, resolved_peer_id).await?;
-        peer_refs::update_on_sync_in_tx(&mut tx, resolved_peer_id, &up_to_hash, "").await?;
-        // #2046: a snapshot catch-up IS a protocol reset — the initiator's
-        // op_log/Loro state was wiped and re-seeded from the responder's
-        // snapshot. Bump `reset_count` (and stamp `last_reset_at`) in the
-        // SAME transaction that advances `synced_at`/`last_hash`, so the
-        // counter and the new frontier commit atomically: a crash between
-        // them can't record the re-sync without the reset (or vice versa).
-        // This is the single production caller of the increment, so the
-        // counter advances exactly once per applied snapshot — driving the
-        // "{reset_count} resets" badge in `PeerListItem.tsx`.
-        peer_refs::increment_reset_count_in_tx(&mut tx, resolved_peer_id).await?;
-        tx.commit().await?;
-        Ok::<(), AppError>(())
-    };
-    if let Err(e) = bookkeeping.await {
-        // Non-fatal: the snapshot itself is already durable, and a
-        // failed bookkeeping update just means the next scheduler
-        // tick will reconsider this peer — not data loss.
-        tracing::warn!(
-            peer_id = %resolved_peer_id,
-            error = %e,
-            "failed to record snapshot-driven sync in peer_refs"
-        );
-    }
-
-    event_sink.on_sync_event(SyncEvent::Complete {
-        remote_device_id: remote_device_id.to_string(),
-        ops_received: 0,
-        ops_sent: 0,
-        // #1071: snapshot catch-up reimports an ENTIRE space snapshot, so a
-        // per-page targeted reload would be both incorrect (every page may
-        // have changed) and impossible to enumerate cheaply here. Send an
-        // empty set — the frontend falls back to a full reload + preload,
-        // which is exactly the right response to a whole-space catch-up.
-        changed_page_ids: Vec::new(),
-        // #4305: `None`, not `Some(0)`. A whole-space reimport is the loudest
-        // change there is; it simply has no meaningful block count. `Some(0)`
-        // is reserved for "nothing moved" and would make the frontend skip
-        // both the message and the reload this path depends on.
-        changed_blocks: None,
-    });
-
-    Ok(CatchupOutcome::Applied {
-        bytes_received: size_bytes,
-        up_to_hash,
-    })
 }
 
 /// #2503 — receive + MERGE full per-space Loro snapshots from a peer after
@@ -1174,16 +384,15 @@ pub async fn try_receive_snapshot_catchup(
 /// [`LoroSyncMessage::Snapshot`] is imported into THIS device's per-space
 /// engine via [`crate::sync_protocol::loro_sync::apply_remote`], which merges
 /// (Loro CRDT semantics — the initiator's unsynced local content is preserved,
-/// not destroyed) and reprojects the changed blocks into SQL. In contrast to
-/// the legacy CBOR path in [`try_receive_snapshot_catchup`] there is:
+/// not destroyed) and reprojects the changed blocks into SQL. Unlike the CBOR
+/// RESET this replaced (deleted in #3487) there is:
 ///   * NO core-table wipe (SQL is reprojected from the merged engine),
 ///   * NO engine registry reload / drop (the live engines are merged in place),
-///   * NO `reset_count` / peer-epoch bump (no reset occurred — #2046 is a
-///     legacy-CBOR-only concern now).
+///   * NO `reset_count` / peer-epoch bump (no reset occurred).
 ///
 /// `engine_reload` supplies the live registry + local device id the merge
-/// applies against; it is REQUIRED here (the legacy CBOR path can run without
-/// it, but a merge cannot). A `None` is a programmer error → `InvalidOperation`.
+/// applies against; it is REQUIRED — a merge has nothing to merge into
+/// without it. A `None` is a programmer error → `InvalidOperation`.
 ///
 /// Residual (#2503 open q1): if an inbound snapshot forks our own
 /// `(peer, counter)` space (a corrupt / pre-epoch-reset local doc — #792),
@@ -1367,52 +576,18 @@ async fn receive_loro_snapshot_catchup(
     })
 }
 
-/// A temp file holding a freshly-received snapshot blob.
-///
-/// Owns its on-disk path; `Drop` unlinks the file (best-effort,
-/// synchronous `std::fs::remove_file` because we can't `await` in
-/// `Drop`). `apply_snapshot` reads through this file as a
-/// `std::fs::File` and the temp is unlinked the moment this guard
-/// goes out of scope — including on apply failure, hash mismatch,
-/// or panic, so a partial transfer never lingers.
-///
-/// We deliberately roll our own guard rather than depend on the
-/// `tempfile` crate at runtime (it is dev-only today; pulling it
-/// into `[dependencies]` would be a new runtime dep for one path).
-/// The pattern is small and matches the
-/// `TempAttachmentWriter::Drop` cleanup path.
-pub(crate) struct SnapshotTempFile {
-    path: PathBuf,
-}
-
-impl SnapshotTempFile {
-    /// Path of the on-disk temp blob. Tests use this to assert the
-    /// file appears mid-receive and is unlinked post-`Drop`.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for SnapshotTempFile {
-    fn drop(&mut self) {
-        // Best-effort unlink; ignore "already gone" / permission
-        // errors so a panic-on-drop never masks the real failure.
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// #2696 — boot-time sweep of orphaned snapshot-receive temp files.
 ///
-/// `receive_snapshot_to_temp` streams each in-flight catch-up blob into
-/// a `<app_data_dir>/snapshot-recv-<ulid>.tmp` file guarded by
-/// `SnapshotTempFile`, whose `Drop` unlinks it on every normal exit
-/// path (apply success, decode error, peer drop, cancel). But `Drop`
-/// never runs on `SIGKILL` / OOM-kill / power-loss, so a process death
-/// mid-receive strands the temp — potentially up to `MAX_SNAPSHOT_SIZE`
-/// (256 MB) — directly in `app_data_dir` with no other GC path
-/// reclaiming it.
+/// The CBOR catch-up deleted in #3487 streamed each in-flight blob into
+/// a `<app_data_dir>/snapshot-recv-<ulid>.tmp` file whose guard unlinked it
+/// on every normal exit path (apply success, decode error, peer drop,
+/// cancel). `Drop` never runs on `SIGKILL` / OOM-kill / power-loss, so a
+/// process death mid-receive stranded the temp — up to 256 MB — directly in
+/// `app_data_dir` with no other GC path reclaiming it. No build produces one
+/// any more; this sweep still runs so a vault carried over from a build that
+/// did is not left holding the orphan forever.
 ///
-/// This sweep removes every `snapshot-recv-*.tmp` file directly under
+/// It removes every `snapshot-recv-*.tmp` file directly under
 /// `app_data_dir`. It is deliberately called **once at startup, before
 /// the sync daemon begins accepting inbound connections**, which is what
 /// makes an unconditional delete (no age gate) safe: at boot no receive
@@ -1439,8 +614,8 @@ pub fn sweep_orphaned_snapshot_temps(app_data_dir: &Path) -> usize {
     for entry in rd.filter_map(Result::ok) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        // Match the exact prefix + suffix `receive_snapshot_to_temp`
-        // produces so we never touch an unrelated file.
+        // Match the exact prefix + suffix the receive path produced so we
+        // never touch an unrelated file.
         if !(name.starts_with("snapshot-recv-") && name.ends_with(".tmp")) {
             continue;
         }
@@ -1468,140 +643,6 @@ pub fn sweep_orphaned_snapshot_temps(app_data_dir: &Path) -> usize {
         tracing::info!(removed, "swept orphaned snapshot-recv temp files at boot");
     }
     removed
-}
-
-/// #706 item 2 — stream a file through a blake3 hasher and return the
-/// lowercase hex digest. Reads in `BINARY_FRAME_CHUNK_SIZE` chunks so the
-/// integrity check inherits the same bounded-memory profile as the
-/// Receive path (never buffers the whole compressed blob). The hash
-/// is computed on a blocking thread so the receive loop's executor is not
-/// stalled on a multi-hundred-MB read.
-async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<String, AppError> {
-        use std::io::Read;
-        let mut file = std::fs::File::open(&path).map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                e.kind(),
-                format!("opening snapshot temp for hashing {}: {e}", path.display()),
-            ))
-        })?;
-        let mut hasher = blake3::Hasher::new();
-        let mut buf = vec![0u8; BINARY_FRAME_CHUNK_SIZE];
-        loop {
-            let n = file.read(&mut buf).map_err(|e| {
-                AppError::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("reading snapshot temp for hashing {}: {e}", path.display()),
-                ))
-            })?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-        }
-        Ok(hasher.finalize().to_hex().to_string())
-    })
-    .await
-    .map_err(|e| AppError::Snapshot(format!("blake3 hashing task panicked: {e}")))?
-}
-
-/// Stream `size_bytes` of a compressed snapshot off `recv` straight
-/// to a `<app_data_dir>/snapshot-recv-<rand>.tmp` file.
-///
-/// Replaces the old `receive_snapshot_bytes` `Vec<u8>` accumulator —
-/// peak Rust-heap during the receive is one
-/// [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES) buffer
-/// regardless of the snapshot size, instead of `O(size_bytes)`. Nothing
-/// here is sized from `size_bytes`. The `MAX_SNAPSHOT_SIZE` cap (256 MB)
-/// enforced on the wire-level `size_bytes` by
-/// `try_receive_snapshot_catchup` bounds the temp file the same way.
-///
-/// The returned [`SnapshotTempFile`] guard unlinks the file on
-/// drop, so the caller does not need an explicit cleanup branch on
-/// the apply / decode error paths.
-///
-/// `_send` is unused — this phase only reads. It is taken so every
-/// catch-up entry point in this module has the same `(send, recv)` prefix.
-#[tracing::instrument(skip(_send, recv, app_data_dir, progress), err)]
-async fn receive_snapshot_to_temp(
-    _send: &mut SendStream,
-    recv: &mut RecvStream,
-    app_data_dir: &Path,
-    size_bytes: u64,
-    progress: Option<&SnapshotTransferProgress<'_>>,
-) -> Result<SnapshotTempFile, AppError> {
-    // ULID gives us 128 bits of entropy + a monotonic timestamp
-    // prefix — collisions across overlapping snapshot transfers
-    // are not practically possible. Render in lower-case hex so
-    // the suffix is portable across case-folding filesystems.
-    let suffix: u128 = u128::from(ulid::Ulid::generate());
-    let path = app_data_dir.join(format!("snapshot-recv-{suffix:032x}.tmp"));
-
-    // The guard owns the path from the moment it is constructed —
-    // any `?` early-return below unlinks the temp on drop.
-    let guard = SnapshotTempFile { path: path.clone() };
-
-    let mut file = tokio::fs::File::create(&path).await.map_err(|e| {
-        AppError::Io(std::io::Error::new(
-            e.kind(),
-            format!("creating snapshot temp {}: {e}", path.display()),
-        ))
-    })?;
-
-    // Uses the bulk receiver: bytes are pulled off the stream and written
-    // to the file as they arrive, so neither the compressed payload nor
-    // any accumulator ever grows beyond a single `BULK_COPY_BYTES` buffer.
-    // When a progress hook is present (#2133), each buffer ticks a
-    // `"receiving"` SnapshotProgress event so the UI sees a real
-    // bytes-done bar for the catch-up blob.
-    //
-    // Cap: `MAX_SNAPSHOT_SIZE`. This is the BACKSTOP, not the primary
-    // check — `try_receive_snapshot_catchup` already rejected an
-    // over-cap `size_bytes` at the offer, with a `SnapshotReject` on the
-    // wire, before we got here. It is passed again because under QUIC the
-    // cap belongs to the caller: the old transport bounded every frame at
-    // `MAX_MSG_SIZE` and so put a ceiling on a runaway receive whatever
-    // the call site did, and a QUIC stream has no such ceiling. So this
-    // arms the same bound for any future caller that reaches this
-    // function without the offer-time check, and `recv_bulk` refuses
-    // before it reads or allocates anything.
-    //
-    // A `size_bytes` of 0 reads NOTHING off the stream: the old
-    // transport's empty sentinel frame has no counterpart under QUIC, and
-    // consuming one that was never sent would eat the length prefix of
-    // the next framed message and desync the session.
-    match progress {
-        Some(p) => {
-            recv_bulk(
-                recv,
-                &mut file,
-                size_bytes,
-                MAX_SNAPSHOT_SIZE,
-                |bytes_received| {
-                    p.emit("receiving", bytes_received);
-                },
-            )
-            .await?;
-        }
-        None => {
-            recv_bulk(recv, &mut file, size_bytes, MAX_SNAPSHOT_SIZE, |_| {}).await?;
-        }
-    }
-
-    file.flush().await.map_err(|e| {
-        AppError::Io(std::io::Error::new(
-            e.kind(),
-            format!("flushing snapshot temp {}: {e}", path.display()),
-        ))
-    })?;
-    // Drop the async handle so the subsequent `std::fs::File::open`
-    // (in `try_receive_snapshot_catchup`) observes a closed FD —
-    // this matters on Windows where two open handles to the same
-    // path can fight over rename/locks.
-    drop(file);
-
-    Ok(guard)
 }
 
 // ===========================================================================

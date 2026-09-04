@@ -2500,9 +2500,10 @@ pub async fn run_sync_session(
                     peer_id = %peer_id,
                     "snapshot-driven catch-up complete"
                 );
-                // The receiver of a snapshot answers last (`SnapshotAccept`, then the
-                // bytes flow the other way), so the offering side is a round trip
-                // ahead of us and there is nothing of ours left in flight.
+                // The offering side writes last on the Loro catch-up (it ends with
+                // `LoroSync { is_last: true }` and we answer nothing), so it is a
+                // round trip ahead of us and nothing of ours is left in flight.
+                // (Pre-#3487 the same held via the peer's `SnapshotAccept`.)
                 if let Err(e) = finish_session(false, send, conn, SessionLimits::default()).await {
                     tracing::debug!(error = %e, "failed to close after snapshot catch-up");
                 }

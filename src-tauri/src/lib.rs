@@ -2585,8 +2585,11 @@ pub fn run() {
 
                 // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
                 // `app_data_dir` by a previous process that died mid-receive
-                // (SIGKILL / OOM / power-loss, where `SnapshotTempFile::Drop`
-                // never ran). Safe to delete unconditionally here because it
+                // (SIGKILL / OOM / power-loss, where the receive path's temp-file
+                // guard never ran). #3487 deleted that receive path, so no NEW
+                // orphan can appear — this sweeps ones a pre-#3487 build left
+                // behind, which can be 256 MB each. Safe to delete unconditionally
+                // here because it
                 // runs BEFORE `wire_sync_daemon` below starts accepting inbound
                 // connections, so no snapshot receive can be in flight yet.
                 agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
