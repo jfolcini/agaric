@@ -212,7 +212,17 @@ jobs:
           known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint full-suite'
           sel=$(printf '%s' "$LANES" | tr ',' ' ' | tr -s '[:space:]' ' ' \
                 | sed 's/^ //; s/ $//')
-          [ -n "$sel" ] || sel=all
+          # Not `sel=all`: `github.event.inputs.lanes || 'all'` already covers
+          # unset and empty, so the only inputs reaching here are
+          # whitespace/comma-only ones — `lanes=' '`, `lanes=','` — and those
+          # are typos. Erroring beats both silent readings: `sel=all` runs the
+          # full ~4 h matrix, and simply falling through selects NOTHING (an
+          # empty list makes the loop below iterate zero times, so the
+          # unknown-lane branch never fires — measured, not assumed).
+          if [ -z "$sel" ]; then
+            echo "::error::lanes is empty after normalising '$LANES'. Use 'all' or a comma-separated subset of: $known"
+            exit 1
+          fi
           if [ "$sel" = all ]; then
             sel="$known"
           else
@@ -1591,12 +1601,19 @@ jobs:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
     # is the merged one, and `mutants` is now 21 shard jobs.
     needs: [mutants-merge, mutants-frontend, select-lanes]
-    # Reachable whenever EITHER mutants lane ran — it is the only thing that
-    # turns their survivors into a notification. A subset run reaches it and
-    # then dry-runs (`CRON_EQUIVALENT` is false for any subset), which is the
-    # point: the tracking issue spans both lanes, and rewriting it from one
-    # lane's data deletes the other's (#3364).
-    if: always() && (needs.select-lanes.outputs.mutants == 'true' || needs.select-lanes.outputs.mutants_frontend == 'true')
+    # BOTH mutants lanes, not either: the step below passes `--require-rust`
+    # AND `--require-frontend` unconditionally, and `assertLaneInputsPresent`
+    # throws on a missing one. Under `||`, a `lanes=mutants` run reached this
+    # job with no `mutation-frontend-report` to download and exited 1 — a red
+    # run for a mutants lane that was green, in exactly the re-run-one-lane
+    # case the `lanes` input exists to serve.
+    #
+    # `&&` costs nothing: any subset dry-runs (`CRON_EQUIVALENT` is false for
+    # one), so the job can only ever do something useful when both lanes ran.
+    # `lanes=mutants,mutants-frontend` still reaches it and still dry-runs,
+    # which keeps the #3364 rule intact — the tracking issue spans both lanes,
+    # so rewriting it from one lane's data deletes the other's.
+    if: always() && needs.select-lanes.outputs.mutants == 'true' && needs.select-lanes.outputs.mutants_frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2926,6 +2943,12 @@ jobs:
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
+      # `select-lanes` included so the comment above stays true, and for a
+      # concrete failure: if it dies for an infra reason on the cron, all
+      # eleven lanes skip and this reporter — authoritative, since `lanes`
+      # defaults to `all` — would file eleven broken lanes without naming
+      # the one job that actually failed.
+      - select-lanes
       - clippy-clean
       - bench-smoke
       - bench-slo
