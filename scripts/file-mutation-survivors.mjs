@@ -2145,6 +2145,12 @@ export function main(argv = process.argv.slice(2)) {
     args.lane !== 'frontend' ||
     EXPECTED_FRONTEND_REPORTS === undefined ||
     frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
+  // Computed ONCE and threaded into every site that acts on it. It was
+  // spelled three times — here, in `writeParent`, and in `printDryRun` — and
+  // only this copy carried `frontendComplete`, so the gate did not gate the
+  // close it was added for: with `--children`, a partial frontend run's
+  // child-closes make `willWrite` true on their own and `writeParent` then
+  // closed on its own un-gated copy of the condition.
   const needsClose =
     all.length === 0 &&
     existingIssue !== null &&
@@ -2184,7 +2190,7 @@ export function main(argv = process.argv.slice(2)) {
       acceptedOn,
       reanchored,
     })
-    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions })
+    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions, needsClose })
     return
   }
 
@@ -2214,7 +2220,7 @@ export function main(argv = process.argv.slice(2)) {
     acceptedOn,
     reanchored,
   })
-  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork, all })
+  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork, needsClose })
 }
 
 /**
@@ -2237,7 +2243,7 @@ export function main(argv = process.argv.slice(2)) {
  * child close already uses, and why that close writes the not-an-all-clear
  * note into its body first.
  */
-function writeParent({ existingIssue, repo, title, body, newOnes, childWork, all }) {
+function writeParent({ existingIssue, repo, title, body, newOnes, childWork, needsClose }) {
   if (existingIssue === null) {
     withTempFile(body, (bodyFile) => {
       const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
@@ -2262,7 +2268,7 @@ function writeParent({ existingIssue, repo, title, body, newOnes, childWork, all
     withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
     // Body first, then close: the body is the record of WHY it closed, and a
     // close that raced ahead of it would leave the old survivor list showing.
-    if (all.length === 0 && existingIssue.state !== 'CLOSED') {
+    if (needsClose) {
       gh(['issue', 'close', number, '--repo', repo])
       console.log(`closed tracking issue #${number} — nothing left to act on in this lane`)
       return
@@ -2280,7 +2286,16 @@ function writeParent({ existingIssue, repo, title, body, newOnes, childWork, all
   console.log(`updated tracking issue #${number} (${newOnes.length} new finding(s))`)
 }
 
-function printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions }) {
+function printDryRun({
+  args,
+  existingIssue,
+  newOnes,
+  resolvedOnes,
+  all,
+  body,
+  childActions,
+  needsClose,
+}) {
   // Compare to null explicitly — issue #0 is not a real GitHub issue
   // number, but the `--known-body-file` test stub uses 0 as a placeholder
   // and 0 is falsy, so a `existingIssue.number` truthiness check here
@@ -2292,7 +2307,7 @@ function printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, ch
     // The close is the branch a smoke dispatch most needs previewed: it is
     // the only one that changes the issue's STATE, and a lane reaching zero
     // is exactly when someone runs a dry run to see what would happen.
-    if (all.length === 0 && newOnes.length === 0 && existingIssue.state !== 'CLOSED') {
+    if (needsClose && newOnes.length === 0) {
       console.log(
         `[dry-run] would CLOSE issue #${existingIssue.number} — nothing left to act on in this lane`,
       )
@@ -2848,6 +2863,15 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
       // got clean. Rewriting from partial data is pre-existing (#3364); what
       // this PR added is that the same partial data could CLOSE the issue,
       // which is the one outcome nobody re-reads. It must not.
+      //
+      // `--children` AND a recorded child link are both load-bearing here.
+      // Without them this ran through the `no-op` branch and never reached
+      // the close guard — it asserted "did not close" about a run that was
+      // never going to write at all, the vacuous shape AGENTS.md names. With
+      // them the emptied set makes `decideChildActions` emit a close for the
+      // recorded area, so `childWork > 0` and `willWrite` is true on its own,
+      // leaving the close guard as the only thing between a partial report
+      // set and a closed issue.
       const feTracked = join(root, 'close-only-frontend-body.md')
       writeFileSync(
         feTracked,
@@ -2859,11 +2883,17 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
           `2026-08-01\t${survivor(4242)}`,
           '```',
           MARKER_END,
+          CHILD_MARKER_START,
+          '```',
+          `#101\t${survivorArea(survivor(4242))}`,
+          '```',
+          CHILD_MARKER_END,
         ].join('\n'),
         'utf8',
       )
       const short = captureMain([
         '--dry-run',
+        '--children',
         '--lane',
         'frontend',
         '--frontend-dir',

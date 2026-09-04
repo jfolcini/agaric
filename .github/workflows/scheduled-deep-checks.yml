@@ -1602,8 +1602,8 @@ jobs:
   # hand it a `missed.txt`, run 30794686024), so a job-level gate meant a
   # `mutants` fix could not be confirmed to have un-blocked it until the next
   # cron. The job runs on every event; the step dry-runs unless
-  # `CRON_EQUIVALENT` holds, so a smoke dispatch exercises the whole path
-  # (artifact download, both `--require-*` gates, the `gh issue list` lookup,
+  # `LANE_AUTHORITATIVE` holds, so a smoke dispatch exercises the whole path
+  # (artifact download, its `--require-input` gate, the `gh issue list` lookup,
   # the body render) and writes nothing (#2947), while a default-input
   # dispatch on `main` files exactly what the cron would.
   # ---------------------------------------------------------------------------
@@ -1694,7 +1694,8 @@ jobs:
         # that set would report them resolved, drop them from the marker block
         # and re-report them as new next week (#3364). Dry-run performs every
         # read and skips only the `gh` writes, so a short week still renders
-        # its body and comment into the log. Fails CLOSED: `mutants-merge`
+        # its body into the log (there is no comment — this job never
+        # comments). Fails CLOSED: `mutants-merge`
         # dying outright leaves both counts empty, which counts as short.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
