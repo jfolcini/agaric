@@ -1,4 +1,4 @@
-# Session 1517 — recovery's live-row cascades adopt the engine's `Active` reach
+# Session 1518 — recovery's live-row cascades adopt the engine's `Active` reach
 
 Issue #4233. Recovery's delete cascade descended *through* an already-tombstoned child and
 pruned only the write (`WHERE deleted_at IS NULL`); the engine's `project_delete_block_to_sql`
