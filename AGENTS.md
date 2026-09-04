@@ -57,7 +57,7 @@ scripts/push.sh                                  # push after a Rust change (run
 Four commands have a wrong-but-plausible form. Use the right one:
 
 - **`npm run typecheck`, never `npx tsc --noEmit`.** The root tsconfig is solution-style, and `--noEmit` without `-b` checks an empty program and exits 0 (#3805).
-- **`cargo nextest run --workspace`, never the bare form.** Bare `cargo nextest run` is scoped to the `agaric` package and silently skips `agaric-store`, `agaric-engine`, `agaric-sync`, `agaric-core` (#3212). Same for `cargo mutants --workspace`.
+- **`cargo nextest run --workspace`, never the bare form.** Bare `cargo nextest run` is scoped to the `agaric` package and silently skips `agaric-store`, `agaric-engine`, `agaric-sync`, `agaric-core` (#3212). Same for `cargo mutants --workspace`. `-p <crate>` is narrower still: it does not compile the dependent crates at all, so a green `-p` run says nothing about whether the change breaks a consumer — not even its signatures. Most boundary oracles also live in the app crate, so they do not run under `-p` either (#3443).
 - **`just gen-sqlx`, never `cargo sqlx prepare`.** Four `.sqlx/` caches must move together (invariant 6).
 - **`scripts/push.sh` for anything touching `.rs`, not raw `git push`.** Raw push holds the connection open through the multi-minute pre-push verify and GitHub drops it. `SKIP_CI_VERIFY='<real reason>' git push` skips the verify when it would only repeat what CI runs on the PR (docs, CI or tooling-only ranges, a re-push after a review nit, a range already run through the full suite); CI is the merge gate.
 
@@ -235,6 +235,7 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second i
 1. **Assert durable, re-queried effect, never call shape.** `expect(invoke).toHaveBeenCalledWith(…)` proves the frontend asked, not that anything persisted. Persist, re-query, assert the state.
 2. **The mock is a contract pinned by conformance fixtures.** Every state-mutating handler is driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'`) and asserted by both sides. Read commands are pinned through `queries` steps the same way; `conformance-coverage.test.ts` fails a new command without a fixture or a reasoned waiver. Wiring: `conformance_query.rs` + the `WIRE` table in `conformance-query.ts`.
 3. **A migration that touches a table the mock references updates the mock in the same PR.**
+4. **A bug that reached a user lands a spec in `e2e-tauri/`.** That lane runs the real backend, so it is the only frontend surface with no second implementation between the test and the truth. A bug that shipped is by definition one the mock-backed estate did not catch — #3081 (a tag vanishing after a view switch, the mock reading a table migrations 0087/0088 retired) went out with e2e green.
 
 ### Running tests efficiently
 
