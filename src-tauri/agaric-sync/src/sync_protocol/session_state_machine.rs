@@ -41,8 +41,9 @@
 //! * Snapshot catch-up — once the machine reaches
 //!   [`SyncState::ResetRequired`], the daemon layer drives the
 //!   snapshot sub-flow via [`crate::sync_daemon::snapshot_transfer`].
-//!   `handle_message` will *reject* a `SnapshotOffer` if it ever
-//!   arrives at the protocol layer (see the dispatch arm below).
+//!   `handle_message` will *reject* a `SnapshotAccept` / `SnapshotReject`
+//!   if one ever arrives at the protocol layer (see the dispatch arm
+//!   below).
 //! * File transfer — once the machine reaches [`SyncState::Complete`],
 //!   the daemon layer hands the connection to
 //!   [`crate::sync_files::run_file_transfer_initiator`] /
@@ -636,12 +637,7 @@ impl SyncOrchestrator {
             // keeps the match exhaustive; the dispatch match rejects it loudly.
             (_, SyncMessage::OpLogBatchChunked { .. }) => {}
             // Snapshot messages accepted in any non-terminal state
-            (
-                _,
-                SyncMessage::SnapshotOffer { .. }
-                | SyncMessage::SnapshotAccept
-                | SyncMessage::SnapshotReject,
-            ) => {}
+            (_, SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject) => {}
             // File-transfer messages must never reach the protocol
             // orchestrator — they are read directly off the wire by
             // `sync_files::run_file_transfer_{initiator,responder}` after
@@ -1126,27 +1122,12 @@ impl SyncOrchestrator {
                 Ok(None)
             }
 
-            // ---- Snapshot ---------------------------------------------------
-            // The snapshot catch-up sub-flow runs entirely at the sync daemon
-            // layer (`sync_daemon::snapshot_transfer`) AFTER the main loop
-            // exits with `ResetRequired`. `handle_message` must never receive
-            // a `SnapshotOffer` on any reachable path — if one arrives here,
-            // it indicates a protocol state-machine bug (e.g. a regression in
-            // the daemon-layer interception). Fail loudly so the caller can
-            // surface the violation instead of silently reject-and-continue.
-            SyncMessage::SnapshotOffer { .. } => Err(AppError::InvalidOperation(
-                "SnapshotOffer must be handled by the sync daemon \
-                 snapshot_transfer sub-flow, not by the orchestrator state \
-                 machine"
-                    .into(),
-            )),
-
             // ---- Chunked LoroSync header (#611) ------------------------------
             // The chunked encoding went with the WebSocket transport (#3464):
             // QUIC frames are capped at 256 MB, so an oversized `LoroSync`
             // ships inline and nothing produces this variant. It can only
             // arrive from a chunking-era peer, which this build cannot decode
-            // — fail loudly, same contract as `SnapshotOffer`.
+            // — fail loudly.
             SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
                 "LoroSyncChunked is not supported: the chunked encoding was \
                  removed with the WebSocket transport, and an oversized LoroSync \
@@ -1234,8 +1215,7 @@ impl SyncOrchestrator {
             // daemon-layer loop exits on `SyncState::Complete`. One reaching
             // `handle_message` is a regression in the daemon dispatch path
             // (e.g., a change that forgets to hand the connection off after
-            // the orchestrator signals completion) — fail loudly, same
-            // contract as `SnapshotOffer`.
+            // the orchestrator signals completion) — fail loudly.
             SyncMessage::FileRequest { .. }
             | SyncMessage::FileOffer { .. }
             | SyncMessage::FileReceived { .. }

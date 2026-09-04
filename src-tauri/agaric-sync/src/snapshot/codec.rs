@@ -10,13 +10,14 @@ use agaric_core::error::AppError;
 // ---------------------------------------------------------------------------
 //
 // `decode_snapshot` used to feed a bare `zstd::Decoder` straight to ciborium
-// with NO bound on the decompressed byte count or the zstd window. The only
-// upstream guard caps the *compressed* blob at `MAX_SNAPSHOT_SIZE` (256 MB),
-// but zstd routinely hits 10-100x on repetitive CBOR, so a compromised/buggy
-// *already-paired* peer (the transport is mTLS + TOFU cert-pinned, so not an
-// arbitrary network attacker) could advertise a sub-256 MB blob that expands
-// into a multi-GB `SnapshotData` — an allocation-driven crash instead of a
-// clean rejection.
+// with NO bound on the decompressed byte count or the zstd window. The
+// upstream guard that capped the *compressed* blob at `MAX_SNAPSHOT_SIZE`
+// (256 MB) was the `SnapshotOffer` size check, deleted with the legacy CBOR
+// path in #3487 — so today `decode_snapshot` only ever reads a blob this
+// device created. The bound below still earns its keep as the guard against a
+// corrupt or truncated local artifact: zstd routinely hits 10-100x on
+// repetitive CBOR, so a sub-256 MB blob could expand into a multi-GB
+// `SnapshotData` — an allocation-driven crash instead of a clean rejection.
 //
 // Fix: cap the decompression *ratio* on the fly. We never know the legitimate
 // decompressed size up front (it scales with vault size, not the 256 MB

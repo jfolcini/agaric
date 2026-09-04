@@ -1197,7 +1197,7 @@ struct ReplayDiagnostics {
 /// STRUCTURAL, not semantic. An entry means "this walk was cut off", never
 /// "the cut changed the answer" — the two probes below cannot tell those apart
 /// without the unbounded walk this replay deliberately does not have (see
-/// [`materialize_cascade_cohort`] for the three shapes that report despite a
+/// [`materialize_cascade_cohort`] for the two shapes that report despite a
 /// provably correct result). Read an entry as "verify this subtree", not as
 /// "this subtree is wrong".
 ///
@@ -1218,8 +1218,8 @@ struct ReplayDiagnostics {
 ///
 /// There is deliberately no `depth` field. The depth a walk stops at is
 /// [`DESCENDANT_DEPTH_CAP`] for EVERY entry — invariant by construction, not
-/// merely constant in practice: the cap is a literal in the single recursive
-/// arm [`materialize_cascade_cohort`] runs, so two entries in the same report
+/// merely constant in practice: the cap is the same literal in BOTH recursive
+/// arms [`materialize_cascade_cohort`] can run, so two entries in the same report
 /// cannot differ in it and a comparison between them could only ever be
 /// trivially true. The number is still named rather than implied — once, by
 /// [`ReplayDiagnostics::emit`]'s `depth_cap` field and message body, instead of
@@ -1376,7 +1376,7 @@ impl ReplayDiagnostics {
         // The message states what the probe actually establishes and no more.
         // The probe is STRUCTURAL (see `materialize_cascade_cohort`): it
         // proves the walk was cut off, NOT that the cut changed the answer, and
-        // there are three shapes where the cut is provably harmless. Asserting
+        // there are two shapes where the cut is provably harmless. Asserting
         // "the rebuilt table holds a truncated cohort" would therefore be false
         // on a correct rebuild, and telling an operator to distrust a correct
         // rebuild — on the disaster path, where the rebuild may be all they
@@ -1538,6 +1538,44 @@ const CASCADE_COHORT_DDL: &str = "CREATE TEMP TABLE IF NOT EXISTS recovery_casca
      depth INTEGER NOT NULL \
  )";
 
+/// #4233: which children a cascade's walk descends INTO. This is the cascade's
+/// REACH, and it is a different question from the outer `WHERE` each caller
+/// puts on its own DML — the reach decides which rows are candidates at all,
+/// the predicate decides which candidates are written.
+#[derive(Clone, Copy)]
+enum CascadeReach {
+    /// Descend through EVERY child regardless of `deleted_at` — the
+    /// [`descendants_cte_standard`](agaric_store::descendants_cte_standard)
+    /// shape. The arms whose target rows are THEMSELVES tombstoned need the
+    /// descent: `restore_block` and the move un-sweep look for cohort members
+    /// below a tombstone, and `purge_block` hard-deletes a trashed subtree.
+    Standard,
+    /// Descend only through still-active children — the
+    /// [`descendants_cte_active`](agaric_store::descendants_cte_active) shape,
+    /// and the `DescendantWalkFilter::Active` one the engine's
+    /// `project_delete_block_to_sql` walks. The two arms that write LIVE rows,
+    /// `delete_block` and the move sweep, stop at a tombstoned child, so a live
+    /// block BELOW one keeps its `NULL`.
+    ///
+    /// WHY the `NULL` matters, stated once for both arms and both their tests:
+    /// on the disaster path `reproject_blocks_from_engine` (Pass C) drives every
+    /// block through R9's live-under-tombstone sweep. A `NULL` reads there as
+    /// `(sql None, ancestor Some)`, so the sweep fires and stamps the NEAREST
+    /// tombstoned ancestor's cohort — the converged-tree answer of #4188/#4204,
+    /// where `deleted_at` is a function of the tree and not of replay order. A
+    /// row this op stamped instead reads as `(sql Some, ancestor Some)`, which
+    /// the resurrection guard leaves alone. So the wider `Standard` reach did
+    /// not merely over-stamp: it CEMENTED the wrong cohort past the only healer
+    /// in the boot path.
+    ///
+    /// The two arms must also carry the SAME reach as each other. They are the
+    /// two replay orders of one op pair — `{Move(B → P), Delete(P)}` lands in
+    /// the delete arm, `{Delete(P), Move(B → P)}` in the sweep — so a split
+    /// between them is exactly the replay-order divergence #4187 exists to
+    /// remove.
+    Active,
+}
+
 /// #4232/#4289: run the cascades' depth-capped descendant walk ONCE, and answer
 /// from it both "which rows does the cascade touch" and "was the walk cut off
 /// with tree still beyond it".
@@ -1559,13 +1597,17 @@ const CASCADE_COHORT_DDL: &str = "CREATE TEMP TABLE IF NOT EXISTS recovery_casca
 /// the materialised rows — rather than in a second, one-level-deeper recursive
 /// arm — is also what keeps the #1655 drift guard
 /// (`every_descendants_cte_keeps_depth_cap`, agaric-store) satisfied without
-/// loosening it: the one recursive arm in this file still carries the literal
-/// `d.depth < 100`, and an interpolated `{cap} + 1` arm would fail that guard
-/// — correctly, since such an arm is by construction not the cascades' walk.
+/// loosening it. Since #4233 both walks come from the store's
+/// `descendants_cte_*!()` macros, so the literal `d.depth < 100` lives — and is
+/// pinned — there rather than here; an interpolated `{cap} + 1` arm written
+/// into this file would fail that guard, correctly, since such an arm is by
+/// construction not the cascades' walk.
 ///
 /// Era-agnostic by construction, like the cascades' own statements: it reads
-/// `id` and `parent_id` only, and both exist with the same type in every era
-/// this pre-migration pass can run at. That is why it does not call
+/// `id`, `parent_id` and (under [`CascadeReach::Active`]) `deleted_at IS NULL`,
+/// binds no timestamp, and all three behave the same in every era this
+/// pre-migration pass can run at — the #618 TEXT/INTEGER split is about the
+/// STAMP, not about nullness. That is why it does not call
 /// `agaric_store::block_descendants::cascade_depth_saturated`, which is
 /// additionally deliberately conservative (`>= CAP - 1`, so it fires on a tree
 /// sitting exactly AT the cap that was not truncated at all) — a false
@@ -1584,11 +1626,11 @@ const CASCADE_COHORT_DDL: &str = "CREATE TEMP TABLE IF NOT EXISTS recovery_casca
 /// its OWN outer predicate, which this flag deliberately does not mirror
 /// (mirroring it would still be inexact: the deep tail can be arbitrarily far
 /// past `DESCENDANT_DEPTH_CAP + 1`, so only an unbounded walk could decide it).
-/// Three reachable shapes therefore report a truncation on a rebuild that is
+/// It DOES mirror the `reach`, because that is part of the walk: an `Active`
+/// walk stopping at a tombstoned child did not fail to reach anything.
+/// Two reachable shapes therefore report a truncation on a rebuild that is
 /// byte-identical to the uncapped one:
 ///
-/// * `delete_block` / the move sweep, when everything past the cap is ALREADY
-///   tombstoned — the `deleted_at IS NULL` guard would have skipped it anyway.
 /// * `restore_block`, when the deep tail is not a member of the restored
 ///   cohort (e.g. a peer created it under the trashed frontier after the
 ///   delete), so `deleted_at = ?ref` excludes it.
@@ -1605,6 +1647,7 @@ const CASCADE_COHORT_DDL: &str = "CREATE TEMP TABLE IF NOT EXISTS recovery_casca
 async fn materialize_cascade_cohort(
     executor: &mut sqlx::SqliteConnection,
     seed: &str,
+    reach: CascadeReach,
 ) -> Result<bool, sqlx::Error> {
     // `IF NOT EXISTS`, re-issued on EVERY cascade op rather than once per
     // replay. Hoisting it to the top of `recover_blocks_from_op_log` was
@@ -1624,30 +1667,50 @@ async fn materialize_cascade_cohort(
         .await?;
     // dynamic-sql: the cascades' recursive CTE, at the pre-migration era where
     // `query!`'s head-shaped check must not be assumed (same reason as the
-    // cascade statements below).
+    // cascade statements below). Both arms read `id` / `parent_id` /
+    // `deleted_at IS NULL` and bind no timestamp, so both stay era-agnostic —
+    // the #618 TEXT/INTEGER split is about the STAMP, not the walk.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    sqlx::query(
-        "INSERT INTO recovery_cascade_cohort(id, depth) \
-         WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-               JOIN descendants d ON b.parent_id = d.id \
-              WHERE d.depth < 100 \
-         ) \
-         SELECT id, depth FROM descendants",
-    )
+    // #4233: the CTE bodies come from the store's macros rather than being
+    // copied, so recovery's reach cannot drift from the shape the engine
+    // walks — the parity this function exists to hold is structural, not
+    // maintained by review. The macros expand to string literals precisely so
+    // a `sqlx::query(…)` site can `concat!()` them (`block_descendants.rs`).
+    const STANDARD_WALK: &str = concat!(
+        "INSERT INTO recovery_cascade_cohort(id, depth) ",
+        agaric_store::descendants_cte_standard!(),
+        "SELECT id, depth FROM descendants"
+    );
+    const ACTIVE_WALK: &str = concat!(
+        "INSERT INTO recovery_cascade_cohort(id, depth) ",
+        agaric_store::descendants_cte_active!(),
+        "SELECT id, depth FROM descendants"
+    );
+    sqlx::query(match reach {
+        CascadeReach::Standard => STANDARD_WALK,
+        CascadeReach::Active => ACTIVE_WALK,
+    })
     .bind(seed)
     .execute(&mut *executor)
     .await?;
     // dynamic-sql: reads the TEMP table above plus the era-varying `blocks`.
-    sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS ( \
+    // The probe mirrors the WALK's own filter: under `Active` a tombstoned
+    // frontier child is not tree the walk failed to reach, it is tree the walk
+    // would have stopped at anyway.
+    const STANDARD_PROBE: &str = "SELECT EXISTS ( \
              SELECT 1 FROM blocks c \
                JOIN recovery_cascade_cohort d ON c.parent_id = d.id \
               WHERE d.depth = 100 \
-         )",
-    )
+         )";
+    const ACTIVE_PROBE: &str = "SELECT EXISTS ( \
+             SELECT 1 FROM blocks c \
+               JOIN recovery_cascade_cohort d ON c.parent_id = d.id \
+              WHERE c.deleted_at IS NULL AND d.depth = 100 \
+         )";
+    sqlx::query_scalar::<_, bool>(match reach {
+        CascadeReach::Standard => STANDARD_PROBE,
+        CascadeReach::Active => ACTIVE_PROBE,
+    })
     .fetch_one(executor)
     .await
 }
@@ -1698,7 +1761,8 @@ async fn purge_cascade_step(
     executor: &mut sqlx::SqliteConnection,
     seed: &str,
 ) -> Result<PurgeCascadeStep, sqlx::Error> {
-    let truncated = materialize_cascade_cohort(&mut *executor, seed).await?;
+    let truncated =
+        materialize_cascade_cohort(&mut *executor, seed, CascadeReach::Standard).await?;
     // Read the frontier BEFORE the DELETE: afterwards the rows it joins
     // through are gone and the answer would always be empty.
     let unreached = if truncated {
@@ -2210,9 +2274,10 @@ async fn recover_blocks_from_op_log(
                 //
                 // The rule (cascade-soft-delete the moved subtree at the
                 // nearest tombstoned ancestor's `deleted_at`) is R9's and
-                // #4112's; what differs is the REACH of the two walks it is
-                // built from, which is recovery's pre-existing convention and
-                // is argued at the cascade below — see
+                // #4112's. Since #4233 the downward REACH of the two walks it
+                // is built from agrees; what still differs is the DEPTH bound
+                // (R27 re-anchors past the cap, this replay stops at it and
+                // REPORTS the truncation, #4232) — see
                 // `sweep_move_under_tombstoned_ancestor`'s doc comment for why
                 // sweeping is the only candidate behaviour that CONVERGES with
                 // the move-first replay order, and why a move whose SUBJECT is
@@ -2425,18 +2490,29 @@ async fn recover_blocks_from_op_log(
                         // Recovery clears `Y`; the materializer leaves it
                         // trashed.
                         //
-                        // Left as-is deliberately, for the same reason the
-                        // sweep's reach gap below is: recovery's `restore_block`
-                        // and `delete_block` arms both use this flat shape, so
-                        // importing the contiguous one HERE would make recovery
-                        // disagree with ITSELF (a `RestoreBlock` on the cleared
-                        // cohort would cover rows this un-sweep would not),
-                        // which is the self-consistency #4187 traded the
-                        // engine-parity for. Closing it means changing all three
-                        // arms together, not this one. Reaching it also needs a
-                        // pre-existing `deleted_at`-equal-but-disconnected row,
-                        // which only a #4188/#4204-shaped history produces.
-                        if materialize_cascade_cohort(&mut *executor, block_id).await? {
+                        // Left as-is deliberately: this arm clears rows that
+                        // are TOMBSTONED, so it shares the `restore_block`
+                        // arm's flat `(subtree, deleted_at)` shape and its
+                        // standard walk (the members it looks for sit below a
+                        // tombstone by construction). Importing the contiguous
+                        // one HERE would make recovery disagree with ITSELF —
+                        // a `RestoreBlock` on the cleared cohort would cover
+                        // rows this un-sweep would not — which is the
+                        // self-consistency #4187 exists to keep. Closing it
+                        // means changing this arm and `restore_block`
+                        // together, not this one alone. (#4233 aligned the two
+                        // arms that write LIVE rows, `delete_block` and the
+                        // move sweep; this pair is the other axis and stays
+                        // pinned.) Reaching it also needs a pre-existing
+                        // `deleted_at`-equal-but-disconnected row, which only a
+                        // #4188/#4204-shaped history produces.
+                        if materialize_cascade_cohort(
+                            &mut *executor,
+                            block_id,
+                            CascadeReach::Standard,
+                        )
+                        .await?
+                        {
                             diagnostics.cascade_truncations.push(CascadeTruncation {
                                 cascade: CASCADE_MOVE_UNSWEEP,
                                 block_id: block_id.to_owned(),
@@ -2541,33 +2617,18 @@ async fn recover_blocks_from_op_log(
                     // already-trashed descendant's original cohort, exactly as
                     // it does there.
                     //
-                    // REACH — and why it is the `delete_block` ARM's reach,
-                    // not the engine sweep's. #4112 cascades through
-                    // `project_delete_block_to_sql`, whose walk is
-                    // `DescendantWalkFilter::Active` (it STOPS at an
-                    // already-tombstoned child) and depth-UNBOUNDED (R27
-                    // re-anchoring). This walk is the standard one (it
-                    // descends THROUGH a tombstoned child) and stops at the
-                    // depth-100 cap. So on a subtree holding a LIVE block
-                    // beneath an already-tombstoned child of the moved block
-                    // — reachable, it is the shape
-                    // `recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`
-                    // builds — this stamps rows #4112 would leave live. That
-                    // is deliberate: recovery's own `delete_block` arm walks
-                    // the standard tree with the same cap, so adopting the
-                    // engine's reach here would make recovery disagree with
-                    // ITSELF — `{Move(B → P), Delete(P)}` (caught by the
-                    // delete arm's standard walk) and `{Delete(P),
-                    // Move(B → P)}` (caught by this sweep) would stamp
-                    // different row sets for the same op pair, which is
-                    // exactly the replay-order divergence #4187 exists to
-                    // remove. The residual recovery-vs-engine reach gap is
-                    // the delete cascade's, i.e. the #4188 / #4204 lane, and
-                    // closing it means changing BOTH arms together.
+                    // REACH (#4233): `CascadeReach::Active` — see the variant's
+                    // doc for why, and why this arm and the `delete_block` arm
+                    // below must carry the SAME reach. The residual gap to the
+                    // engine is depth only: its walk is unbounded (R27
+                    // re-anchoring), this one stops at the depth-100 cap and
+                    // REPORTS the truncation (#4232).
                     // #4232/#4289: the sweep's own reach, answered off the
                     // SAME walk the UPDATE below is keyed on — one enumeration
                     // per swept move, not two.
-                    if materialize_cascade_cohort(&mut *executor, block_id).await? {
+                    if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active)
+                        .await?
+                    {
                         diagnostics.cascade_truncations.push(CascadeTruncation {
                             cascade: CASCADE_MOVE_SWEEP,
                             block_id: block_id.to_owned(),
@@ -2599,9 +2660,15 @@ async fn recover_blocks_from_op_log(
                 // lost. Stamp the op's OWN `created_at` (not boot-time `now`)
                 // so distinct delete ops keep distinct cohorts, and cascade
                 // through the temp `blocks` tree (depth-bounded, same shape as
-                // production / the purge cascade). The `deleted_at IS NULL`
-                // guard preserves an already-deleted descendant's original
-                // cohort timestamp (mirrors `descendants_cte_active!()`).
+                // production). The `deleted_at IS NULL` guard preserves an
+                // already-deleted descendant's original cohort timestamp.
+                //
+                // REACH (#4233): `CascadeReach::Active` — see the variant's doc.
+                // The `deleted_at IS NULL` guard above was not enough on its
+                // own: it prunes the WRITE, while the walk kept descending, so
+                // a LIVE block under a tombstoned child was still reached and
+                // stamped. The move sweep above carries the same reach, and the
+                // two move together (#4187).
                 //
                 // #618: encode per era — INTEGER epoch-ms once 0080 has run
                 // (any later rebuild re-run copies `deleted_at` RAW into a
@@ -2610,15 +2677,18 @@ async fn recover_blocks_from_op_log(
                 // (0080's julianday() backfill converts it).
                 //
                 // #2043: this arm is INTENTIONALLY left inline, not routed
-                // through `project_delete_block_to_sql`. That projection is
-                // i64-only (`deleted_at` INTEGER) and its recursive CTE filter
-                // differs; the era-switched TEXT/INTEGER stamp above cannot be
-                // expressed through it, so unifying would mis-stamp the
-                // pre-0080 (TEXT) era.
+                // through `project_delete_block_to_sql`. The reach is now the
+                // same, but that projection is i64-only (`deleted_at` INTEGER):
+                // the era-switched TEXT/INTEGER stamp above cannot be expressed
+                // through it, so unifying would mis-stamp the pre-0080 (TEXT)
+                // era. The walk FILTER carries no timestamp, which is why the
+                // reach could be aligned while the stamp stayed hand-rolled.
                 // #4232: a truncated delete cohort leaves the subtree's deep
                 // tail LIVE under a tombstoned ancestor — the invisible orphan
                 // this arm exists to prevent, below depth 100.
-                if materialize_cascade_cohort(&mut *executor, block_id).await? {
+                if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active)
+                    .await?
+                {
                     diagnostics.cascade_truncations.push(CascadeTruncation {
                         cascade: CASCADE_DELETE,
                         block_id: block_id.to_owned(),
@@ -2681,7 +2751,9 @@ async fn recover_blocks_from_op_log(
                 // cohort it was raised with. Probed before the UPDATE for
                 // symmetry; the walk is the standard one, so the answer does
                 // not depend on that.
-                if materialize_cascade_cohort(&mut *executor, block_id).await? {
+                if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Standard)
+                    .await?
+                {
                     diagnostics.cascade_truncations.push(CascadeTruncation {
                         cascade: CASCADE_RESTORE,
                         block_id: block_id.to_owned(),
@@ -4133,6 +4205,68 @@ mod tests {
         );
     }
 
+    /// #4233, the move sweep's half of the reach pair. The sweep and the
+    /// `delete_block` arm are the two ways the same op pair can be replayed
+    /// (`{Delete(P), Move(B → P)}` lands here, `{Move(B → P), Delete(P)}` in
+    /// the delete arm), so they must agree on REACH or recovery diverges with
+    /// itself across replay orders (#4187).
+    ///
+    /// `B > X(tombstoned) > Y(live)`, then `Move(B → P)` with `P` tombstoned.
+    /// The sweep's walk is `CascadeReach::Active`: it stops AT `X` instead of
+    /// descending through it, so `Y` keeps its `NULL` and R9's Pass C sweep is
+    /// still free to give it `X`'s cohort — the nearest tombstoned ancestor in
+    /// the converged tree (#4188/#4204). The pre-#4233 standard walk reached
+    /// `Y` and stamped it with `P`'s cohort instead, which the resurrection
+    /// guard then cements.
+    ///
+    /// Reddens if this arm goes back to `CascadeReach::Standard`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_sweep_stops_at_a_tombstoned_child() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+        seed_create_op(&pool, 3, "X", Some("B"), T0 + 3).await;
+        seed_delete_op(&pool, 4, "X", T0 + 4).await;
+        // Created AFTER X's delete — live under a tombstone, exactly the row
+        // the two walks disagree about.
+        seed_create_op(&pool, 5, "Y", Some("X"), T0 + 5).await;
+        seed_delete_op(&pool, 6, "P", T0 + 6).await;
+        seed_move_op(&pool, 7, "B", "P", T0 + 7).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // The sweep DID fire — without this the `Y` assertion below would pass
+        // for the wrong reason.
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["B".to_string()],
+            "the live subject moved under a tombstoned ancestor is swept"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "B").await,
+            Some(T0 + 6),
+            "the swept subject joins the ancestor's cohort"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "X").await,
+            Some(T0 + 4),
+            "the already-tombstoned child keeps its OWN cohort (the write guard)"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "Y").await,
+            None,
+            "#4233: the walk STOPS at the tombstoned X, so the live block below it is not \
+             in the cohort at all — stamping it with P's cohort would cement the wrong \
+             answer past R9's Pass C sweep"
+        );
+    }
+
     /// The negative half of the same property: the sweep must not fire on the
     /// overwhelmingly common shape. `Move(B → P)` with `P` LIVE leaves `B`
     /// (and its subtree) live. Reddens on an over-broad sweep — e.g. one that
@@ -5171,7 +5305,9 @@ mod tests {
         }
 
         let mut conn = pool.acquire().await.unwrap();
-        let truncated = materialize_cascade_cohort(&mut conn, "w0").await.unwrap();
+        let truncated = materialize_cascade_cohort(&mut conn, "w0", CascadeReach::Standard)
+            .await
+            .unwrap();
         assert!(
             truncated,
             "a chain one level past the cap is truncated by construction"
@@ -5201,9 +5337,10 @@ mod tests {
         // The negative half: a subtree that fits reports nothing, and the
         // cohort still holds the whole thing.
         let shallow_root = format!("w{}", cap - 1);
-        let truncated = materialize_cascade_cohort(&mut conn, &shallow_root)
-            .await
-            .unwrap();
+        let truncated =
+            materialize_cascade_cohort(&mut conn, &shallow_root, CascadeReach::Standard)
+                .await
+                .unwrap();
         assert!(
             !truncated,
             "a subtree that fits inside the cap is not truncated"
@@ -5606,15 +5743,22 @@ mod tests {
         );
     }
 
-    /// The same characteristic on a DOWNWARD arm, where it is easiest to see
-    /// that the reported walk wrote exactly the rows an uncapped one would
-    /// have: everything past the cap is already tombstoned in an earlier
-    /// cohort, so the delete cascade's `deleted_at IS NULL` guard would have
-    /// skipped it even with unlimited reach. The rebuilt table is
-    /// byte-identical to the uncapped rebuild, and the truncation is reported
-    /// anyway.
+    /// #4233: the DOWNWARD arm no longer has that characteristic. Everything
+    /// past the cap is already tombstoned in an earlier cohort, and the delete
+    /// cascade's walk is now `CascadeReach::Active` — it stops AT the tombstone
+    /// rather than descending through it — so there is nothing beyond the cap
+    /// the walk would have visited and NO truncation is reported.
+    ///
+    /// This test previously pinned the opposite (a report on a byte-identical
+    /// rebuild) as the accepted downward-arm false positive. It moved with the
+    /// reach, because the probe mirrors the cascade's own walk: pruning the
+    /// walk makes the probe exact for this shape. A genuinely truncated delete
+    /// cascade — a LIVE tail past the cap — still reports, pinned by
+    /// `recover_delete_cascade_reports_its_depth_cap_truncation`. The
+    /// remaining false-positive shapes are the restore cohort's and the move
+    /// arm's upward probe (see `materialize_cascade_cohort`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn recover_delete_cascade_truncation_is_structural_not_semantic() {
+    async fn recover_delete_cascade_stops_at_an_already_tombstoned_deep_tail() {
         let (pool, _dir) = test_pool().await;
         const T0: i64 = 1_767_225_600_000;
         let cap = depth_cap();
@@ -5643,11 +5787,11 @@ mod tests {
             "and the reachable cohort is stamped in full"
         );
 
-        assert_eq!(
-            diagnostics.cascade_truncations,
-            vec![truncation(CASCADE_DELETE, "c0")],
-            "reported despite a rebuild identical to the uncapped one: the probe mirrors the \
-             cascade's CTE, not the cascade's outer `deleted_at IS NULL` predicate"
+        assert!(
+            diagnostics.cascade_truncations.is_empty(),
+            "the Active walk stopped at the tombstoned tail, so nothing past the cap was \
+             missed and nothing is reported (#4233); got {:?}",
+            diagnostics.cascade_truncations
         );
     }
 

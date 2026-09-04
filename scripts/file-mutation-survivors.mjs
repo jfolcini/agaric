@@ -48,7 +48,9 @@
 //     [--children]                  (also open/update/close ONE child issue per
 //                                    AREA — see § Parent/child below)
 //     [--max-children N]            (blast-radius cap on child CREATES in a
-//                                    single run; default DEFAULT_MAX_CHILDREN)
+//                                    single run; default LANE_MAX_CHILDREN for
+//                                    the --lane being run, NOT the both-lane
+//                                    DEFAULT_MAX_CHILDREN)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -143,12 +145,14 @@
 // `file-scheduled-failures.mjs` refuses to leave open.
 //
 // `--max-children` caps CHILD CREATES IN ONE RUN and throws past it, in the
-// same spirit as the `--require-*` gates: refuse with a diagnosis rather than
-// do something unrecoverable. The default is DERIVED, at import time, from
-// the actual size of the area universe (see DEFAULT_MAX_CHILDREN and #3667 —
-// a pinned copy of that size silently went stale once already), so it
-// cannot bite on real data and can only bite if `survivorArea` starts
-// fragmenting.
+// same spirit as the `--require-input` gate: refuse with a diagnosis rather
+// than do something unrecoverable. The default is DERIVED, at import time,
+// from the size of the RUNNING LANE's area universe (`LANE_MAX_CHILDREN`),
+// because #3667's pinned copy of that size silently went stale once already.
+// So it cannot bite on real data and can only bite if `survivorArea` starts
+// fragmenting. `DEFAULT_MAX_CHILDREN` is the two lanes SUMMED — roughly twice
+// what either lane alone can reach, which is why it is not the per-run
+// default.
 //
 // ── Accepted-equivalent mutants (#4173) ──────────────────────────────────
 //
@@ -244,12 +248,8 @@ import { join, resolve } from 'node:path'
 // the tag here too, to filter a mixed id set; `main` reads only the lane's own
 // input now, so nothing ever needed it.
 export const LANES = {
-  rust: {
-    title: 'Mutation testing: rust survivor triage (auto-filed, do not rename)',
-  },
-  frontend: {
-    title: 'Mutation testing: frontend survivor triage (auto-filed, do not rename)',
-  },
+  rust: 'Mutation testing: rust survivor triage (auto-filed, do not rename)',
+  frontend: 'Mutation testing: frontend survivor triage (auto-filed, do not rename)',
 }
 export const LANE_NAMES = Object.keys(LANES)
 export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
@@ -1593,8 +1593,8 @@ export function buildIssueBody({
   state.push('```')
   state.push(MARKER_END)
   // Part of STATE, not of the presentational sections: it is bounded by the
-  // area count (one short line each, capped by DEFAULT_MAX_CHILDREN) and it is
-  // the primary dedup record, so the clamp ladder below must never drop it.
+  // area count, one short line each, and it is the primary dedup record, so
+  // the clamp ladder below must never drop it.
   state.push(...renderChildBlock(childLinks))
   // #4173 — STATE too, for the same reason and with the same consequence: it
   // is the filer's memory of what triage has already ruled equivalent, so the
@@ -1960,14 +1960,14 @@ function defaultRunUrl() {
  * lane that ran writes one report per module, and its own liveness guard
  * (`check-mutation-reports.mjs`) fails on a module that produced none.
  */
-function assertLaneInputsPresent(args) {
+function assertLaneInputsPresent(args, frontendReports) {
   if (!args.requireInput) return
   if (args.lane === 'rust' && !existsSync(args.rustMissed ?? '')) {
     throw new Error(
       `--require-input: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the rust tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
     )
   }
-  if (args.lane === 'frontend' && frontendReportCount(args.frontendDir ?? '') === 0) {
+  if (args.lane === 'frontend' && frontendReports === 0) {
     throw new Error(
       `--require-input: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the frontend tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
     )
@@ -2057,7 +2057,7 @@ export function main(argv = process.argv.slice(2)) {
       `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
     )
   }
-  args.title = LANES[args.lane].title
+  args.title = LANES[args.lane]
   // Per-lane blast radius unless the caller pinned one explicitly.
   if (!args.maxChildrenExplicit) args.maxChildren = LANE_MAX_CHILDREN[args.lane]
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
@@ -2066,7 +2066,11 @@ export function main(argv = process.argv.slice(2)) {
   // #3364 — a MISSING lane input is a hard error, not an empty one; see
   // `assertLaneInputsPresent` above for why the alternative silently corrupts
   // the tracking issue's state.
-  assertLaneInputsPresent(args)
+  // Counted ONCE and threaded: this walks the whole artifact tree, and both
+  // the input guard above and `frontendComplete` below need the same number.
+  // Only the frontend lane reads it; the rust lane never touches that tree.
+  const frontendReports = args.lane === 'frontend' ? frontendReportCount(args.frontendDir ?? '') : 0
+  assertLaneInputsPresent(args, frontendReports)
 
   // Only the lane's OWN input is read. An earlier draft parsed both and
   // filtered by tag; review correctly called that dead weight, since the two
@@ -2144,7 +2148,7 @@ export function main(argv = process.argv.slice(2)) {
   const frontendComplete =
     args.lane !== 'frontend' ||
     EXPECTED_FRONTEND_REPORTS === undefined ||
-    frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
+    frontendReports >= EXPECTED_FRONTEND_REPORTS
 
   const childActions = args.children
     ? decideChildActions({
@@ -2996,10 +3000,9 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         // NOT asserted here: that the suppressed close keeps its `area ->
         // #number` record. That only happens on the REAL path —
         // `applyChildActions` builds the link map from the actions it is
-        // given, while a dry run renders from `knownChildren` regardless. An
-        // assertion here passes with or without the fix, so it would be
-        // vacuous. Covering it needs a `gh`-stubbed frontend driver; this
-        // harness is rust-only. See `suppressedChildLinks` in `main`.
+        // given, while a dry run renders from `knownChildren` regardless, so
+        // an assertion here would pass with or without the fix.
+        // `selfTestSuppressedChildLinks` covers it through the `gh` stub.
         if (bad.length === 0) ok(NAME)
         else fail(NAME, `${bad.join('; ')} — out=${short.out.slice(0, 320)}`)
       }
@@ -3224,10 +3227,10 @@ function selfTestChildPlanning({ check, survivor }) {
       area: FE,
       members: [survivor(1)],
       parentNumber: undefined,
-      parentTitle: LANES.frontend.title,
+      parentTitle: LANES.frontend,
     })
     check(
-      firstRun.includes(`Parent: "${LANES.frontend.title}"`) && !firstRun.includes('undefined'),
+      firstRun.includes(`Parent: "${LANES.frontend}"`) && !firstRun.includes('undefined'),
       "a child filed before its lane parent exists names that lane's parent by title",
       firstRun.split('\n').find((l) => l.startsWith('Parent:')) ?? '(no Parent line)',
     )
@@ -3298,8 +3301,43 @@ function selfTestChildGh({ check }) {
   const OP = 'rust: agaric-store/src/op.rs'
   const REV = 'rust: src/reverse/mod.rs'
 
-  const drive = ({ missedLines, body, list = [], state = 'OPEN' }) => {
+  // `lane` swaps which input the run reads: rust from `missed.txt`, frontend
+  // from a tree of Stryker `mutation.json` reports. `reports` is
+  // `[[module, [[line, column, mutator], …]], …]`, one entry per report file —
+  // and FEWER entries than EXPECTED_FRONTEND_REPORTS is what makes a frontend
+  // run incomplete, which is the only route to `suppressedChildLinks`.
+  const drive = ({
+    missedLines = [],
+    body,
+    list = [],
+    state = 'OPEN',
+    lane = 'rust',
+    reports = [],
+  }) => {
     writeFileSync(missed, missedLines.join('\n'), 'utf8')
+    // `feDir` exists only on the frontend lane; the writes that use it live
+    // with it, so no lane can resolve them against cwd.
+    let feDir = ''
+    if (lane === 'frontend') {
+      feDir = mkdtempSync(join(tmpdir(), 'mutation-children-fe-'))
+      for (const [module_, survivors] of reports) {
+        mkdirSync(join(feDir, module_), { recursive: true })
+        writeFileSync(
+          join(feDir, module_, 'mutation.json'),
+          JSON.stringify({
+            files: {
+              [`src/lib/${module_}.ts`]: {
+                mutants: survivors.map(([line, column, mutatorName]) => ({
+                  status: 'Survived',
+                  mutatorName,
+                  location: { start: { line, column } },
+                })),
+              },
+            },
+          }),
+        )
+      }
+    }
     writeFileSync(knownBody, body, 'utf8')
     writeFileSync(listFixture, JSON.stringify(list), 'utf8')
     writeFileSync(stateFixture, state, 'utf8')
@@ -3313,9 +3351,8 @@ function selfTestChildGh({ check }) {
     try {
       main([
         '--lane',
-        'rust',
-        '--rust-missed',
-        missed,
+        lane,
+        ...(lane === 'frontend' ? ['--frontend-dir', feDir] : ['--rust-missed', missed]),
         '--children',
         '--known-body-file',
         knownBody,
@@ -3384,7 +3421,7 @@ function selfTestChildGh({ check }) {
     // reverting the fix reddens this assertion. It replaces an earlier
     // `buildChildBody` throw, which pinned a state no call site can reach.
     check(
-      created.every((c) => (c.body ?? '').includes(`Parent: "${LANES.rust.title}"`)),
+      created.every((c) => (c.body ?? '').includes(`Parent: "${LANES.rust}"`)),
       "a bootstrapped child names its lane's parent by title, not `undefined`",
       created.map((c) => (c.body ?? '').split('\n')[2] ?? '(no body)').join(' | '),
     )
@@ -3527,6 +3564,7 @@ function selfTestChildGh({ check }) {
   }
 
   selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP })
+  selfTestSuppressedChildLinks({ check, drive, parentWith })
 
   // 11g. A recorded child that no longer exists (deleted, or transferred) must
   //      not take the whole run down with it — the parent update, and every
@@ -3586,6 +3624,59 @@ function selfTestChildGh({ check }) {
       `${calls.map((c) => c.sub).join(',')} recorded=${JSON.stringify([...written])}`,
     )
   }
+}
+
+/**
+ * #3364 — the suppressed close's `area -> #number` record, on the REAL write
+ * path. A short frontend report set drops the close (a child rewritten to
+ * "0 findings" while its survivors are live is a lost issue), but
+ * `applyChildActions` builds the parent's link map from the actions it is
+ * GIVEN — so dropping the close also drops the link unless `suppressedChildLinks`
+ * puts it back. Losing it re-renders the parent without that area while its
+ * child stays open, and once the area is genuinely empty no close is ever
+ * generated again: the child sits open forever listing killed mutants.
+ *
+ * The dry-run fixture cannot see this. It renders from `knownChildren`
+ * regardless, so the link survives there with or without the fix. This is the
+ * frontend half of the `gh`-stubbed driver, and the only place that path is
+ * asserted.
+ */
+function selfTestSuppressedChildLinks({ check, drive, parentWith }) {
+  const NAME = 'a close suppressed by a short frontend run keeps its area -> #number record (#3364)'
+  // Same reason as the dry-run half: under the #3373 detached-copy guard
+  // `EXPECTED_FRONTEND_REPORTS` is undefined, the completeness gate disables
+  // itself by design, and no close is ever suppressed to assert about.
+  if (EXPECTED_FRONTEND_REPORTS === undefined) {
+    check(true, `${NAME} (skipped: count not derivable here)`, '')
+    return
+  }
+
+  const GONE = 'frontend: classify'
+  const goneId = '[frontend] classify: src/lib/classify.ts:9:1 [ConditionalExpression]'
+  const calls = drive({
+    lane: 'frontend',
+    // Two reports where a complete lane writes EXPECTED_FRONTEND_REPORTS (one
+    // per enrolled module): short, so the run is incomplete by definition.
+    // `classify` reports nothing, which is exactly the shape the gate exists
+    // for — an absent module looks identical to a cleaned-up one.
+    reports: [
+      ['tokenize', [[7, 3, 'ConditionalExpression']]],
+      ['classify', []],
+    ],
+    body: parentWith([goneId], new Map([[GONE, 202]])),
+  })
+  const seq = calls.map((c) => c.sub).join(',')
+  const parentEdit = calls.findLast((c) => c.sub === 'edit')
+  const recorded = parseChildLinks(parentEdit?.body ?? '')
+  check(
+    // The new area is filed and the parent edited, and that is the WHOLE call
+    // set — no `view` and no `close`, either of which would mean the close
+    // plan was still being executed against #202.
+    seq === 'list,create,edit',
+    "a short frontend run files the new area but leaves the vanished area's child alone",
+    `gh sequence was: ${seq || '(no gh calls at all)'}`,
+  )
+  check(recorded.get(GONE) === 202, NAME, `parent recorded: ${JSON.stringify([...recorded])}`)
 }
 
 /**

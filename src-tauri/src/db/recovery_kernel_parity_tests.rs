@@ -40,6 +40,10 @@
 //!    reconstructs the exact orphan scenario and asserts the kernel restores the
 //!    tombstoned ancestor while recovery leaves it deleted. The pin is
 //!    non-vacuous: it fails if either interpreter is changed to match the other.
+//!    The same corpus carries the #4233 CONVERGENCE pin on the delete cascade's
+//!    REACH: a live block under an already-tombstoned child must get the same
+//!    `deleted_at` from both interpreters. Divergence here is not a documented
+//!    trade — it decides whether R9's Pass C sweep can still heal the row.
 //!
 //! ## How the two arms stay byte-aligned on op ordering / timestamps
 //!
@@ -271,14 +275,23 @@ async fn active_shape(pool: &SqlitePool, ids: [&str; 4]) -> Vec<ShapeRow> {
     .expect("active shape")
 }
 
-/// Whether `id`'s row is soft-deleted (`deleted_at IS NOT NULL`). A missing row
-/// returns `None`.
-async fn is_deleted(pool: &SqlitePool, id: &str) -> Option<bool> {
+/// Raw `deleted_at` — the COHORT STAMP, not just the flag. The outer `Option`
+/// is row presence, the inner one the column: `Some(None)` is a live row. The
+/// #4233 pin needs the value, because the two interpreters disagreed on WHICH
+/// stamp a row got, not only on whether it got one.
+async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<Option<i64>> {
     sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await
         .expect("fetch deleted_at")
+}
+
+/// Whether `id`'s row is soft-deleted (`deleted_at IS NOT NULL`). A missing row
+/// returns `None`.
+async fn is_deleted(pool: &SqlitePool, id: &str) -> Option<bool> {
+    deleted_at_of(pool, id)
+        .await
         .map(|deleted_at| deleted_at.is_some())
 }
 
@@ -665,20 +678,29 @@ const D_PAGE: &str = "01HZ0000000000000000DVPG01";
 const D_PARENT: &str = "01HZ0000000000000000DVPR01";
 // The leaf that is deleted first, then restored — its restore is the divergence.
 const D_CHILD: &str = "01HZ0000000000000000DVCH01";
+// #4233: created UNDER the already-tombstoned CHILD, so it is LIVE beneath a
+// tombstone when PARENT is deleted — the row whose stamp the delete cascade's
+// REACH decides.
+const D_GRANDCHILD: &str = "01HZ0000000000000000DVGC01";
 
 /// Build the kernel arm for the divergence corpus. Returns the pool.
 ///
 /// Corpus (all through `apply_op_tx`):
 ///   1. create PAGE > PARENT > CHILD (nested).
 ///   2. DeleteBlock(CHILD)  — CHILD alone gets cohort `ts_child`.
-///   3. DeleteBlock(PARENT) — PARENT gets cohort `ts_parent`; the already-
+///   3. CreateBlock(GRANDCHILD) under the tombstoned CHILD (#4233). The create
+///      arm carries no tombstoned-parent guard, so both interpreters accept it
+///      and it is LIVE under a tombstone when step 4 runs.
+///   4. DeleteBlock(PARENT) — PARENT gets cohort `ts_parent`; the already-
 ///      deleted CHILD is SKIPPED by the active-descendants filter, so it keeps
 ///      `ts_child`. PARENT is now a tombstoned ancestor above CHILD.
-///   4. RestoreBlock(CHILD, deleted_at_ref = ts_child).
+///   5. RestoreBlock(CHILD, deleted_at_ref = ts_child).
 ///
-/// After step 4 the kernel restores CHILD *and* the contiguous soft-deleted
+/// After step 5 the kernel restores CHILD *and* the contiguous soft-deleted
 /// ancestor PARENT (#1884/#2017), so both are active. Recovery, replaying the
 /// SAME op_log, restores only the flat CHILD cohort and leaves PARENT deleted.
+/// GRANDCHILD is inert to that restore in BOTH arms — whatever stamp step 4
+/// leaves on it, it is not `ts_child`, so the cohort UPDATE never matches it.
 async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
     let pool = init_pool(&dir.path().join("kernel_arm.db"))
         .await
@@ -729,7 +751,22 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
         .expect("apply delete child");
     tx.commit().await.expect("commit delete child");
 
-    // (3) DeleteBlock(PARENT) — PARENT becomes the tombstoned ancestor.
+    // (3) #4233: CreateBlock(GRANDCHILD) under the ALREADY-tombstoned CHILD.
+    // This is the whole reach fixture: the delete below seeds at PARENT, and
+    // whether GRANDCHILD lands in its cohort depends on whether the cascade
+    // walk descends THROUGH the tombstoned CHILD or stops at it.
+    create_via_kernel(
+        &pool,
+        &state,
+        D_GRANDCHILD,
+        "content",
+        Some(D_CHILD),
+        "divergence-grandchild",
+    )
+    .await;
+    stamp_owner(&pool, D_GRANDCHILD, Some(D_CHILD), D_PAGE).await;
+
+    // (4) DeleteBlock(PARENT) — PARENT becomes the tombstoned ancestor.
     let del_parent = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(D_PARENT),
     });
@@ -742,7 +779,7 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
         .expect("apply delete parent");
     tx.commit().await.expect("commit delete parent");
 
-    // (4) RestoreBlock(CHILD) with the CHILD-cohort token. Its parent is still
+    // (5) RestoreBlock(CHILD) with the CHILD-cohort token. Its parent is still
     // tombstoned, so `apply_restore_block_via_loro` resolves off the soft-
     // deleted parent, misses a space, and routes to the sql_only restore — which
     // STILL runs `project_restore_block_to_sql` (the ancestor-restoring kernel
@@ -821,6 +858,60 @@ async fn restore_ancestor_divergence_is_pinned() {
         is_deleted(&recovery_pool, D_PARENT).await,
         "the documented #2043 ancestor-restore divergence must be OBSERVABLE: \
          kernel restores PARENT, recovery leaves it deleted"
+    );
+}
+
+/// #4233: the delete cascade's REACH past an already-tombstoned child must be
+/// the same in both interpreters.
+///
+/// `PAGE > PARENT > CHILD(tombstoned) > GRANDCHILD(live)`, then
+/// `DeleteBlock(PARENT)`. The kernel's `project_delete_block_to_sql` walks
+/// `DescendantWalkFilter::Active`, which PRUNES THE WALK at the tombstoned
+/// CHILD, so GRANDCHILD is not in the cohort and stays live. Recovery used to
+/// walk the standard tree — descending THROUGH CHILD — and prune only the
+/// WRITE (`WHERE deleted_at IS NULL`), so GRANDCHILD was stamped with PARENT's
+/// cohort.
+///
+/// Why the two answers are not interchangeable, and why recovery is the side
+/// that moved, is stated once on `db::recovery::CascadeReach::Active`. In this
+/// fixture's terms: `NULL` lets R9's Pass C sweep give GRANDCHILD `ts_child`,
+/// the nearest tombstoned ancestor's cohort; a stamp of `ts_parent` is what
+/// the resurrection guard then refuses to correct.
+///
+/// Non-vacuous: before the fix recovery returned `Some(Some(ts_parent))` here
+/// while the kernel returned `Some(None)`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_cascade_reach_past_a_tombstoned_child_agrees_with_kernel() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let kernel_pool = run_divergence_kernel_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    let kernel_stamp = deleted_at_of(&kernel_pool, D_GRANDCHILD).await;
+    let recovery_stamp = deleted_at_of(&recovery_pool, D_GRANDCHILD).await;
+    assert_eq!(
+        kernel_stamp, recovery_stamp,
+        "the delete cascade's reach past a tombstoned child must be the SAME \
+         in both interpreters (#4233); kernel={kernel_stamp:?} \
+         recovery={recovery_stamp:?}"
+    );
+    assert_eq!(
+        recovery_stamp,
+        Some(None),
+        "and the shared answer is the ACTIVE-pruned one: the walk stops at the \
+         tombstoned CHILD, so GRANDCHILD keeps NULL and R9's Pass C sweep is \
+         still free to stamp it with CHILD's cohort on the disaster path"
+    );
+
+    // Non-vacuity anchor: the `DeleteBlock(PARENT)` cascade demonstrably RAN in
+    // the recovery arm — its seed is still tombstoned there (recovery does not
+    // restore ancestors, #2043) — so GRANDCHILD's NULL is a REACH result, not a
+    // cascade that quietly did nothing.
+    assert_eq!(
+        is_deleted(&recovery_pool, D_PARENT).await,
+        Some(true),
+        "the delete cascade under test must actually have stamped its seed"
     );
 }
 

@@ -817,10 +817,11 @@ async fn handle_incoming_sync_inner(
         .await
         {
             Ok(outcome) => {
-                // The offering side writes last on both catch-up paths: the Loro path
-                // ends with `LoroSync { is_last: true }` (or `SyncComplete` for an
-                // empty registry) and the receiver answers nothing; the legacy CBOR
-                // path ends with the blob after the peer's `SnapshotAccept`. So this
+                // The offering side writes last: the Loro catch-up ends with
+                // `LoroSync { is_last: true }` (or `SyncComplete` for an empty
+                // registry) and the receiver answers nothing. (#3487 deleted the
+                // legacy CBOR path, which ended with the blob after the peer's
+                // `SnapshotAccept`; it held the same property.) So this
                 // side is a round trip ahead of the peer's read, and closing without
                 // waiting is what would truncate a catch-up at the tail — silently,
                 // since the peer's error would be "connection lost".
