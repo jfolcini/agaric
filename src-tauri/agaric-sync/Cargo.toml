@@ -75,11 +75,9 @@ n0-error = "1.0"
 n0-future = "0.3"
 
 # Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
-# directly (the wire types + apply path). Caret-1 mirrors agaric-engine, which
-# carries the 1.13.6 hold note.
-# Pinned exactly to match `agaric-engine`, the workspace's owning entry for
-# this dep (#3120). The hold and its measurements live there; a caret here
-# would let a workspace-wide resolution drift past it. See #3161.
+# directly (the wire types + apply path). Pinned exactly to match
+# `agaric-engine`, the workspace's owning entry for this dep (#3120); the hold
+# and its measurements live there. See #3161.
 loro = "=1.13.6"
 # `ulid::Ulid` for snapshot / file-transfer temp-name minting + id parsing.
 ulid = "3.0.0"

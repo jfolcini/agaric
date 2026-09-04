@@ -390,16 +390,23 @@ updates:
       # diverging growth curve — 1.13.6 is linear, 1.13.7 is not. That is the
       # ordinary one-user-two-devices shape, so it is reachable in production.
       #
-      # This ignore exists because the hold was otherwise ONLY the lockfile:
-      # Cargo.toml carries a caret `loro = "1.12"`, which 1.13.7 satisfies, so
-      # any `cargo update` would lift it silently. Worse, our own regression
-      # test can no longer catch it — #3187 narrowed the frontier to width 1,
-      # which hits dag.rs's `left.len() <= 1 && right.len() == 1` fast path
-      # and measures at parity. The detector is gone; the defect is not.
+      # This ignore is now a second line of defence, not the whole hold:
+      # `agaric-engine` and `agaric-sync` pin `loro = "=1.13.6"` AND
+      # `loro-internal = "=1.13.6"`, so cargo refuses the bad resolution. Both
+      # pins are needed — loro 1.13.6 requires only `loro-internal = "^1.13.6"`,
+      # so pinning the facade alone lets the crate the regression lives in
+      # float. It keeps dependabot from opening the PR at all.
+      #
+      # Our own regression test cannot catch a lift — #3187 narrowed the
+      # frontier to width 1, which hits dag.rs's `left.len() <= 1 &&
+      # right.len() == 1` fast path and measures at parity on every version.
+      # The detector is gone; the defect is not.
       #
       # Do not remove without a width-2 measurement showing 1.13.6 parity.
-      # 1.13.7 is still the newest on crates.io and the suspect commit is
-      # untouched upstream, so there is nothing newer to move to.
+      # Re-measured against 1.13.9 (2026-09-04, the newest release): still
+      # quadratic, 192x at 1000 rounds. Upstream rewrote the suspect code and
+      # it did not fix this shape, so a newer release is not by itself a
+      # reason to lift.
       - dependency-name: 'loro'
       - dependency-name: 'loro-*'
 
