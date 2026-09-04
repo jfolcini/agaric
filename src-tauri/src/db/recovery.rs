@@ -1197,7 +1197,7 @@ struct ReplayDiagnostics {
 /// STRUCTURAL, not semantic. An entry means "this walk was cut off", never
 /// "the cut changed the answer" — the two probes below cannot tell those apart
 /// without the unbounded walk this replay deliberately does not have (see
-/// [`materialize_cascade_cohort`] for the three shapes that report despite a
+/// [`materialize_cascade_cohort`] for the two shapes that report despite a
 /// provably correct result). Read an entry as "verify this subtree", not as
 /// "this subtree is wrong".
 ///
@@ -1218,8 +1218,8 @@ struct ReplayDiagnostics {
 ///
 /// There is deliberately no `depth` field. The depth a walk stops at is
 /// [`DESCENDANT_DEPTH_CAP`] for EVERY entry — invariant by construction, not
-/// merely constant in practice: the cap is a literal in the single recursive
-/// arm [`materialize_cascade_cohort`] runs, so two entries in the same report
+/// merely constant in practice: the cap is the same literal in BOTH recursive
+/// arms [`materialize_cascade_cohort`] can run, so two entries in the same report
 /// cannot differ in it and a comparison between them could only ever be
 /// trivially true. The number is still named rather than implied — once, by
 /// [`ReplayDiagnostics::emit`]'s `depth_cap` field and message body, instead of
@@ -1376,7 +1376,7 @@ impl ReplayDiagnostics {
         // The message states what the probe actually establishes and no more.
         // The probe is STRUCTURAL (see `materialize_cascade_cohort`): it
         // proves the walk was cut off, NOT that the cut changed the answer, and
-        // there are three shapes where the cut is provably harmless. Asserting
+        // there are two shapes where the cut is provably harmless. Asserting
         // "the rebuilt table holds a truncated cohort" would therefore be false
         // on a correct rebuild, and telling an operator to distrust a correct
         // rebuild — on the disaster path, where the rebuild may be all they
@@ -1580,9 +1580,11 @@ enum CascadeReach {
 /// the materialised rows — rather than in a second, one-level-deeper recursive
 /// arm — is also what keeps the #1655 drift guard
 /// (`every_descendants_cte_keeps_depth_cap`, agaric-store) satisfied without
-/// loosening it: the one recursive arm in this file still carries the literal
-/// `d.depth < 100`, and an interpolated `{cap} + 1` arm would fail that guard
-/// — correctly, since such an arm is by construction not the cascades' walk.
+/// loosening it. Since #4233 both walks come from the store's
+/// `descendants_cte_*!()` macros, so the literal `d.depth < 100` lives — and is
+/// pinned — there rather than here; an interpolated `{cap} + 1` arm written
+/// into this file would fail that guard, correctly, since such an arm is by
+/// construction not the cascades' walk.
 ///
 /// Era-agnostic by construction, like the cascades' own statements: it reads
 /// `id`, `parent_id` and (under [`CascadeReach::Active`]) `deleted_at IS NULL`,
@@ -1652,24 +1654,21 @@ async fn materialize_cascade_cohort(
     // `deleted_at IS NULL` and bind no timestamp, so both stay era-agnostic —
     // the #618 TEXT/INTEGER split is about the STAMP, not the walk.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    const STANDARD_WALK: &str = "INSERT INTO recovery_cascade_cohort(id, depth) \
-         WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-               JOIN descendants d ON b.parent_id = d.id \
-              WHERE d.depth < 100 \
-         ) \
-         SELECT id, depth FROM descendants";
-    const ACTIVE_WALK: &str = "INSERT INTO recovery_cascade_cohort(id, depth) \
-         WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ?1 \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-               JOIN descendants d ON b.parent_id = d.id \
-              WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         SELECT id, depth FROM descendants";
+    // #4233: the CTE bodies come from the store's macros rather than being
+    // copied, so recovery's reach cannot drift from the shape the engine
+    // walks — the parity this function exists to hold is structural, not
+    // maintained by review. The macros expand to string literals precisely so
+    // a `sqlx::query(…)` site can `concat!()` them (`block_descendants.rs`).
+    const STANDARD_WALK: &str = concat!(
+        "INSERT INTO recovery_cascade_cohort(id, depth) ",
+        agaric_store::descendants_cte_standard!(),
+        "SELECT id, depth FROM descendants"
+    );
+    const ACTIVE_WALK: &str = concat!(
+        "INSERT INTO recovery_cascade_cohort(id, depth) ",
+        agaric_store::descendants_cte_active!(),
+        "SELECT id, depth FROM descendants"
+    );
     sqlx::query(match reach {
         CascadeReach::Standard => STANDARD_WALK,
         CascadeReach::Active => ACTIVE_WALK,
@@ -2258,9 +2257,10 @@ async fn recover_blocks_from_op_log(
                 //
                 // The rule (cascade-soft-delete the moved subtree at the
                 // nearest tombstoned ancestor's `deleted_at`) is R9's and
-                // #4112's; what differs is the REACH of the two walks it is
-                // built from, which is recovery's pre-existing convention and
-                // is argued at the cascade below — see
+                // #4112's. Since #4233 the downward REACH of the two walks it
+                // is built from agrees; what still differs is the DEPTH bound
+                // (R27 re-anchors past the cap, this replay stops at it and
+                // REPORTS the truncation, #4232) — see
                 // `sweep_move_under_tombstoned_ancestor`'s doc comment for why
                 // sweeping is the only candidate behaviour that CONVERGES with
                 // the move-first replay order, and why a move whose SUBJECT is
