@@ -2167,6 +2167,18 @@ export function main(argv = process.argv.slice(2)) {
   const gatedChildActions = frontendComplete
     ? childActions
     : childActions.filter((a) => a.action !== 'close')
+  // The suppressed closes' `area -> #number` records, carried forward
+  // separately. `applyChildActions` builds `childLinks` from the actions it is
+  // GIVEN, so dropping a close also drops its link: the parent body would be
+  // re-rendered without that area while its child stayed open, and if the area
+  // is genuinely empty by the next complete run no close is ever generated
+  // again — the child sits open forever listing killed mutants, which is the
+  // stale-open state the parent close exists to prevent.
+  const suppressedChildLinks = frontendComplete
+    ? []
+    : childActions
+        .filter((a) => a.action === 'close' && a.number !== undefined)
+        .map((a) => [a.area, a.number])
   const childWork = gatedChildActions.filter((a) => a.action !== 'sync')
 
   // An open issue with nothing left to track is itself a reason to act: the
@@ -2230,14 +2242,17 @@ export function main(argv = process.argv.slice(2)) {
 
   // Children FIRST — the parent records their numbers, so they have to exist.
   const childLinks = args.children
-    ? applyChildActions({
-        actions: gatedChildActions,
-        repo,
-        runUrl,
-        firstSeen,
-        parentNumber: existingIssue?.number,
-        parentTitle: args.title,
-      })
+    ? new Map([
+        ...applyChildActions({
+          actions: gatedChildActions,
+          repo,
+          runUrl,
+          firstSeen,
+          parentNumber: existingIssue?.number,
+          parentTitle: args.title,
+        }),
+        ...suppressedChildLinks,
+      ])
     : knownChildren
 
   const body = buildIssueBody({
@@ -2906,6 +2921,34 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
       // recorded area, so `childWork > 0` and `willWrite` is true on its own,
       // leaving the close guard as the only thing between a partial report
       // set and a closed issue.
+      // A SECOND module that still reports, carrying a survivor the tracked
+      // body does not know. Without it `willWrite` is false and the run
+      // no-ops, so the parent is never rewritten and the link can't be lost —
+      // the defect needs a reason to write, which is the other half of the
+      // reported scenario ("date-utils gains a new survivor").
+      mkdirSync(join(fullDir, 'date-utils'), { recursive: true })
+      writeFileSync(
+        join(fullDir, 'date-utils', 'mutation.json'),
+        JSON.stringify({
+          schemaVersion: '1',
+          thresholds: { high: 80, low: 60 },
+          files: {
+            'src/lib/date-utils.ts': {
+              language: 'typescript',
+              source: 'x',
+              mutants: [
+                {
+                  id: '1',
+                  mutatorName: 'ConditionalExpression',
+                  status: 'Survived',
+                  location: { start: { line: 7, column: 7 }, end: { line: 7, column: 9 } },
+                },
+              ],
+            },
+          },
+        }),
+        'utf8',
+      )
       const feTracked = join(root, 'close-only-frontend-body.md')
       writeFileSync(
         feTracked,
@@ -2952,6 +2995,13 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         // from. `printDryRun` lists planned actions as `close  #N area`, so
         // the absence of a close line is the assertion.
         if (/\[dry-run\]\s+close\s+#/.test(short.out)) bad.push('would close a CHILD')
+        // NOT asserted here: that the suppressed close keeps its `area ->
+        // #number` record. That only happens on the REAL path —
+        // `applyChildActions` builds the link map from the actions it is
+        // given, while a dry run renders from `knownChildren` regardless. An
+        // assertion here passes with or without the fix, so it would be
+        // vacuous. Covering it needs a `gh`-stubbed frontend driver; this
+        // harness is rust-only. See `suppressedChildLinks` in `main`.
         if (bad.length === 0) ok(NAME)
         else fail(NAME, `${bad.join('; ')} — out=${short.out.slice(0, 320)}`)
       }
