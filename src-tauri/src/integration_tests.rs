@@ -269,7 +269,10 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
     )
     .await
     .unwrap();
-    settle_bg_tasks(&mat).await;
+    // `flush()`, not `settle_bg_tasks`: `ApplyOp` — the task that drives the Loro
+    // engine — rides the FOREGROUND queue, so flushing only the background one
+    // leaves the registry empty and `save_all_engines` finds nothing.
+    mat.flush().await.unwrap();
 
     let deleted = delete_block_inner(&pool, DEV, &mat, block_id.clone().into())
         .await
@@ -2586,12 +2589,12 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
 /// only one of them. Whether that is worth losing undo/history past the
 /// retention window depends entirely on the ratio below.
 ///
-/// `#[ignore]` because it is a measurement, not an assertion: it seeds tens of
-/// thousands of ops and prints. Run it with
+/// `#[ignore]` because it is a measurement, not an assertion: it seeds a few
+/// thousand ops and prints. Run it with
 /// `cargo nextest run -p agaric -E 'test(measure_op_log_against_loro)' \
 ///  --ignored --no-capture`.
 #[tokio::test]
-#[ignore = "measurement for #4700, not an assertion; seeds ~20k ops"]
+#[ignore = "measurement for #4700, not an assertion; seeds 3k ops"]
 async fn measure_op_log_against_loro_doc_state_4700() {
     // Sized to finish inside nextest's 60 s per-test budget: 2_000 x 10 timed
     // out twice. Per-op figures below make the ratio scale-independent.
@@ -2601,13 +2604,29 @@ async fn measure_op_log_against_loro_doc_state_4700() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
+    // The blocks MUST live in a space, or every op takes
+    // `SqlOnlyFallbackReason::SpaceUnresolved` in `apply_op_projected` and the
+    // Loro engine is never touched at all — which is what made an earlier
+    // version of this test report `loro_doc_state: 0 rows` and wrongly conclude
+    // the command path does not populate it.
+    let space = crate::commands::spaces::create_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        "Measurement space".into(),
+        None,
+    )
+    .await
+    .unwrap()
+    .into_string();
+
     let mut ids = Vec::with_capacity(BLOCKS);
     for i in 0..BLOCKS {
         let b = create_content(
             &pool,
             &mat,
             &format!("block {i} initial content"),
-            None,
+            Some(space.clone()),
             None,
         )
         .await;
@@ -2632,7 +2651,10 @@ async fn measure_op_log_against_loro_doc_state_4700() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    // Every column, not just the payload: this is what the rows actually cost.
+    // The columns that dominate. NOT complete: it omits `block_id`, `origin`,
+    // `attachment_id`, `is_undo`, `is_replicated`, `reverses_device_id` and
+    // `reverses_seq`, and every op_log index. So this UNDERCOUNTS op_log, making
+    // the ratio a floor rather than a headline.
     let op_bytes: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(LENGTH(device_id) + LENGTH(seq) + LENGTH(COALESCE(parent_seqs,'')) \
          + LENGTH(hash) + LENGTH(op_type) + LENGTH(payload) + LENGTH(created_at)), 0) FROM op_log",
@@ -2645,59 +2667,50 @@ async fn measure_op_log_against_loro_doc_state_4700() {
         .await
         .unwrap();
 
-    // `loro_doc_state` is written by the time-driven snapshot scheduler, not by
-    // the command path, so the rows above are empty in a command-only harness.
-    // Measure Loro's side directly instead: apply the SAME op shapes to an
-    // engine and export, which is exactly what `save_snapshot` persists.
-    let loro_bytes = {
-        use agaric_engine::loro::engine::LoroEngine;
-        let mut engine = LoroEngine::with_peer_id("MEASURE_4700").expect("engine");
-        let mut block_ids = Vec::with_capacity(BLOCKS);
-        for i in 0..BLOCKS {
-            let id = format!("{:026}", i + 1);
-            engine
-                .apply_create_block(
-                    &id,
-                    "content",
-                    &format!("block {i} initial content"),
-                    None,
-                    0,
-                )
-                .expect("create");
-            block_ids.push(id);
-        }
-        for round in 0..EDITS_PER_BLOCK {
-            for (i, id) in block_ids.iter().enumerate() {
-                // Replace the whole content, which is what `edit_block_inner`
-                // does on the SQL side, so both columns measure the same edit.
-                let replacement =
-                    format!("block {i} content revision {round} with some realistic prose in it");
-                let current_len = engine
-                    .read_block_content(id)
-                    .ok()
-                    .flatten()
-                    .map_or(0, |c| c.chars().count());
-                engine
-                    .apply_edit_content(id, 0, current_len, &replacement)
-                    .expect("edit");
-            }
-        }
-        engine.export_snapshot().expect("export").len() as i64
-    };
+    // The Loro side is NOT measured here, and saying so is the point.
+    //
+    // Three attempts failed for three different reasons, each of which produced
+    // a plausible wrong number rather than an obvious failure:
+    //   1. Reading `loro_doc_state` after only `flush_background()` — `ApplyOp`
+    //      rides the FOREGROUND queue, so the column was empty.
+    //   2. Measuring a PARALLEL `LoroEngine` instead, replacing whole text per
+    //      edit. Production splices: `apply_edit_block_via_loro` calls
+    //      `apply_edit_via_diff_splice`, which strips the common prefix and
+    //      suffix, so these rounds (one differing character) splice ~1 scalar
+    //      where that engine re-inserted ~65 plus tombstones. It inflated Loro
+    //      by more than an order of magnitude — a workload the product never
+    //      runs.
+    //   3. Seeding a space and calling `save_all_engines` on
+    //      `mat.loro_state().registry` — the space is created (op_log grows by
+    //      its two ops) but the column stays empty, so the engine the command
+    //      path drives is not the one this reaches.
+    //
+    // What the op_log figure below supports on its own: compaction reclaims
+    // ~300 B per op, and the Loro copy it cannot touch is smaller — attempt 2
+    // overstated Loro and still put it at 32 B/op. Treat the ratio as a floor
+    // of roughly 9x, not a measurement.
+    let loro_bytes: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(LENGTH(snapshot)), 0) FROM loro_doc_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let ratio = op_bytes as f64 / loro_bytes.max(1) as f64;
+    let loro_measured = loro_bytes > 0;
     println!("#4700 MEASUREMENT ---------------------------------------------");
     println!("  seeded:          {BLOCKS} blocks x {EDITS_PER_BLOCK} edits");
     println!("  op_log:          {op_rows} rows, {op_bytes} bytes");
-    println!("  loro_doc_state:  {loro_rows} rows in-harness (scheduler-driven, so 0 here)");
-    println!("  loro snapshot:   {loro_bytes} bytes for the same ops, measured directly");
-    println!("  op_log / loro:   {ratio:.2}x");
+    println!("  loro_doc_state:  {loro_rows} rows, {loro_bytes} bytes");
+    if loro_measured {
+        println!("  op_log / loro:   {ratio:.2}x");
+    } else {
+        println!("  op_log / loro:   NOT MEASURED — see the doc comment; >=9x floor");
+    }
     println!(
-        "  per op:          op_log {:.0} B, loro {:.0} B",
+        "  per op:          op_log {:.0} B",
         op_bytes as f64 / op_rows.max(1) as f64,
-        loro_bytes as f64 / op_rows.max(1) as f64,
     );
-    println!("  compaction would reclaim at most {op_bytes} bytes and cannot");
-    println!("  touch the {loro_bytes} bytes of Loro history.");
+    println!("  compaction would reclaim {op_bytes} bytes; the Loro copy it");
+    println!("  cannot touch is smaller, but is not measured here.");
     println!("--------------------------------------------------------------");
 }
