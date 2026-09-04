@@ -197,10 +197,10 @@ impl SyncEventSink for SharedEventSink {
 
 /// Whether the daemon has committed to the ACTIVE path — it has left the
 /// dormant waiter (or never entered one) and is about to call
-/// [`session_supervisor::daemon_loop`].
+/// `session_supervisor::daemon_loop`.
 ///
 /// Not "is inside `daemon_loop`", and the difference is load-bearing for every
-/// caller: on the paired-at-startup path [`SyncDaemon::start_seeded`] flips the
+/// caller: on the paired-at-startup path `SyncDaemon::start_seeded` flips the
 /// flag synchronously, *before* `tokio::spawn`, so `true` can be read before
 /// the daemon task has been polled at all — and it stays `true` if
 /// `daemon_loop` then returns `Err` at the QUIC bind without ever reaching its

@@ -30,7 +30,7 @@
 //! there is no fallback path to take: the process refuses to open any vault at
 //! all rather than open the wrong one.
 //!
-//! [`decide`] is deliberately a pure function of three strings so the policy can
+//! `decide` is deliberately a pure function of three strings so the policy can
 //! be unit-tested without a Tauri runtime, a filesystem, or (crucially) any risk
 //! of a test touching a real directory — the tests assert on the RESOLVED PATH,
 //! never on the effect of writing to it.
@@ -45,10 +45,10 @@ pub const DATA_DIR_ENV: &str = "AGARIC_DATA_DIR";
 
 /// Set by a harness that must never operate on a real vault.
 ///
-/// Presence of this flag makes [`DATA_DIR_ENV`] MANDATORY: see [`decide`].
+/// Presence of this flag makes [`DATA_DIR_ENV`] MANDATORY: see `decide`.
 pub const SANDBOX_ENV: &str = "AGARIC_E2E_SANDBOX";
 
-/// What [`decide`] concluded from the environment.
+/// What `decide` concluded from the environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
     /// Use this caller-supplied absolute path.

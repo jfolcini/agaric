@@ -19,13 +19,13 @@
 //!
 //! Backoff schedule: 1 min → 5 min → 30 min → 1 h (cap) for a task that ran
 //! and failed; 1 min → 2 min → 3 min → 5 min (cap) for one persisted by a
-//! SHED, which never ran (#4208 — see [`BackoffClass`]).
+//! SHED, which never ran (#4208 — see `BackoffClass`).
 //!
 //! ## Two-tier retry semantics
 //!
 //! This persistent schedule is the **second tier** of the materializer's
 //! retry pipeline. The first tier — the in-memory
-//! [`super::consumer::retry_with_backoff`] loop — runs on a much shorter
+//! `super::consumer::retry_with_backoff` loop — runs on a much shorter
 //! ms-scale budget (foreground: 1 retry × 100 ms; background: 2 retries
 //! × 150/300 ms exponential) and clears transient WAL contention before
 //! the task ever reaches `materializer_retry_queue`. The handoff:
@@ -41,7 +41,7 @@
 //!
 //! Both tiers are observability-instrumented but otherwise independent:
 //! tightening one schedule does not change the other. See the module
-//! doc-comment on [`super::consumer`] for the full table.
+//! doc-comment on `super::consumer` for the full table.
 
 use crate::materializer::MaterializeTask;
 use agaric_core::error::AppError;
@@ -70,7 +70,7 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// #2541: distinct `last_error` marker for a task persisted because it was
 /// SHED at enqueue time (`try_enqueue_background` hit a full channel) — the
 /// task never executed, so this is a capacity signal, not an execution
-/// failure. [`give_up_reason`] consults the marker to keep shed-driven
+/// failure. `give_up_reason` consults the marker to keep shed-driven
 /// `attempts` increments from burning the `MAX_ATTEMPTS` give-up budget:
 /// under sustained backpressure a task could previously hit the give-up
 /// threshold with ZERO executions and be permanently dropped. This is a
@@ -79,9 +79,9 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// (shed or execution failure), only the give-up guard's interpretation
 /// changes.
 ///
-/// #4208: [`BackoffClass::of`] reads the same marker to put shed rows on a
+/// #4208: `BackoffClass::of` reads the same marker to put shed rows on a
 /// much shorter re-attempt ladder — a task that never ran is waiting on
-/// capacity, not on a fix — and [`lease_entry`] restarts `attempts` at 1
+/// capacity, not on a fix — and `lease_entry` restarts `attempts` at 1
 /// once such a row wins a slot, so the sheds never spend the execution
 /// budget.
 pub const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
@@ -116,7 +116,7 @@ pub(crate) const SEED_PAGE_LINK_FULL_REBUILD_LAST_ERROR: &str =
 /// #4118: `last_error` marker for a `ReindexBlockLinks` row seeded on behalf
 /// of a REFERRER when the block it references has just become linkable.
 ///
-/// Distinct text from [`SEED_PAGE_LINK_REPAIR_LAST_ERROR`] because the two
+/// Distinct text from `SEED_PAGE_LINK_REPAIR_LAST_ERROR` because the two
 /// seeds are keyed on different blocks for different reasons: that one repairs
 /// the roll-up key of the block whose own `page_id` moved, this one repairs an
 /// edge belonging to a DIFFERENT block that has not changed at all. A queue
@@ -480,12 +480,12 @@ pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::D
 /// `attempts + 1` computes the correct delay inline, so the whole
 /// failure record is one atomic statement (and one round-trip) for both
 /// the first-failure and escalation paths. The `CASE` selects among four
-/// delays bound from [`backoff_delay_for`], so the schedule stays defined
+/// delays bound from `backoff_delay_for`, so the schedule stays defined
 /// in exactly one place.
 ///
 /// #4208: which of the two ladders those four delays come from is decided
 /// by `last_error` — a shed persistence ([`SHED_LAST_ERROR`]) gets the short
-/// [`BackoffClass::Shed`] ladder, because the task never ran and is waiting
+/// `BackoffClass::Shed` ladder, because the task never ran and is waiting
 /// on capacity, not on a fix. The SQL is identical either way; only the
 /// bound constants differ.
 ///
@@ -493,7 +493,7 @@ pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::D
 /// `created_at`, so the original first-failure timestamp is preserved
 /// across every re-failure. Combined with the sweeper no longer
 /// pre-clearing the row on enqueue (it leases instead — see
-/// [`lease_entry`] / [`sweep_once_counted`]), a fail-on-run task now keeps the
+/// `lease_entry` / `sweep_once_counted`), a fail-on-run task now keeps the
 /// SAME row across cycles: `attempts` accumulates (1, 2, 3, …) and
 /// `created_at` ages, so both `give_up_reason` triggers
 /// (`attempts >= MAX_ATTEMPTS`, `now - created_at >= GIVE_UP_AGE_DAYS`)
@@ -1919,7 +1919,7 @@ async fn sweep_until_no_progress(
 }
 
 /// Spawn a long-lived task that drains the retry queue every 60 seconds
-/// ([`sweep_until_no_progress`]) and exits when `shutdown_flag` is set.
+/// (`sweep_until_no_progress`) and exits when `shutdown_flag` is set.
 ///
 /// I-Materializer-1: takes both pools so `sweep_until_no_progress` can route SELECTs
 /// to the reader pool and DELETEs to the writer pool, mirroring the

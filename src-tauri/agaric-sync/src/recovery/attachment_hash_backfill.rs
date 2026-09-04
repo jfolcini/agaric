@@ -52,7 +52,7 @@ struct Candidate {
 ///
 /// Idempotent: only `content_hash IS NULL` rows are considered, so running twice
 /// is a no-op on the second pass. A missing-on-disk file leaves the row `NULL`
-/// and is counted in [`BackfillReport::skipped_missing`].
+/// and is counted in `BackfillReport::skipped_missing`.
 ///
 /// # Errors
 ///

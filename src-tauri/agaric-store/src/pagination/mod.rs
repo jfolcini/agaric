@@ -610,7 +610,7 @@ impl Cursor {
     /// Encode to opaque base64 representation.
     ///
     /// The encoded JSON includes a `version` key set to
-    /// [`CURRENT_CURSOR_VERSION`] so that future schema bumps can reject
+    /// `CURRENT_CURSOR_VERSION` so that future schema bumps can reject
     /// Stale cursors on decode. The version is injected via a
     /// `serde_json::Value` intermediate rather than a struct field so
     /// that the many `Cursor { … }` literal call sites across the crate
@@ -634,14 +634,14 @@ impl Cursor {
     ///
     /// Cursors emitted by [`Cursor::encode`] carry a `version` key.  This
     /// function rejects any cursor whose version is not
-    /// [`CURRENT_CURSOR_VERSION`] with [`AppError::Validation`] so clients
+    /// `CURRENT_CURSOR_VERSION` with [`AppError::Validation`] so clients
     /// re-paginate from page 1 instead of silently consuming a cursor that
     /// Was encoded against a different field layout.
     ///
     /// **Backwards compatibility:** pre-versioning cursors (no `version`
     /// key in their JSON) are treated as version 1.  This is the desired
     /// behaviour at the seating commit — any FUTURE bump of
-    /// [`CURRENT_CURSOR_VERSION`] will reject those legacy cursors.
+    /// `CURRENT_CURSOR_VERSION` will reject those legacy cursors.
     pub fn decode(s: &str) -> Result<Self, AppError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
@@ -812,7 +812,7 @@ impl Cursor {
     /// so — per this type's "reuse the existing slots rather than adding new
     /// fields" convention — `deleted_at` carries `projected_date` (the H-8
     /// date-carrier convention `list_agenda_range` already uses) and `id`
-    /// carries `block_id` and `source` joined by [`CURSOR_PART_SEP`]. The
+    /// carries `block_id` and `source` joined by `CURSOR_PART_SEP`. The
     /// packing is transport-only: [`Cursor::projected_agenda_key`] splits the
     /// pair back out and the SQL binds the three parts separately, so the
     /// `ORDER BY` — and therefore the query plan — is untouched.
@@ -851,7 +851,7 @@ impl PageRequest {
     /// outside that range surfaces as `AppError::Validation` (limit-
     /// clamp-followup Phase 1 — see the followup doc for the rationale
     /// against the previous `clamp(1, MAX_PAGE_SIZE)` silent truncation).
-    /// `None` falls through to [`DEFAULT_PAGE_SIZE`].
+    /// `None` falls through to `DEFAULT_PAGE_SIZE`.
     pub fn new(after: Option<String>, limit: Option<i64>) -> Result<Self, AppError> {
         let limit = match limit {
             Some(l) if (1..=MAX_PAGE_SIZE).contains(&l) => l,

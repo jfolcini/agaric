@@ -287,7 +287,7 @@ pub async fn dispatch_restore_ancestors(
 ///
 /// The seed's repair is a background `ReindexBlockLinks`, but that queue is
 /// reachable only from `CommandTx::commit_and_dispatch`. This helper has to
-/// serve the REMOTE / replay path too ([`apply_op`], the `BatchApplyOps` arm),
+/// serve the REMOTE / replay path too (`apply_op`, the `BatchApplyOps` arm),
 /// which holds a pool and a cohort and no queue handle — and on that path the
 /// seed does not reach `invalidations_for_op` either, so an inline call is
 /// what makes the remote restore work at all. Running the same code the task
@@ -680,7 +680,7 @@ fn record_absent_from_engine_skip(root_record: &OpRecord, op: &'static str, bloc
 /// — classifying the state as a legitimate soft fallback. The post-commit
 /// fan-out then hands that identical block to `engine_apply`, which classifies
 /// it as drift. So membership is probed here too, per member, via
-/// [`known_absent_from_engine`].
+/// `known_absent_from_engine`.
 ///
 /// ### Why the guard is here and not at `ApplyEffects::deleted_cohort`
 ///

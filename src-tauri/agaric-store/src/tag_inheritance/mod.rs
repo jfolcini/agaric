@@ -41,7 +41,7 @@
 //! step 2 (the `anc` exception above) is built from the macro family in
 //! [`crate::tag_inheritance_macros`]. The macros bake in
 //! invariant #9 ( filter, `subtree_unfiltered` excepted)
-//! and the [`crate::tag_inheritance_macros::MAX_TAG_INHERITANCE_DEPTH`]
+//! and the `crate::tag_inheritance_macros::MAX_TAG_INHERITANCE_DEPTH`
 //! depth bound. Do **not** hand-roll a new `WITH RECURSIVE` block here —
 //! extend the macro family instead. Step 2's hand-rolled CTEs predate this
 //! policy and are grandfathered in; they are not a precedent for new code.

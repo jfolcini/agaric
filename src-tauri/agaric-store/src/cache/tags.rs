@@ -179,7 +179,7 @@ const ALL_LIVE_TAGS_SQL: &str = "SELECT id, content
 /// `add_tag` / `remove_tag` mutate exactly one `(block_id, tag_id)` edge in
 /// `block_tags`. The only `tags_cache` column that can change as a result is
 /// the affected tag's `usage_count`; neither the tag's `name` nor the *set*
-/// of cached tags can move (see [`DESIRED_TAG_USAGE_SQL`]). So instead of the
+/// of cached tags can move (see `DESIRED_TAG_USAGE_SQL`). So instead of the
 /// former full O(vault) [`rebuild_tags_cache`] (which streams every tag block
 /// and the whole `block_tags`/`block_tag_refs` union to sort-merge-diff the
 /// entire cache), this recomputes the desired row for just `tag_id` and:
@@ -191,7 +191,7 @@ const ALL_LIVE_TAGS_SQL: &str = "SELECT id, content
 ///     rebuild's treatment of that tag).
 ///
 /// `INSERT OR REPLACE` is safe here for the same reason as in the full
-/// rebuild ([`apply_tags_diff`]): the candidate is, by the de-dup guard, the
+/// rebuild (`apply_tags_diff`): the candidate is, by the de-dup guard, the
 /// sole owner of its `UNIQUE(name)` slot among live tags, so no unchanged tag
 /// can collide on the name.
 pub async fn refresh_tag_usage_count(pool: &SqlitePool, tag_id: &str) -> Result<(), AppError> {

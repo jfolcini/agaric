@@ -382,7 +382,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
 /// [`insert_remote_op`]'s exact verification recipe — blake3 hash check,
 /// NUL-rejection gate, `SetProperty` domain validation, idempotent
 /// `INSERT OR IGNORE` on `(device_id, seq)`, divergence probe — via the shared
-/// [`ingest_remote_record`] core, differing only in the [`IngestProfile::Audit`]
+/// `ingest_remote_record` core, differing only in the `IngestProfile::Audit`
 /// policy:
 ///
 /// * an unresolved `parent_seqs` pointer (peer-side compaction of early

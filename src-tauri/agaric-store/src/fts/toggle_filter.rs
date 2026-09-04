@@ -74,7 +74,7 @@ pub struct SearchToggles {
     pub whole_word: bool,
     /// Regex-mode. FTS5 MATCH is bypassed; candidates come
     /// from a recency-ordered SQL scan capped at
-    /// [`REGEX_PRE_FILTER_CAP`].
+    /// `REGEX_PRE_FILTER_CAP`.
     pub is_regex: bool,
 }
 
@@ -120,7 +120,7 @@ pub const REGEX_PRE_FILTER_CAP: i64 = 1000;
 
 /// Public entry-point. Dispatches between the FTS5 path
 /// (`super::search::search_fts`) and the regex-mode path
-/// ([`regex_mode_query`]) based on `toggles.is_regex`, then applies
+/// (`regex_mode_query`) based on `toggles.is_regex`, then applies
 /// the post-FTS filter when any non-regex toggle is on.
 #[allow(clippy::too_many_arguments)]
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
@@ -289,7 +289,7 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
 ///
 /// Toggle dispatch mirrors [`search_with_toggles`]:
 ///
-/// - `is_regex` → two parallel [`regex_mode_query`] scans; the pages
+/// - `is_regex` → two parallel `regex_mode_query` scans; the pages
 ///   Scan pushes `block_type = 'page'` into SQL instead
 ///   of post-fetch `Vec::retain()`. Each scan asks for `limit + 1`.
 /// - `case_sensitive` / `whole_word` → FTS5 candidate set narrowed by

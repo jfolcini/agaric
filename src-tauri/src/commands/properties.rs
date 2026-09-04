@@ -662,7 +662,7 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// Like the todo batch, this path deliberately does NOT run recurrence /
 /// completion-timestamp transitions — it is a bulk multi-select reflex.
 /// #3264: and, like the todo batch, it now says so — when `key` is
-/// `todo_state` it runs [`warn_if_batch_skips_recurrence`] inside the same
+/// `todo_state` it runs `warn_if_batch_skips_recurrence` inside the same
 /// IMMEDIATE tx, so a Pages-browser multi-select over `repeat`-carrying pages
 /// leaves a diagnostic in the daily log instead of nothing.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
@@ -1299,7 +1299,7 @@ async fn conflicting_existing_values(
 /// Before inserting, this probes `block_properties` for the key and
 /// rejects with [`AppError::Validation`] when any value already stored
 /// under it would be rejected by the requested `value_type` — see
-/// [`conflicting_existing_values`] for the trap that guards against, and
+/// `conflicting_existing_values` for the trap that guards against, and
 /// for why the probe is shape-aware instead of the coarser "any values at
 /// all?" test the bibliography import uses.
 ///
@@ -1701,7 +1701,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 
 /// Batch-fetch properties for multiple blocks in a single query.
 ///
-/// Returns a map of block_id → Vec<PropertyRow>. Block IDs with no properties
+/// Returns a map of block_id → `Vec<PropertyRow>`. Block IDs with no properties
 /// are omitted from the result (not an error).
 ///
 /// Uses `json_each()` so the full ID list is passed as a single JSON-encoded

@@ -429,7 +429,7 @@ fn project_block_into(
 /// instead of buffering every projection up-front.  The writer lock is
 /// held marginally longer (one extra block-projection per chunk
 /// boundary) but peak Rust-heap drops from `O(blocks × horizon)` to
-/// `O(CHUNK_SIZE + max-per-block)`.  See [`CHUNK_SIZE`] for the
+/// `O(CHUNK_SIZE + max-per-block)`.  See `CHUNK_SIZE` for the
 /// trade-off.
 ///
 /// Timezone semantics: `today` is captured **before** the read tx

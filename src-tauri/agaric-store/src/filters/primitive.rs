@@ -182,7 +182,7 @@ pub enum PropertyPredicate {
     Ne { value: PropertyValue },
     /// #1280 — property value is strictly less than the operand. The
     /// compared column is chosen from the [`PropertyValue`] variant (see
-    /// [`property_value_column`]).
+    /// `property_value_column`).
     Lt { value: PropertyValue },
     /// #1280 — property value is strictly greater than the operand.
     Gt { value: PropertyValue },
@@ -309,7 +309,7 @@ impl LastEditedSpec {
     /// accepted. The error carries `ValidationCode::InvalidDateFilter`, the
     /// code the frontend keys on (#2251).
     ///
-    /// This runs [`last_edited_bound_ms`] — the same parse the compiler runs,
+    /// This runs `last_edited_bound_ms` — the same parse the compiler runs,
     /// on the same derived string — so anything this accepts, the compiler can
     /// parse. Checking a looser grammar here would let a bound through that
     /// aborts there.
@@ -427,9 +427,8 @@ pub enum Bind {
     Text(String),
     Int(i64),
     /// #1280 — a real (`f64`) value. Emitted by the property `Num`-valued
-    /// predicates routed through [`BacklinkProjection`](crate::backlink::projection::BacklinkProjection)
-    /// so a numeric property value keeps its native SQLite affinity rather
-    /// than being stringified.
+    /// predicates routed through `BacklinkProjection` so a numeric property
+    /// value keeps its native SQLite affinity rather than being stringified.
     Real(f64),
 }
 

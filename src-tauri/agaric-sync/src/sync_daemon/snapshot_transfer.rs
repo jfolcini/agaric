@@ -17,7 +17,7 @@
 //!   `SyncMessage::LoroSync { LoroSyncMessage::Snapshot, .. }` per space.
 //! * Initiator: [`try_receive_snapshot_catchup`] dispatches on the first
 //!   post-`ResetRequired` message — a `LoroSync` routes to
-//!   [`receive_loro_snapshot_catchup`] (merge); a legacy `SnapshotOffer`
+//!   `receive_loro_snapshot_catchup` (merge); a legacy `SnapshotOffer`
 //!   routes to the CBOR wipe-and-replace path below (accept-old back-compat).
 //!
 //! The legacy CBOR `SnapshotOffer`/`SnapshotAccept` **offer** path
@@ -38,13 +38,12 @@
 //! ops needed for a delta replay.
 //!
 //! This module wires the existing snapshot machinery — the
-//! [`apply_snapshot`](crate::snapshot::apply_snapshot) function, the
-//! `log_snapshots` table, and the pre-existing
-//! [`SyncMessage::SnapshotOffer`] / `SnapshotAccept` / `SnapshotReject`
-//! wire variants — into a post-`ResetRequired` sub-flow that transfers
-//! a compressed snapshot blob over the same QUIC bi-stream the session
-//! is already running on (using the bulk path in
-//! [`crate::transport::bulk`], shared with attachments in
+//! [`apply_snapshot`] function, the `log_snapshots` table, and the
+//! pre-existing [`SyncMessage::SnapshotOffer`] / `SnapshotAccept` /
+//! `SnapshotReject` wire variants — into a post-`ResetRequired`
+//! sub-flow that transfers a compressed snapshot blob over the same
+//! QUIC bi-stream the session is already running on (using the bulk
+//! path in [`crate::transport::bulk`], shared with attachments in
 //! [`sync_files`](crate::sync_files)).
 //!
 //! ## Protocol
@@ -78,17 +77,16 @@
 //!    advertised `size_bytes`. Over cap → send `SnapshotReject` and
 //!    terminate. This is the PRIMARY cap: it rejects before a byte moves.
 //! 3. Under cap: send `SnapshotAccept`, then read exactly `size_bytes`
-//!    off the stream via [`recv_bulk`](crate::transport::bulk::recv_bulk),
-//!    which is handed `MAX_SNAPSHOT_SIZE` again as a backstop (the cap
-//!    now belongs to the caller — the transport no longer bounds a
-//!    per-frame size on its behalf).
-//! 4. Call [`apply_snapshot`](crate::snapshot::apply_snapshot) to
-//!    wipe + restore core tables from the compressed blob.
-//!    `apply_snapshot` uses `BEGIN IMMEDIATE` + `defer_foreign_keys`
-//!    so the restore is atomic; a decode or integrity failure leaves
-//!    the DB untouched (rolled back by transaction). The same tx wipes
-//!    the Loro sidecar state (`loro_doc_state`, `loro_sync_inbox`,
-//!    apply cursor — #607/#779).
+//!    off the stream via [`recv_bulk`], which is handed
+//!    `MAX_SNAPSHOT_SIZE` again as a backstop (the cap now belongs to
+//!    the caller — the transport no longer bounds a per-frame size on
+//!    its behalf).
+//! 4. Call [`apply_snapshot`] to wipe + restore core tables from the
+//!    compressed blob. `apply_snapshot` uses `BEGIN IMMEDIATE` +
+//!    `defer_foreign_keys` so the restore is atomic; a decode or
+//!    integrity failure leaves the DB untouched (rolled back by
+//!    transaction). The same tx wipes the Loro sidecar state
+//!    (`loro_doc_state`, `loro_sync_inbox`, apply cursor — #607/#779).
 //! 5. Drop + reload the in-memory Loro engines
 //!    ([`agaric_engine::loro::snapshot::reload_registry_from_db`]) so the live
 //!    registry matches the post-reset SQL — there is no process
@@ -1405,9 +1403,9 @@ impl Drop for SnapshotTempFile {
 
 /// #2696 — boot-time sweep of orphaned snapshot-receive temp files.
 ///
-/// [`receive_snapshot_to_temp`] streams each in-flight catch-up blob into
+/// `receive_snapshot_to_temp` streams each in-flight catch-up blob into
 /// a `<app_data_dir>/snapshot-recv-<ulid>.tmp` file guarded by
-/// [`SnapshotTempFile`], whose `Drop` unlinks it on every normal exit
+/// `SnapshotTempFile`, whose `Drop` unlinks it on every normal exit
 /// path (apply success, decode error, peer drop, cancel). But `Drop`
 /// never runs on `SIGKILL` / OOM-kill / power-loss, so a process death
 /// mid-receive strands the temp — potentially up to `MAX_SNAPSHOT_SIZE`

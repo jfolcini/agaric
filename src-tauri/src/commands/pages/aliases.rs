@@ -179,7 +179,7 @@ struct PageAliasPrefixRow {
 /// Returns `(page_id, alias, title)` rows so the frontend can render
 /// "Page Title (alias: pp)" without a second round trip per match.
 ///
-/// Bounded by [`MAX_PAGE_ALIASES_PREFIX`] to keep the popup responsive
+/// Bounded by `MAX_PAGE_ALIASES_PREFIX` to keep the popup responsive
 /// even if a user has hundreds of substring-matched aliases.
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the

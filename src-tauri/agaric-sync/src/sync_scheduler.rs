@@ -481,7 +481,7 @@ const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// bounds the memory at eight short strings per peer *in backoff* (the map is
 /// emptied by [`SyncScheduler::record_success`] and
 /// [`SyncScheduler::clear_backoff`]). The number of *peers* is bounded
-/// separately by [`MAX_BACKOFF_PEERS`] (#4231) — this const alone bounds only
+/// separately by `MAX_BACKOFF_PEERS` (#4231) — this const alone bounds only
 /// the per-entry payload, which is the gap that issue names.
 ///
 /// If you are here because you added a sixth failure site: you do not need to
@@ -738,15 +738,15 @@ impl SyncScheduler {
     /// different views* of the backoff and they intentionally diverge:
     ///
     /// - **Internal `state.backoff` (deterministic).** Doubled on every
-    ///   call and capped at [`MAX_BACKOFF`]: `1s → 2s → 4s → 8s → 16s →
-    ///   32s → 60s → 60s …`. The leading `1s` is the [`MIN_BACKOFF`]
+    ///   call and capped at `MAX_BACKOFF`: `1s → 2s → 4s → 8s → 16s →
+    ///   32s → 60s → 60s …`. The leading `1s` is the `MIN_BACKOFF`
     ///   seed planted by the `or_insert`; it is overwritten by `2s`
     ///   *inside this very call*, so callers never observe `1s` after
-    ///   `record_failure` returns. See on [`MIN_BACKOFF`] for the
+    ///   `record_failure` returns. See on `MIN_BACKOFF` for the
     ///   user-visible sequence.
     /// - **Wall-clock `state.next_retry_at` (jittered).** Computed as
     ///   `now + state.backoff * jitter` where `jitter ∈ [0.9, 1.1]`,
-    ///   floored at [`MIN_BACKOFF`]. The ±10 % spread prevents multiple
+    ///   floored at `MIN_BACKOFF`. The ±10 % spread prevents multiple
     ///   peers that fail in the same instant from all retrying together.
     ///
     /// Telemetry / logs that read `state.backoff` (e.g. `failure_count`
@@ -760,13 +760,13 @@ impl SyncScheduler {
     /// This one books with [`PeerMembership::Unknown`], because it has not
     /// been given the `peer_refs` rows and must not claim a membership it did
     /// not check. The consequence is stated rather than hidden: an entry
-    /// booked here is the FIRST one [`evict_for_new_peer`] takes once the map
-    /// is at [`MAX_BACKOFF_PEERS`], so a real peer booked through this method
+    /// booked here is the FIRST one `evict_for_new_peer` takes once the map
+    /// is at `MAX_BACKOFF_PEERS`, so a real peer booked through this method
     /// gets exactly the treadmill #4385 is about.
     ///
     /// That is deliberate and it is the safe direction — losing a retry hint
     /// costs one premature retry, "noisier, never quieter" (see
-    /// [`evict_for_new_peer`]) — but it means production code with a peer it
+    /// `evict_for_new_peer`) — but it means production code with a peer it
     /// believes in must route through
     /// [`record_failure_and_take_report`](Self::record_failure_and_take_report)
     /// and pass [`PeerMembership::of`]. #4203 removed the last in-tree
@@ -812,7 +812,7 @@ impl SyncScheduler {
     /// * `membership` — whether this vault holds a `peer_refs` row for the
     ///   peer (#4385). It has nothing to do with reporting: it rides in
     ///   because this is the one call that CREATES a backoff entry from a
-    ///   caller that already has the rows, and [`evict_for_new_peer`] needs
+    ///   caller that already has the rows, and `evict_for_new_peer` needs
     ///   the answer stored on the entry to rank it. See [`PeerMembership`] for
     ///   why the predicate is row-presence and not `endpoint_id.is_some()`.
     ///

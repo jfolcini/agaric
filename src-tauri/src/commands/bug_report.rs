@@ -3,14 +3,14 @@
 //! Provides two read-only commands consumed by the in-app bug-report dialog:
 //!
 //! - `collect_bug_report_metadata` — gathers app version, OS, arch, device ID,
-//!   and the last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+//!   and the last `RECENT_ERRORS_CAP` error/warn lines from the recent
 //!   daily log files (#4216 — the newest days back to
-//!   [`MAX_ROLLED_AGE_DAYS`], not just the current UTC day's).
+//!   `MAX_ROLLED_AGE_DAYS`, not just the current UTC day's).
 //!   #609: the recent-error lines are ALWAYS redacted (same pipeline as the
 //!   ZIP path) because the frontend embeds them into the prefilled public
 //!   GitHub issue body.
 //! - `read_logs_for_report` — enumerates rolled log files, capping per-file
-//!   size, skipping anything older than [`MAX_ROLLED_AGE_DAYS`] days, and
+//!   size, skipping anything older than `MAX_ROLLED_AGE_DAYS` days, and
 //!   optionally redacting home paths + device IDs.
 //!
 //! The frontend composes these with the user-entered title/description,
@@ -22,7 +22,7 @@
 //! ZIP-on-disk flow.
 //!
 //! #4283 — and on both paths reading only the log directory's OWN regular
-//! files. Every read here goes through [`open_confined_log_file`], which opens
+//! files. Every read here goes through `open_confined_log_file`, which opens
 //! with symlink resolution of the final component disabled and proves the
 //! result is a regular file from the open handle. Redaction is tuned for this
 //! application's log format; a file reached through a planted link is not that,
@@ -357,17 +357,17 @@ pub struct BugReport {
     pub os: String,
     pub arch: String,
     pub device_id: String,
-    /// Last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+    /// Last `RECENT_ERRORS_CAP` error/warn lines from the recent
     /// `agaric.log.YYYY-MM-DD` files, newest last.
     ///
     /// #4216: this is a recency window, not a calendar-day one — the walk
     /// crosses UTC day boundaries backwards until the cap is full or the
-    /// bundle's own [`MAX_ROLLED_AGE_DAYS`] retention runs out, so a report
+    /// bundle's own `MAX_ROLLED_AGE_DAYS` retention runs out, so a report
     /// filed minutes after midnight still shows the errors that prompted
-    /// it. See [`recent_errors_from_log_dir`].
+    /// it. See `recent_errors_from_log_dir`.
     ///
     /// #609: ALWAYS redacted through the same pipeline as the ZIP export
-    /// ([`redact_line_with_redactor`]) — the frontend embeds these lines
+    /// (`redact_line_with_redactor`) — the frontend embeds these lines
     /// verbatim into the prefilled PUBLIC GitHub issue body
     /// (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
     /// path there is no user-facing redact toggle on the issue-body path.
@@ -820,10 +820,10 @@ fn read_errors_from_path(path: &Path) -> Vec<String> {
 /// #609: `home` / `peer_device_ids` are the same redaction
 /// inputs `read_logs_for_report_inner` consumes. The recent-error tail is
 /// run through the SAME per-line pipeline as the ZIP export
-/// ([`redact_line_with_redactor`]) — unconditionally, because the frontend
+/// (`redact_line_with_redactor`) — unconditionally, because the frontend
 /// embeds these lines into the prefilled PUBLIC GitHub issue body and that
 /// path has no redact toggle. All inputs are "absent → noop" per
-/// [`RedactionContext`]; pass `None` / `&[]` when unknown and the deny-list
+/// `RedactionContext`; pass `None` / `&[]` when unknown and the deny-list
 /// JSON pipeline + generic email scrub still apply.
 #[tracing::instrument(skip(app_data_dir, device_id, home, peer_device_ids), err)]
 pub fn collect_bug_report_metadata_inner(

@@ -319,10 +319,10 @@ fn is_write_contention(err: &AppError) -> bool {
 /// code path with the manual "Empty Trash" UI button.
 ///
 /// **Bounded catch-up drain:** each delete transaction processes at most
-/// [`TOMBSTONE_PURGE_BATCH_LIMIT`] rows (so no single purge holds a long
+/// `TOMBSTONE_PURGE_BATCH_LIMIT` rows (so no single purge holds a long
 /// write lock), but a run loops over successive batches — re-querying
 /// eligible rows after each — until the backlog is empty or the
-/// [`TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN`] ceiling is hit. This lets a
+/// `TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN` ceiling is hit. This lets a
 /// large accumulated backlog drain within a few 24 h ticks rather than
 /// at ~1000 rows/day, while keeping every individual delete batched and
 /// bounded. The eligibility predicate (`deleted_at < cutoff`) is
@@ -345,7 +345,7 @@ fn is_write_contention(err: &AppError) -> bool {
 /// **Contention is not poison (#4018):** the per-root fallback above is
 /// entered ONLY for a failure that could plausibly belong to one root. A
 /// busy/locked writer is the one failure shape that provably does not (see
-/// [`is_write_contention`]), and it is the shape these jobs actually hit —
+/// `is_write_contention`), and it is the shape these jobs actually hit —
 /// so it abandons the run with `Err` instead of re-queueing every root
 /// behind the same lock. Returning `Err` rather than `Ok` is load-bearing
 /// twice over: it is what stops the drain loop from opening the NEXT

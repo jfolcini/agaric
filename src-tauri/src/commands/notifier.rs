@@ -86,7 +86,7 @@ pub(crate) fn prepare_notification(
 
 /// Tauri command: fire an OS notification for a due / scheduled task.
 ///
-/// Validates the payload via [`prepare_notification`], then dispatches it
+/// Validates the payload via `prepare_notification`, then dispatches it
 /// through the platform notification backend. A dispatch failure surfaces as
 /// [`AppError::InvalidOperation`]; a blank title surfaces as
 /// [`AppError::Validation`].

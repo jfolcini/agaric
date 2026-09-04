@@ -233,7 +233,7 @@ pub struct SyncService {
 ///
 /// # Why this type implements [`Drop`] when it has nothing to clean up
 ///
-/// [`Self::_permit`] releases itself when the struct's fields are dropped, so the
+/// `Self::_permit` releases itself when the struct's fields are dropped, so the
 /// `Drop` impl below frees nothing that would otherwise leak. It is here for what the
 /// *compiler* does in its presence, not for what its body does.
 ///
@@ -314,7 +314,7 @@ impl Drop for InboundSession {
 /// loop, because refusing an over-capacity peer *before* the handshake is what stops
 /// excess peers from costing CPU and file descriptors. Setup is not cheap and must not:
 /// a peer that completes the handshake and then says nothing legitimately holds its
-/// budget for [`FIRST_FRAME_TIMEOUT`], and doing that in the accept loop charges every
+/// budget for `FIRST_FRAME_TIMEOUT`, and doing that in the accept loop charges every
 /// peer behind it for the wait.
 ///
 /// Splitting the two makes the caller's `spawn` the thing that separates them, which is
@@ -324,7 +324,7 @@ impl Drop for InboundSession {
 ///
 /// # The permit is not lost by not calling [`Self::establish`]
 ///
-/// Dropping an `AdmittedConnection` drops [`Self::permit`], releasing the slot, and
+/// Dropping an `AdmittedConnection` drops `Self::permit`, releasing the slot, and
 /// drops `incoming`, which `noq` turns into an implicit reject so the peer is told. So
 /// a caller that admits and then decides not to proceed — a shutdown between the two
 /// steps, a spawn that is aborted — costs nothing and leaks nothing.
@@ -348,7 +348,7 @@ impl AdmittedConnection {
     /// Each phase carries its own budget, and they are not the same number. The first is
     /// a handshake and nothing else; the second waits on the peer's first frame, which
     /// it cannot send until `orch.start()` has read its heads and version vectors out of
-    /// the database. [`FIRST_FRAME_TIMEOUT`] documents why collapsing the two was wrong.
+    /// the database. `FIRST_FRAME_TIMEOUT` documents why collapsing the two was wrong.
     ///
     /// Returns `None` when the connection failed for a reason already logged here — the
     /// caller only needs to know it did not become a session. The slot is released on

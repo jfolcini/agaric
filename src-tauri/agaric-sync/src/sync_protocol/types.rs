@@ -110,7 +110,7 @@ pub const MAX_DEVICE_ID_CHARS: usize = 64;
 /// [`SyncMessage::HeadExchange::sender_device_id`] (#4380).
 ///
 /// Trims, rejects empty/whitespace-only, rejects anything containing a
-/// display-hostile scalar (see [`is_display_hostile`] — an id reaches the
+/// display-hostile scalar (see `is_display_hostile` — an id reaches the
 /// device list too), and rejects anything longer than
 /// [`MAX_DEVICE_ID_CHARS`].
 ///
@@ -430,7 +430,7 @@ impl From<OpTransfer> for OpRecord {
 ///
 /// The full session is driven by two cooperating state machines: the
 /// per-session [`SyncOrchestrator`](super::SyncOrchestrator) (defined in
-/// [`crate::sync_protocol::session_state_machine`]) drives the head-exchange →
+/// `crate::sync_protocol::session_state_machine`) drives the head-exchange →
 /// op-stream → merge → complete pipeline, and the surrounding
 /// [`crate::sync_daemon`] orchestrator drives the post-complete
 /// snapshot and file-transfer sub-flows. The valid order on the wire
@@ -442,7 +442,7 @@ impl From<OpTransfer> for OpRecord {
 ///    with the streaming phase below (it does not send its own
 ///    `HeadExchange`). A second `HeadExchange` mid-session is a
 ///    protocol violation and transitions to
-///    [`SyncState::Failed`](super::SyncState::Failed).
+///    [`SyncState::Failed`].
 ///
 /// 2. **`LoroSync`** — zero or more, sent by the responder only, after
 ///    it has processed the initiator's `HeadExchange`. Each message
@@ -484,11 +484,10 @@ impl From<OpTransfer> for OpRecord {
 ///    `SyncOrchestrator::handle_message` dispatch.
 ///
 /// 7. **`Error { message }`** — any side may send at any point to
-///    abort. The receiver transitions to
-///    [`SyncState::Failed`](super::SyncState::Failed); the connection
-///    is closed and the daemon retries on the next scheduled tick.
+///    abort. The receiver transitions to [`SyncState::Failed`]; the
+///    connection is closed and the daemon retries on the next scheduled tick.
 ///
-/// See [`crate::sync_protocol::session_state_machine`] (per-session ASCII
+/// See `crate::sync_protocol::session_state_machine` (per-session ASCII
 /// diagram) and `crate::sync_daemon::session_supervisor` (daemon-level
 /// orchestration) for the source-of-truth narrative.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -709,7 +708,7 @@ pub enum SyncMessage {
     /// the inline JSON number-array encoding (worst case 4 chars/byte)
     /// would blow the per-message receive cap — 10 MB on the WebSocket
     /// transport this split was sized against (see
-    /// [`LoroSyncChunkedHeader`](super::loro_sync_types::LoroSyncChunkedHeader)).
+    /// [`LoroSyncChunkedHeader`]).
     ///
     /// **Nothing in this build produces it.** The iroh port (#3464) removed
     /// the chunking layer along with the transport that needed it: a QUIC

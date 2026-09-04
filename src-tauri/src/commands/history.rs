@@ -756,7 +756,7 @@ async fn require_reverse_attachment_bytes(
 ///
 /// #2655 — but the SQL write alone is not enough: the per-space Loro engine is
 /// what sync exports, so EVERY engine-modeled reverse arm additionally fans its
-/// settled effect onto the engine (via [`drive_reverse_engine`], mirroring the
+/// settled effect onto the engine (via `drive_reverse_engine`, mirroring the
 /// MoveBlock arm's #1553 convergence). Without this the engine goes stale after
 /// an undo/redo/revert — and an undo-of-create leaves an engine-live block SQL
 /// has soft-deleted, tripping the #1257 sync-export freshness gate and silently
@@ -776,7 +776,7 @@ async fn require_reverse_attachment_bytes(
 /// converge and they cannot trip the block-scoped #1257 gate.
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
-/// `op_log.created_at` (mint it via [`reverse_op_timestamp`]). The DeleteBlock
+/// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
 /// arm stamps it into `blocks.deleted_at`, preserving the forward-path cohort
 /// invariant `op.created_at == blocks.deleted_at` (#1549): `reverse_delete_block`
 /// later reconstructs `RestoreBlock { deleted_at_ref: record.created_at }`, so
@@ -785,7 +785,7 @@ async fn require_reverse_attachment_bytes(
 ///
 /// `app_data_dir` is the vault root the `AddAttachment` arm resolves the
 /// payload's `fs_path` against before it commits a row naming that file
-/// (#3706 — see [`require_reverse_attachment_bytes`]). Pass
+/// (#3706 — see `require_reverse_attachment_bytes`). Pass
 /// `materializer.app_data_dir().as_deref()`; `None` skips the check, which is
 /// only reachable in a `Materializer` built without a vault root.
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
@@ -2532,7 +2532,7 @@ pub async fn find_undo_group_inner(
 ///     Previously the FE loop re-ran the page-subtree recursive CTE plus a
 ///     `LIMIT 1 OFFSET N` membership scan on every `undo_page_op` call.
 ///  2. The enumerated ops are reverted through the shared
-///     [`revert_ops_in_tx`], which sorts them newest-first
+///     `revert_ops_in_tx`, which sorts them newest-first
 ///     (`created_at DESC, seq DESC, device_id DESC`) and applies the reverses
 ///     in that order — preserving the newest-first offset semantics the
 ///     sequential `undo_page_op(undo_depth = depth + i)` loop had (each of
@@ -2728,7 +2728,7 @@ pub async fn undo_page_group_inner(
 ///   state (the redo op links to the undo op), so re-undoing after redo is
 ///   legal.
 ///
-/// The revert itself is the shared [`revert_ops_in_tx`] with
+/// The revert itself is the shared `revert_ops_in_tx` with
 /// `skip_non_reversible = false` — the interactive contract: a single
 /// non-reversible op (including a reverse-move preflight failure,
 /// classified `NonReversible`) ABORTS the whole batch before any reverse

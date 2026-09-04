@@ -7,7 +7,7 @@
 //!   happens on a background worker and never blocks the command hot path,
 //! - OPTIONALLY (M8), when `config.endpoint` is `Some` — i.e. the user opted in
 //!   via a loopback `AGARIC_OTEL_ENDPOINT` — a SECOND `BatchSpanProcessor`
-//!   wrapping the opt-in OTLP/HTTP exporter (see [`super::otlp`]). Spans then
+//!   wrapping the opt-in OTLP/HTTP exporter (see `super::otlp`). Spans then
 //!   fan out to BOTH the local file and the loopback collector; the file sink
 //!   is never replaced. If the OTLP exporter fails to build, the provider runs
 //!   file-only, and
@@ -66,7 +66,7 @@ pub(super) fn resource() -> Resource {
 /// M8 — when `config.endpoint` is `Some(ep)` (the user opted into the
 /// loopback-validated OTLP collector), a SECOND `BatchSpanProcessor` wrapping
 /// the opt-in OTLP exporter is added so spans fan out to BOTH sinks. The OTLP
-/// exporter is built via [`super::otlp::build_otlp_span_exporter`]; if it
+/// exporter is built via `super::otlp::build_otlp_span_exporter`; if it
 /// returns `None` (build error), the provider proceeds file-only — the
 /// always-present local sink is never dropped. Both processors share the one
 /// `RuntimeSampler` + resource above, so the OTLP collector sees exactly the
@@ -105,7 +105,7 @@ where
 /// Build an `SdkLoggerProvider` from an owned log `exporter` (M1b).
 ///
 /// Uses `with_batch_exporter` (the dedicated-worker `BatchLogProcessor`) so log
-/// export happens off the hot path, with the same [`resource`] as the tracer
+/// export happens off the hot path, with the same `resource` as the tracer
 /// provider. There is no sampler on the logs side — every event that passes the
 /// subscriber's `EnvFilter` is recorded; correlation with the active span is
 /// supplied by the SDK logger from the current OTel context, which the

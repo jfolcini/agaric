@@ -486,7 +486,7 @@ pub async fn create_block_in_tx(
 /// Snapshot of a `property_definitions` row's validation-relevant fields.
 ///
 /// Pre-fetched by the caller of [`set_property_in_tx`] and
-/// passed to [`validate_property_value`] so the helper stays sync and
+/// passed to `validate_property_value` so the helper stays sync and
 /// trivially unit-testable. The full `PropertyDefinition` struct carries
 /// `key` and `created_at` fields that the validation logic does not need;
 /// this slimmer view keeps the helper signature minimal.

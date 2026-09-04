@@ -5,7 +5,7 @@
 //! exporter via `futures_executor::block_on` — no async runtime, so the M1
 //! "no rt-tokio / thread-based" posture holds for metrics too) around the
 //! local-file [`FileMetricExporter`]. It tags every metric with the SAME
-//! [`super::provider::resource`] as the trace + logs providers, so a span, its
+//! `super::provider::resource` as the trace + logs providers, so a span, its
 //! correlated logs, and the metrics of the same run agree on `service.name` /
 //! `service.version`.
 //!
@@ -79,8 +79,8 @@ pub struct MaterializerCounters {
 /// Build an [`SdkMeterProvider`] from `config` and an owned `exporter`.
 ///
 /// Wraps the exporter in a [`PeriodicReader`] (background collector thread, no
-/// async runtime) at [`EXPORT_INTERVAL`] and stamps the same
-/// [`resource`] as the trace + logs providers. `config` is accepted for
+/// async runtime) at `EXPORT_INTERVAL` and stamps the same
+/// `resource` as the trace + logs providers. `config` is accepted for
 /// symmetry with [`super::provider::build_tracer_provider`] and so a future
 /// metrics-specific knob (e.g. interval override) has a home; today the only
 /// gate that matters — whether to build this at all — is checked by the caller
@@ -105,7 +105,7 @@ pub fn build_meter_provider(
 /// Each observable counter carries a collection callback that reads the
 /// matching process-global atomic and `observe`s its current value. The
 /// callbacks fire on the `PeriodicReader`'s collection cycle (every
-/// [`EXPORT_INTERVAL`]); they are cheap relaxed atomic loads with no locking.
+/// `EXPORT_INTERVAL`); they are cheap relaxed atomic loads with no locking.
 ///
 /// The returned [`ObservableCounter`](opentelemetry::metrics::ObservableCounter)s are *not* stored: registering the
 /// callback is the whole job, and the SDK keeps the instrument alive inside the

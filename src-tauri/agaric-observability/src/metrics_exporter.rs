@@ -30,7 +30,7 @@
 //! pipeline emits carries only opaque counts, durations, and command *names*
 //! (which are compile-time identifiers, not user data). The format below
 //! additionally routes every serialized value through
-//! [`super::exporter::sanitize_inline`] so no value can ever split or misalign
+//! `super::exporter::sanitize_inline` so no value can ever split or misalign
 //! a line — the same defense-in-depth the M1b log exporter applies.
 //!
 //! # Graceful degradation
@@ -74,7 +74,7 @@ impl std::fmt::Debug for FileMetricExporter {
 /// Build the on-disk metric exporter, or `None` if `metrics/` is unwritable.
 ///
 /// Creates `<log_dir>/metrics/` with a daily `RollingFileAppender` (the shared
-/// [`RollingFileSink`], same retention cap as the trace + log sinks). Degrades
+/// `RollingFileSink`, same retention cap as the trace + log sinks). Degrades
 /// to `None` (caller skips the metrics pipeline) on any filesystem error —
 /// never panics, mirroring [`super::exporter::build_file_exporter`].
 pub fn build_metric_exporter(log_dir: &std::path::Path) -> Option<FileMetricExporter> {

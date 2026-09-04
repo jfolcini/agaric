@@ -230,7 +230,7 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 ///
 /// Mirrors [`rebuild_pages_cache`]'s `begin_immediate_logged` +
 /// `rebuild_with_timing` shape but runs the count-only
-/// [`recompute_all_pages_cache_counts`].
+/// `recompute_all_pages_cache_counts`.
 pub async fn rebuild_pages_cache_counts(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("pages_counts", || rebuild_pages_cache_counts_impl(pool)).await
 }

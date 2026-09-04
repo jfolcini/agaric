@@ -18,14 +18,14 @@
 //!
 //!   The distinguishing signal is not "a record was deferred" (one busy write
 //!   does that and is normal) but "the same device deferred again, and again,
-//!   landing nothing in between". So [`record_stall`] keeps a per-device
-//!   *consecutive* count, retired by [`note_progress`] as soon as anything lands
+//!   landing nothing in between". So `record_stall` keeps a per-device
+//!   *consecutive* count, retired by `note_progress` as soon as anything lands
 //!   for that device — including in the very batch that then stalls mid-chain,
 //!   which is what keeps the escalation's claim true (#3740) — and escalates to
 //!   a single `error!` line once it crosses [`PERSISTENT_STALL_BATCHES`], the
 //!   point at which "busy writer" stops being a plausible explanation.
 //!
-//!   A run also ages out after [`STALL_RUN_TTL`]. A device that stalls once and
+//!   A run also ages out after `STALL_RUN_TTL`. A device that stalls once and
 //!   is then retired would otherwise leave its entry in the map forever, and
 //!   reappearing months later to stall again would read as `consecutive == 2`
 //!   rather than as the fresh busy writer it is (#3740).
@@ -34,7 +34,7 @@
 //!   correct only when each device's records are presented in ascending `seq`;
 //!   a higher seq ingested *earlier* in the same batch has already advanced the
 //!   frontier past the gap the deferral was supposed to protect. Nothing
-//!   enforced that. [`record_out_of_order`] is the cheap release-mode check the
+//!   enforced that. `record_out_of_order` is the cheap release-mode check the
 //!   issue asked for: it does not reorder anything (see
 //!   [`super::ingest_replicated_batch`] for why a defensive sort was rejected),
 //!   it reports that the invariant the policy rests on has been broken.
@@ -377,7 +377,7 @@ pub fn stalls() -> u64 {
 }
 
 /// Total out-of-order audit records seen in this process. Monotonic, and
-/// expected to stay zero — see [`OUT_OF_ORDER_RECORDS`].
+/// expected to stay zero — see `OUT_OF_ORDER_RECORDS`.
 pub fn out_of_order_records() -> u64 {
     OUT_OF_ORDER_RECORDS.load(Ordering::Relaxed)
 }

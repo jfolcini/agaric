@@ -27,7 +27,7 @@ impl LoroEngine {
     /// 4 on the SPIKE-REPORT.md readiness checklist).
     ///
     /// #1584: stamps the current [`ENGINE_FORMAT_VERSION`] into
-    /// [`ENGINE_META_ROOT`] before serializing so a later [`Self::import`] can
+    /// `ENGINE_META_ROOT` before serializing so a later [`Self::import`] can
     /// positively assert the doc's shape instead of trusting arbitrary bytes.
     pub fn export_snapshot(&self) -> Result<Vec<u8>, AppError> {
         self.stamp_format_version();

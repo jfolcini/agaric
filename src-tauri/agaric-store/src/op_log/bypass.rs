@@ -50,7 +50,7 @@ async fn disable_op_log_mutation_bypass_conn(
 /// # A raw DELETE must ALSO capture the seq high-water (#3310 / #3998)
 /// The bracket is not the only obligation a wholesale `op_log` delete
 /// carries. [`truncate`] / [`prune`] additionally record the pre-delete
-/// per-device `MAX(seq)` into [`super::high_water`] so the local-append
+/// per-device `MAX(seq)` into `super::high_water` so the local-append
 /// allocator cannot restart at `seq = 1` over an emptied log and re-mint
 /// `(device_id, seq)` addresses a paired peer still holds. This raw pair
 /// does NOT do that — nothing in the trigger, the type system, or the
@@ -58,8 +58,8 @@ async fn disable_op_log_mutation_bypass_conn(
 /// swallowing this device's post-wipe history via `INSERT OR IGNORE`) is
 /// invisible locally. Every call site of this pair today is `#[cfg(test)]`;
 /// any future PRODUCTION site that deletes `op_log` rows through it must
-/// call [`super::high_water::capture_device_frontier`] /
-/// [`super::high_water::capture_all_frontiers`] first, in the same
+/// call `super::high_water::capture_device_frontier` /
+/// `super::high_water::capture_all_frontiers` first, in the same
 /// transaction — or, preferably, use [`truncate`] / [`prune`] instead.
 ///
 /// #4018: that obligation is no longer carried by this doc comment alone.
@@ -123,7 +123,7 @@ pub async fn disable_op_log_mutation_bypass(
 ///
 /// # Seq high-water (#3998)
 /// Before the DELETE this captures every device's `MAX(seq)` into the durable
-/// [`super::high_water`] marks, so the local-append allocator does not restart
+/// `super::high_water` marks, so the local-append allocator does not restart
 /// at `seq = 1` over the emptied log and re-issue `(device_id, seq)` addresses
 /// a paired peer still holds. See that module for why the mark lives in
 /// `app_settings` (the RESET does not wipe it) rather than in `op_log`.
@@ -163,7 +163,7 @@ pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError>
 /// Neither bound stops the DELETE from emptying the device: on a vault whose
 /// newest op predates the retention window, the cutoff is newer than every row
 /// and the frontier covers all of them. Before the DELETE this therefore
-/// captures the device's `MAX(seq)` into the durable [`super::high_water`]
+/// captures the device's `MAX(seq)` into the durable `super::high_water`
 /// mark, so the allocator keeps counting from the pre-compaction frontier
 /// instead of falling back to `seq = 1`.
 ///

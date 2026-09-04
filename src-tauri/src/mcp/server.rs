@@ -5,10 +5,10 @@
 //! (the rmcp adapter). This module owns the bits that the rmcp adapter
 //! does not touch:
 //!
-//! - [`serve`] / [`serve_unix`] / `serve_pipe` (the latter is
+//! - [`serve`] / `serve_unix` / `serve_pipe` (the latter is
 //!   `#[cfg(windows)]`, so it is absent from a non-Windows doc build) — accept-loop with the
 //!   H-2 enable/disable gate and the disconnect signal.
-//! - [`run_connection`] — per-connection lifecycle wrapper around the
+//! - `run_connection` — per-connection lifecycle wrapper around the
 //!   rmcp adapter, threading [`super::McpLifecycle`]'s connection
 //!   counter and the disconnect grace period.
 //! - [`handle_connection`] — the thin rmcp-adapter entry point that

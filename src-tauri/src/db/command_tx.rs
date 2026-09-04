@@ -465,7 +465,7 @@ impl Drop for CommandTx {
     /// silently abandoned *after a successful commit*.
     ///
     /// Invariant: once `self.inner.commit()` has returned `Ok` (tracked by
-    /// `self.committed`), every enqueued [`PendingDispatch`] must have been
+    /// `self.committed`), every enqueued `PendingDispatch` must have been
     /// drained — either fired (`commit_and_dispatch`) or explicitly
     /// discarded (`commit_without_dispatch`). Both methods do exactly that
     /// immediately after the commit, so a `committed` `CommandTx` reaching

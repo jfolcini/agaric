@@ -12,7 +12,7 @@ use thiserror::Error;
 /// type-level promotion with zero wire drift.
 ///
 /// Because this enum derives `specta::Type` and is referenced by
-/// [`AppErrorSchema`], the generated `bindings.ts` now carries
+/// `AppErrorSchema`, the generated `bindings.ts` now carries
 /// `kind: AppErrorKind` as a string-literal union instead of the old open
 /// `kind: string` — the frontend's error discrimination
 /// (`isCancellation` / `isPoolBusy` / …) type-checks against it, and the
@@ -334,7 +334,7 @@ impl Serialize for AppError {
     }
 }
 
-/// Forward specta's type introspection to [`AppErrorSchema`] so that the
+/// Forward specta's type introspection to `AppErrorSchema` so that the
 /// generated TypeScript type matches the `{ kind, message, code? }` JSON
 /// shape produced by the manual `Serialize` impl above.
 impl specta::Type for AppError {

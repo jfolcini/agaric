@@ -53,7 +53,7 @@
 //! *because* the network already stopped working. That is the #3852 symptom
 //! exactly, on a device the daemon has already correctly diagnosed.
 //!
-//! [`CURRENT_STATUS`] answers the second: it records **every** delivery, and
+//! `CURRENT_STATUS` answers the second: it records **every** delivery, and
 //! [`current_status`] reads it for a UI that has just started listening. That
 //! is not the stale backfill #4034 ruled out. A stale backfill replays a past
 //! transition and can therefore describe a block that has ended; this reports
@@ -212,7 +212,7 @@ pub fn install_event_sink(sink: Arc<dyn SyncEventSink>) {
 /// that arrives before [`install_event_sink`] emits no *event* — there is
 /// nothing to deliver it to, and buffering an event would surface a stale
 /// firewall state at an unrelated later moment. It still updates
-/// [`CURRENT_STATUS`], which is a fact about the present rather than a message
+/// `CURRENT_STATUS`, which is a fact about the present rather than a message
 /// waiting to be delivered.
 pub fn report_blocked_status(blocked: bool) {
     // Record what the platform just said BEFORE anything below can return

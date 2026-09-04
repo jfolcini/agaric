@@ -998,9 +998,8 @@ pub async fn read_attachment_file_metadata(
 ///
 /// Path-validates `fs_path`, opens the file as a `tokio::fs::File`,
 /// queries `metadata().len()` for the size, and returns both. The
-/// caller passes the `File` to
-/// [`send_bulk`](crate::transport::bulk::send_bulk) alongside the size,
-/// so the bytes are pulled off disk one copy buffer at a time and
+/// caller passes the `File` to [`send_bulk`] alongside the size, so the
+/// bytes are pulled off disk one copy buffer at a time and
 /// written to the stream as one uninterrupted run.
 ///
 /// Returning the size again (despite [`read_attachment_file_metadata`]
@@ -1263,8 +1262,8 @@ impl AsyncWrite for TempAttachmentWriter {
 /// concurrent transfers of the same attachment cannot collide.
 ///
 /// The returned writer is an `AsyncWrite` sink — callers feed it via
-/// [`recv_bulk`](crate::transport::bulk::recv_bulk) then call
-/// [`TempAttachmentWriter::commit`] to atomically publish the file.
+/// [`recv_bulk`] then call [`TempAttachmentWriter::commit`] to atomically
+/// publish the file.
 pub async fn write_attachment_streaming(
     app_data_dir: &Path,
     fs_path: &str,

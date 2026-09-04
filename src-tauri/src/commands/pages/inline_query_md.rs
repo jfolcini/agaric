@@ -11,7 +11,7 @@
 //! This module makes export/import symmetric with the existing `#[ULID]` /
 //! `[[ULID]]` / `((ULID))` reference handling (#1446/#1924/#2963):
 //!
-//! * **Export** ([`rewrite_inline_queries_for_export`]) decodes the stored
+//! * **Export** (`rewrite_inline_queries_for_export`) decodes the stored
 //!   `v2:` payload into the REAL [`FilterExpr`] type (the query engine's own
 //!   type — no schema re-implementation), walks every ULID-bearing ref field,
 //!   and resolves each ULID to its human-readable NAME using the SAME batched
@@ -25,12 +25,12 @@
 //!   description carries the resolved names in plaintext for humans + external
 //!   tools.
 //!
-//! * **Import** ([`rewrite_inline_queries_for_import`]) detects the `v2n:`
+//! * **Import** (`rewrite_inline_queries_for_import`) detects the `v2n:`
 //!   form, decodes it, and remaps every embedded NAME back to the NEW vault's
 //!   ULID via the same `resolved_page_links` / `resolved_tag_tokens` maps the
 //!   inbound `[[Page]]` / `#tag` resolution passes already build (create-if-
 //!   missing included — the query's referenced names are harvested into those
-//!   passes via [`query_tag_names`] / [`query_page_names`]). It re-encodes the
+//!   passes via `query_tag_names` / `query_page_names`). It re-encodes the
 //!   ULID-carrying spec back to the canonical `{{query v2:<base64url(ULIDs)>}}`
 //!   form BEFORE the other rewrites run, so the LIVE editor representation is
 //!   UNCHANGED — the readable form exists only inside the exported `.md` file.
