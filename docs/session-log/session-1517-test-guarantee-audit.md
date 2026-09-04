@@ -27,7 +27,11 @@ weakened to unordered set comparisons.
 
 The sharpest finding is historical. Every divergence conformance has caught was caught when
 someone wrote a new fixture — never by the existing corpus reddening. Meanwhile #3081 reached a
-user with e2e green.
+user with e2e green. Worth stating precisely, because the first draft of this log and of rule 4
+got it backwards: #3081's root cause was a real atomicity defect — a committed tag create
+followed by a swallowed `SetProperty(space)` (session 1220) — and the mock's stale contract is
+why the mock-backed estate never *showed* it, not what caused it. Migrations 0087/0088 retired
+the `block_properties(key='space')` rows, not the table.
 
 ## The crate boundaries
 
