@@ -73,12 +73,13 @@ test-fe:
 test-be:
     cd src-tauri && cargo nextest run --workspace
 
-# How an `assert!` promotion (#4638) or an arithmetic audit (#4640) is CHECKED
-# rather than asserted: the dev profile keeps every `debug_assert!` the shipped
-# binary drops, so only this run exercises what release actually executes.
-# `[profile.release]` cannot run tests at all — `panic = "abort"` plus the
-# `agaric` self dev-dependency builds two copies of each dep and they do not
-# link (#4677). Slower than `test-be`; not a per-change gate.
+# Reach for this after promoting a `debug_assert!` (#4638) or auditing arithmetic
+# on a trust boundary (#4640): the dev profile keeps assertions the shipped binary
+# drops, so only this run exercises what release executes. Why `[profile.release]`
+# itself cannot run tests is on `[profile.release-test]` in src-tauri/Cargo.toml.
+# Needs the sqlx dev DB, same as `test-be` — run `just setup-db` first, or the
+# `query!` macros fail with errors that say nothing about the profile.
+# Slower than `test-be` (an optimised build of the world); not a per-change gate.
 # Backend tests with RELEASE semantics: `debug_assertions` off, `overflow-checks` on.
 [group('test')]
 test-be-release:

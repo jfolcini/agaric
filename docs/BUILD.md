@@ -155,10 +155,9 @@ cargo bench --bench interactive_slo              # warm latency mean budgets at 
   `overflow-checks` ON, via `[profile.release-test]`. Use it after promoting a
   `debug_assert!` to `assert!` or auditing arithmetic on a trust boundary: the dev profile
   keeps assertions the shipped binary drops, so it cannot show whether the check survives
-  release. `cargo test --profile release` cannot be used for this — `panic = "abort"` plus
-  the `agaric` self dev-dependency (#4499) builds two copies of every dependency and the
-  test targets do not link against them (#4677). It is slower than `just test-be` and is
-  not a per-change gate.
+  release. Needs the sqlx dev DB (`just setup-db`), same as `just test-be`. Slower, and not
+  a per-change gate. Why `[profile.release]` itself cannot run tests is documented on the
+  profile in `src-tauri/Cargo.toml` (#4677).
 
 - **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
