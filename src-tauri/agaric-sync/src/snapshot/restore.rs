@@ -168,12 +168,14 @@ fn cache_wipe_sql(table: &str) -> Option<&'static str> {
 ///   would then hold the cursor above freshly minted seqs and the H-4 boot
 ///   clamp is the only thing that would ever correct it.
 /// - `log_snapshots` — wiped (#793). Local snapshots taken before the RESET
-///   describe the pre-reset lineage, and #3487 removed the wire path that
-///   used to re-ship them. The wipe still earns its keep for two LOCAL
-///   readers: `dag::find_lca` treats any `status = 'complete'` row as proof
-///   that compaction has occurred and changes its error reporting on that,
-///   and `compact_op_log` takes the latest such row as its retention floor.
-///   A row describing a dead lineage would mislead both.
+///   describe the pre-reset lineage. Stated honestly: this wipe no longer runs
+///   anywhere in production, because it lives inside `apply_snapshot` and #3487
+///   removed that function's last caller — so it is part of a contract only
+///   tests and benches exercise. Were the restore ever driven again, the wipe
+///   would matter to two LOCAL readers that outlived the wire path:
+///   `dag::find_lca` reads any `status = 'complete'` row as proof compaction
+///   occurred, and `compact_op_log` takes the latest as its retention floor.
+///   #4699 decides whether the whole restore half survives.
 /// - `app_settings['loro.peer_id_epoch']` — **bumped, not wiped** (#792).
 ///   Post-reset engines restart op counters at 0; reusing the old
 ///   deterministic PeerID would fork the (peer, counter) space against this

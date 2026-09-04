@@ -5450,11 +5450,14 @@ async fn apply_snapshot_clears_projected_agenda_horizon_3160() {
 
 /// #793 regression: `apply_snapshot` wipes the CRDT sidecar but left
 /// `log_snapshots` intact, so rows describing the PRE-RESET lineage
-/// survived the reset. #3487 deleted the wire path that could re-ship
-/// them, but the rows still mislead two local readers: `dag::find_lca`
-/// reads any `status = 'complete'` row as "compaction has occurred", and
-/// `compact_op_log` takes the latest as its retention floor. This pins
-/// the wipe against both.
+/// survived the reset.
+///
+/// This pins a contract nothing in production runs: #3487 removed
+/// `apply_snapshot`'s last caller, so the wipe happens only here and in the
+/// benches. It is pinned anyway because the readers it protects are live —
+/// `dag::find_lca` reads any `status = 'complete'` row as "compaction has
+/// occurred", and `compact_op_log` takes the latest as its retention floor —
+/// so if #4699 keeps the restore, the wipe still has to be correct.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_snapshot_clears_stale_log_snapshots_793() {
     let (pool, _dir) = test_pool().await;
