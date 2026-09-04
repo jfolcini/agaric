@@ -2400,10 +2400,16 @@ async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
 
     // The joiner's dialog mints a competing passphrase of its own (#3463's root
     // cause), but the user types the host's.
-    crate::pairing::start_pairing(&joiner_state, "JOINING_DEV", None).unwrap();
-    crate::pairing::confirm_pairing(&joiner_pool, &joiner_state, &joiner_sched, host_passphrase)
-        .await
-        .expect("#3463: the joiner accepts the host's passphrase");
+    crate::pairing::start_pairing(&joiner_state, "JOINING_DEV").unwrap();
+    crate::pairing::confirm_pairing(
+        &joiner_pool,
+        &joiner_state,
+        &joiner_sched,
+        host_passphrase,
+        None,
+    )
+    .await
+    .expect("#3463: the joiner accepts the host's passphrase");
 
     // What the initiator puts on the wire (`session_state_machine::start`).
     let offered_proof = peer_refs::get_pending_pairing_proof(&joiner_pool)
@@ -3897,21 +3903,28 @@ fn process_discovery_unpaired_returns_some_only_while_pairing_pending() {
 // #3502 Part 2 — peers_for_change_round (Branch B's pairing-window round)
 // ======================================================================
 
+/// Build a `DiscoveredPeer` for the change-round tests.
+///
+/// Shared with the #4037 scanned-candidate tests so a QR candidate and an mDNS
+/// announcement of the same device are byte-identical peers — which is the
+/// claim those tests are about: everything below the round cannot tell them
+/// apart.
+fn discovered_peer(device_id: &str) -> crate::mdns::DiscoveredPeer {
+    crate::mdns::DiscoveredPeer {
+        device_id: device_id.to_string(),
+        endpoint_id: Some(mdns::test_endpoint_id(device_id)),
+        addresses: vec![std::net::IpAddr::from([127, 0, 0, 1])],
+        port: 8443,
+    }
+}
+
 /// Build a `DiscoveredPeer` map entry for the change-round tests.
 fn discovered_entry(
     device_id: &str,
 ) -> (String, (crate::mdns::DiscoveredPeer, tokio::time::Instant)) {
     (
         device_id.to_string(),
-        (
-            crate::mdns::DiscoveredPeer {
-                device_id: device_id.to_string(),
-                endpoint_id: Some(mdns::test_endpoint_id(device_id)),
-                addresses: vec![std::net::IpAddr::from([127, 0, 0, 1])],
-                port: 8443,
-            },
-            tokio::time::Instant::now(),
-        ),
+        (discovered_peer(device_id), tokio::time::Instant::now()),
     )
 }
 
@@ -3923,7 +3936,7 @@ async fn change_round_ignores_unpaired_discovered_peer_when_not_pairing() {
     let no_refs: Vec<PeerRef> = vec![];
     let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
 
-    let round = peers_for_change_round(&no_refs, &discovered, false);
+    let round = peers_for_change_round(&no_refs, &discovered, false, None);
 
     assert!(
         round.is_empty(),
@@ -3946,7 +3959,7 @@ async fn change_round_dials_discovered_unpaired_peer_while_pairing_pending() {
     let no_refs: Vec<PeerRef> = vec![];
     let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
 
-    let round = peers_for_change_round(&no_refs, &discovered, true);
+    let round = peers_for_change_round(&no_refs, &discovered, true, None);
 
     assert_eq!(
         round
@@ -3971,7 +3984,7 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
         .into_iter()
         .collect();
 
-    let round = peers_for_change_round(&refs, &discovered, true);
+    let round = peers_for_change_round(&refs, &discovered, true, None);
 
     assert_eq!(
         round
@@ -3981,6 +3994,77 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
         vec!["PEER_A", "PEER_B"],
         "the paired peer must appear exactly once, and the unpaired one must be \
          appended after it in device-id order"
+    );
+}
+
+/// #4037: the network this feature exists for. Multicast never arrives, so
+/// `discovered` is EMPTY and `peer_refs` is empty — every existing clause
+/// composes an empty round — and the only thing that knows a host exists is the
+/// QR the user's camera read.
+#[tokio::test]
+async fn change_round_dials_the_scanned_host_when_mdns_found_nothing_4037() {
+    let no_refs: Vec<PeerRef> = vec![];
+    let no_mdns = DiscoveredPeers::new();
+    let scanned = discovered_peer("SCANNED_HOST_4037");
+
+    let round = peers_for_change_round(&no_refs, &no_mdns, true, Some(&scanned));
+
+    assert_eq!(
+        round
+            .iter()
+            .map(|p| p.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["SCANNED_HOST_4037"],
+        "with nothing discovered and nothing paired, the scanned host is the \
+         whole round — otherwise a first pair on a LAN without multicast has no \
+         dial at all"
+    );
+}
+
+/// The other arm: outside a pairing window a scanned candidate is inert.
+///
+/// It is what keeps a scan from an abandoned attempt — the slot is never
+/// cleared, deliberately, so a retry inside the window still has it — from
+/// dialling a stranger on every later local edit.
+#[tokio::test]
+async fn change_round_ignores_the_scanned_host_outside_a_pairing_window_4037() {
+    let no_refs: Vec<PeerRef> = vec![];
+    let no_mdns = DiscoveredPeers::new();
+    let scanned = discovered_peer("SCANNED_HOST_4037");
+
+    let round = peers_for_change_round(&no_refs, &no_mdns, false, Some(&scanned));
+
+    assert!(
+        round.is_empty(),
+        "a scanned candidate must only ever be dialled while a pairing is \
+         pending; got {:?}",
+        round.iter().map(|p| &p.device_id).collect::<Vec<_>>()
+    );
+}
+
+/// mDNS working and a QR scanned name the same device, and the round must
+/// contain it ONCE.
+///
+/// `try_lock_peer` would make the second attempt a no-op, but only after the
+/// round had spawned a task and emitted a second "connecting" event for one
+/// device — which the pairing dialog shows the user.
+#[tokio::test]
+async fn change_round_does_not_duplicate_a_scanned_host_mdns_already_found_4037() {
+    let no_refs: Vec<PeerRef> = vec![];
+    let discovered: DiscoveredPeers = [discovered_entry("SCANNED_HOST_4037")]
+        .into_iter()
+        .collect();
+    let scanned = discovered_peer("SCANNED_HOST_4037");
+
+    let round = peers_for_change_round(&no_refs, &discovered, true, Some(&scanned));
+
+    assert_eq!(
+        round
+            .iter()
+            .map(|p| p.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["SCANNED_HOST_4037"],
+        "one device, one round entry, however many sources found it"
     );
 }
 
@@ -4024,7 +4108,7 @@ fn dial_started(sink: &RecordingEventSink, peer_id: &str) -> bool {
 ///
 /// This is the first-ever-pair shape: the paired-only enumeration produces
 /// nothing at all, so the round can only be non-empty if Branch B composes it
-/// with `peers_for_change_round(&refs, &discovered, pairing_pending)`. Reverting
+/// with `peers_for_change_round(&refs, &discovered, pairing_pending, scanned)`. Reverting
 /// that call site to the paired-only round reds this test — which is the property
 /// #3533 was filed for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -4096,6 +4180,81 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
         },
         BRANCH_SHUTDOWN_DEADLINE,
         "branch_b/#3533: handle.is_finished()",
+    )
+    .await;
+    mat.shutdown();
+}
+
+/// #4037, end to end through the real `select!` loop: a QR-scanned host is
+/// dialled with `discovered` EMPTY.
+///
+/// This is the test the feature exists for, and the empty map is what makes it
+/// one. The #3533 test above seeds a peer into `discovered`, so it cannot
+/// distinguish "Branch B reads the scanned slot" from "Branch B reads the mDNS
+/// map"; here there is no mDNS entry to read, no `peer_ref`, and no
+/// announcement will ever arrive — exactly the AP-with-client-isolation shape.
+/// The only route from the user's camera to a dial is
+/// `publish_scanned_peer` → `peers_for_change_round`, so the "connecting" event
+/// cannot appear unless that route is wired.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_4037() {
+    const SCANNED_HOST: &str = "SCANNED_HOST_4037";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(60),
+    ));
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // The joiner's state the instant `confirm_pairing` returns: marker armed,
+    // no peers, and the scanned host published.
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
+    scheduler.publish_scanned_peer(discovered_peer(SCANNED_HOST));
+
+    let daemon = SyncDaemon::start_with_lifecycle_seeded(
+        SyncDaemonContext {
+            pool: pool.clone(),
+            device_id: "DEV_4037_JOINER".into(),
+            materializer: std::sync::Arc::new(mat.clone()),
+            scheduler: scheduler.clone(),
+            endpoint_secret: SecretKey::generate(),
+            event_sink: sink_dyn,
+            cancel,
+            lifecycle: crate::foreground::LifecycleHooks::new(),
+        },
+        // No mDNS ever reached this device — the whole point.
+        DiscoveredPeers::new(),
+    )
+    .await
+    .expect("the seeded daemon must start");
+
+    {
+        let sink = sink.clone();
+        scheduler.notify_change();
+        wait_for(
+            move || dial_started(&sink, SCANNED_HOST),
+            BRANCH_DISPATCH_DEADLINE,
+            "branch_b/#4037: connecting event for the scanned host",
+        )
+        .await;
+    }
+
+    daemon.shutdown();
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        BRANCH_SHUTDOWN_DEADLINE,
+        "branch_b/#4037: handle.is_finished()",
     )
     .await;
     mat.shutdown();
@@ -4574,6 +4733,75 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     })
     .await
     .expect("daemon must shut down within 10s after pair notification");
+}
+
+/// #4037: the dormant waiter transitions on the wake itself, not a debounce
+/// window later.
+///
+/// The debounce was pure latency here and the user paid it twice over: the host
+/// dialog's `start_pairing_armed` sits waiting for the QUIC endpoint to publish
+/// where it bound, and the endpoint is not bound until this waiter has left the
+/// `select!`. A 3 s spinner before a QR appeared was that window.
+///
+/// The bound is a 30 s debounce against a 5 s deadline rather than a race
+/// against the real 3 s one: a waiter that still debounced could not pass by
+/// being lucky on a loaded runner, it would have to beat its own window by 25 s.
+/// `DORMANT_POLL_INTERVAL` (30 s) also sits above the deadline, so the periodic
+/// poll cannot be what satisfies this either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dormant_waiter_activates_without_waiting_out_the_debounce_window_4037() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(60),
+    ));
+    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+        Arc::new(RecordingEventSink::new());
+
+    let daemon = SyncDaemon::start_if_peers_exist(
+        pool.clone(),
+        "DEV_LOCAL_4037".into(),
+        std::sync::Arc::new(materializer),
+        scheduler.clone(),
+        SecretKey::generate(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !daemon.activation.is_active(),
+        "precondition: an empty peer table must park the daemon in the dormant \
+         waiter, or there is no wake to time"
+    );
+
+    // The host's `start_pairing_armed`: arm the marker, then wake.
+    peer_refs::set_pending_pairing(&pool, "test-proof-4037")
+        .await
+        .unwrap();
+    scheduler.notify_change();
+
+    let activated = tokio::time::timeout(
+        DORMANT_ACTIVATION_DEADLINE,
+        daemon.activation.wait_until_active(),
+    )
+    .await
+    .expect(
+        "the dormant waiter must transition on the wake itself; a waiter that \
+         still debounced would take the scheduler's 30 s window",
+    );
+    assert!(activated, "wait_until_active resolved without activation");
+
+    daemon.shutdown();
+    let handle = daemon.handle;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    })
+    .await
+    .expect("daemon must shut down within 10s");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -10422,7 +10650,7 @@ async fn drive_two_device_pairing_windowed_3507(
     let joiner_sched = Arc::new(SyncScheduler::new());
     let joiner_sink = Arc::new(RecordingEventSink::new());
     let joiner_slot = std::sync::Mutex::new(None);
-    crate::pairing::start_pairing(&joiner_slot, JOINER_DEV_3507, None)
+    crate::pairing::start_pairing(&joiner_slot, JOINER_DEV_3507)
         .expect("the joiner's dialog opens a session of its own");
 
     // A mistype is derived from the real passphrase rather than invented, so
@@ -10432,7 +10660,7 @@ async fn drive_two_device_pairing_windowed_3507(
     } else {
         format!("{host_passphrase} typo")
     };
-    crate::pairing::confirm_pairing(&joiner_pool, &joiner_slot, &joiner_sched, typed)
+    crate::pairing::confirm_pairing(&joiner_pool, &joiner_slot, &joiner_sched, typed, None)
         .await
         .expect(
             "#3463/#3469: confirming is a purely local act — it arms a marker with the \

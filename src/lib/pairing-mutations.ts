@@ -46,7 +46,7 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { PairingInfo } from '@/lib/bindings'
+import type { PairingInfo, ScannedPeerCandidate } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { runWithTimeout } from '@/lib/promise-timeout'
@@ -128,10 +128,21 @@ export const pairingMutations = {
   /** Host: mint a passphrase and arm this device's marker. */
   start: (): Promise<PairingInfo> =>
     runPairingMutation(() => commands.startPairing().then((r) => unwrap(r))),
-  /** Joiner: arm this device's marker with the proof of the typed passphrase. */
-  confirm: (passphrase: string, remoteDeviceId: string): Promise<void> =>
+  /**
+   * Joiner: arm this device's marker with the proof of the typed passphrase.
+   *
+   * `scannedPeer` is the host a v2 pairing QR named (#4037), or `null` when the
+   * passphrase was typed. The backend races it against mDNS; it never replaces
+   * it, so passing `null` is always correct behaviour, just slower on a LAN
+   * where multicast does not work.
+   */
+  confirm: (
+    passphrase: string,
+    remoteDeviceId: string,
+    scannedPeer: ScannedPeerCandidate | null,
+  ): Promise<void> =>
     runPairingMutation(() =>
-      commands.confirmPairing(passphrase, remoteDeviceId).then((r) => {
+      commands.confirmPairing(passphrase, remoteDeviceId, scannedPeer).then((r) => {
         unwrap(r)
       }),
     ),

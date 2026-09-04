@@ -299,7 +299,7 @@ async fn confirm_pairing_two_devices_converge_on_same_proof_3463() {
     );
 
     // B's user types the passphrase shown on A.
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_a.clone())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_a.clone(), None)
         .await
         .expect("#3463: the joiner must accept the HOST's passphrase");
 
@@ -358,7 +358,7 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
     assert_ne!(typed, passphrase_a);
     assert_ne!(typed, passphrase_b);
 
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, typed.into())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, typed.into(), None)
         .await
         .expect("arming a local marker is a local act and cannot fail on content");
 
@@ -383,7 +383,7 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
     // disagrees with the host's. Asserting it this way is stronger than asserting
     // a local error: it pins that the security boundary is the wire-side proof
     // comparison, not any local bookkeeping we could later relax again.
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_b.clone())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_b.clone(), None)
         .await
         .expect("arming a local marker is a local act and cannot fail on content");
 
@@ -419,9 +419,15 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
 
     // A non-empty remote id, exercising the path that pre-#855 took the
     // now-deleted peer_ref else-branch.
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.clone())
-        .await
-        .unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.clone(),
+        None,
+    )
+    .await
+    .unwrap();
 
     // #855: confirm no longer writes a peer_ref directly (the CN-spoof-prone
     // NULL-cert row is gone). It sets the pending-pairing marker carrying the
@@ -466,7 +472,7 @@ async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
     let scheduler = SyncScheduler::new();
 
     start_pairing_inner(&pairing_state, "device-local").unwrap();
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase)
+    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase, None)
         .await
         .unwrap();
 
@@ -511,6 +517,7 @@ async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
             &pairing_state,
             &scheduler,
             format!("wrong wrong wrong {attempt}"),
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("typo {attempt} must not be rationed, got {e:?}"));
@@ -518,9 +525,15 @@ async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
 
     // Now the correct passphrase, well past the retired budget.
     start_pairing_inner(&pairing_state, "device-local").unwrap();
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.clone())
-        .await
-        .expect("the correct passphrase must succeed however many typos preceded it");
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.clone(),
+        None,
+    )
+    .await
+    .expect("the correct passphrase must succeed however many typos preceded it");
 
     assert_eq!(
         peer_refs::get_pending_pairing_proof(&pool)
@@ -565,9 +578,15 @@ async fn confirm_pairing_pure_joiner_with_no_local_session_succeeds_3463() {
 
     let host_passphrase = "correct horse battery staple";
 
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.into())
-        .await
-        .expect("#3463: a joiner with no local session must be able to confirm");
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.into(),
+        None,
+    )
+    .await
+    .expect("#3463: a joiner with no local session must be able to confirm");
 
     // The marker must carry the proof of the passphrase the user typed, which is
     // what lets this device and the host converge.
@@ -692,6 +711,7 @@ async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_se
         &pairing_state,
         &scheduler,
         "correct horse battery staple".into(),
+        None,
     )
     .await
     .unwrap();
@@ -782,6 +802,7 @@ async fn sync_pairing_commands_clear_the_backoff_that_would_swallow_their_wake_3
         &joiner_state,
         &joiner_scheduler,
         "correct horse battery staple".into(),
+        None,
     )
     .await
     .unwrap();

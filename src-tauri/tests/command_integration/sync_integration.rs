@@ -169,7 +169,7 @@ async fn pairing_lifecycle_arms_pending_window_with_proof() {
 
     // Confirm pairing with remote device
     let passphrase = info.passphrase.clone();
-    confirm_pairing_inner(&pool, &pairing.0, &scheduler, info.passphrase.clone())
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, info.passphrase.clone(), None)
         .await
         .unwrap();
 
@@ -279,7 +279,7 @@ async fn confirm_without_prior_start_arms_proof_and_creates_no_peer_3463() {
 
     let host_passphrase = "some random phrase";
 
-    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.into())
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.into(), None)
         .await
         .expect("#3463: the joiner path has no local session and must still confirm");
 
@@ -405,7 +405,7 @@ async fn full_pair_then_sync_workflow() {
     );
 
     // Now the user types the passphrase displayed on the remote device.
-    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.clone())
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.clone(), None)
         .await
         .unwrap();
 
