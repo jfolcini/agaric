@@ -126,9 +126,12 @@
     //
     // #4409 drove six of the eight to zero and promoted them below; #4406
     // then did the same for `react/refs`. Only `react/set-state-in-effect`
-    // is still burning down (#4407); it must stay at `warn` until its count
+    // is still burning down (#4407); it stays at `warn` here until its count
     // reaches zero, and `npm run lint` deliberately carries no
-    // `--max-warnings` so it keeps printing without failing the build.
+    // `--max-warnings` so it keeps printing without failing the build. A
+    // directory whose count IS zero is promoted to `error` by a per-directory
+    // override at the bottom of this file, so this global level is the
+    // not-yet-swept default rather than a blanket ban.
     //
     // `react/refs` was NOT burned down by rewriting every site. #4469 proved
     // the pattern #4398 prescribed for it — destructuring a hook's return so

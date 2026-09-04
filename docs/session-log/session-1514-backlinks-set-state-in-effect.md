@@ -55,7 +55,20 @@ suppression guard): 17 files, 534 tests. All passing, `axe(container)` included.
 
 The promotion itself was falsified rather than assumed: reintroducing the violation into
 `LinkedReferences.tsx` reports it as `error`, not `warning`, and oxlint exits 1. Restored and
-`cmp`-verified.
+`cmp`-verified. Its reach was checked the same way: the override wins over the base `rules`
+block regardless of array position (moved to the front, still `error`), and it does NOT reach
+inside `BacklinkRowInner`, whose `exhaustive-deps` directive triggers the compiler bailout that
+silences every `react/*` rule for that function — a `setState` in an effect there reports
+nothing even at `error`. The config comment now says so.
+
+`docs/architecture/frontend.md` requires this rule's sweeps to be validated by e2e rather than
+vitest, because `vite.config.ts` disables the React Compiler under Vitest and only a compiled
+build exercises the memoised path. That was missed in the first pass and is now covered:
+`e2e/unlinked-references.spec.ts` navigates away and back and asserts the panel is shut but
+still expandable. Going away and *back* is what separates the two candidate implementations —
+comparing the previous pageId forgets, storing the current one would remember and reopen the
+panel. Falsified against the compiled build: with `setCollapsed(true)` removed the row is still
+visible on return and the test fails.
 
 Left alone: the pre-existing `react(rule-suppression)` warning at `BacklinkGroupRenderer.tsx`
 is a different rule, and the config's own comment records that `error` there is unreachable by
