@@ -4988,9 +4988,9 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // causality is judged from Loro VVs. Advertise a crafted vv claiming the
     // responder authored MORE ops (5) than its engine holds (1), so the
     // responder's own-lineage-loss check trips ResetRequired. The stale op-log
-    // head above is retained because the snapshot-covering check
-    // (`snapshot_covers_remote_heads`) still keys off the advertised
-    // `heads` — the audit-replication cursor, per #2481.
+    // head above is retained as part of the crafted advertisement; the
+    // snapshot-covering check that used to key off it went with
+    // `snapshot_covers_remote_heads` in #3487.
     let crafted_resp_vv = {
         let mut craft = agaric_engine::loro::engine::LoroEngine::with_peer_id("FEAT6_RESP")
             .expect("craft engine");

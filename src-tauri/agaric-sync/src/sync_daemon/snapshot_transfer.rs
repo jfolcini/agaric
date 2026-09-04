@@ -58,13 +58,14 @@ use agaric_store::peer_refs;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Maximum snapshot size the initiator will accept (256 MB).
+/// VESTIGIAL since #3487 (256 MB).
 ///
-/// The cap is defensive: a compromised or misconfigured responder
-/// could otherwise advertise a huge `size_bytes` and tie up the
-/// connection streaming a blob the initiator cannot apply. A typical
-/// 100K-block database compresses to well under this cap, so rejecting
-/// anything larger is safe in practice.
+/// It capped the LEGACY CBOR path only — the `size_bytes > MAX_SNAPSHOT_SIZE`
+/// check on a `SnapshotOffer`, and the `recv_bulk` backstop reachable only from
+/// that arm. Both are gone, so nothing reads this. The Loro catch-up is bounded
+/// by `transport::session::MAX_FRAME_SIZE` instead, independently of this value.
+///
+/// Kept because #3487 named it a constraint; #4692 tracks removing it.
 pub const MAX_SNAPSHOT_SIZE: u64 = 256 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -227,8 +228,10 @@ pub struct EngineReloadCtx<'a> {
 /// Result of an initiator-side snapshot catch-up attempt.
 #[derive(Debug, PartialEq)]
 pub enum CatchupOutcome {
-    /// The initiator declined the offer (over size cap) and sent
-    /// [`SyncMessage::SnapshotReject`]. No DB changes occurred.
+    /// VESTIGIAL since #3487: no longer constructible. It meant the
+    /// initiator declined an over-cap `SnapshotOffer`, and that message no
+    /// longer exists, so the `#2538` arm in `session_supervisor` that reads
+    /// this can never run. #4692 tracks removing both.
     Rejected { size_bytes: u64 },
     /// Snapshot was received, decoded, applied, and the initiator's
     /// frontier advanced to the snapshot's `up_to_hash`.

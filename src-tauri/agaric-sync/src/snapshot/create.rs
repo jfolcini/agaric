@@ -239,30 +239,13 @@ pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTable
 /// audit rows are meant to be purged by the same retention sweep as
 /// locally-authored ones, so `up_to_seqs` including them there is correct.
 ///
-/// BUT `up_to_seqs` has a second consumer:
-/// `sync_daemon::snapshot_transfer::snapshot_covers_remote_heads` treats
-/// `up_to_seqs[device]` as a proxy for "this snapshot's materialized SQL/Loro
-/// STATE reflects `device`'s edits up to this seq." That equivalence holds
-/// today only because op_log is (pre-#2481) strictly single-device — every
-/// entry in the map so far is the local device's own audit-and-state trail,
-/// and those two are the same thing for a single device. Once a real caller of
-/// `dag::insert_replicated_op` exists (no production path calls it yet —
-/// #2481 phase 1 is ingest-only), `up_to_seqs` for a REPLICATED foreign
-/// device seq is audit bookkeeping only and says nothing about whether this
-/// device's Loro-merged state actually incorporates that device's edits
-/// (audit-only replication is explicitly decoupled from state by design).
-/// That reintroduces both a spurious-failure risk (a real coverage mismatch
-/// on unrelated audit bookkeeping wrongly fails `snapshot_covers_remote_heads`
-/// and declines a perfectly good snapshot) and, more seriously, a false-
-/// coverage risk (a device with a high replicated audit seq for X but no
-/// actual Loro merge of X's state could pass the covering check and have its
-/// snapshot accepted as if it carried X's contributions). Resolve this before
-/// wiring the send/receive sub-flow that would let replicated rows actually
-/// exist in production — either split `up_to_seqs` into a state-covering
-/// variant (`is_replicated = 0`) used only by `snapshot_covers_remote_heads`
-/// and an unfiltered variant used only by the compaction purge, or fold this
-/// into the #87 §10.5 vv-based head/reset redesign this file already
-/// TODOs toward.
+/// #3487 removed the only other consumer
+/// (`sync_daemon::snapshot_transfer::snapshot_covers_remote_heads`, which read
+/// `up_to_seqs[device]` as a proxy for "this snapshot's STATE reflects that
+/// device's edits"). The compaction purge is now the sole reader, and for it
+/// the unfiltered map is the correct one, so the #2481-phase-2 hazard that
+/// block described — a replicated audit seq passing a state-coverage check it
+/// says nothing about — is no longer reachable from here.
 pub async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {
