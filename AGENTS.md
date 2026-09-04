@@ -230,7 +230,7 @@ The same applies to prose: a comment or issue body that claims something was che
 
 ### Testing invariants (anti-drift)
 
-The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation of the backend. Three rules keep it honest:
+The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation of the backend. Four rules keep it honest:
 
 1. **Assert durable, re-queried effect, never call shape.** `expect(invoke).toHaveBeenCalledWith(…)` proves the frontend asked, not that anything persisted. Persist, re-query, assert the state.
 2. **The mock is a contract pinned by conformance fixtures.** Every state-mutating handler is driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'`) and asserted by both sides. Read commands are pinned through `queries` steps the same way; `conformance-coverage.test.ts` fails a new command without a fixture or a reasoned waiver. Wiring: `conformance_query.rs` + the `WIRE` table in `conformance-query.ts`.
