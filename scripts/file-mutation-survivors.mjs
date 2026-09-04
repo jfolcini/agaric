@@ -245,31 +245,6 @@ export const LANES = {
 export const LANE_NAMES = Object.keys(LANES)
 export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
 
-/**
- * The lane a survivor id belongs to, read from the `[lane]` tag it already
- * carries. `undefined` for anything that carries neither tag, which is how
- * `laneFilter` below refuses to guess.
- */
-export function laneOf(id) {
-  for (const [name, { tag }] of Object.entries(LANES)) {
-    if (id.startsWith(`${tag} `)) return name
-  }
-  return undefined
-}
-
-/**
- * Structural guarantee that a lane's issue only ever sees its own ids.
- *
- * The workflow passes one input per lane, so `current` is already lane-pure
- * by construction — but "by construction" here means "by call site", and the
- * failure it prevents (one lane's parent silently adopting the other lane's
- * survivors) is the exact #3364 corruption this split exists to make
- * impossible. One filter makes it a property of the script instead.
- */
-export function laneFilter(ids, lane) {
-  return ids.filter((id) => laneOf(id) === lane)
-}
-
 const MARKER_START = '<!-- mutation-survivors:begin -->'
 const MARKER_END = '<!-- mutation-survivors:end -->'
 
@@ -514,9 +489,9 @@ export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 // not truncate, because the block is the filer's only cross-run memory and a
 // short block silently shrinks the tracked set. That red weekly job is the
 // designed outcome, not a bug to be patched by raising this number; the fix is
-// a per-outcome cap or a spill-to-child strategy. The COMMENT bodies, which
-// hold no state, do truncate — at a line boundary and labelled with the count
-// dropped (`clampCommentLines`).
+// a per-outcome cap or a spill-to-child strategy. Comment bodies used to
+// truncate instead, holding no state; the CI job no longer comments at all,
+// so every render this cap governs is now state.
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
@@ -1214,7 +1189,9 @@ export function appendReanchorNote(notes, stale, today) {
  * carried through to the close action for exactly one reason: an area whose
  * remaining findings are ALL accepted is absent from `groups`, so it closes on
  * the same branch as an area that was genuinely cleaned up, and the two must
- * not be told to the reader the same way. See `buildChildCloseComment`.
+ * not be told to the reader the same way. The close writes the child BODY
+ * first and says which kind it is — that used to be a close comment, and the
+ * CI job no longer comments.
  */
 export function decideChildActions({
   groups,
@@ -1381,122 +1358,6 @@ export function buildChildBody({
   return render(withNote(datedNc, keptNc), withNote(datedSv, keptSv))
 }
 
-/**
- * #3257/#4032 — clamp a rendered COMMENT to `MAX_BODY_CHARS`.
- *
- * Comments carry no state (the parent's marker block is the only tracked set),
- * so cutting one is safe — but the pre-#4032 cut was
- * `text.slice(0, MAX_BODY_CHARS - footer.length) + footer`, and a raw character
- * slice fails three ways at once, every one of them quiet. Measured on 2000
- * rust-shaped findings against `buildNewSurvivorComment` before this change:
- *
- *   - the cut landed mid-id, so the last rendered line was
- *     `[rust] src/reverse/batch.rs:1657:18: replace ` — a truncated mutant that
- *     reads as a complete finding, and would be searched for as one;
- *   - the ``` fence was left unterminated (odd fence count: 1), so the
- *     "truncated" footer was swallowed INTO the code block instead of reading
- *     as a note about it;
- *   - the footer named no number, so a reader could not tell whether 3 findings
- *     were missing or 1 200. It was 1 200.
- *
- * The result was a 60 000-char comment that looked like a complete report. That
- * is the fail-open shape: a report that has dropped most of its content must
- * say so louder than one that has not.
- *
- * So: cut at a LINE boundary, re-close the fence, and state the exact count
- * omitted against the total. A comment that already fits is returned
- * byte-for-byte unchanged and carries no note at all — a truncation label that
- * is always present says nothing.
- *
- * `noteFor(omitted, total)` returns the footer LINES. It is called once with
- * the worst case (everything omitted) to size the reservation, so the space set
- * aside never depends on the cut it is paying for.
- */
-function clampCommentLines(lines, noteFor) {
-  const full = lines.join('\n')
-  if (full.length <= MAX_BODY_CHARS) return full
-
-  // Findings are exactly the fenced lines: every builder here renders ids
-  // inside ``` blocks and prose outside them, so fence parity is the count.
-  let total = 0
-  let fenced = false
-  for (const line of lines) {
-    if (line === '```') fenced = !fenced
-    else if (fenced) total += 1
-  }
-
-  const reserve = ['```', ...noteFor(total, total)].join('\n').length + 1
-  const budget = MAX_BODY_CHARS - reserve
-  const kept = []
-  let used = 0
-  let keptFindings = 0
-  let inFence = false
-  for (const line of lines) {
-    if (used + line.length + 1 > budget) break
-    kept.push(line)
-    used += line.length + 1
-    if (line === '```') inFence = !inFence
-    else if (inFence) keptFindings += 1
-  }
-  // The cut can land inside a code block; close it so the note below renders as
-  // a note rather than as one more line of monospace mutant id.
-  if (inFence) kept.push('```')
-  kept.push(...noteFor(total - keptFindings, total))
-  return kept.join('\n')
-}
-
-export function buildChildComment({ area, newMembers, runUrl }) {
-  const { survived, noCoverage } = partitionByOutcome(newMembers)
-  const lines = [
-    `${newMembers.length} new mutation finding${newMembers.length === 1 ? '' : 's'} in **${area}** this run — ${noCoverage.length} with no coverage, ${survived.length} survivor(s):`,
-  ]
-  if (noCoverage.length > 0)
-    lines.push('', `**No coverage (${noCoverage.length})**`, '```', ...noCoverage, '```')
-  if (survived.length > 0)
-    lines.push('', `**Survivors (${survived.length})**`, '```', ...survived, '```')
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in this issue's body._`,
-  ])
-}
-
-/**
- * #4173 residual — a child closes for TWO different reasons and they are not
- * interchangeable.
- *
- * The area drops out of `groupByArea(all)` both when its last mutant was
- * actually killed AND when every finding left in it was accepted as
- * equivalent, because accepted ids are subtracted from the observed set before
- * the grouping (see `applyAcceptedGaps`). The single unqualified "no mutants
- * survive or go uncovered in X any more" was therefore a FALSE ALL-CLEAR on
- * the second path: those mutants do survive, every one of them, and the only
- * thing that changed is that triage ruled them unkillable and the filer stopped
- * saying so. A closing comment claiming the tests now kill them is a lie of the
- * #3245 family — the report telling a reader the opposite of the truth — and it
- * is worse than the noise it replaced, because a closed issue is not re-read.
- */
-export function buildChildCloseComment({ area, runUrl, accepted = [] }) {
-  const lines =
-    accepted.length > 0
-      ? [
-          `Nothing left to triage in **${area}** — closing. **This is not an all-clear**: the ${accepted.length} finding(s) still there are recorded in the parent as **accepted as equivalent** (triage proved them unkillable, #4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears in ${area}, the next run reopens this issue rather than filing a new one.`,
-          '',
-          `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
-          '```',
-          ...accepted,
-          '```',
-        ]
-      : [
-          `No mutants survive or go uncovered in **${area}** any more — closing. If a finding reappears there, the next run reopens this issue rather than filing a new one.`,
-        ]
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} accepted entries are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the parent's accepted-equivalent block._`,
-  ])
-}
-
 // ---------------------------------------------------------------------------
 // Issue body / comment rendering
 // ---------------------------------------------------------------------------
@@ -1516,9 +1377,9 @@ export function buildChildCloseComment({ area, runUrl, accepted = [] }) {
  * precisely the distinction the issue's triage convention depends on.
  *
  * The body is now ONE deduped list — the state block — and cannot drift.
- * "New this run" lives where a per-run snapshot belongs: in the per-run
- * comment (`buildNewSurvivorComment`), which is timestamped by its own
- * position in the thread and carries the run URL.
+ * "New this run" was a per-run comment; the CI job no longer comments, so the
+ * per-run snapshot lives only in the run log and the run's own counts. The
+ * body stays state, which is the half that had to be durable anyway.
  *
  * `resolvedOnes` is NOT part of `all` (it is the complement), so it
  * duplicates nothing; it stays as the one presentational section, and is the
@@ -1728,55 +1589,6 @@ export function buildIssueBody({
   throw new Error(
     `the survivor set outgrew a single issue body: ${all.length} finding(s) render to ${clampedHarder.length} chars, ${clampedHarder.length - MAX_BODY_CHARS} over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536; the measured ceiling is ~635 findings at ~90 chars each). The machine-readable state block cannot be truncated without corrupting the tracked set — every dropped line would be re-reported as new next run. Triage the tracking issue down, split the lanes into separate tracking issues, add a per-outcome cap or spill the lists to the child issues, or un-enrol the noisiest module from stryker.modules.mjs — the deferred list there records this ceiling as the reason some modules are not enrolled yet (#3350).`,
   )
-}
-
-export function buildNewSurvivorComment({ newOnes, runUrl }) {
-  const lines = []
-  const groups = groupByArea(newOnes)
-  const totals = partitionByOutcome(newOnes)
-  lines.push(
-    `${newOnes.length} new mutation finding${newOnes.length === 1 ? '' : 's'} this run, in ${groups.length} area${groups.length === 1 ? '' : 's'} — ${totals.noCoverage.length} with no coverage, ${totals.survived.length} survivor(s):`,
-  )
-  lines.push('')
-  // #3350 — grouped and ranked rather than one flat block. A 200-line
-  // undifferentiated paste is read as "the mutation thing is noisy again";
-  // "page-blocks-move: 40" is read as a place to go. The per-area counts also
-  // make an ENROLMENT spike (one brand-new area contributing everything)
-  // visually distinct from a REGRESSION (a handful of new lines spread across
-  // areas that were already being tracked), which is the difference between
-  // "expected" and "someone weakened a test".
-  // #3788 — the per-area block is split by outcome for the same reason the
-  // child bodies are: "3 new" that are all no-coverage is a different piece of
-  // news from "3 new" survivors, and the merged wording told the second story
-  // for both.
-  for (const g of groups) {
-    lines.push(
-      `**${g.area}** — ${g.members.length} (${g.noCoverage.length} no coverage, ${g.survived.length} survived)`,
-    )
-    if (g.noCoverage.length > 0) {
-      lines.push('```')
-      lines.push(...g.noCoverage)
-      lines.push('```')
-    }
-    if (g.survived.length > 0) {
-      lines.push('```')
-      lines.push(...g.survived)
-      lines.push('```')
-    }
-  }
-  if (runUrl) lines.push('', `Run: ${runUrl}`)
-  // #3257 — a comment body hits the same 65536 limit as an issue body, and
-  // this is the call the SAME large-batch run makes right after the edit, so
-  // capping only the body would just move the 422 one line down. A comment
-  // carries no state, so truncation is safe here — see `clampCommentLines` for
-  // why it is not a `slice`, and #4032 for the run that made it matter: the
-  // first `NoCoverage`-admitting run announces its whole newly-visible
-  // no-coverage set as new in ONE comment, which is the largest single artifact
-  // this script has ever rendered.
-  return clampCommentLines(lines, (omitted, total) => [
-    '',
-    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the issue body${runUrl ? `, and this run is [here](${runUrl})` : ''}._`,
-  ])
 }
 
 // ---------------------------------------------------------------------------
@@ -2171,13 +1983,20 @@ export function main(argv = process.argv.slice(2)) {
   // the tracking issue's state.
   assertLaneInputsPresent(args)
 
-  const rustSurvivors = args.rustMissed ? parseRustSurvivors(args.rustMissed) : []
-  const frontendSurvivors = args.frontendDir ? parseFrontendSurvivors(args.frontendDir) : []
-  // `laneFilter`, not just concatenation: see its header. The workflow passes
-  // one input per lane, so this is normally a no-op — it is here so that a
-  // call site passing both cannot silently file one lane's survivors under
-  // the other lane's issue.
-  const current = laneFilter([...rustSurvivors, ...frontendSurvivors], args.lane)
+  // Only the lane's OWN input is read. An earlier draft parsed both and
+  // filtered by tag; review correctly called that dead weight, since the two
+  // sources are already tag-pure and the filter could never drop anything.
+  // Not reading the other lane's input at all is simpler AND strictly safer:
+  // passing `--frontend-dir` with `--lane rust` now cannot contribute an id,
+  // rather than contributing ids a filter is trusted to remove.
+  const current =
+    args.lane === 'rust'
+      ? args.rustMissed
+        ? parseRustSurvivors(args.rustMissed)
+        : []
+      : args.frontendDir
+        ? parseFrontendSurvivors(args.frontendDir)
+        : []
 
   const { survived, noCoverage } = partitionByOutcome(current)
   console.log(
@@ -2642,18 +2461,14 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     const ids = [...few, ...many]
     const groups = groupByArea(ids)
     const body = buildIssueBody({ all: ids, resolvedOnes: [], today: '2026-07-31' })
-    const comment = buildNewSurvivorComment({ newOnes: ids, runUrl: undefined })
     const bodyRustFirst =
       body.indexOf('| rust: agaric-store/src/op.rs |') < body.indexOf('| frontend: glob-validate |')
-    const commentRustFirst =
-      comment.indexOf('**rust: agaric-store/src/op.rs**') <
-      comment.indexOf('**frontend: glob-validate**')
-    if (groups[0].members.length === 5 && bodyRustFirst && commentRustFirst)
-      ok('the worst area is ranked first in both body and comment (#3350)')
+    if (groups[0].members.length === 5 && bodyRustFirst)
+      ok('the worst area is ranked first in the body (#3350)')
     else
       fail(
-        'the worst area is ranked first in both body and comment (#3350)',
-        `first=${groups[0].area} body=${bodyRustFirst} comment=${commentRustFirst}`,
+        'the worst area is ranked first in the body (#3350)',
+        `first=${groups[0].area} body=${bodyRustFirst}`,
       )
   }
 
@@ -3082,70 +2897,6 @@ function selfTestChildPlanning({ check, survivor }) {
       !small.includes('do not fit') && small.includes(survivor(1)),
       'a small child body is not truncated',
       small,
-    )
-  }
-
-  selfTestChildCloseWording({ check, FE, RS, survivor })
-}
-
-/**
- * #4173 residual — the wording of a CLOSE, split out of `selfTestChildPlanning`
- * only to keep that function under the repo's cyclomatic-complexity budget.
- */
-function selfTestChildCloseWording({ check, FE, RS, survivor }) {
-  // 10h. #4173 residual — THE TWO KINDS OF CLOSE, and the whole point is that a
-  //      test which passes on both is worthless here. An area leaves
-  //      `groupByArea(all)` for two unrelated reasons: its mutants were killed,
-  //      or every one of them was accepted as equivalent and subtracted from
-  //      the observed set. Both reach the SAME close branch, so before this
-  //      both closed with "No mutants survive or go uncovered in X any more" —
-  //      a flat falsehood in the second case, on an issue nobody reopens to
-  //      re-read. #3751/#3760/#3763/#3764 were the four standing instances.
-  //
-  //      Pinned as a pair: the clean close must keep the all-clear AND not
-  //      mention acceptance, the accepted close must say the count AND NOT
-  //      claim the all-clear. Assert only one arm and the "fix" of always
-  //      qualifying the wording passes while lying the other way round.
-  {
-    const acceptedHere = [survivor(1), survivor(2)]
-    const plan = decideChildActions({
-      groups: [],
-      newOnes: [],
-      knownChildren: new Map([
-        [FE, 41],
-        [RS, 42],
-      ]),
-      accepted: acceptedHere,
-    })
-    const byArea = new Map(plan.map((a) => [a.area, a]))
-    check(
-      byArea.get(FE).accepted.length === 2 &&
-        byArea.get(RS).accepted.length === 0 &&
-        acceptedHere.every((id) => byArea.get(FE).accepted.includes(id)),
-      'a close carries the accepted-equivalent ids of ITS area, and only those',
-      plan.map((a) => `${a.area}=[${(a.accepted ?? []).length}]`).join(' '),
-    )
-
-    const acceptedClose = buildChildCloseComment({
-      area: FE,
-      accepted: byArea.get(FE).accepted,
-      runUrl: 'https://example/run',
-    })
-    const cleanClose = buildChildCloseComment({ area: RS, runUrl: 'https://example/run' })
-    check(
-      !acceptedClose.includes('No mutants survive or go uncovered') &&
-        acceptedClose.includes('not an all-clear') &&
-        acceptedClose.includes('Accepted as equivalent (2)') &&
-        acceptedHere.every((id) => acceptedClose.includes(id)),
-      'an all-accepted area closes WITHOUT claiming an all-clear, and names the survivors (#4173)',
-      acceptedClose,
-    )
-    check(
-      cleanClose.includes('No mutants survive or go uncovered') &&
-        !/accepted as equivalent/i.test(cleanClose) &&
-        !cleanClose.includes('not an all-clear'),
-      'a genuinely cleaned-up area still closes with the plain all-clear (#4173)',
-      cleanClose,
     )
   }
 }
@@ -3650,66 +3401,6 @@ function selfTestNoCoverage({ ok, fail }) {
   // 12b. THE PARENT BODY. Present AND separated: the counts are split, the
   //      state block says which is which, and the no-coverage entry is not
   //      described as something a test ran over.
-  {
-    const all = [NC_ID, SV_COL7, SV_COL24].toSorted()
-    const body = buildIssueBody({
-      all,
-      resolvedOnes: [],
-      today: '2026-08-16',
-      newOnes: all,
-      runUrl: undefined,
-    })
-    const table = body.slice(body.indexOf('| Area |'), body.indexOf('### All currently-known'))
-    if (
-      body.includes(NC_ID) &&
-      table.includes('| frontend: date-utils | 1 | 2 | 2026-08-16 |') &&
-      body.includes('### All currently-known mutants (1 no coverage, 2 survived)') &&
-      // #3245 still holds across the split: nothing is listed twice.
-      all.every((id) => body.split(id).length - 1 === 1)
-    )
-      ok('the parent body surfaces the NoCoverage mutant with its own count (#3788)')
-    else
-      fail(
-        'the parent body surfaces the NoCoverage mutant with its own count (#3788)',
-        `present=${body.includes(NC_ID)} table=${table.trim()}`,
-      )
-
-    // 12c. THE CHILD BODY — the thing an agent actually works from. Two
-    //      sections, no-coverage first, each id under the right heading.
-    const child = buildChildBody({
-      area: 'frontend: date-utils',
-      members: all,
-      parentNumber: 3142,
-    })
-    const ncAt = child.indexOf('### No coverage')
-    const svAt = child.indexOf('### Survivors')
-    if (
-      ncAt !== -1 &&
-      svAt > ncAt &&
-      child.includes('### No coverage — no test executed this code (1)') &&
-      child.includes('### Survivors — a test ran and did not fail (2)') &&
-      child.indexOf(NC_ID) > ncAt &&
-      child.indexOf(NC_ID) < svAt &&
-      child.indexOf(SV_COL7) > svAt
-    )
-      ok('the child body renders no-coverage and survivors as separate sections (#3788)')
-    else
-      fail(
-        'the child body renders no-coverage and survivors as separate sections (#3788)',
-        `nc@${ncAt} sv@${svAt} ncId@${child.indexOf(NC_ID)}`,
-      )
-
-    // 12d. THE PER-RUN COMMENT carries the split too, or the notification says
-    //      "3 new survivors" for a run whose news was an untested function.
-    const comment = buildNewSurvivorComment({ newOnes: all, runUrl: undefined })
-    if (
-      comment.includes('1 with no coverage, 2 survivor(s)') &&
-      comment.includes('(1 no coverage, 2 survived)') &&
-      comment.includes(NC_ID)
-    )
-      ok('the per-run comment counts no-coverage separately (#3788)')
-    else fail('the per-run comment counts no-coverage separately (#3788)', comment)
-  }
 
   // 12e. RANKING. An area with untested code outranks a bigger survivor-only
   //      area — the ordering is the report's whole "look here first" claim, and
@@ -3889,48 +3580,8 @@ function selfTestBodyCap({ ok, fail }) {
   const RUN = 'https://github.com/o/r/actions/runs/1234567890'
 
   // ── over-cap comment: cut at a line boundary, fence closed, count exact ──
-  {
-    const newOnes = Array.from({ length: 2000 }, (_, i) => rust(i)).toSorted()
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
-    const shown = newOnes.filter((id) => comment.includes(id)).length
-    const m = /_\*\*Truncated\*\* — (\d+) of these (\d+) findings are not shown/.exec(comment)
-    const fences = (comment.match(/```/g) ?? []).length
-    // Every id that appears must appear WHOLE: the pre-#4032 slice left a
-    // partial id as the last line, which reads as a finding and is not one.
-    const lastFinding = comment.split('\n').findLast((l) => l.startsWith('[rust] '))
-    const problems = []
-    if (comment.length > MAX_BODY_CHARS) problems.push(`len=${comment.length}`)
-    if (!m) problems.push('no truncation label')
-    else if (Number(m[1]) !== 2000 - shown)
-      problems.push(`label says ${m[1]}, dropped ${2000 - shown}`)
-    else if (Number(m[2]) !== 2000) problems.push(`label total ${m[2]} != 2000`)
-    if (fences % 2 !== 0) problems.push(`unbalanced fences (${fences})`)
-    if (!newOnes.includes(lastFinding))
-      problems.push(`last finding line is partial: ${lastFinding}`)
-    if (problems.length === 0)
-      ok(
-        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
-      )
-    else
-      fail(
-        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
-        problems.join('; '),
-      )
-  }
 
   // ── under-cap comment: whole, and NOT labelled ──
-  {
-    const newOnes = Array.from({ length: 20 }, (_, i) => rust(i)).toSorted()
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
-    const allPresent = newOnes.every((id) => comment.includes(id))
-    if (allPresent && !/Truncated/.test(comment) && !/not shown/.test(comment))
-      ok('under-cap comment is posted whole and carries no truncation label (#4032)')
-    else
-      fail(
-        'under-cap comment is posted whole and carries no truncation label (#4032)',
-        `len=${comment.length} allPresent=${allPresent}`,
-      )
-  }
 
   // ── child body: the note counts PER SECTION, not the whole area, twice ──
   {
@@ -4771,32 +4422,6 @@ async function runSelfTest() {
   // 1. #3245 — the first-fill case: an empty `known` set means EVERY
   //    survivor is "new". The old body listed them under `New this run` AND
   //    under the marker block; the deduped body must list each exactly once.
-  {
-    const current = [survivor(1), survivor(2), survivor(3)]
-    const { newOnes, resolvedOnes, all } = diffSurvivors(current, new Set())
-    const body = buildIssueBody({ all, resolvedOnes, runUrl: 'https://example/run' })
-    const counts = current.map((s) => body.split(s).length - 1)
-    if (newOnes.length === 3 && counts.every((c) => c === 1))
-      ok('first fill lists each survivor exactly once (#3245)')
-    else
-      fail(
-        'first fill lists each survivor exactly once (#3245)',
-        `newOnes=${newOnes.length} per-survivor occurrences=${JSON.stringify(counts)}`,
-      )
-
-    // …and the marker block round-trips to exactly the same set, so the
-    // dedupe did not cost the script its state.
-    const reparsed = parseKnownSurvivors(body)
-    if (reparsed.size === 3 && current.every((s) => reparsed.has(s)))
-      ok('deduped body round-trips through parseKnownSurvivors')
-    else fail('deduped body round-trips through parseKnownSurvivors', `size=${reparsed.size}`)
-
-    // The per-run comment is where "new this run" lives now.
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
-    if (current.every((s) => comment.includes(s)))
-      ok('per-run comment still carries the new survivors')
-    else fail('per-run comment still carries the new survivors', comment)
-  }
 
   // 2. #3245 — the incremental case: a genuinely new survivor must not
   //    duplicate the already-known ones either.
@@ -4874,15 +4499,6 @@ async function runSelfTest() {
 
   // 6. #3257 — the comment is the very next `gh` call the same oversized run
   //    makes, so capping only the body would move the 422 one line down.
-  {
-    const newOnes = Array.from({ length: 800 }, (_, i) => survivor(i))
-    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
-    // #4032 — the label moved from a bare "truncated" to one carrying the count
-    // dropped; `selfTestBodyCap` checks that count is the true one.
-    if (comment.length <= MAX_BODY_CHARS && /\*\*Truncated\*\* — \d+ of these \d+/.test(comment))
-      ok('oversized new-survivor comment is truncated (#3257)')
-    else fail('oversized new-survivor comment is truncated (#3257)', `len=${comment.length}`)
-  }
 
   // 7. A body that comfortably fits is left completely alone.
   {

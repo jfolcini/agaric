@@ -1714,27 +1714,36 @@ jobs:
           if [ "$LANE_AUTHORITATIVE" != 'true' ]; then
             extra=(--dry-run)
           fi
-          # SHORT_MERGE is a RUST signal — it reports how many of the 21
-          # cargo-mutants shards made it into the merged artifact — so since
-          # the split it must gate the rust invocation ONLY. Applying it to
-          # both would let a dead rust shard silently stop the frontend lane
-          # from writing its own, entirely unaffected, issue.
-          rust_extra=("${extra[@]}")
-          if [ "$SHORT_MERGE" = 'true' ]; then
-            echo "::warning::running --dry-run for the RUST lane: mutants-merge reported a short merge, so the rust tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
-            rust_extra=(--dry-run)
-          fi
+          # The two invocations must fail INDEPENDENTLY. Under `set -e` a
+          # non-zero rust exit aborts the step before the frontend one runs,
+          # and `assertLaneInputsPresent` throws before the --dry-run branch
+          # is even consulted — so a dead `mutants-out` (the only red this
+          # lane has ever had: run 30794686024) would stop the FRONTEND issue
+          # being written that week, with `mutants-frontend` green and its
+          # artifact complete. `|| rc=1` keeps each lane's failure its own
+          # while still reddening the step.
+          rc=0
           # ONE INVOCATION PER LANE (#3364 superseded): each lane has its own
           # tracking issue, so a lane that did not run is simply not filed for
           # — no cross-lane `--require-*` pair, and no way for one lane's data
           # to rewrite the other's issue.
           if [ "$RAN_RUST" = 'true' ]; then
+            # SHORT_MERGE counts the 21 cargo-mutants shards that reached the
+            # merged artifact, so it is a RUST signal and is consulted only
+            # here. Evaluating it outside this branch also warned about
+            # dry-running a rust lane that never ran, on every frontend-only
+            # dispatch (`mutants-merge` skipped => `shards_merged` empty).
+            rust_extra=("${extra[@]}")
+            if [ "$SHORT_MERGE" = 'true' ]; then
+              echo "::warning::running --dry-run for the RUST lane: mutants-merge reported a short merge, so the rust tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
+              rust_extra=(--dry-run)
+            fi
             node scripts/file-mutation-survivors.mjs \
               --lane rust \
               --rust-missed mutants-artifact/missed.txt \
               --require-input \
               --children \
-              "${rust_extra[@]}"
+              "${rust_extra[@]}" || rc=1
           fi
           if [ "$RAN_FRONTEND" = 'true' ]; then
             node scripts/file-mutation-survivors.mjs \
@@ -1742,8 +1751,9 @@ jobs:
               --frontend-dir mutation-artifact \
               --require-input \
               --children \
-              "${extra[@]}"
+              "${extra[@]}" || rc=1
           fi
+          exit "$rc"
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
