@@ -248,7 +248,9 @@ async fn pairing_start_then_cancel_clears_session() {
         "session must exist after start"
     );
 
-    cancel_pairing_inner(&pool, &pairing.0).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing.0, &SyncScheduler::new())
+        .await
+        .unwrap();
     assert!(
         pairing.0.lock().unwrap().is_none(),
         "session must be cleared after cancel"

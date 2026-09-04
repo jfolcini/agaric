@@ -1091,13 +1091,24 @@ impl SyncScheduler {
     /// The peer a scanned pairing QR named, if any.
     ///
     /// Read once per change round rather than consumed, so a candidate stays
-    /// available across the retries a pairing window allows. It is only ever
-    /// *used* while a pairing is pending (see
-    /// [`crate::sync_daemon::peers_for_change_round`]), which is
-    /// what keeps a scan from an abandoned attempt inert.
+    /// available across the retries a pairing window allows. The
+    /// `pairing_pending` gate in [`crate::sync_daemon::peers_for_change_round`]
+    /// keeps it inert BETWEEN windows — but only between them, which is why
+    /// [`Self::clear_scanned_peer`] exists: without it an abandoned scan would
+    /// be re-dialled in every later window for the process lifetime, including
+    /// one this device opens as host for a different peer.
     #[must_use]
     pub fn scanned_peer(&self) -> Option<DiscoveredPeer> {
         self.scanned_peer.borrow().clone()
+    }
+
+    /// Forget the scanned peer (#4037).
+    ///
+    /// Called when a pairing attempt is cancelled: the candidate belongs to that
+    /// attempt, and the `pairing_pending` gate alone would let it ride into the
+    /// next window.
+    pub fn clear_scanned_peer(&self) {
+        self.scanned_peer.send_replace(None);
     }
 
     /// How many changes have been signalled. The caller's high-water mark for
@@ -2606,6 +2617,33 @@ mod tests {
             sched.await_local_endpoint(Duration::ZERO).await,
             Some(test_advert()),
             "a value already in the slot must not cost a wait"
+        );
+    }
+
+    /// #4037 review: the `pairing_pending` gate keeps a scanned candidate inert
+    /// BETWEEN windows only. Without a clear, an abandoned scan is re-dialled in
+    /// every later window for the process lifetime — including one this device
+    /// opens as host for a different peer.
+    #[tokio::test]
+    async fn clear_scanned_peer_forgets_an_abandoned_scan() {
+        let scheduler = SyncScheduler::new();
+        scheduler.publish_scanned_peer(DiscoveredPeer {
+            device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".into(),
+            endpoint_id: Some(crate::mdns::test_endpoint_id("QR_HOST_4037")),
+            addresses: vec![std::net::IpAddr::from([192, 168, 1, 42])],
+            port: 59553,
+        });
+        assert!(
+            scheduler.scanned_peer().is_some(),
+            "the publish must land, or this test proves nothing about the clear"
+        );
+
+        scheduler.clear_scanned_peer();
+
+        assert!(
+            scheduler.scanned_peer().is_none(),
+            "a cancelled attempt's candidate must not survive into the next \
+             pairing window"
         );
     }
 

@@ -229,13 +229,19 @@ pub async fn confirm_pairing_inner(
 /// rather than being a bug in its own right, but it regresses a flow that
 /// used to work (by accident) and is worth knowing before assuming "host
 /// closed its dialog" is harmless to an in-flight joiner.
-#[instrument(skip(pool, pairing_state), err)]
+#[instrument(skip(pool, pairing_state, scheduler), err)]
 pub async fn cancel_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
 ) -> Result<(), AppError> {
     *lock_pairing_state(pairing_state)? = None;
     peer_refs::clear_pending_pairing(pool).await?;
+    // #4037: the scanned candidate belongs to the attempt being cancelled. The
+    // `pairing_pending` gate keeps it inert only BETWEEN windows, so without
+    // this it would be re-dialled in every later window for the process
+    // lifetime — including one this device opens as host for a different peer.
+    scheduler.clear_scanned_peer();
     Ok(())
 }
 
@@ -504,8 +510,9 @@ pub async fn confirm_pairing(
 pub async fn cancel_pairing(
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
-    cancel_pairing_inner(&pool.0, &pairing_state.0)
+    cancel_pairing_inner(&pool.0, &pairing_state.0, &scheduler)
         .await
         .map_err(sanitize_internal_error)
 }
