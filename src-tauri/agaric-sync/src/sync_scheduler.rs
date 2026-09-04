@@ -1052,8 +1052,10 @@ impl SyncScheduler {
     /// except the one this budget exists for: on a first-ever pair the daemon
     /// is dormant and has bound no endpoint, and the caller's own act of
     /// arming the pairing marker is what wakes it. So the wait covers a
-    /// dormant→active transition, and the caller sizes `budget` from
-    /// [`Self::debounce_window`], which is what that transition costs.
+    /// dormant→active transition. The caller sizes `budget` from
+    /// [`Self::debounce_window`] plus slack — as headroom, not because the
+    /// window is spent: the dormant waiter watches the raw counter and
+    /// transitions on the wake itself.
     ///
     /// `None` on timeout is a legitimate answer, not an error: a device with
     /// no bound endpoint has no address to advertise, and the QR degrades to

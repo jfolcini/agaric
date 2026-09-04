@@ -98,23 +98,21 @@ pub const PAIRING_QR_VERSION_PASSPHRASE_ONLY: u32 = 1;
 
 /// How many address candidates the QR will carry (#4037).
 ///
-/// `ip_addrs()` returns every address the endpoint bound, and that list is not
-/// bounded by anything the user controls — Wi-Fi and Ethernet both up, a VPN
-/// tunnel, a container bridge, or any IPv6 address (which is more than twice
-/// an IPv4 one in this payload). The QR is read by a phone camera out of a
-/// 200 px box, so payload bytes are a scannability budget, not free.
+/// `ip_addrs()` is a `Vec` with no bound the user controls, and the QR is read
+/// by a phone camera out of a 200 px box, so payload bytes are a scannability
+/// budget. This is the `.take()` that keeps an unbounded list out of it.
 ///
-/// Truncating is safe in a way that dropping an mDNS record would not be: a
-/// candidate only ever *races* mDNS, which stays the discovery path and the
-/// staleness fallback. A dropped candidate costs a first pair nothing unless
-/// multicast is also broken AND the reachable address was the one dropped.
+/// Two is not a measured cliff. Measured, a third candidate costs no QR version
+/// (two 241 B/v12, three 260 B/v12) — the earlier "last rung before density
+/// degrades" reason died when `device_id` joined the payload. Two is simply what
+/// a multi-homed host has, and dropping a candidate only ever costs a race,
+/// never a pair: mDNS remains the discovery path and the fallback.
 ///
-/// Two, because two is what a multi-homed host actually has on one LAN — Wi-Fi
-/// and Ethernet — and every address past that is a container bridge or a VPN
-/// tunnel the joiner is not on. It is deliberately NOT justified by the QR
-/// version any more: measured, a third candidate lands on the same version 12
-/// as the second (see `the_v2_payload_costs_eight_qr_versions_over_v1`), so
-/// this cap buys bytes and a bound, not a version.
+/// **Open (#4037 review):** the bind is a single `bind_addr_with_opts`, so it is
+/// unclear whether `ip_addrs()` can yield more than one address in production —
+/// on a loopback-only CI box it yields exactly one, which settles nothing about
+/// a laptop on Wi-Fi and Ethernet. If it provably cannot, this constant and the
+/// `addrs` array both collapse to one string.
 pub const MAX_QR_ADDR_CANDIDATES: usize = 2;
 
 /// Build the JSON payload for a pairing QR code.
@@ -438,10 +436,14 @@ fn install_pairing_session(
 /// Slack added to [`SyncScheduler::debounce_window`] when waiting for this
 /// device's bound endpoint before rendering a pairing QR (#4037).
 ///
-/// The debounce window is what the dormant waiter spends before it rechecks the
-/// peer table; this covers the interface sweep and the bind that follow it.
-/// Derived from the scheduler's own field rather than written as one number, so
-/// a change to the debounce cannot silently make this budget too short.
+/// This covers the interface sweep and the bind that follow the wake.
+///
+/// It is added to `debounce_window` for headroom, NOT because the waiter spends
+/// that window: this change moved the dormant waiter off
+/// `wait_for_debounced_change`, so it transitions on the wake itself and the
+/// window is no longer part of the cost. The slack alone is what this budget
+/// actually rests on; the window is kept in the sum so a squeezed debounce in
+/// tests cannot make the total shorter than the bind needs.
 const QR_ENDPOINT_BIND_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Start pairing AND arm the pairing window so the host's dormant daemon
@@ -489,11 +491,12 @@ pub async fn start_pairing_armed(
     // then publishes where it bound (`SyncScheduler::publish_local_endpoint`).
     //
     // So the wait below is not a poll for something that already exists; it is
-    // waiting on a transition this function just caused. The budget is sized
-    // from the scheduler's own debounce window because that window is what the
-    // dormant waiter spends before it rechecks, plus slack for the bind. Every
-    // other case — any device that has ever paired — is already active and this
-    // returns on the first `borrow`.
+    // waiting on a transition this function just caused. Since the waiter no
+    // longer debounces (it watches the raw counter), that transition costs the
+    // bind and little else; the budget adds `debounce_window` to the slack only
+    // as headroom, not because the window is spent. Every other case — any
+    // device that has ever paired — is already active and this returns on the
+    // first `borrow`.
     //
     // A timeout is not a failure: it means this device has no endpoint to
     // advertise, and the QR degrades to the passphrase-only v1 shape that mDNS
