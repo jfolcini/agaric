@@ -3316,10 +3316,8 @@ function selfTestChildGh({ check }) {
     reports = [],
   }) => {
     writeFileSync(missed, missedLines.join('\n'), 'utf8')
-    // `feDir` is created ONLY on the frontend lane, so the writes that use it
-    // live inside the same branch: with `lane: 'rust'` it would be '' and
-    // `join('', module_)` resolves against cwd — writing fixture trees into the
-    // repo, the class of accident #4287 / #4018 / #4204 already cost us.
+    // `feDir` exists only on the frontend lane; the writes that use it live
+    // with it, so no lane can resolve them against cwd.
     let feDir = ''
     if (lane === 'frontend') {
       feDir = mkdtempSync(join(tmpdir(), 'mutation-children-fe-'))
