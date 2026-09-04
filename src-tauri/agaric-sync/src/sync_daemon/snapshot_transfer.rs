@@ -212,7 +212,7 @@ pub async fn try_offer_loro_snapshot_catchup(
 /// Engine context for the initiator-side catch-up.
 ///
 /// Bundles the live engine registry with this device's id so
-/// [`receive_loro_snapshot_catchup`] can merge the responder's per-space
+/// `receive_loro_snapshot_catchup` can merge the responder's per-space
 /// snapshots into the local engines. `None` is a programmer error on this
 /// path — a merge has nothing to merge into without a registry — and fails
 /// the catch-up.
@@ -276,7 +276,7 @@ fn catchup_peer_identity<'a>(
 ///
 /// Reads the responder's first post-`ResetRequired` message under an explicit
 /// [`RECV_TIMEOUT`] — QUIC gives a receive no clock of its own — and hands a
-/// [`SyncMessage::LoroSync`] to [`receive_loro_snapshot_catchup`], which merges
+/// [`SyncMessage::LoroSync`] to `receive_loro_snapshot_catchup`, which merges
 /// each per-space snapshot into the local engine and reprojects SQL. Any other
 /// variant returns [`AppError::InvalidOperation`] so the caller records a sync
 /// failure (same treatment as a malformed delta exchange).
