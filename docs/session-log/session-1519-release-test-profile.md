@@ -30,11 +30,8 @@ test target, `command_integration` included — the target that produced the 116
 
 The suite: **6339 tests, 6337 passed, 2 failed**. Both were diagnosed rather than assumed:
 
-- `export_import_export_list_style_fixpoint_4552` **passes in isolation**. It is sensitive to
-  load in a full parallel run, not to release semantics. The same run independently marked
-  `snapshot::tests::old_snapshots_accumulate` FLAKY, which is the corroborating signal.
-- `payload_with_embedded_null_byte_panics` was the only genuine failure, and it was a
-  **duplicate**.
+- `payload_with_embedded_null_byte_panics` was a **duplicate**; see below.
+- `export_import_export_list_style_fixpoint_4552` is a real finding, filed as **#4688**.
 
 ## The one real failure was a duplicate, not a gap
 
@@ -50,6 +47,30 @@ an ungated `#[should_panic]` fails.
 So the assertion stayed and the duplicate went. Falsified: breaking the payload `debug_assert!`
 reddens `null_byte_assert_fires_for_payload`; restored and `cmp`-verified byte-identical. All
 four gated null-byte tests still pass under the dev profile.
+
+## The other failure was not a flake
+
+The first instinct was to call it load sensitivity and move on. That was wrong, and worth
+recording as a near miss: the profile's first run found something, and the cheap reading would
+have discarded it.
+
+It reproduces with 166 tests in 8.8 s, not just under whole-suite load, and it fails by
+**reordering sibling blocks** — nondeterministically. The same test, retried once inside one
+nextest invocation, produced two *different* wrong orderings. In the second, the reorder also
+corrupted the #4552 positional ordinals: once `Step two` stopped being adjacent to `Step one`,
+it renumbered to `1.`.
+
+Export cannot be the source: its order is total, `(COALESCE(position, sentinel), id)` at
+`markdown.rs:808` and again at `:1401`. So the variance is upstream — either import writing
+colliding sibling positions, or `settle()` returning before the materializer is done. #4688
+carries both hypotheses and the experiment that separates them; it is deliberately not fixed
+here, because this session's change is a build profile.
+
+The decisive measurement is that the dev profile passes 3/3 at ~27.7 s per run while
+`release-test` fails at ~8.8 s. That is a **3x speed** difference, not a semantic one —
+nothing in this test touches `debug_assertions` or `overflow-checks`. Which inverts the
+severity: users run release builds, so if the ordering is timing-dependent, production is the
+more exposed environment, not the less.
 
 ## What this independently confirmed
 
