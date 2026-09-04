@@ -86,8 +86,10 @@
 //
 // Issue-body shape (#3245/#3257): the body carries exactly ONE deduped
 // survivor list — the machine-readable marker block. Per-run deltas ("new
-// this run") go in the per-run comment, not the persistent body, so no
-// survivor is ever listed twice and no stale snapshot masquerades as "new".
+// this run") are carried by each entry's first-seen date, not by a second
+// section, so no survivor is ever listed twice and no stale snapshot
+// masquerades as "new". They used to go in a per-run comment; this job no
+// longer comments at all.
 // The rendered body is clamped to MAX_BODY_CHARS so a large survivor batch
 // cannot 422 `gh issue edit` and wedge this weekly job red indefinitely.
 //
@@ -1188,7 +1190,8 @@ export function appendReanchorNote(notes, stale, today) {
  *   'sync'   — the area is unchanged or only shrank: re-render the body, do not
  *              comment, do not reopen. A partial recovery is not news, exactly
  *              as in the sibling reporter.
- *   'close'  — the area has no REPORTABLE finding left: comment and close.
+ *   'close'  — the area has no REPORTABLE finding left: rewrite the body
+ *              (so it says WHICH kind of close this is) and close.
  *
  * `maxChildren` caps CREATES only. An update or a close cannot run away — they
  * are bounded by what is already recorded — so capping the total would just
@@ -1443,7 +1446,7 @@ export function buildIssueBody({
   )
   head.push('')
   head.push(
-    "The list below is the single deduped source of truth (#3245): mutants that are NEW in a given run are reported in that run's comment on this issue, never re-listed here — including the no-coverage ones, which is why they are not repeated as a section of their own here. The per-area split lives in the table below, and the per-area child issues render the two lists separately.",
+    "The list below is the single deduped source of truth (#3245): every tracked mutant appears exactly once, including the no-coverage ones, which is why they are not repeated as a section of their own here. A finding first seen in the latest run carries that run's date in the leading first-seen column — there is no per-run comment; this job only ever edits bodies. The per-area split lives in the table below, and the per-area child issues render the two lists separately.",
   )
   head.push('')
 
@@ -2162,7 +2165,8 @@ export function main(argv = process.argv.slice(2)) {
 /**
  * The parent write. Split from `main` both for its cyclomatic complexity and
  * because it now has two callers' worth of policy in it: a run with NEW
- * survivors notifies (reopen + comment), while a run that only had CHILD work
+ * survivors notifies (reopen; there is no comment — this job only edits
+ * bodies), while a run that only had CHILD work
  * to do — an area resolved, a child adopted — syncs the body silently. That is
  * the same "an edit is state, a comment is news" split the sibling reporter's
  * `sync` branch makes, and it is what keeps the child bookkeeping from turning
@@ -3745,10 +3749,6 @@ function selfTestBodyCap({ ok, fail }) {
   const ncId = (i) =>
     `[frontend] date-utils: src/lib/date-utils.ts:${1000 + i}:${(i % 40) + 1} [BooleanLiteral]${NO_COVERAGE_SUFFIX}`
   const RUN = 'https://github.com/o/r/actions/runs/1234567890'
-
-  // ── over-cap comment: cut at a line boundary, fence closed, count exact ──
-
-  // ── under-cap comment: whole, and NOT labelled ──
 
   // ── child body: the note counts PER SECTION, not the whole area, twice ──
   {

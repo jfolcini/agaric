@@ -121,9 +121,13 @@ on:
           Which lanes to run: `all`, or a comma-separated subset of
           clippy-clean, bench-smoke, bench-slo, mutants, mutants-frontend,
           fuzz, type-aware-lint, full-suite. Re-running one lane after a fix
-          costs that lane instead of the whole ~4 h matrix. Any subset makes
-          the run a smoke run (see `CRON_EQUIVALENT`), because the tracking
-          issues span lanes and a partial set must not rewrite them.
+          costs that lane instead of the whole ~4 h matrix.
+
+          A subset still WRITES for the two mutation lanes: each owns its own
+          tracking issue, so running one alone is complete data about the
+          issue it updates. It is a smoke run for the fuzz and
+          scheduled-failure trackers, which span the whole run — those
+          `--dry-run` on any subset (see `CRON_EQUIVALENT`).
         required: false
         default: 'all'
 
