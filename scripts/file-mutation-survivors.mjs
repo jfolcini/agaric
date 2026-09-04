@@ -218,11 +218,57 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-// Stable title: the ONLY thing the find-or-file logic matches on. Never
-// rename an existing issue with this title — the script would stop finding
+// One PARENT PER LANE, keyed by the tag every survivor id already carries.
+//
+// A single parent spanning both lanes made every partial run dangerous: the
+// body is one set, so rewriting it from the lane that ran deletes the lane
+// that did not and re-reports it the following week (#3364). `--require-*`
+// existed only to turn that into a loud failure rather than silent damage.
+// With one parent per lane there is nothing to protect — a lane writes its
+// own issue and cannot see the other's — so a single-lane dispatch can write
+// for real instead of dry-running, which is the whole point of the `lanes`
+// input in `scheduled-deep-checks.yml`.
+//
+// Stable titles: the ONLY thing the find-or-file logic matches on. Never
+// rename an existing issue with one of these — the script would stop finding
 // it and file a duplicate.
-export const TRACKING_ISSUE_TITLE = 'Mutation testing: survivor triage (auto-filed, do not rename)'
+export const LANES = {
+  rust: {
+    tag: '[rust]',
+    title: 'Mutation testing: rust survivor triage (auto-filed, do not rename)',
+  },
+  frontend: {
+    tag: '[frontend]',
+    title: 'Mutation testing: frontend survivor triage (auto-filed, do not rename)',
+  },
+}
+export const LANE_NAMES = Object.keys(LANES)
 export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
+
+/**
+ * The lane a survivor id belongs to, read from the `[lane]` tag it already
+ * carries. `undefined` for anything that carries neither tag, which is how
+ * `laneFilter` below refuses to guess.
+ */
+export function laneOf(id) {
+  for (const [name, { tag }] of Object.entries(LANES)) {
+    if (id.startsWith(`${tag} `)) return name
+  }
+  return undefined
+}
+
+/**
+ * Structural guarantee that a lane's issue only ever sees its own ids.
+ *
+ * The workflow passes one input per lane, so `current` is already lane-pure
+ * by construction — but "by construction" here means "by call site", and the
+ * failure it prevents (one lane's parent silently adopting the other lane's
+ * survivors) is the exact #3364 corruption this split exists to make
+ * impossible. One filter makes it a property of the script instead.
+ */
+export function laneFilter(ids, lane) {
+  return ids.filter((id) => laneOf(id) === lane)
+}
 
 const MARKER_START = '<!-- mutation-survivors:begin -->'
 const MARKER_END = '<!-- mutation-survivors:end -->'
@@ -905,7 +951,7 @@ function recordedFirstSeen(firstSeen, id) {
  * A child's title is a PURE FUNCTION of its area and is the tier-2 dedup key
  * (see § Parent/child in the header): the run that cannot find a recorded
  * number for an area searches for this exact string before it files anything.
- * Same contract as the parent's `TRACKING_ISSUE_TITLE`, and the same warning —
+ * Same contract as the parent's title in `LANES`, and the same warning —
  * rename one and the next run adopts-or-files a fresh child.
  */
 export function childIssueTitle(area) {
@@ -1229,9 +1275,35 @@ export function decideChildActions({
  * parent cannot repeat the split as a list (#3245 forbids any finding appearing
  * twice in that body); it carries the split as counts in its area table.
  */
-export function buildChildBody({ area, members, firstSeen = new Map(), parentNumber, runUrl }) {
-  const parentRef = parentNumber ? `#${parentNumber}` : `"${TRACKING_ISSUE_TITLE}"`
+export function buildChildBody({
+  area,
+  members,
+  firstSeen = new Map(),
+  parentNumber,
+  parentTitle,
+  accepted = [],
+  runUrl,
+}) {
+  const parentRef = parentNumber ? `#${parentNumber}` : `"${parentTitle}"`
   const { survived, noCoverage } = partitionByOutcome(members)
+  // The two kinds of close read identically from the outside — no findings
+  // left — and they mean opposite things: one area is genuinely clean, the
+  // other is clean only because every finding in it was proven equivalent and
+  // is still surviving. That distinction used to live in the close COMMENT.
+  // The CI job does not comment, so it lives here, in the body, where it also
+  // outlives the run log that would otherwise be its only record (#4173).
+  const acceptedNote =
+    accepted.length === 0
+      ? []
+      : [
+          `**This is not an all-clear.** The ${accepted.length} finding(s) still present in **${area}** are recorded in the parent as **accepted as equivalent** — triage proved them unkillable (#4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears here, the next run reopens this issue rather than filing a new one.`,
+          '',
+          `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
+          '```',
+          ...accepted,
+          '```',
+          '',
+        ]
   const head = [
     `Mutation findings in **${area}** from the weekly \`scheduled-deep-checks.yml\` mutation lanes: **${noCoverage.length} with no coverage** (no test executed the mutated code at all) and **${survived.length} survivor(s)** (a test ran and did not fail).`,
     '',
@@ -1240,6 +1312,7 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
     `Start with the no-coverage list: those mutants are unkillable by construction until a test exercises the code, so no amount of strengthening an existing test touches them. Survivors are the opposite — the test exists and is too weak. Either way, fix it the way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The lists below are re-rendered from the parent's machine-readable block on every run and hold no state of their own — remove a line **in the parent**, not here. This issue closes itself once ${area} has no findings left.`,
     '',
   ]
+  head.push(...acceptedNote)
   const tail = []
   if (runUrl) tail.push('', `_Last updated by [this run](${runUrl})._`)
 
@@ -1716,14 +1789,14 @@ function ghJson(args) {
 }
 
 /** Finds the single tracking issue by exact title, preferring an OPEN match over a CLOSED one (so a triaged-and-closed issue gets reopened rather than duplicated). */
-function findTrackingIssue(repo) {
+function findTrackingIssue(repo, title) {
   const results = ghJson([
     'issue',
     'list',
     '--repo',
     repo,
     '--search',
-    `in:title "${TRACKING_ISSUE_TITLE}"`,
+    `in:title "${title}"`,
     '--state',
     'all',
     '--json',
@@ -1731,7 +1804,7 @@ function findTrackingIssue(repo) {
     '--limit',
     '20',
   ])
-  const exact = results.filter((i) => i.title === TRACKING_ISSUE_TITLE)
+  const exact = results.filter((i) => i.title === title)
   if (exact.length === 0) return null
   const open = exact.find((i) => i.state === 'OPEN')
   if (open) return open
@@ -1816,7 +1889,7 @@ function createChild(repo, title, body) {
  * this throws half-way, the parent keeps the previous (smaller) block and the
  * orphaned children are adopted by title next run — the reason tier 2 exists.
  */
-function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, newSet }) {
+function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, parentTitle }) {
   const links = new Map()
   for (const a of actions) {
     let { number, action } = a
@@ -1853,8 +1926,22 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
     }
     if (action === 'close') {
       const acceptedHere = a.accepted ?? []
-      withTempFile(buildChildCloseComment({ area: a.area, runUrl, accepted: acceptedHere }), (f) =>
-        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
+      // EDIT then close, never a close comment: the CI job does not comment.
+      // The edit is not cosmetic — it is what makes the close honest. An area
+      // closed because everything in it is accepted-equivalent looks exactly
+      // like a clean one, and the difference used to be stated only in the
+      // comment. Writing the body first puts it somewhere durable (#4173).
+      withTempFile(
+        buildChildBody({
+          ...a,
+          members: [],
+          firstSeen,
+          parentNumber,
+          parentTitle,
+          accepted: acceptedHere,
+          runUrl,
+        }),
+        (f) => gh(['issue', 'edit', String(number), '--repo', repo, '--body-file', f]),
       )
       if (state !== 'CLOSED') gh(['issue', 'close', String(number), '--repo', repo])
       console.log(
@@ -1870,15 +1957,11 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
     if (action === 'notify' && state === 'CLOSED') {
       gh(['issue', 'reopen', String(number), '--repo', repo])
     }
-    withTempFile(buildChildBody({ ...a, firstSeen, parentNumber, runUrl }), (f) =>
+    withTempFile(buildChildBody({ ...a, firstSeen, parentNumber, parentTitle, runUrl }), (f) =>
       gh(['issue', 'edit', String(number), '--repo', repo, '--body-file', f]),
     )
-    if (action === 'notify') {
-      const newMembers = a.members.filter((m) => newSet.has(m))
-      withTempFile(buildChildComment({ area: a.area, newMembers, runUrl }), (f) =>
-        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
-      )
-    }
+    // The reopen above is the whole notification. A comment naming the new
+    // members used to follow it; the body it just wrote already lists them.
     links.set(a.area, number)
   }
   return links
@@ -1891,8 +1974,7 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
 function parseArgs(argv) {
   const args = {
     dryRun: false,
-    requireRust: false,
-    requireFrontend: false,
+    requireInput: false,
     children: false,
     maxChildren: DEFAULT_MAX_CHILDREN,
   }
@@ -1907,12 +1989,12 @@ function parseArgs(argv) {
         args.frontendDir = argv[++i]
         break
       }
-      case '--require-rust': {
-        args.requireRust = true
+      case '--lane': {
+        args.lane = argv[++i]
         break
       }
-      case '--require-frontend': {
-        args.requireFrontend = true
+      case '--require-input': {
+        args.requireInput = true
         break
       }
       case '--children': {
@@ -1984,14 +2066,15 @@ function defaultRunUrl() {
  * (`check-mutation-reports.mjs`) fails on a module that produced none.
  */
 function assertLaneInputsPresent(args) {
-  if (args.requireRust && !existsSync(args.rustMissed ?? '')) {
+  if (!args.requireInput) return
+  if (args.lane === 'rust' && !existsSync(args.rustMissed ?? '')) {
     throw new Error(
-      `--require-rust: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
+      `--require-input: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the rust tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
     )
   }
-  if (args.requireFrontend && frontendReportCount(args.frontendDir ?? '') === 0) {
+  if (args.lane === 'frontend' && frontendReportCount(args.frontendDir ?? '') === 0) {
     throw new Error(
-      `--require-frontend: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
+      `--require-input: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the frontend tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
     )
   }
 }
@@ -2074,6 +2157,12 @@ function announceReanchoring({ stale, willWrite, dryRun }) {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
+  if (!LANE_NAMES.includes(args.lane)) {
+    throw new Error(
+      `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
+    )
+  }
+  args.title = LANES[args.lane].title
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
 
@@ -2084,11 +2173,15 @@ export function main(argv = process.argv.slice(2)) {
 
   const rustSurvivors = args.rustMissed ? parseRustSurvivors(args.rustMissed) : []
   const frontendSurvivors = args.frontendDir ? parseFrontendSurvivors(args.frontendDir) : []
-  const current = [...rustSurvivors, ...frontendSurvivors]
+  // `laneFilter`, not just concatenation: see its header. The workflow passes
+  // one input per lane, so this is normally a no-op — it is here so that a
+  // call site passing both cannot silently file one lane's survivors under
+  // the other lane's issue.
+  const current = laneFilter([...rustSurvivors, ...frontendSurvivors], args.lane)
 
   const { survived, noCoverage } = partitionByOutcome(current)
   console.log(
-    `mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived (rust: ${rustSurvivors.length}, frontend: ${frontendSurvivors.length})`,
+    `${args.lane} mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived`,
   )
 
   // --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
@@ -2104,7 +2197,7 @@ export function main(argv = process.argv.slice(2)) {
       throw new Error(
         '--repo (or $GITHUB_REPOSITORY) is required outside of --known-body-file test mode',
       )
-    existingIssue = findTrackingIssue(repo)
+    existingIssue = findTrackingIssue(repo, args.title)
   }
 
   // #4173 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
@@ -2168,8 +2261,6 @@ export function main(argv = process.argv.slice(2)) {
   // from the body that is being replaced.
   const reanchored = appendReanchorNote(parseReanchorNotes(existingIssue?.body), stale, today)
 
-  const comment = buildNewSurvivorComment({ newOnes, runUrl })
-
   if (args.dryRun) {
     // Rendered against the ALREADY-RECORDED links only: a dry run files no
     // child, so no new number exists, and inventing one would misdescribe what
@@ -2186,7 +2277,7 @@ export function main(argv = process.argv.slice(2)) {
       acceptedOn,
       reanchored,
     })
-    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, comment, childActions })
+    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions })
     return
   }
 
@@ -2200,7 +2291,7 @@ export function main(argv = process.argv.slice(2)) {
         runUrl,
         firstSeen,
         parentNumber: existingIssue?.number,
-        newSet: new Set(newOnes),
+        parentTitle: args.title,
       })
     : knownChildren
 
@@ -2216,7 +2307,7 @@ export function main(argv = process.argv.slice(2)) {
     acceptedOn,
     reanchored,
   })
-  writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
+  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork })
 }
 
 /**
@@ -2228,7 +2319,7 @@ export function main(argv = process.argv.slice(2)) {
  * `sync` branch makes, and it is what keeps the child bookkeeping from turning
  * every quiet week into a notification.
  */
-function writeParent({ existingIssue, repo, body, comment, newOnes, childWork }) {
+function writeParent({ existingIssue, repo, title, body, newOnes, childWork }) {
   if (existingIssue === null) {
     withTempFile(body, (bodyFile) => {
       const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
@@ -2238,7 +2329,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
         '--repo',
         repo,
         '--title',
-        TRACKING_ISSUE_TITLE,
+        title,
         '--body-file',
         bodyFile,
         ...labelArgs,
@@ -2252,7 +2343,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
   if (newOnes.length === 0) {
     withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
     console.log(
-      `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings, so no comment — a partial recovery is not news)`,
+      `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings)`,
     )
     return
   }
@@ -2261,20 +2352,10 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
     gh(['issue', 'reopen', number, '--repo', repo])
   }
   withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
-  withTempFile(comment, (f) => gh(['issue', 'comment', number, '--repo', repo, '--body-file', f]))
   console.log(`updated tracking issue #${number} (${newOnes.length} new finding(s))`)
 }
 
-function printDryRun({
-  args,
-  existingIssue,
-  newOnes,
-  resolvedOnes,
-  all,
-  body,
-  comment,
-  childActions,
-}) {
+function printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, childActions }) {
   // Compare to null explicitly — issue #0 is not a real GitHub issue
   // number, but the `--known-body-file` test stub uses 0 as a placeholder
   // and 0 is falsy, so a `existingIssue.number` truthiness check here
@@ -2284,7 +2365,7 @@ function printDryRun({
       `[dry-run] would ${existingIssue.state === 'CLOSED' && newOnes.length > 0 ? 'REOPEN + ' : ''}edit issue #${existingIssue.number}`,
     )
   } else {
-    console.log(`[dry-run] would CREATE a new issue titled "${TRACKING_ISSUE_TITLE}"`)
+    console.log(`[dry-run] would CREATE a new issue titled "${args.title}"`)
   }
   console.log(
     `[dry-run] new findings: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
@@ -2309,8 +2390,6 @@ function printDryRun({
   }
   console.log('[dry-run] --- issue body ---')
   console.log(body)
-  console.log('[dry-run] --- new-survivor comment ---')
-  console.log(comment)
 }
 
 // ---------------------------------------------------------------------------
@@ -2694,18 +2773,46 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
 
     const cases = [
       [
-        'an ABSENT frontend dir fails --require-frontend (#3364)',
-        [...base, '--frontend-dir', absent, '--require-frontend'],
+        'an ABSENT frontend dir fails --require-input (#3364)',
+        [...base, '--lane', 'frontend', '--frontend-dir', absent, '--require-input'],
         /no Stryker mutation\.json/,
       ],
       [
-        'an EMPTY frontend dir fails --require-frontend too — empty artifact is still no data (#3364)',
-        [...base, '--frontend-dir', emptyDir, '--require-frontend'],
+        'an EMPTY frontend dir fails --require-input too — empty artifact is still no data (#3364)',
+        [...base, '--lane', 'frontend', '--frontend-dir', emptyDir, '--require-input'],
         /no Stryker mutation\.json/,
       ],
       [
-        'an absent missed.txt fails --require-rust (#3364)',
-        [...base, '--rust-missed', absent, '--require-rust'],
+        'an absent missed.txt fails --require-input (#3364)',
+        [...base, '--lane', 'rust', '--rust-missed', absent, '--require-input'],
+        /no cargo-mutants missed\.txt/,
+      ],
+      [
+        'an unknown --lane is refused rather than guessing which issue to rewrite',
+        [...base, '--lane', 'bogus', '--rust-missed', missed],
+        /--lane is required and must be one of/,
+      ],
+      [
+        'a missing --lane is refused for the same reason',
+        [...base, '--rust-missed', missed],
+        /--lane is required and must be one of/,
+      ],
+      [
+        // The guard is per-lane now: --require-input on the rust lane says
+        // nothing about the frontend dir, so the OTHER lane's absent input
+        // must not fail it. Under the old cross-lane pair this was the
+        // failure that made a single-lane run impossible (#4685 review).
+        "--require-input on one lane ignores the other lane's absent input",
+        [
+          ...base,
+          '--lane',
+          'rust',
+          '--rust-missed',
+          absent,
+          '--frontend-dir',
+          absent,
+          '--require-input',
+        ],
         /no cargo-mutants missed\.txt/,
       ],
     ]
@@ -2720,16 +2827,32 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
     // writes one when nothing survived) — only an ABSENT one is "no data".
     const okCases = [
       [
-        'a populated frontend dir passes --require-frontend',
-        [...base, '--frontend-dir', fullDir, '--require-frontend'],
+        'a populated frontend dir passes --require-input',
+        [...base, '--lane', 'frontend', '--frontend-dir', fullDir, '--require-input'],
       ],
       [
-        'an empty-but-present missed.txt passes --require-rust',
-        [...base, '--rust-missed', missed, '--require-rust'],
+        'an empty-but-present missed.txt passes --require-input',
+        [...base, '--lane', 'rust', '--rust-missed', missed, '--require-input'],
       ],
       [
-        'the guards are opt-in: an absent dir is still tolerated without the flag',
-        [...base, '--frontend-dir', absent, '--rust-missed', absent],
+        'the guard is opt-in: an absent dir is still tolerated without the flag',
+        [...base, '--lane', 'frontend', '--frontend-dir', absent, '--rust-missed', absent],
+      ],
+      [
+        // The frontend lane's own input is absent, but it is the RUST lane
+        // running: its input is present, so this run is fine. The old paired
+        // flags made this combination a hard error.
+        "the frontend lane's absent input does not block the rust lane",
+        [
+          ...base,
+          '--lane',
+          'rust',
+          '--rust-missed',
+          missed,
+          '--frontend-dir',
+          absent,
+          '--require-input',
+        ],
       ],
     ]
     for (const [name, argv] of okCases) {
@@ -3086,6 +3209,8 @@ function selfTestChildGh({ check }) {
     let threw = null
     try {
       main([
+        '--lane',
+        'rust',
         '--rust-missed',
         missed,
         '--children',
@@ -3189,18 +3314,19 @@ function selfTestChildGh({ check }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     check(
-      seq === 'view,comment,close,edit' &&
-        closeComment.includes(OP) &&
-        // This area really was cleaned up — the missed.txt is empty and nothing
-        // is accepted — so the unqualified all-clear is the TRUE thing to say,
-        // and 11i is the same sequence where it would be false. The pair is
-        // what makes either assertion mean anything.
-        closeComment.includes('No mutants survive or go uncovered') &&
-        !/accepted as equivalent/i.test(closeComment),
-      'a resolved area comments on and closes its child, then syncs the parent',
-      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
+      seq === 'view,edit,close,edit' &&
+        closeBody.includes(OP) &&
+        // This area really was cleaned up — the missed.txt is empty and
+        // nothing is accepted — so the child body must carry NO
+        // not-an-all-clear caveat, and 11i is the same sequence where it must.
+        // The pair is what makes either assertion mean anything. The claim
+        // moved from the close comment to the body the close writes first.
+        !/not an all-clear/i.test(closeBody) &&
+        !/accepted as equivalent/i.test(closeBody),
+      'a resolved area edits its child body, closes it, then syncs the parent',
+      `gh sequence was: ${seq || '(no gh calls at all)'} — body: ${closeBody.slice(0, 200)}`,
     )
     check(
       parseChildLinks(calls.findLast((c) => c.sub === 'edit')?.body ?? '').size === 0,
@@ -3240,10 +3366,13 @@ function selfTestChildGh({ check }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const childComment = calls.find((c) => c.sub === 'comment' && c.target === '101')
+    const childEdit = calls.find((c) => c.sub === 'edit' && c.target === '101')
     check(
-      seq === 'view,edit,comment,edit,comment' && (childComment?.body ?? '').includes('op.rs:99:9'),
-      'a new survivor comments on its child and on the parent',
+      // Two edits, no comments: the CI job never comments. The child's own
+      // body is what names the new survivor, so asserting on it keeps this
+      // test meaningful rather than reducing it to a call count.
+      seq === 'view,edit,edit' && (childEdit?.body ?? '').includes('op.rs:99:9'),
+      'a new survivor is written into its child body and the parent body',
       `gh sequence was: ${seq || '(no gh calls at all)'}`,
     )
   }
@@ -3263,7 +3392,7 @@ function selfTestChildGh({ check }) {
       state: 'CLOSED',
     })
     check(
-      relapse.map((c) => c.sub).join(',') === 'view,reopen,edit,comment,edit,comment',
+      relapse.map((c) => c.sub).join(',') === 'view,reopen,edit,edit',
       'a closed child reopens when its area gains a survivor',
       relapse.map((c) => c.sub).join(','),
     )
@@ -3290,8 +3419,7 @@ function selfTestChildGh({ check }) {
     check(
       !calls.some((c) => c.target === '101' && c.sub !== 'view') &&
         parentEdit !== undefined &&
-        parseChildLinks(parentEdit.body).size === 0 &&
-        calls.some((c) => c.sub === 'comment'),
+        parseChildLinks(parentEdit.body).size === 0,
       'a vanished child is dropped from the record, and the parent is still updated',
       calls.map((c) => `${c.sub}${c.target ? `#${c.target}` : ''}`).join(','),
     )
@@ -3310,7 +3438,16 @@ function selfTestChildGh({ check }) {
     process.env.PATH = `${dir}:${prevPath}`
     console.log = () => {}
     try {
-      main(['--rust-missed', missed, '--known-body-file', knownBody, '--repo', 'owner/repo'])
+      main([
+        '--lane',
+        'rust',
+        '--rust-missed',
+        missed,
+        '--known-body-file',
+        knownBody,
+        '--repo',
+        'owner/repo',
+      ])
     } finally {
       console.log = prevLog
       process.env.PATH = prevPath
@@ -3350,16 +3487,15 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
       state: 'OPEN',
     })
     const seq = calls.map((c) => c.sub).join(',')
-    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     const parentEdit = calls.findLast((c) => c.sub === 'edit')
     check(
-      seq === 'view,comment,close,edit' &&
-        !closeComment.includes('No mutants survive or go uncovered') &&
-        closeComment.includes('not an all-clear') &&
-        closeComment.includes('Accepted as equivalent (1)') &&
-        closeComment.includes(opId),
+      seq === 'view,edit,close,edit' &&
+        closeBody.includes('not an all-clear') &&
+        closeBody.includes('Accepted as equivalent (1)') &&
+        closeBody.includes(opId),
       'an area that is clean ONLY because everything in it was accepted does not close with an all-clear (#4173)',
-      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
+      `gh sequence was: ${seq || '(no gh calls at all)'} — body: ${closeBody.slice(0, 200)}`,
     )
     check(
       parseAcceptedSurvivors(parentEdit?.body ?? '').has(opId) &&
@@ -3592,7 +3728,9 @@ function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
       join(dir, 'no-such-body.md'),
       '--frontend-dir',
       dir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
     if (
       found.length === 0 &&
@@ -3619,7 +3757,9 @@ function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
       join(mixedDir, 'no-such-body.md'),
       '--frontend-dir',
       mixedDir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
     if (
       mixed.err === null &&
@@ -3856,7 +3996,9 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
       path,
       '--frontend-dir',
       root,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
 
   // 14a. SUPPRESSED. The accepted mutant is observed by the lane this run;
@@ -3935,20 +4077,21 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
     )
     const { out, err } = runDry(path)
     const bodyAt = out.indexOf('[dry-run] --- issue body ---')
-    const commentAt = out.indexOf('[dry-run] --- new-survivor comment ---')
-    const body = out.slice(bodyAt, commentAt)
-    // A predicate rather than a `const comment` the assertions only ever call
-    // `.includes()` on: oxlint's `unicorn/prefer-set-has` reads that shape as
-    // an array membership test and errors on it.
-    const announced = (id) => out.slice(commentAt).includes(id)
+    // The body block is the LAST thing the dry run prints now that there is
+    // no comment section after it — the CI job never comments.
+    const body = out.slice(bodyAt)
+    // "Announced as new" used to mean "named in the per-run comment". The CI
+    // job does not comment, so the claim is carried by the tracked set plus
+    // the exact new/resolved counts asserted at the bottom of this block —
+    // 3 observed, 1 accepted, so exactly 2 new and 0 resolved. That pair is
+    // strictly stronger than the old per-id comment check: it fails if the
+    // accepted id leaks into EITHER side.
     const tracked = parseKnownSurvivors(body)
     const acceptedBack = parseAcceptedSurvivors(body)
     const problems = []
     if (err) problems.push(`threw: ${err.message}`)
     if (!tracked.has(SV_COL24)) problems.push('the same-line sibling was suppressed too')
-    if (!announced(SV_COL24)) problems.push('the sibling was not announced as new')
     if (tracked.has(SV_COL7)) problems.push('the accepted mutant entered the tracked set')
-    if (announced(SV_COL7)) problems.push('the accepted mutant was announced as new')
     // THE `known` SIDE OF THE SUBTRACTION, and this is the fixture that
     // exercises it (14a cannot: its accepted id is not in its tracked block, so
     // the filter there is a no-op). Here SV_COL7 IS tracked and IS accepted, so
@@ -4125,8 +4268,9 @@ function selfTestAcceptedReanchorTrace({ ok, fail }) {
   const STALE = '[frontend] date-utils: src/lib/date-utils.ts:12:1 [BooleanLiteral]'
   const root = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
   const HEAD = '[dry-run] --- issue body ---\n'
-  const TAIL = '[dry-run] --- new-survivor comment ---'
-  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length, out.indexOf(TAIL))
+  // Runs to the end: the comment section that used to terminate the body
+  // block is gone, because the CI job never comments.
+  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length)
   const bodyFile = (name, body) => {
     const path = join(root, name)
     writeFileSync(path, body)
@@ -4140,7 +4284,9 @@ function selfTestAcceptedReanchorTrace({ ok, fail }) {
       path,
       '--frontend-dir',
       dir,
-      '--require-frontend',
+      '--lane',
+      'frontend',
+      '--require-input',
     ])
 
   // 14f. THE QUIET WEEK. Everything observed is already tracked and nothing is

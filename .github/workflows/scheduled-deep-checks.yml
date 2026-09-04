@@ -1601,19 +1601,13 @@ jobs:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
     # is the merged one, and `mutants` is now 21 shard jobs.
     needs: [mutants-merge, mutants-frontend, select-lanes]
-    # BOTH mutants lanes, not either: the step below passes `--require-rust`
-    # AND `--require-frontend` unconditionally, and `assertLaneInputsPresent`
-    # throws on a missing one. Under `||`, a `lanes=mutants` run reached this
-    # job with no `mutation-frontend-report` to download and exited 1 — a red
-    # run for a mutants lane that was green, in exactly the re-run-one-lane
-    # case the `lanes` input exists to serve.
-    #
-    # `&&` costs nothing: any subset dry-runs (`CRON_EQUIVALENT` is false for
-    # one), so the job can only ever do something useful when both lanes ran.
-    # `lanes=mutants,mutants-frontend` still reaches it and still dry-runs,
-    # which keeps the #3364 rule intact — the tracking issue spans both lanes,
-    # so rewriting it from one lane's data deletes the other's.
-    if: always() && needs.select-lanes.outputs.mutants == 'true' && needs.select-lanes.outputs.mutants_frontend == 'true'
+    # EITHER lane, and safely so since the split: each lane owns its own
+    # tracking issue and the step below runs the filer once per lane that
+    # actually ran, requiring only that lane's artifact. The `&&` this briefly
+    # carried existed because a single shared issue plus unconditional
+    # `--require-rust --require-frontend` made a one-lane run exit 1 (#4685
+    # review); per-lane issues remove the cause rather than working around it.
+    if: always() && (needs.select-lanes.outputs.mutants == 'true' || needs.select-lanes.outputs.mutants_frontend == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1689,6 +1683,8 @@ jobs:
         # dying outright leaves both counts empty, which counts as short.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAN_RUST: ${{ needs.select-lanes.outputs.mutants }}
+          RAN_FRONTEND: ${{ needs.select-lanes.outputs.mutants_frontend }}
           SHORT_MERGE: >-
             ${{ needs.mutants-merge.outputs.shards_merged == ''
               || needs.mutants-merge.outputs.shards_merged
@@ -1702,13 +1698,26 @@ jobs:
           elif [ "$CRON_EQUIVALENT" != 'true' ]; then
             extra=(--dry-run)
           fi
-          node scripts/file-mutation-survivors.mjs \
-            --rust-missed mutants-artifact/missed.txt \
-            --frontend-dir mutation-artifact \
-            --require-rust \
-            --require-frontend \
-            --children \
-            "${extra[@]}"
+          # ONE INVOCATION PER LANE (#3364 superseded): each lane has its own
+          # tracking issue, so a lane that did not run is simply not filed for
+          # — no cross-lane `--require-*` pair, and no way for one lane's data
+          # to rewrite the other's issue.
+          if [ "$RAN_RUST" = 'true' ]; then
+            node scripts/file-mutation-survivors.mjs \
+              --lane rust \
+              --rust-missed mutants-artifact/missed.txt \
+              --require-input \
+              --children \
+              "${extra[@]}"
+          fi
+          if [ "$RAN_FRONTEND" = 'true' ]; then
+            node scripts/file-mutation-survivors.mjs \
+              --lane frontend \
+              --frontend-dir mutation-artifact \
+              --require-input \
+              --children \
+              "${extra[@]}"
+          fi
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
