@@ -908,9 +908,11 @@ On the Loro-merge path — the only catch-up path since #3487 — the initiator'
 unsynced local content is preserved by Loro's merge semantics and its history
 is re-pulled per #2481 phase 3. Nothing below happens on it.
 
-The paragraphs that follow describe the deleted CBOR RESET, and are kept
-because `apply_snapshot` itself survives as the on-disk restore used by
-disaster recovery and the compaction artifact. Under that RESET it wipes a
+The paragraphs that follow describe the deleted CBOR RESET. They are kept as
+the contract of `apply_snapshot`, which still compiles but now has **no
+production caller at all**: disaster recovery reprojects from `loro_doc_state`
+(`db/recovery.rs`), and compaction only ever *creates* snapshots. See #4699.
+Under that RESET it wipes a
 device's `op_log` (and Loro sidecar state) wholesale, so on the caught-up device
 **content converges to the snapshot but the local paper trail — page history,
 activity feed, undo/redo, per-op origin/`is_undo` attribution — is destroyed**

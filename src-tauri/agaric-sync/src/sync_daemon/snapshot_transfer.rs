@@ -247,9 +247,11 @@ pub enum CatchupOutcome {
 /// The pure half of what
 /// [`SyncOrchestrator::resolve_remote_peer_id`](crate::sync_protocol::SyncOrchestrator)
 /// does inside the state machine, extracted (#4097) because the two catch-up
-/// entry points below had grown two hand-rolled copies of the same three-way
-/// choice — one of which logged the *expected* fallback at `warn!` while the
-/// other logged it not at all.
+/// entry points of the time had grown two hand-rolled copies of the same
+/// three-way choice — one of which logged the *expected* fallback at `warn!`
+/// while the other logged it not at all. #3487 deleted the CBOR one, so there
+/// is a single caller now; the extraction stays because it is also what keeps
+/// that caller's identity handling honest, pinned by the #4097 tests.
 ///
 /// `None` means neither source carried an identity; the caller turns that into
 /// a hard error rather than key a `peer_refs` row on the empty string.

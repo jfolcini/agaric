@@ -522,8 +522,10 @@ async fn snapshot_catchup_events_carry_the_resolved_peer_id_4097() {
 // On-disk snapshot codec (`apply_snapshot` / `decode_snapshot`)
 // -----------------------------------------------------------------
 //
-// The wire path that used to feed these is gone (#3487); the codec
-// itself still backs disaster recovery and the compaction artifact.
+// The wire path that used to feed these is gone (#3487), and nothing
+// else calls `apply_snapshot` — recovery reprojects from `loro_doc_state`
+// and compaction only creates snapshots. These pin the codec's contract
+// while #4699 decides whether the module survives at all.
 
 /// `apply_snapshot` now takes `impl std::io::Read`. Passing
 /// a `std::io::Cursor` (the simplest in-memory `Read`) must work
