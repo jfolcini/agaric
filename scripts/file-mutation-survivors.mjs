@@ -1593,8 +1593,9 @@ export function buildIssueBody({
   state.push('```')
   state.push(MARKER_END)
   // Part of STATE, not of the presentational sections: it is bounded by the
-  // area count (one short line each, capped by DEFAULT_MAX_CHILDREN) and it is
-  // the primary dedup record, so the clamp ladder below must never drop it.
+  // area count (one short line each, capped by this lane's LANE_MAX_CHILDREN)
+  // and it is the primary dedup record, so the clamp ladder below must never
+  // drop it.
   state.push(...renderChildBlock(childLinks))
   // #4173 — STATE too, for the same reason and with the same consequence: it
   // is the filer's memory of what triage has already ruled equivalent, so the
@@ -3315,23 +3316,28 @@ function selfTestChildGh({ check }) {
     reports = [],
   }) => {
     writeFileSync(missed, missedLines.join('\n'), 'utf8')
-    const feDir = lane === 'frontend' ? mkdtempSync(join(tmpdir(), 'mutation-children-fe-')) : ''
-    for (const [module_, survivors] of reports) {
-      mkdirSync(join(feDir, module_), { recursive: true })
-      writeFileSync(
-        join(feDir, module_, 'mutation.json'),
-        JSON.stringify({
-          files: {
-            [`src/lib/${module_}.ts`]: {
-              mutants: survivors.map(([line, column, mutatorName]) => ({
-                status: 'Survived',
-                mutatorName,
-                location: { start: { line, column } },
-              })),
+    // `feDir` exists only on the frontend lane; the writes that use it live
+    // with it, so no lane can resolve them against cwd.
+    let feDir = ''
+    if (lane === 'frontend') {
+      feDir = mkdtempSync(join(tmpdir(), 'mutation-children-fe-'))
+      for (const [module_, survivors] of reports) {
+        mkdirSync(join(feDir, module_), { recursive: true })
+        writeFileSync(
+          join(feDir, module_, 'mutation.json'),
+          JSON.stringify({
+            files: {
+              [`src/lib/${module_}.ts`]: {
+                mutants: survivors.map(([line, column, mutatorName]) => ({
+                  status: 'Survived',
+                  mutatorName,
+                  location: { start: { line, column } },
+                })),
+              },
             },
-          },
-        }),
-      )
+          }),
+        )
+      }
     }
     writeFileSync(knownBody, body, 'utf8')
     writeFileSync(listFixture, JSON.stringify(list), 'utf8')
