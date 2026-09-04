@@ -582,9 +582,9 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     filer to dry-run on exactly the single-lane re-run the `lanes` input
  *     exists to make cheap.
  *
- *     What is NOT relaxed: the `--dry-run` must still be selected from one of
- *     those two names. A bare `--dry-run`, or one keyed off something else,
- *     still fails here.
+ *     What is NOT relaxed: the `--dry-run` must still be selected from that
+ *     name. A bare `--dry-run`, or one keyed off something else, still fails
+ *     here.
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */

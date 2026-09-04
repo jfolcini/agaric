@@ -433,8 +433,17 @@ function isUsableCount(n) {
   return Number.isInteger(n) && n > 0
 }
 
-export async function computeDefaultMaxChildren() {
-  let frontendCount
+/**
+ * The area universe, derived ONCE: `{ frontend, rust }`, or `null` when either
+ * half could not be worked out.
+ *
+ * Three constants below are projections of this pair. They used to derive it
+ * three times over — two of them running `countRustAreaFiles()`, a full
+ * `globSync` of the rust workspace, at module load — for numbers that cannot
+ * differ between the calls.
+ */
+async function deriveAreaUniverse() {
+  let frontend
   try {
     // Relative to THIS module's URL (not cwd); same file as
     // `STRYKER_MODULES_PATH` by construction, since `REPO_ROOT` is `../`.
@@ -444,90 +453,76 @@ export async function computeDefaultMaxChildren() {
     // wrong), neither of which throws.
     if (!Array.isArray(MODULE_NAMES)) {
       warnDerivationFailed('stryker.modules.mjs did not export MODULE_NAMES as an array')
-      return FALLBACK_MAX_CHILDREN
+      return null
     }
-    frontendCount = MODULE_NAMES.length
+    frontend = MODULE_NAMES.length
   } catch (err) {
     warnDerivationFailed(`could not import ${STRYKER_MODULES_PATH}: ${err.message}`)
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  let rustCount
+  let rust
   try {
-    rustCount = await countRustAreaFiles()
+    rust = await countRustAreaFiles()
   } catch (err) {
     warnDerivationFailed(`could not enumerate the rust lane's area files: ${err.message}`)
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  if (!isUsableCount(frontendCount)) {
-    warnDerivationFailed(`the frontend half derived to ${frontendCount}`)
-    return FALLBACK_MAX_CHILDREN
+  if (!isUsableCount(frontend)) {
+    warnDerivationFailed(`the frontend half derived to ${frontend}`)
+    return null
   }
-  if (!isUsableCount(rustCount)) {
+  if (!isUsableCount(rust)) {
     warnDerivationFailed(
-      `the rust half derived to ${rustCount} — examine_globs in ${MUTANTS_TOML_PATH} matched no non-excluded .rs file`,
+      `the rust half derived to ${rust} — examine_globs in ${MUTANTS_TOML_PATH} matched no non-excluded .rs file`,
     )
-    return FALLBACK_MAX_CHILDREN
+    return null
   }
-  return frontendCount + rustCount
+  return { frontend, rust }
 }
 
-export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
+const AREA_UNIVERSE = await deriveAreaUniverse()
+
+/** Both lanes' areas together. `FALLBACK_MAX_CHILDREN` if either half failed. */
+export const DEFAULT_MAX_CHILDREN =
+  AREA_UNIVERSE === null ? FALLBACK_MAX_CHILDREN : AREA_UNIVERSE.frontend + AREA_UNIVERSE.rust
 
 /**
- * The child-creation cap PER LANE, because one invocation now covers one lane.
+ * The child-creation cap PER LANE, because one invocation covers one lane.
  *
- * `DEFAULT_MAX_CHILDREN` is the whole area universe, frontend + rust. That was
- * the right blast radius when a single run filed for both; since the split it
- * is twice the reachable number for whichever lane is running, so a rust run
- * could open every rust area's child AND a frontend lane's worth again before
- * the guard fired. The cap exists to catch `survivorArea()` fragmenting rather
- * than grouping (#3667), and a cap set to double the real universe cannot.
+ * `DEFAULT_MAX_CHILDREN` is the whole universe, frontend + rust — the right
+ * blast radius when a single run filed for both. Since the split it is twice
+ * the reachable number for whichever lane is running, and a cap set to double
+ * the real universe cannot catch `survivorArea()` fragmenting rather than
+ * grouping (#3667), which is the only thing it exists for.
  *
- * Falls back to `DEFAULT_MAX_CHILDREN` when a half could not be derived —
- * same posture as that constant's own fallback: too loose beats refusing to
- * run.
+ * Falls back to `DEFAULT_MAX_CHILDREN` when the universe could not be derived
+ * — same posture as that constant's own fallback: too loose beats refusing to
+ * run, and `deriveAreaUniverse` has already said why on stderr.
  */
-export const LANE_MAX_CHILDREN = await (async () => {
-  try {
-    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
-    const frontend = Array.isArray(MODULE_NAMES) ? MODULE_NAMES.length : undefined
-    const rust = await countRustAreaFiles()
-    if (isUsableCount(frontend) && isUsableCount(rust)) return { frontend, rust }
-  } catch {
-    // fall through
-  }
-  return { frontend: DEFAULT_MAX_CHILDREN, rust: DEFAULT_MAX_CHILDREN }
-})()
+export const LANE_MAX_CHILDREN =
+  AREA_UNIVERSE === null
+    ? { frontend: DEFAULT_MAX_CHILDREN, rust: DEFAULT_MAX_CHILDREN }
+    : { frontend: AREA_UNIVERSE.frontend, rust: AREA_UNIVERSE.rust }
 
 /**
  * How many Stryker `mutation.json` reports a COMPLETE frontend run produces —
- * one per enrolled module, from the same `stryker.modules.mjs` that
- * `computeDefaultMaxChildren` reads.
+ * one per enrolled module.
  *
- * Used to gate the CLOSE, and only the close. The rust lane already refuses
- * to write from a partial set: a merge that reassembled fewer than its 21
- * shards forces `--dry-run`. The frontend lane has no such signal, and
+ * Used to gate the CLOSE, and only the close. The rust lane already refuses to
+ * write from a partial set: a merge that reassembled fewer than its 21 shards
+ * forces `--dry-run`. The frontend lane has no such signal, and
  * `--require-input` passes on a SINGLE report, so a Stryker run that lost a
  * module's report rewrites the frontend issue from partial data.
  *
- * That rewrite is pre-existing (#3364 — the marker block is the only
- * cross-run memory) and is deliberately left alone here. What this PR adds is
- * the OUTCOME: the parent now closes when its set empties, so a partial run
- * could close the issue outright, and a closed issue is one nobody re-reads.
- * Gating the close is the whole of the new risk; widening `--require-input`
- * would be a different, pre-existing fix wearing this PR's clothes.
+ * That rewrite is pre-existing (#3364 — the marker block is the only cross-run
+ * memory) and deliberately left alone here. What this PR adds is the OUTCOME:
+ * the parent now closes when its set empties, so a partial run could close the
+ * issue outright, and a closed issue is one nobody re-reads.
  *
- * `undefined` when the count could not be derived, in which case the close is
- * not gated rather than being gated on an invented threshold.
+ * `undefined` when the universe could not be derived, in which case the close
+ * is not gated rather than gated on an invented threshold.
  */
-export const EXPECTED_FRONTEND_REPORTS = await (async () => {
-  try {
-    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
-    return Array.isArray(MODULE_NAMES) && MODULE_NAMES.length > 0 ? MODULE_NAMES.length : undefined
-  } catch {
-    return undefined
-  }
-})()
+export const EXPECTED_FRONTEND_REPORTS = AREA_UNIVERSE?.frontend
 
 // #3257 — a GitHub issue body maxes out at 65536 characters; past that
 // `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
@@ -1492,7 +1487,7 @@ export function buildIssueBody({
   const { survived, noCoverage } = partitionByOutcome(all)
   const head = []
   head.push(
-    'This issue tracks mutation-testing findings (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
+    'This issue tracks the mutation-testing findings for ONE lane, surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
   )
   head.push('')
   head.push(
@@ -4648,7 +4643,7 @@ function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
  * silently wrong from 2026-08-16 on, once `agaric-store/src/op_log/high_water.rs`
  * landed in #4016 and nobody had reason to revisit this constant).
  *
- * This recomputes both halves independently of `computeDefaultMaxChildren`
+ * This recomputes both halves independently of `deriveAreaUniverse`
  * — reading `stryker.modules.mjs` and `mutants.toml` itself rather than
  * calling that function again — so a bug that makes the derivation drop or
  * miscount one half is actually caught here instead of the test and the

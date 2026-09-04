@@ -1681,18 +1681,19 @@ jobs:
         # writes. There are no comment writes: this job never comments.
         #
         # `--children`: the rolling parent is the index, not the worktop.
+        # Measured 2026-08-09, it carried 261 survivors across 9 areas in one
+        # 40 756-character body that nothing could assign, close or reference
+        # from a PR. `--children` adds one CHILD issue per area carrying that
+        # area's survivors — the unit a maintainer actually fixes — while all
+        # state stays single-copy in the parent's marker blocks.
         #
-        # It is no longer much of a NOTIFICATION either. With the comment
-        # writes gone, only `create` and `reopen` reach anyone: a new survivor
-        # in an area whose child is already OPEN lands as a body edit, which
-        # GitHub does not notify on. That narrows #2947's push loop to new and
-        # previously-closed areas, deliberately — the job never comments — and
-        # is worth knowing before relying on this lane to tell you something. Measured 2026-08-09, it carried 261 survivors across 9
-        # areas in one 40 756-character body that nothing could assign, close
-        # or reference from a PR. `--children` adds one CHILD issue per area
-        # carrying that area's survivors — the unit a maintainer actually
-        # fixes — while all state stays single-copy in the parent's marker
-        # blocks. Dedup is the parent's recorded `area -> #number` block
+        # The parent is no longer much of a NOTIFICATION either. With the
+        # comment writes gone, only `create` and `reopen` reach anyone: a new
+        # survivor in an area whose child is already OPEN lands as a body
+        # edit, which GitHub does not notify on. That narrows #2947's push
+        # loop to new and previously-closed areas — deliberate, since the job
+        # never comments, but worth knowing before relying on this lane to
+        # tell you something. Dedup is the parent's recorded `area -> #number` block
         # first, a verbatim-title lookup second, so repeated weekly runs
         # update the same children instead of filing new ones. See the
         # § Parent/child section in the script header.
