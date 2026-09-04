@@ -628,7 +628,9 @@ async fn sync_cancel_pairing_clears_session() {
     );
 
     // Cancel
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
     assert!(
         pairing_state.lock().unwrap().is_none(),
         "pairing session must be cleared after cancel"
@@ -641,7 +643,7 @@ async fn sync_cancel_pairing_noop_when_no_session() {
     let pairing_state = Mutex::new(None);
 
     // Cancel with no active session — should succeed
-    let result = cancel_pairing_inner(&pool, &pairing_state).await;
+    let result = cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new()).await;
     assert!(
         result.is_ok(),
         "cancel_pairing with no session must succeed"
@@ -675,7 +677,9 @@ async fn sync_cancel_pairing_disarms_pending_pairing_row() {
          this attempt's own proof"
     );
 
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
 
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
@@ -727,7 +731,9 @@ async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_se
         "confirm_pairing_inner must arm the pending-pairing marker"
     );
 
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
 
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),

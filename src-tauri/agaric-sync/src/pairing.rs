@@ -104,9 +104,17 @@ pub const PAIRING_QR_VERSION_PASSPHRASE_ONLY: u32 = 1;
 ///
 /// Two is not a measured cliff. Measured, a third candidate costs no QR version
 /// (two 241 B/v12, three 260 B/v12) — the earlier "last rung before density
-/// degrades" reason died when `device_id` joined the payload. Two is simply what
-/// a multi-homed host has, and dropping a candidate only ever costs a race,
-/// never a pair: mDNS remains the discovery path and the fallback.
+/// degrades" reason died when `device_id` joined the payload.
+///
+/// It does guard a real case, though the bind is a single socket: #3853 records
+/// that the old mDNS announce enumerated every RFC 1918 interface and "on the
+/// maintainer's desktop it advertised three bridge addresses". #3853 narrowed
+/// the mDNS RECORD to the one bound address; the QR advert deliberately does not
+/// narrow (a dead candidate is refused in microseconds, a dead mDNS record is
+/// indistinguishable from a sleeping device), so this is the bound instead.
+///
+/// Dropping a candidate only ever costs a race, never a pair: mDNS remains the
+/// discovery path and the fallback.
 pub const MAX_QR_ADDR_CANDIDATES: usize = 2;
 
 /// Build the JSON payload for a pairing QR code.

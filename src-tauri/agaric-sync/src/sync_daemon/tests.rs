@@ -5031,17 +5031,6 @@ async fn daemon_publishes_its_bound_endpoint_for_the_pairing_qr_4037() {
          Got {:?}",
         advert.addrs
     );
-    // #4037 review asked whether `MAX_QR_ADDR_CANDIDATES` can ever fire: the
-    // bind is a single `bind_addr_with_opts`, so it is fair to ask whether
-    // `ip_addrs()` can yield more than one. Printed rather than asserted — the
-    // count is a property of THIS box's interfaces, so pinning it would make the
-    // test a machine detector. The cap's fate rests on what this reports across
-    // real hosts, not on one CI runner.
-    println!(
-        "#4037 DIAG bound addrs: {} -> {:?}",
-        advert.addrs.len(),
-        advert.addrs
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
