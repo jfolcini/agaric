@@ -2505,7 +2505,19 @@ jobs:
     # stages) + full vitest + full playwright + full nextest + doc-tests.
     # 60 -> 75: the 4 sqlx-prepare compile passes and the Node 22 floor run,
     # each previously a lane of its own, now sit inside this one budget.
-    timeout-minutes: 75
+    # 75 -> 100: the lane hit the 75 cap and was cancelled on run 33823056127.
+    # Measured growth, not a regression: 46 min (08-24) -> 48 (08-31) -> 69
+    # (09-03) -> cap. The two 16-minute "failures" between the 69-min run and
+    # the timeout were #4647's broken intra-doc links killing the job early,
+    # which hid how little headroom was left. The suite really did grow —
+    # agaric-engine went 942 -> 965 tests and the pre-push `cargo doc` gained
+    # three rustdoc lints (#4665).
+    #
+    # This buys headroom ONCE. The lane's cost tracks test-suite growth, so the
+    # durable fix is to shard it the way `mutants` already is here: #4675.
+    # A cancelled job also reports through #3394 as a failing lane and produces
+    # no artifact, so the failure mode is worse than a slow pass.
+    timeout-minutes: 100
     permissions:
       contents: read
     steps:
