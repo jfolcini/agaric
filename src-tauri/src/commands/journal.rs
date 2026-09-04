@@ -44,7 +44,7 @@ pub async fn today_journal_inner(
 /// block is created with its `space` property atomically set in the
 /// same `BEGIN IMMEDIATE` transaction.
 ///
-/// Thin delegator to [`resolve_or_create_journal_page`] — kept as a named
+/// Thin delegator to `resolve_or_create_journal_page` — kept as a named
 /// public symbol so existing call sites (Tauri command wrapper,
 /// [`today_journal_inner`], the command-integration tests) continue to
 /// Compile unchanged. New code (MCP `journal_for_date` tool) should
@@ -70,7 +70,7 @@ pub async fn navigate_journal_inner(
 ///
 /// Takes a parsed [`NaiveDate`] rather than a string so MCP callers can
 /// surface the parse error with a tool-specific message. Delegates to the
-/// same [`resolve_or_create_journal_page`] helper as
+/// same `resolve_or_create_journal_page` helper as
 /// [`navigate_journal_inner`] and [`today_journal_inner`] — all three call
 /// sites share one implementation so behaviour cannot drift between the
 /// frontend and the MCP surface.

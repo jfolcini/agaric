@@ -181,7 +181,7 @@ pub struct PageWithMetadataRow {
 }
 
 /// Build the `position` slot's encoded sort-mode tag. Stamped into every
-/// outgoing cursor and read back by [`validate_pages_metadata_cursor`]
+/// outgoing cursor and read back by `validate_pages_metadata_cursor`
 /// to refuse a cursor whose sort-mode discriminator doesn't match the
 /// request — the user-visible alternative is a silent "scrolled past
 /// end" with no recovery, which Review Round 1 flagged across three

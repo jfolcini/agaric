@@ -67,10 +67,9 @@ use agaric_engine::materializer::Materializer;
 /// Each inbox row carries a *raw Loro-sync blob* (`bytes`), so the table can
 /// hold many multi-KB-to-MB payloads after a crash storm. A single
 /// `.fetch_all` would materialize EVERY blob into one `Vec` at boot — an OOM
-/// risk. This walks the table in id-ascending chunks of
-/// [`REPLAY_CHUNK_SIZE`](crate::recovery::replay::REPLAY_CHUNK_SIZE) (reusing
-/// the op-log replay's bound), so at most one chunk's worth of blobs is
-/// resident at a time. The walk is re-read by `id > last_seen` each chunk
+/// risk. This walks the table in id-ascending chunks of `REPLAY_CHUNK_SIZE`
+/// (reusing the op-log replay's bound), so at most one chunk's worth of blobs
+/// is resident at a time. The walk is re-read by `id > last_seen` each chunk
 /// (stateless across chunks — no offset cursor to drift), mirroring
 /// [`crate::recovery::replay::replay_unmaterialized_ops`].
 ///

@@ -42,7 +42,7 @@
 //! Submodules: [`config`] (pure env parsing), [`exporter`] (the only place that
 //! knows the span/log on-disk formats + owns the shared rolling-file sink),
 //! [`provider`] (resource + sampler + batch processors for both signals),
-//! [`layer`] (the two tracing↔OTel bridges), [`metrics_exporter`] (the M6
+//! `layer` (the two tracing↔OTel bridges), [`metrics_exporter`] (the M6
 //! local-file metric exporter, reusing the shared sink) + [`metrics`] (the M6
 //! meter provider, observable counters over the existing materializer atomics,
 //! and latency histograms), [`guard`] (flush all three signals on exit).
@@ -77,7 +77,7 @@
 //!    [`config::validate_loopback_endpoint`] — ANY other host (LAN IP, public
 //!    host, DNS name) is rejected at parse time, logged, and dropped to
 //!    file-only. When enabled it is ADDITIVE: spans fan out to BOTH the local
-//!    file and the loopback collector ([`otlp`] + [`provider`]); the local-file
+//!    file and the loopback collector (`otlp` + [`provider`]); the local-file
 //!    sink is never replaced. So the default + the privacy promise = local
 //!    files only, and a user cannot accidentally egress spans off-machine.
 //!    (Logs/metrics OTLP are a deferred follow-up; only traces egress in M8.)
@@ -117,7 +117,7 @@
 //!    - What is guaranteed is therefore CONTAINMENT plus REDACTION AT THE
 //!      EGRESS POINTS, not a PII-free pipeline: the local files never leave the
 //!      app data dir, the opt-in OTLP path is loopback-validated with redirects
-//!      and the system proxy both disabled ([`otlp`]), and the one path that
+//!      and the system proxy both disabled (`otlp`), and the one path that
 //!      hands these files to a third party — the bug-report bundle — redacts
 //!      every value deny-by-default (`commands::bug_report`, `LineFormat`).
 
@@ -198,7 +198,7 @@ impl Observability {
 
 /// Initialize the trace + logs + metrics pipelines for one app boot.
 ///
-/// Returns [`Observability::disabled`] (no layers, no guard) when
+/// Returns `Observability::disabled` (no layers, no guard) when
 /// `config.enabled` is `false` OR the span exporter cannot be built (e.g. a
 /// read-only disk). Otherwise builds the span exporter under `<log_dir>/traces/`,
 /// the batched `SdkTracerProvider`, and the trace layer; then — independently —

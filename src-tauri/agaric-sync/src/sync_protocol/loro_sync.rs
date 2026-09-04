@@ -258,7 +258,7 @@ pub fn classify_from_vv_reachability(
 ///
 /// `sql_deleted` is the vault-wide set of SQL-soft-deleted block ids
 /// (`deleted_at IS NOT NULL`). It is read ONCE per sync round by the caller
-/// ([`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`] via
+/// (`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro` via
 /// [`read_sql_soft_deleted_ids`]) and threaded through every per-space
 /// `prepare_outgoing` call. Previously each call re-ran the same full-vault
 /// `SELECT id FROM blocks WHERE deleted_at IS NOT NULL` into a fresh
@@ -350,7 +350,7 @@ pub async fn prepare_outgoing(
 /// This preserves the pre-#2040 self-contained one-shot signature for callers
 /// that prepare exactly ONE space (tests, the snapshot/daemon seed paths) and
 /// therefore gain nothing from hoisting the read. The hot multi-space round —
-/// [`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`] —
+/// `super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro` —
 /// reads the set ONCE and calls [`prepare_outgoing`] directly per space, so it
 /// does NOT pay one full-vault read per space. Behaviour is identical to the
 /// old inline read: the set is exactly what `prepare_outgoing` would have read.
@@ -370,7 +370,7 @@ pub async fn prepare_outgoing_for_pool(
 ///
 /// Hoisted out of [`prepare_outgoing`] so the per-space loop does not re-run
 /// this identical full-vault scan once per space. The caller
-/// ([`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`])
+/// (`super::session_state_machine::SyncOrchestrator::head_exchange_outgoing_loro`)
 /// invokes this once before iterating spaces and threads the returned set into
 /// every `prepare_outgoing` call. The set is small (tombstones, periodically
 /// purged); its content does not depend on the space being exported.
@@ -447,7 +447,7 @@ pub fn first_engine_live_block_sql_deleted(
 /// [`ApplyOutcome::Imported`] therefore no longer implies "the slot is gone" —
 /// it reports what was projected, which is exactly what the caller's cache/FTS
 /// fan-out needs. Retention of a kept slot is unbounded by design; see the
-/// "Kept slots are retained without bound" section on [`import_and_project`].
+/// "Kept slots are retained without bound" section on `import_and_project`.
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_remote(
     pool: &SqlitePool,
@@ -964,7 +964,7 @@ async fn probe_parent_edges(pool: &SqlitePool, parent_edges: &[(&str, &str)]) ->
     probe
 }
 
-/// How the payload handed to [`import_and_project`] reached us — decides
+/// How the payload handed to `import_and_project` reached us — decides
 /// whether a complete no-op import diff may be trusted as "SQL is already
 /// consistent" (#2264 review; see the fn's "no-op short-circuit" docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1972,7 +1972,7 @@ pub(crate) async fn import_and_project(
     Ok((changed_blocks, purged_blocks))
 }
 
-/// Boot-recovery entry point: re-run [`import_and_project`] for a single
+/// Boot-recovery entry point: re-run `import_and_project` for a single
 /// leftover write-ahead inbox row `(space_id, bytes, inbox_id)`.
 ///
 /// #535: thin `pub(crate)` wrapper so the recovery module doesn't need to
@@ -2172,7 +2172,7 @@ pub struct InboxSlot {
 ///
 /// The invariant is "a slot is deleted IFF its projection committed". Batching
 /// only threatens it if the deletes and the projection can be observed apart,
-/// so they are kept in the one Phase-2 tx inside [`import_and_project`]: it
+/// so they are kept in the one Phase-2 tx inside `import_and_project`: it
 /// commits (all N projections landed, all N slots gone) or rolls back (nothing
 /// landed, all N slots survive for a later boot). There is no third outcome.
 ///
@@ -2202,7 +2202,7 @@ pub struct InboxSlot {
 /// a kept slot still returns `Ok` and the walk proceeds to the next blob — but
 /// #3226: this function is where the boot budget is charged. Every slot that
 /// did NOT clear — kept by the frontier condition, or left behind because its
-/// blob could not be imported at all — goes through [`account_unresolved_slot`],
+/// blob could not be imported at all — goes through `account_unresolved_slot`,
 /// which is the SINGLE accounting point for both arms. Exactly one charge per
 /// slot per boot: a slot reaches either the batch-success probe or the per-row
 /// fallback, never both, because the fallback runs only after the batch returned

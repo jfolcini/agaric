@@ -164,7 +164,7 @@ pub trait CompileExpr: Projection + Sized {
     /// Propagates `unsupported` if any child is unsupported.
     ///
     /// When `cost_order` is set (the AND path only, #2201), the children are
-    /// STABLE-sorted by [`child_cost`] ascending — cheapest first — BEFORE
+    /// STABLE-sorted by `child_cost` ascending — cheapest first — BEFORE
     /// compiling, so index-backed conjuncts narrow the row set before
     /// full-scan ones run, exactly as the Pages path sorts its flat primitive
     /// vec (`compile_pages_filters`). This is a **behaviour-preserving**

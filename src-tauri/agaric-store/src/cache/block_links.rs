@@ -229,7 +229,7 @@ const UNRESOLVED_REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 ///
 /// A source OWES a target when the source is live, its `content` names the
 /// target as a `[[ULID]]` / `((ULID))` token, and no `block_links` row carries
-/// that `(source, target)` edge. That is [`sync_unresolved_links`]'s rule
+/// that `(source, target)` edge. That is `sync_unresolved_links`'s rule
 /// verbatim — it too subtracts the post-INSERT `block_links` rows from the
 /// parsed token set — evaluated for every source at once instead of for the
 /// one source a reindex just touched.

@@ -42,7 +42,7 @@ pub(crate) fn record() {
 
 /// Current process-global descendant-fanout-dropped count. Monotonic.
 ///
-/// The production read side is [`super::super::coordinator`]'s status
+/// The production read side is `super::super::coordinator`'s status
 /// builder, which surfaces this through
 /// `StatusInfo::descendant_fanout_dropped` (#2031); it is additionally
 /// exercised by the unit tests.

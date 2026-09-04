@@ -88,7 +88,7 @@ pub struct BatchIngestOutcome {
 ///   the device forever and re-download its tail every session. #3727 does not
 ///   change that classification (see below for why) but stops it being
 ///   invisible: every stall is reported to
-///   [`audit_ingest_metrics::record_stall`], which keeps a per-device
+///   `audit_ingest_metrics::record_stall`, which keeps a per-device
 ///   *consecutive* count and escalates to a single `error!` once a device has
 ///   deferred [`audit_ingest_metrics::PERSISTENT_STALL_BATCHES`] batches
 ///   running without landing anything — the point at which "busy writer" stops
@@ -128,7 +128,7 @@ pub struct BatchIngestOutcome {
 /// #3726 makes that precondition **checked** rather than merely documented: the
 /// loop tracks the highest `seq` each device has presented and reports any
 /// record arriving below it through [`BatchIngestOutcome::out_of_order`] and
-/// [`audit_ingest_metrics::record_out_of_order`], which emits **one** `error!`
+/// `audit_ingest_metrics::record_out_of_order`, which emits **one** `error!`
 /// per offending device per batch carrying the count (#3740 — the scenario is
 /// thousands of records over a handful of devices, and a line each would bury
 /// the finding). Three things it deliberately is not:
@@ -516,7 +516,7 @@ pub fn check_reset_required(
 /// receiver too, so re-shipping them is safe.
 ///
 /// #3326: the frontier is applied **in SQL** (see
-/// [`COLLECT_OPS_FOR_PEER_SQL`]). Until then this read was
+/// `COLLECT_OPS_FOR_PEER_SQL`). Until then this read was
 /// `SELECT … FROM op_log` with no `WHERE` — one full materialisation of the
 /// whole log, payloads included, on every head exchange with an
 /// `op_log_replication`-capable peer — which is every modern peer, on every

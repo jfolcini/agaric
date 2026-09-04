@@ -49,10 +49,9 @@
 //! So the order here is `recv` → authorize → dispatch, and only the first two are
 //! reordered relative to the old stack. What makes the bug class unrepresentable rather
 //! than merely guarded is that the third step is not this function's to skip:
-//! [`Role::Responder`] carries the opening frame, so
-//! [`run_session`](crate::transport::driver::run_session) cannot dispatch a frame it was
-//! not handed, and the only way to hand it one is to have received it here — where the
-//! authorization is.
+//! [`Role::Responder`] carries the opening frame, so [`run_session`] cannot dispatch a
+//! frame it was not handed, and the only way to hand it one is to have received it here —
+//! where the authorization is.
 //!
 //! # The identity a migrated install does not have yet
 //!
@@ -95,9 +94,8 @@ use agaric_store::peer_refs;
 /// by [`HANDSHAKE_TIMEOUT`], mapping the elapsed case to the same
 /// `InvalidOperation` error every session loop has always produced.
 ///
-/// Both session loops now run inside
-/// [`run_session`](crate::transport::driver::run_session), which applies this bound
-/// itself via [`SessionLimits::dispatch`] — so this helper's remaining consumers are the
+/// Both session loops now run inside [`run_session`], which applies this bound itself
+/// via [`SessionLimits::dispatch`] — so this helper's remaining consumers are the
 /// direct unit tests that pin the timeout and error shape. It is kept rather than
 /// inlined because that pinning is the only thing that would notice the two drifting
 /// apart, and `HANDSHAKE_TIMEOUT` is the one inherited constant whose *scope* genuinely

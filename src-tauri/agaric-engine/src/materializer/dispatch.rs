@@ -559,13 +559,13 @@ impl Materializer {
 
     /// Dispatch the background fan-out for a `delete_block` / `restore_block`
     /// / `purge_block` op, threading the block's `block_type` so
-    /// [`invalidations_for_op`] can narrow the rebuild set for a CONTENT
+    /// `invalidations_for_op` can narrow the rebuild set for a CONTENT
     /// block (#2037 pt2 — skip the page-row `RebuildPagesCache`).
     ///
     /// `block_type` is the block's type as read at the lifecycle site
     /// ("content" / "page" / "tag"). For "content" the fan-out drops the
     /// page-row `RebuildPagesCache` rebuild; for any other value the full set is kept
-    /// (see [`lifecycle_rebuild_tasks`]). Shares the per-op-type dispatch
+    /// (see `lifecycle_rebuild_tasks`). Shares the per-op-type dispatch
     /// table with the plain/edit variants — the FTS-optimize threshold is
     /// gated on `edit_block` so it never fires for these ops.
     pub fn dispatch_lifecycle_background(
@@ -578,7 +578,7 @@ impl Materializer {
 
     /// #2700: dispatch the background fan-out for a LOCAL `move_block` op,
     /// threading whether the move provably kept the block's `page_id`
-    /// (`same_page`) so [`invalidations_for_op`] can skip the three
+    /// (`same_page`) so `invalidations_for_op` can skip the three
     /// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
     /// `RebuildProjectedAgendaCache`) for a same-parent reorder / same-page
     /// indent.
@@ -641,7 +641,7 @@ impl Materializer {
     /// caches until the next local mutation or snapshot restore. This enqueues
     /// a global rebuild of each via the background queue — eventually
     /// consistent + deduped — mirroring the fan-out a local block-structure
-    /// mutation triggers ([`INBOUND_SYNC_CACHE_REBUILD_TASKS`], the lifecycle
+    /// mutation triggers (`INBOUND_SYNC_CACHE_REBUILD_TASKS`, the lifecycle
     /// set minus the tag-inheritance rebuild — see below) plus targeted FTS
     /// reindexing.
     ///
@@ -649,7 +649,7 @@ impl Materializer {
     ///
     /// `RebuildTagInheritanceCache` (a full-vault DELETE + recursive-CTE
     /// recompute under the `BEGIN IMMEDIATE` writer lock) is deliberately
-    /// EXCLUDED ([`INBOUND_SYNC_CACHE_REBUILD_TASKS`]): `apply_remote` →
+    /// EXCLUDED (`INBOUND_SYNC_CACHE_REBUILD_TASKS`): `apply_remote` →
     /// `import_and_project` already refreshed `block_tag_inherited`
     /// synchronously before this fan-out runs, scoped to exactly the
     /// subtrees whose tag edges or tree position changed (`TagScope`,
@@ -657,7 +657,7 @@ impl Materializer {
     /// import diff could not be resolved incrementally. Re-enqueueing the
     /// global rebuild here (deltas arrive at typing cadence) would defeat
     /// that scoping on every inbound message. Local delete / restore /
-    /// purge lifecycle paths keep it via [`FULL_CACHE_REBUILD_TASKS`].
+    /// purge lifecycle paths keep it via `FULL_CACHE_REBUILD_TASKS`.
     ///
     /// ## #2264 — complete-no-op short-circuit
     ///
@@ -681,8 +681,8 @@ impl Materializer {
     /// ## Queue-saturation safety (#483 M1)
     ///
     /// `RebuildFtsIndex` is the single task that can be produced by
-    /// [`inbound_sync_fts_tasks`] for a large import (above
-    /// [`SYNC_FTS_PER_BLOCK_MAX`]). It is NOT persistable via
+    /// `inbound_sync_fts_tasks` for a large import (above
+    /// `SYNC_FTS_PER_BLOCK_MAX`). It is NOT persistable via
     /// `RetryKind::from_task` (returns `None`), so the normal
     /// `try_enqueue_background` shed path would silently lose it on a full
     /// queue, leaving FTS permanently stale. For this task only we use the
@@ -1223,7 +1223,7 @@ impl Materializer {
 /// #3886 — compute the `move_same_page` hint a LOCAL move command may claim,
 /// from the moved root's `page_id` read BEFORE and AFTER the in-tx rederive.
 ///
-/// This is the SOLE producer of `Some(true)` for [`invalidations_for_op`]'s
+/// This is the SOLE producer of `Some(true)` for `invalidations_for_op`'s
 /// `MoveBlock` arm, and it deliberately demands MORE than "the page did not
 /// change". The skip it unlocks drops `RebuildPageLinkCache`, and the
 /// `page_link_cache` roll-up key is NOT `page_id` — it is

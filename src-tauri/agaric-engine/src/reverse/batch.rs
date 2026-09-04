@@ -147,7 +147,7 @@ const LIVE_ATTACHMENT_BINDS_PER_OP: usize = 1;
 /// [`is_skippable_non_reversible`].
 const STATIC_NON_REVERSIBLE_OP_TYPES: [&str; 2] = ["purge_block", "delete_attachment"];
 
-/// Whether `op_type` is in [`STATIC_NON_REVERSIBLE_OP_TYPES`] — the
+/// Whether `op_type` is in `STATIC_NON_REVERSIBLE_OP_TYPES` — the
 /// op-types a point-in-time restore skips on sight (#2020).
 #[must_use]
 pub fn is_statically_non_reversible(op_type: &str) -> bool {

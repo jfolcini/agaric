@@ -198,7 +198,7 @@ fn set_marker_enabled(
 /// `Ok(false)` when the requested state was already in effect (so the
 /// frontend can surface "already on / already off" without an error).
 ///
-/// Thin wrapper around [`set_marker_enabled`].
+/// Thin wrapper around `set_marker_enabled`.
 #[tracing::instrument(skip(app_data_dir, lifecycle), err)]
 pub fn mcp_set_enabled_inner(
     app_data_dir: &Path,
@@ -507,7 +507,7 @@ pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
 /// path also fires [`McpLifecycle::shutdown`] (H-2) so the RW accept
 /// loop drops its listener instead of staying open until app restart.
 ///
-/// Thin wrapper around [`set_marker_enabled`].
+/// Thin wrapper around `set_marker_enabled`.
 #[tracing::instrument(skip(app_data_dir, lifecycle), err)]
 pub fn mcp_rw_set_enabled_inner(
     app_data_dir: &Path,

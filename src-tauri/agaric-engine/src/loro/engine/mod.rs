@@ -269,15 +269,15 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// Phase 3). The v1→v2 forward-migration was retired in #332 once every
 /// persisted snapshot had been re-saved as v2; [`LoroEngine::import`] now
 /// rejects a stray v1 snapshot loudly via
-/// [`LoroEngine::reject_legacy_v1_snapshot`] instead of migrating it. A future
+/// `LoroEngine::reject_legacy_v1_snapshot` instead of migrating it. A future
 /// Protocol-version handshake may gate raw-byte merges across
 /// formats; the maintainer does not sync today.
 ///
-/// #1584: this version is now *stamped* into [`ENGINE_META_ROOT`] under
-/// [`FIELD_FORMAT_VERSION`] on export and *checked* on import, so a
+/// #1584: this version is now *stamped* into `ENGINE_META_ROOT` under
+/// `FIELD_FORMAT_VERSION` on export and *checked* on import, so a
 /// well-formed-but-newer-than-supported Loro blob is rejected up front rather
 /// than trusted and left to fail downstream on the projection path. See
-/// [`LoroEngine::stamp_format_version`] / [`LoroEngine::reject_unknown_format_version`].
+/// `LoroEngine::stamp_format_version` / `LoroEngine::reject_unknown_format_version`.
 pub const ENGINE_FORMAT_VERSION: u32 = 2;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
@@ -298,7 +298,7 @@ pub struct BlockSnapshot {
     pub parent_id: Option<String>,
     /// Dense 1-based rank among the parent's children in fractional-index order
     /// (#400), projected into the SQL `position` column — not the legacy
-    /// [`FIELD_POSITION`] meta value.
+    /// `FIELD_POSITION` meta value.
     pub position: i64,
 }
 
@@ -417,7 +417,7 @@ impl PropertyValue {
 ///
 /// ## Block hierarchy: [`LoroTree`] (Phase 3)
 ///
-/// Blocks are a [`LoroTree`] at [`BLOCKS_TREE_ROOT`]. `create`/`move`/
+/// Blocks are a [`LoroTree`] at `BLOCKS_TREE_ROOT`. `create`/`move`/
 /// `delete`/`purge` map to tree ops; the parent is the tree structure, so
 /// the engine gets Loro's **move-CRDT convergence and deterministic cycle
 /// rejection** ([`loro::TreeID`] moves that would form a cycle fail with
@@ -430,11 +430,11 @@ impl PropertyValue {
 /// [`Self::children_ordered_block_ids`] after every create/move, so
 /// `ORDER BY position, id` pagination and the frontend stay on integer
 /// positions while the CRDT owns rank + concurrent-reorder convergence (equal
-/// fractional indices tie-break by `idlp`; see [`Self::FRACTIONAL_INDEX_JITTER`]).
+/// fractional indices tie-break by `idlp`; see `Self::FRACTIONAL_INDEX_JITTER`).
 /// Ops carry a 0-based sibling **slot** (`index`/`new_index`); Loro derives the
-/// convergent fractional key at apply time. The legacy `i64` [`FIELD_POSITION`]
+/// convergent fractional key at apply time. The legacy `i64` `FIELD_POSITION`
 /// meta survives only as the replay-conversion input for pre-#400 ops and the
-/// one-time import migration ([`Self::migrate_legacy_sibling_order_if_needed`]);
+/// one-time import migration (`Self::migrate_legacy_sibling_order_if_needed`);
 /// the old `midpointPosition`/`computePosition` frontend arithmetic is gone.
 /// Phase-3's original deferral of fractional reorder (§3a "open risk #1") is
 /// resolved here. Cross-peer reorder convergence under future sync is the one
@@ -443,10 +443,10 @@ impl PropertyValue {
 /// ## `block_id ↔ TreeID` indirection
 ///
 /// Tree ops take `TreeID`s but the domain identity is the ULID `block_id`
-/// (stored in node meta under [`FIELD_BLOCK_ID`]). [`Self::index`] caches
+/// (stored in node meta under `FIELD_BLOCK_ID`). `Self::index` caches
 /// the `block_id → TreeID` map: it is maintained incrementally on the local
 /// `apply_*` write path and rebuilt wholesale from node meta after any
-/// `import` (see [`Self::rebuild_index`]).
+/// `import` (see `Self::rebuild_index`).
 pub struct LoroEngine {
     doc: LoroDoc,
     /// `block_id` (ULID) → `TreeID` lookup. A derived cache of the tree's

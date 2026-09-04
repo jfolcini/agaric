@@ -317,7 +317,7 @@ impl SyncOrchestrator {
     /// initiator-**sent** / responder-**received**. On the initiator it was
     /// therefore `None` for the entire session *by construction*, so
     /// `session.remote_device_id` stayed `String::new()` until the completion
-    /// backfill in [`Self::resolve_remote_peer_id`]. Every
+    /// backfill in `Self::resolve_remote_peer_id`. Every
     /// [`SyncEvent`](crate::sync_events::SyncEvent) emitted before that — every
     /// `Progress`, and every `Error` on a session that failed early — carried
     /// `remote_device_id: ""`, so any UI keyed on that field mis-attributed or

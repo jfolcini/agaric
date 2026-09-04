@@ -187,7 +187,7 @@ impl EgressReport {
 /// Would the system send this peer's traffic off the link we bound?
 ///
 /// Pure, total, and the only place the verdict rules live — the syscalls in
-/// [`system_source_address_for`] exist to feed this and nothing else, which is
+/// `system_source_address_for` exist to feed this and nothing else, which is
 /// what lets the rules be tested without a network.
 ///
 /// # Prefixes, not addresses (#4299 review)
@@ -234,7 +234,7 @@ impl EgressReport {
 /// * **Inside `bound_prefix_len`** → `SameEgress`. The benign multi-homing above.
 /// * **Outside `bound_prefix_len`** → `RoutedElsewhere`. Earned.
 /// * **No usable prefix** — `None`, or a length that is not legal for the family,
-///   or `/0` — → `Inconclusive`. Never a guess: see [`shares_prefix`].
+///   or `/0` — → `Inconclusive`. Never a guess: see `shares_prefix`.
 #[must_use]
 pub fn compare(bound: IpAddr, bound_prefix_len: Option<u8>, probed: IpAddr) -> EgressVerdict {
     let unusable = |ip: &IpAddr| match ip {

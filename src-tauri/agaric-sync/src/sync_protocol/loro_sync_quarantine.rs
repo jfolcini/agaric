@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! [`super::loro_sync::import_and_project`] KEEPS a write-ahead
+//! `super::loro_sync::import_and_project` KEEPS a write-ahead
 //! `loro_sync_inbox` slot whose blob's declared end frontier the post-import
 //! `oplog_vv()` did not reach (#3194 for the batch replay path, #3213 for the
 //! live `apply_remote` and per-row `replay_inbox_row` paths). That is the

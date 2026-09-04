@@ -446,7 +446,7 @@ pub async fn move_block(
 ///
 /// Semantics mirror `create_blocks_batch`:
 ///
-/// - **One tx, N ops:** each move runs through the shared [`move_block_in_tx`]
+/// - **One tx, N ops:** each move runs through the shared `move_block_in_tx`
 ///   helper, which appends one `MoveBlock` op to the op_log (so undo / sync
 ///   convergence stay per-op — no new "batch move" op type is invented) and
 ///   drives the same engine-apply + dense-rank reprojection path a single

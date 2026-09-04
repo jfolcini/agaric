@@ -70,7 +70,7 @@ pub(crate) fn log_frontend_inner(
 /// Fire-and-forget — the frontend never awaits this.
 ///
 /// Every `String` / `Option<String>` field is truncated at entry
-/// to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
+/// to `MAX_FRONTEND_LOG_FIELD_BYTES` (64 KB) so a single oversized
 /// payload cannot stall the IPC thread or corrupt the daily log file.
 /// Truncation is unconditional — the FE rate-limiter is not in this
 /// trust scope (caller of `log_frontend` may be a panic handler that

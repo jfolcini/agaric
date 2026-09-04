@@ -303,7 +303,7 @@ impl LoroEngine {
     ///
     /// ## #3189 — cross-peer dependencies are checked too
     ///
-    /// Reachability is decided by [`replay_base_miss`], which checks BOTH
+    /// Reachability is decided by `replay_base_miss`, which checks BOTH
     /// halves of an update blob's causal base: `partial_start_vv` (its own-peer
     /// counter range) and `ImportBlobMetadata::start_frontiers` (its cross-peer
     /// dependencies). Before #3189 only the first half was read, so a blob with

@@ -52,7 +52,7 @@ const SANITIZED_FALLBACK: &str = "attachment";
 ///   they are stripped here.
 /// * a name that is now empty or consists solely of dots (`.`, `..`, `...`)
 ///   resolves to a current/parent-directory component → replaced with the
-///   [`SANITIZED_FALLBACK`] name.
+///   `SANITIZED_FALLBACK` name.
 /// * the result is capped to [`MAX_ATTACHMENT_FILENAME_BYTES`] on a UTF-8 char
 ///   boundary (and re-cleaned in case the cut re-exposed a trailing dot).
 ///

@@ -475,11 +475,11 @@ fn permissive(resolver: DnsResolver) -> Builder {
 ///
 /// # The second consumer, and which way it moves
 ///
-/// This predicate is not only a log-line classifier: [`bind_locality_ok`] triggers on
+/// This predicate is not only a log-line classifier: `bind_locality_ok` triggers on
 /// it too, and there the polarity is inverted — a `false` short-circuits the
 /// "is this one of *our* addresses" proof away entirely. So excluding a range here does
 /// not merely quieten a warning, it also stops requiring that a bind in that range be
-/// vouched for by [`host_ip_addrs`]. That is deliberate and is the same bargain every
+/// vouched for by `host_ip_addrs`. That is deliberate and is the same bargain every
 /// range already on this list takes (RFC 1918, loopback, CGNAT — none of them are
 /// checked against the host list either), and it is safe for exactly these two blocks
 /// because neither is routable: an address in `0.0.0.0/8` or `240.0.0.0/4` that the
