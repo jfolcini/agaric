@@ -41,14 +41,16 @@ name: Scheduled deep checks
 #                    tree-utils — never components or Tauri IPC).
 #                    Non-blocking, same triage-signal posture as `mutants`.
 #   file-mutation-survivors — #2947: push-based triage loop for the two
-#                    mutants lanes above. Diffs their combined survivor list
-#                    against a single open tracking issue's last-known set
-#                    and files/updates that ONE issue only on genuinely NEW
-#                    survivors (see `scripts/file-mutation-survivors.mjs`).
-#                    Since #3667 it also keeps one CHILD issue per AREA under
-#                    that parent (`--children`), so the individual fixes are
+#                    mutants lanes above. Runs the filer ONCE PER LANE that
+#                    ran: each lane owns its own tracking issue, and a run
+#                    diffs only that lane's survivors against only that
+#                    issue's last-known set (see
+#                    `scripts/file-mutation-survivors.mjs`). Since #3667 it
+#                    also keeps one CHILD issue per AREA under that lane's
+#                    parent (`--children`), so the individual fixes are
 #                    assignable/closable work items rather than lines in a
-#                    40 KB body. Scheduled-event-only; needs `issues: write`.
+#                    40 KB body. Reachable on any event (#3394); writes only
+#                    when `LANE_AUTHORITATIVE` holds. Needs `issues: write`.
 #   fuzz           — #650/#2590/#2945: short coverage-guided fuzz runs over
 #                    the raw-input parsers (snapshot decode, deeplink parse,
 #                    Markdown/Obsidian import parse, FTS strip/sanitize, HTML
@@ -1584,11 +1586,13 @@ jobs:
   # and `mutants-frontend` above only ever surface survivors in THIS run's step
   # summary, so nobody is notified unless someone remembers to open it. This
   # job downloads both lanes' survivor output (cargo-mutants' `missed.txt`,
-  # StrykerJS's per-module `mutation.json`), diffs the combined set against
-  # the SINGLE open tracking issue's last-known set (via
-  # `scripts/file-mutation-survivors.mjs`), and files/updates that ONE issue
-  # only when a genuinely NEW survivor appears — a no-op otherwise, so this
-  # never spams a new issue weekly. State lives in the tracking issue's body
+  # StrykerJS's per-module `mutation.json`) and runs the filer once per lane
+  # that ran. Each lane has its OWN tracking issue, so a run diffs that lane's
+  # survivors against that issue's last-known set (via
+  # `scripts/file-mutation-survivors.mjs`) and updates it only when a
+  # genuinely NEW survivor appears, or closes it when the lane empties — a
+  # no-op otherwise, so this never spams weekly. State lives in each tracking
+  # issue's body
   # (a marked, machine-readable block), not a committed baseline file, so
   # this job needs `issues: write` only — never `contents: write`.
   #
@@ -1650,7 +1654,7 @@ jobs:
           name: mutation-frontend-report
           path: mutation-artifact
 
-      - name: File or update the single mutation-survivor tracking issue
+      - name: File or update each lane's mutation-survivor tracking issue
         # `--require-input` (#3364): a lane that produced NO data must not be
         # read as "that lane has no survivors" — an absent artifact would
         # otherwise empty that lane's marker block, this filer's only
@@ -1676,8 +1680,14 @@ jobs:
         # passes it) — and only skips the `gh issue edit` / `close` / `reopen`
         # writes. There are no comment writes: this job never comments.
         #
-        # `--children`: the rolling parent is the notification, not the
-        # worktop. Measured 2026-08-09, it carried 261 survivors across 9
+        # `--children`: the rolling parent is the index, not the worktop.
+        #
+        # It is no longer much of a NOTIFICATION either. With the comment
+        # writes gone, only `create` and `reopen` reach anyone: a new survivor
+        # in an area whose child is already OPEN lands as a body edit, which
+        # GitHub does not notify on. That narrows #2947's push loop to new and
+        # previously-closed areas, deliberately — the job never comments — and
+        # is worth knowing before relying on this lane to tell you something. Measured 2026-08-09, it carried 261 survivors across 9
         # areas in one 40 756-character body that nothing could assign, close
         # or reference from a PR. `--children` adds one CHILD issue per area
         # carrying that area's survivors — the unit a maintainer actually

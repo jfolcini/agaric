@@ -474,6 +474,32 @@ export async function computeDefaultMaxChildren() {
 export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 
 /**
+ * The child-creation cap PER LANE, because one invocation now covers one lane.
+ *
+ * `DEFAULT_MAX_CHILDREN` is the whole area universe, frontend + rust. That was
+ * the right blast radius when a single run filed for both; since the split it
+ * is twice the reachable number for whichever lane is running, so a rust run
+ * could open every rust area's child AND a frontend lane's worth again before
+ * the guard fired. The cap exists to catch `survivorArea()` fragmenting rather
+ * than grouping (#3667), and a cap set to double the real universe cannot.
+ *
+ * Falls back to `DEFAULT_MAX_CHILDREN` when a half could not be derived —
+ * same posture as that constant's own fallback: too loose beats refusing to
+ * run.
+ */
+export const LANE_MAX_CHILDREN = await (async () => {
+  try {
+    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
+    const frontend = Array.isArray(MODULE_NAMES) ? MODULE_NAMES.length : undefined
+    const rust = await countRustAreaFiles()
+    if (isUsableCount(frontend) && isUsableCount(rust)) return { frontend, rust }
+  } catch {
+    // fall through
+  }
+  return { frontend: DEFAULT_MAX_CHILDREN, rust: DEFAULT_MAX_CHILDREN }
+})()
+
+/**
  * How many Stryker `mutation.json` reports a COMPLETE frontend run produces —
  * one per enrolled module, from the same `stryker.modules.mjs` that
  * `computeDefaultMaxChildren` reads.
@@ -1283,7 +1309,7 @@ export function decideChildActions({
       `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). ${
         maxChildrenIsFallback
           ? `The area universe could not be derived, so DEFAULT_MAX_CHILDREN fell back to FALLBACK_MAX_CHILDREN = ${DEFAULT_MAX_CHILDREN}`
-          : `DEFAULT_MAX_CHILDREN is the derived area universe of both lanes, ${DEFAULT_MAX_CHILDREN}`
+          : `the cap is the running lane's derived area universe (both lanes together are ${DEFAULT_MAX_CHILDREN})`
       }, so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
     )
   }
@@ -1886,6 +1912,7 @@ function parseArgs(argv) {
           throw new Error(`--max-children expects a non-negative integer, got "${raw}"`)
         }
         args.maxChildren = n
+        args.maxChildrenExplicit = true
         break
       }
       case '--repo': {
@@ -2041,6 +2068,8 @@ export function main(argv = process.argv.slice(2)) {
     )
   }
   args.title = LANES[args.lane].title
+  // Per-lane blast radius unless the caller pinned one explicitly.
+  if (!args.maxChildrenExplicit) args.maxChildren = LANE_MAX_CHILDREN[args.lane]
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
 
@@ -2307,7 +2336,9 @@ function printDryRun({
     // The close is the branch a smoke dispatch most needs previewed: it is
     // the only one that changes the issue's STATE, and a lane reaching zero
     // is exactly when someone runs a dry run to see what would happen.
-    if (needsClose && newOnes.length === 0) {
+    // `needsClose` already implies `newOnes.length === 0`: it requires
+    // `all.length === 0`, and `newOnes` is a filter of the same set.
+    if (needsClose) {
       console.log(
         `[dry-run] would CLOSE issue #${existingIssue.number} — nothing left to act on in this lane`,
       )
