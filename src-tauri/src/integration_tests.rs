@@ -2572,3 +2572,132 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         "set_property(space=Personal) must re-home the work page to Personal"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #4700 — is op-log compaction worth its cost? (measurement harness)
+// ---------------------------------------------------------------------------
+
+/// Measures `op_log` against `loro_doc_state` on a vault built through the
+/// REAL command path, which is the number #4700 turns on.
+///
+/// Compaction purges `op_log` at 90 days. `loro_doc_state` holds the Loro
+/// snapshot and is never trimmed — there is no GC or shallow export anywhere in
+/// `agaric-engine`. So the vault carries two histories and compaction trims
+/// only one of them. Whether that is worth losing undo/history past the
+/// retention window depends entirely on the ratio below.
+///
+/// `#[ignore]` because it is a measurement, not an assertion: it seeds tens of
+/// thousands of ops and prints. Run it with
+/// `cargo nextest run -p agaric -E 'test(measure_op_log_against_loro)' \
+///  --ignored --no-capture`.
+#[tokio::test]
+#[ignore = "measurement for #4700, not an assertion; seeds ~20k ops"]
+async fn measure_op_log_against_loro_doc_state_4700() {
+    // Sized to finish inside nextest's 60 s per-test budget: 2_000 x 10 timed
+    // out twice. Per-op figures below make the ratio scale-independent.
+    const BLOCKS: usize = 600;
+    const EDITS_PER_BLOCK: usize = 4;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut ids = Vec::with_capacity(BLOCKS);
+    for i in 0..BLOCKS {
+        let b = create_content(
+            &pool,
+            &mat,
+            &format!("block {i} initial content"),
+            None,
+            None,
+        )
+        .await;
+        ids.push(b.id);
+    }
+    for round in 0..EDITS_PER_BLOCK {
+        for (i, id) in ids.iter().enumerate() {
+            edit_block_inner(
+                &pool,
+                DEV,
+                &mat,
+                id.clone(),
+                format!("block {i} content revision {round} with some realistic prose in it"),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    settle_bg_tasks(&mat).await;
+
+    let op_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Every column, not just the payload: this is what the rows actually cost.
+    let op_bytes: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(LENGTH(device_id) + LENGTH(seq) + LENGTH(COALESCE(parent_seqs,'')) \
+         + LENGTH(hash) + LENGTH(op_type) + LENGTH(payload) + LENGTH(created_at)), 0) FROM op_log",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let loro_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // `loro_doc_state` is written by the time-driven snapshot scheduler, not by
+    // the command path, so the rows above are empty in a command-only harness.
+    // Measure Loro's side directly instead: apply the SAME op shapes to an
+    // engine and export, which is exactly what `save_snapshot` persists.
+    let loro_bytes = {
+        use agaric_engine::loro::engine::LoroEngine;
+        let mut engine = LoroEngine::with_peer_id("MEASURE_4700").expect("engine");
+        let mut block_ids = Vec::with_capacity(BLOCKS);
+        for i in 0..BLOCKS {
+            let id = format!("{:026}", i + 1);
+            engine
+                .apply_create_block(
+                    &id,
+                    "content",
+                    &format!("block {i} initial content"),
+                    None,
+                    0,
+                )
+                .expect("create");
+            block_ids.push(id);
+        }
+        for round in 0..EDITS_PER_BLOCK {
+            for (i, id) in block_ids.iter().enumerate() {
+                // Replace the whole content, which is what `edit_block_inner`
+                // does on the SQL side, so both columns measure the same edit.
+                let replacement =
+                    format!("block {i} content revision {round} with some realistic prose in it");
+                let current_len = engine
+                    .read_block_content(id)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |c| c.chars().count());
+                engine
+                    .apply_edit_content(id, 0, current_len, &replacement)
+                    .expect("edit");
+            }
+        }
+        engine.export_snapshot().expect("export").len() as i64
+    };
+
+    let ratio = op_bytes as f64 / loro_bytes.max(1) as f64;
+    println!("#4700 MEASUREMENT ---------------------------------------------");
+    println!("  seeded:          {BLOCKS} blocks x {EDITS_PER_BLOCK} edits");
+    println!("  op_log:          {op_rows} rows, {op_bytes} bytes");
+    println!("  loro_doc_state:  {loro_rows} rows in-harness (scheduler-driven, so 0 here)");
+    println!("  loro snapshot:   {loro_bytes} bytes for the same ops, measured directly");
+    println!("  op_log / loro:   {ratio:.2}x");
+    println!(
+        "  per op:          op_log {:.0} B, loro {:.0} B",
+        op_bytes as f64 / op_rows.max(1) as f64,
+        loro_bytes as f64 / op_rows.max(1) as f64,
+    );
+    println!("  compaction would reclaim at most {op_bytes} bytes and cannot");
+    println!("  touch the {loro_bytes} bytes of Loro history.");
+    println!("--------------------------------------------------------------");
+}
