@@ -107,12 +107,6 @@ pub const PAIRING_QR_VERSION_PASSPHRASE_ONLY: u32 = 1;
 /// degrades" reason died when `device_id` joined the payload. Two is simply what
 /// a multi-homed host has, and dropping a candidate only ever costs a race,
 /// never a pair: mDNS remains the discovery path and the fallback.
-///
-/// **Open (#4037 review):** the bind is a single `bind_addr_with_opts`, so it is
-/// unclear whether `ip_addrs()` can yield more than one address in production —
-/// on a loopback-only CI box it yields exactly one, which settles nothing about
-/// a laptop on Wi-Fi and Ethernet. If it provably cannot, this constant and the
-/// `addrs` array both collapse to one string.
 pub const MAX_QR_ADDR_CANDIDATES: usize = 2;
 
 /// Build the JSON payload for a pairing QR code.
@@ -433,18 +427,15 @@ fn install_pairing_session(
     Ok(PairingInfo { passphrase, qr_svg })
 }
 
-/// Slack added to [`SyncScheduler::debounce_window`] when waiting for this
-/// device's bound endpoint before rendering a pairing QR (#4037).
+/// How long [`start_pairing_armed`] waits for this device's bound endpoint
+/// before rendering the pairing QR (#4037).
 ///
-/// This covers the interface sweep and the bind that follow the wake.
-///
-/// It is added to `debounce_window` for headroom, NOT because the waiter spends
-/// that window: this change moved the dormant waiter off
-/// `wait_for_debounced_change`, so it transitions on the wake itself and the
-/// window is no longer part of the cost. The slack alone is what this budget
-/// actually rests on; the window is kept in the sum so a squeezed debounce in
-/// tests cannot make the total shorter than the bind needs.
-const QR_ENDPOINT_BIND_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+/// Covers the interface sweep and the bind that follow the wake. It used to be
+/// slack added to `SyncScheduler::debounce_window`, back when the dormant
+/// waiter spent that window before rechecking; this change moved the waiter onto
+/// the raw counter, so the window is not spent and summing it only obscured
+/// what the budget rests on.
+const QR_ENDPOINT_BIND_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Start pairing AND arm the pairing window so the host's dormant daemon
 /// activates for the duration.
@@ -502,7 +493,7 @@ pub async fn start_pairing_armed(
     // advertise, and the QR degrades to the passphrase-only v1 shape that mDNS
     // has always carried on its own.
     let advert = scheduler
-        .await_local_endpoint(scheduler.debounce_window + QR_ENDPOINT_BIND_SLACK)
+        .await_local_endpoint(QR_ENDPOINT_BIND_BUDGET)
         .await;
     if advert.is_none() {
         tracing::warn!(
