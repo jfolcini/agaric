@@ -434,8 +434,9 @@ async fn majority_space_by_content_refs(
     conn: &mut sqlx::SqliteConnection,
     tag_ids_json: &str,
 ) -> Result<Vec<(String, String)>, AppError> {
-    // Runtime query (not macro) so no .sqlx cache entry is needed for the
-    // dynamic json_each + window-function shape.
+    // dynamic-sql: json_each fan-out over a runtime-built id list plus a
+    // ROW_NUMBER window — no fixed arity, so the compile-checked macro form
+    // cannot express it.
     Ok(sqlx::query_as(
         r"WITH refs AS (
               SELECT t.value AS tag_id, b.id AS source_id
@@ -670,15 +671,19 @@ pub async fn repair_misfiled_tag_spaces(
 ) -> Result<usize, AppError> {
     // One indexed primary-key lookup — the whole cost of this function on
     // every boot after the first.
-    let done: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
-        .bind(TAG_SPACE_REPAIR_MARKER)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let done: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        TAG_SPACE_REPAIR_MARKER,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
     if done.is_some() {
         return Ok(0);
     }
 
-    // Runtime query (not macro) for the dynamic CTE + window-function shape.
+    // dynamic-sql: recursive-shaped CTE chain with a ROW_NUMBER window and a
+    // correlated `LIKE '%#[' || t.id || ']%'` join built over the tag table —
+    // not expressible as a fixed-arity compile-checked macro.
     let misfiled: Vec<(String, String)> = sqlx::query_as(
         r"WITH tokened AS (
               SELECT
@@ -746,12 +751,15 @@ pub async fn repair_misfiled_tag_spaces(
     // repair: the point of the marker is to retire the SCAN, not to record
     // that work happened.
     let now = now_ms();
-    sqlx::query("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)")
-        .bind(TAG_SPACE_REPAIR_MARKER)
-        .bind(repaired.to_string())
-        .bind(now)
-        .execute(&mut **tx)
-        .await?;
+    let repaired_count = repaired.to_string();
+    sqlx::query!(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        TAG_SPACE_REPAIR_MARKER,
+        repaired_count,
+        now,
+    )
+    .execute(&mut **tx)
+    .await?;
 
     Ok(repaired)
 }

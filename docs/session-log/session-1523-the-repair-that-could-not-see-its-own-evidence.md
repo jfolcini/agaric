@@ -121,3 +121,24 @@ misfiled *after* it was set is deliberately left alone.
 Worth keeping: adding a short-circuit in front of an existing function silently weakens every
 test that asserted a zero/no-op result through it. The short-circuit is new evidence for the same
 assertion, and an assertion satisfied by two independent causes is testing neither.
+
+## The guard offered an escape hatch, and two of four didn't deserve it
+
+CI failed on the dynamic-SQL justification guard (#646): four new runtime `sqlx::query(` sites
+with no `// dynamic-sql:` marker. The guard's own message names the remedy — add the marker, then
+re-anchor the baseline — and taking it for all four would have been a two-minute fix.
+
+Two of them did not deserve it. `SELECT value FROM app_settings WHERE key = ?` and its matching
+`INSERT OR REPLACE` are static SQL against a table the schema has had since migration 0053. The
+guard's message says so itself, above the escape hatch: *prefer the compile-checked macro form*.
+Marking them would have bought two permanent entries in a ratchet baseline — ownerless debt, in
+exchange for skipping a codegen step — for queries that can simply be validated at build time.
+They became `sqlx::query_scalar!` / `sqlx::query!`.
+
+Only the two that genuinely cannot be macros kept a marker: a `json_each` fan-out over an id list
+built at runtime, joined against a `ROW_NUMBER` window. There is no fixed arity to compile-check.
+
+Worth keeping: a guard that ships with a documented way to silence it is offering two different
+things — an exemption for the case it cannot judge, and a shortcut for the case you did not want
+to do properly. The message reads the same either way. The question that separates them is whether
+the construct the guard prefers can actually express this query, and for half of these it could.
