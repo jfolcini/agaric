@@ -55,22 +55,13 @@ const variantConfig: Record<
  * keypress, and it renders `OverdueSection` / `UpcomingSection` inline —
  * unmemoized and unvirtualized, over a list `useDuePanelData` fills to a
  * 200-row page. Without this memo every visible row would rebuild its
- * `renderRichContent` element tree per keystroke: the same churn #2193 / #2200
- * already memoized away for the projected rows of the same panel. (The parse
- * itself is LRU-cached in `RichContentRenderer`; the element tree is not.)
+ * `renderRichContent` element tree per keystroke, the churn #2193 already
+ * memoized away for the projected rows of this same panel.
  *
  * The callbacks are sourced INSIDE the memoized component, as `BlockListItem`
  * and `ProjectedEntryRow` do: `useRichContentCallbacks()` returns a fresh
  * object literal each render, so threading it through a prop would fail this
  * component's shallow compare on every parent re-render.
- *
- * No inner `useMemo` here, unlike `BlockListItem` / `BlockDndOverlay`. Those
- * two re-render for reasons unrelated to their content (`isFocused`, the drag's
- * per-pointer-move `projected`), so a memo has something to skip. `content` is
- * this component's ONLY prop, and its one other re-render trigger is the
- * resolve-store subscription inside `useRichContentCallbacks()` — which fires
- * exactly when a `[[ULID]]` has resolved and the tree therefore MUST be
- * rebuilt. A `useMemo` keyed on content + resolve version could never hit.
  */
 function AlertRowContentInner({ content }: { content: string }): React.ReactElement {
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } =
