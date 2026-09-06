@@ -184,7 +184,8 @@ pub async fn bootstrap_spaces(
     // frequently references it, or Personal as fallback. Idempotent
     // — the inner query filters to tags WITHOUT a `space` property,
     // so steady-state boots see zero candidates.
-    let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
+    let tags_migrated =
+        migrate_orphan_tags_to_space(&mut tx, state, device_id, &mut records).await?;
 
     // Repair pass — move any tag an earlier, buggy run of the migration
     // above parked in the WRONG space. That version decided placement by
