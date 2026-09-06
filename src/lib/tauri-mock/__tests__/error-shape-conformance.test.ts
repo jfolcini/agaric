@@ -197,7 +197,6 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         cmd: 'set_todo_state_batch',
         args: { blockIds: [], state: 'TODO' },
       },
-      { name: 'get_blocks (empty)', cmd: 'get_blocks', args: { ids: [] } },
       {
         name: 'load_page_subtree (foreign space)',
         cmd: 'load_page_subtree',

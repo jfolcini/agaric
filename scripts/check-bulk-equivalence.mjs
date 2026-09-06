@@ -37,7 +37,7 @@
 // the `_inner` variants that carry the actual logic are caught alongside
 // their IPC wrappers:
 //
-//   - a `batch` segment      → `create_blocks_batch`, `count_agenda_batch_inner`,
+//   - a `batch` segment      → `create_blocks_batch`, `count_agenda_batch_by_source_inner`,
 //                              `batch_resolve`, `get_batch_properties`
 //   - a `bulk` segment       → `read_blocks_bulk`
 //   - adjacent `by` + `ids`  → `delete_blocks_by_ids_inner`, `add_tags_by_ids`
@@ -58,7 +58,7 @@
 //
 // ─── The read-only discriminator ─────────────────────────────────────
 //
-// A read-only N-key fan-out (`count_agenda_batch`, `get_batch_properties`,
+// A read-only N-key fan-out (`count_agenda_batch_by_source`, `get_batch_properties`,
 // `count_backlinks_batch`, …) appends no op_log rows and mutates nothing, so
 // there is no state for it to fork on and no equivalence test to demand. The
 // discriminator is PRINCIPLED rather than a hardcoded name list: a function

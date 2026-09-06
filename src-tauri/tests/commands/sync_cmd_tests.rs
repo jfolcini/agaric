@@ -19,14 +19,14 @@ async fn sync_list_peer_refs_returns_empty_vec_initially() {
 }
 
 // ======================================================================
-// Sync — get_peer_ref
+// Sync — peer_refs::get_peer_ref
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sync_get_peer_ref_returns_none_for_nonexistent() {
     let (pool, _dir) = test_pool().await;
 
-    let result = get_peer_ref_inner(&pool, "nonexistent-peer".into())
+    let result = peer_refs::get_peer_ref(&pool, "nonexistent-peer")
         .await
         .unwrap();
     assert!(
@@ -60,7 +60,7 @@ async fn sync_delete_peer_ref_removes_existing_peer() {
         .unwrap();
 
     // Verify it exists
-    let before = get_peer_ref_inner(&pool, "peer-to-delete".into())
+    let before = peer_refs::get_peer_ref(&pool, "peer-to-delete")
         .await
         .unwrap();
     assert!(before.is_some(), "peer must exist before delete");
@@ -71,7 +71,7 @@ async fn sync_delete_peer_ref_removes_existing_peer() {
         .unwrap();
 
     // Verify it's gone
-    let after = get_peer_ref_inner(&pool, "peer-to-delete".into())
+    let after = peer_refs::get_peer_ref(&pool, "peer-to-delete")
         .await
         .unwrap();
     assert!(after.is_none(), "peer must be gone after delete");

@@ -1,5 +1,5 @@
 {
-  "description": "#3826 — READ-command differential over the block point-read surface: `get_block`, `get_blocks`, `first_child_for_blocks`, `batch_resolve` and `load_page_subtree`. The #763 snapshot already diffs these ROWS; what it does not diff is each command's own decision about them, so every step targets one such decision — whether a tombstone is served or filtered, whether a missing id is dropped or surfaced, whether `page_id` is the ROOT page or the immediate parent, and whether a subtree read walks `page_id` (grandchildren included) or just direct children. Every queried block is a SEED block, so ids are byte-identical on both stacks and the tokens are comparable.",
+  "description": "#3826 — READ-command differential over the block point-read surface: `get_block`, `first_child_for_blocks`, `batch_resolve` and `load_page_subtree`. The #763 snapshot already diffs these ROWS; what it does not diff is each command's own decision about them, so every step targets one such decision — whether a tombstone is served or filtered, whether a missing id is dropped or surfaced, whether `page_id` is the ROOT page or the immediate parent, and whether a subtree read walks `page_id` (grandchildren included) or just direct children. Every queried block is a SEED block, so ids are byte-identical on both stacks and the tokens are comparable.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -114,17 +114,6 @@
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "get_blocks_keeps_tombstone_drops_missing",
-      "rows": [
-        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=DELETED",
-        "B4#parent_id=B3#page_id=B1#position=1#deleted_at=null"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": null,
       "name": "first_child_skips_tombstoned_first_sibling",
       "rows": [
         "B1->B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
@@ -181,14 +170,6 @@
       "command": "get_block",
       "comment": "The other half of the pair: an ACTIVE block still comes back, so the `deleted_at IS NULL` predicate is pinned as a filter rather than as a blanket refusal. S4 is a grandchild (parent B3, page B1), so unlike the tombstone step its `page_id` attribute DOES pin the #1775 class — `page_id != parent_id` here, and a command that returned the immediate parent as the page would redden.",
       "name": "get_block_serves_a_live_block"
-    },
-    {
-      "args": {
-        "ids": ["S4", "S2", "00000000000000000000000ZZZ"]
-      },
-      "command": "get_blocks",
-      "comment": "Three ids: a live grandchild, a tombstone, and an id that exists nowhere. `get_blocks_inner` documents both halves — no `deleted_at` filter, and unknown ids silently omitted — so a mock that filtered tombstones OR echoed a placeholder row for the unknown id reddens. Unordered: the backend's `id IN (json_each(…))` does not guarantee input order.",
-      "name": "get_blocks_keeps_tombstone_drops_missing"
     },
     {
       "args": {

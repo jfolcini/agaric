@@ -85,12 +85,6 @@
     "reason": "Moves ONE payload as an uninterrupted QUIC byte run (#78/#3464). `bulk` is the byte-stream sense \u2014 one attachment or snapshot, not N keys \u2014 so there is no fold to agree with; the fixed BULK_COPY_BYTES buffer is a memory bound and a progress-tick granularity, unobservable on the wire"
   },
   {
-    "fn": "src-tauri/src/commands/agenda.rs::count_agenda_batch",
-    "kind": "read-only",
-    "status": "wrapper",
-    "reason": "IPC shim over count_agenda_batch_inner"
-  },
-  {
     "fn": "src-tauri/src/commands/agenda.rs::count_agenda_batch_by_source",
     "kind": "read-only",
     "status": "wrapper",
@@ -98,12 +92,6 @@
   },
   {
     "fn": "src-tauri/src/commands/agenda.rs::count_agenda_batch_by_source_inner",
-    "kind": "read-only",
-    "status": "read-only",
-    "reason": "N-key agenda COUNT fan-out; appends no op_log rows and mutates nothing, so it has no single-item write path to fork from"
-  },
-  {
-    "fn": "src-tauri/src/commands/agenda.rs::count_agenda_batch_inner",
     "kind": "read-only",
     "status": "read-only",
     "reason": "N-key agenda COUNT fan-out; appends no op_log rows and mutates nothing, so it has no single-item write path to fork from"

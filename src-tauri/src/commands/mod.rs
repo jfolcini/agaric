@@ -64,9 +64,8 @@ pub mod tags;
 
 // Tauri command handlers and testable _inner functions — explicitly re-exported.
 pub use agenda::{
-    count_agenda_batch, count_agenda_batch_by_source, count_agenda_batch_by_source_inner,
-    count_agenda_batch_inner, list_projected_agenda, list_projected_agenda_inner,
-    list_undated_tasks, list_undated_tasks_inner,
+    count_agenda_batch_by_source, count_agenda_batch_by_source_inner, list_projected_agenda,
+    list_projected_agenda_inner, list_undated_tasks, list_undated_tasks_inner,
 };
 // `_on_the_fly` exposed for date-clock-pinned regression tests.
 // Tests bypass the cache (which itself reads `chrono::Local::now()` and
@@ -91,13 +90,13 @@ pub use blocks::{
     create_block, create_block_inner, create_block_inner_with_space, create_blocks_batch,
     create_blocks_batch_inner, delete_block, delete_block_inner, delete_blocks_by_ids,
     delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
-    first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, get_blocks,
-    get_blocks_inner, list_blocks, list_blocks_inner, list_trash, list_trash_inner, move_block,
-    move_block_inner, move_blocks_batch, move_blocks_batch_inner, move_blocks_to_space,
-    move_blocks_to_space_inner, purge_all_deleted, purge_all_deleted_inner, purge_block,
-    purge_block_inner, purge_blocks_by_ids, purge_blocks_by_ids_inner, restore_all_deleted,
-    restore_all_deleted_inner, restore_block, restore_block_inner, restore_blocks_by_ids,
-    restore_blocks_by_ids_inner, trash_descendant_counts, trash_descendant_counts_inner,
+    first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, list_blocks,
+    list_blocks_inner, list_trash, list_trash_inner, move_block, move_block_inner,
+    move_blocks_batch, move_blocks_batch_inner, move_blocks_to_space, move_blocks_to_space_inner,
+    purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
+    purge_blocks_by_ids, purge_blocks_by_ids_inner, restore_all_deleted, restore_all_deleted_inner,
+    restore_block, restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
+    trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
     BugReport, LogFileEntry, collect_bug_report_metadata, collect_bug_report_metadata_inner,
@@ -111,13 +110,14 @@ pub use drafts::{
     FlushAllDraftsResult, delete_draft, flush_all_drafts, flush_all_drafts_inner, flush_draft,
     flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
 };
+#[cfg(any(test, feature = "test-util"))]
+pub use history::find_undo_group_inner;
 pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
-    compute_edit_diff, compute_edit_diff_inner, find_undo_group, find_undo_group_inner,
-    list_page_history, list_page_history_inner, redo_page_op, redo_page_op_inner,
-    restore_page_to_op, restore_page_to_op_inner, revert_ops, revert_ops_inner, undo_op,
-    undo_op_inner, undo_ops, undo_ops_inner, undo_page_group, undo_page_group_inner, undo_page_op,
-    undo_page_op_inner,
+    compute_edit_diff, compute_edit_diff_inner, list_page_history, list_page_history_inner,
+    redo_page_op, redo_page_op_inner, restore_page_to_op, restore_page_to_op_inner, revert_ops,
+    revert_ops_inner, undo_op, undo_op_inner, undo_ops, undo_ops_inner, undo_page_group,
+    undo_page_group_inner, undo_page_op, undo_page_op_inner,
 };
 pub use journal::{
     get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
@@ -165,8 +165,8 @@ pub use queries::{
     filtered_blocks_query, filtered_blocks_query_inner, get_backlinks, get_backlinks_inner,
     get_status, get_status_inner, list_backlinks_grouped, list_backlinks_grouped_inner,
     list_unfinished_tasks, list_unfinished_tasks_inner, list_unlinked_references,
-    list_unlinked_references_inner, query_backlinks_filtered, query_backlinks_filtered_inner,
-    query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
+    list_unlinked_references_inner, query_by_property, query_by_property_inner, search_blocks,
+    search_blocks_inner,
 };
 pub use recovery::get_recovery_status;
 pub use spaces::{
@@ -176,10 +176,10 @@ pub use spaces::{
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
     confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_bind_exposure_status,
-    get_device_id, get_device_id_inner, get_mdns_status, get_os_network_block_status, get_peer_ref,
-    get_peer_ref_inner, list_peer_refs, list_peer_refs_inner, set_peer_address,
-    set_peer_address_inner, start_pairing, start_pairing_armed_inner, start_pairing_inner,
-    start_sync, start_sync_inner, update_peer_name, update_peer_name_inner,
+    get_device_id, get_device_id_inner, get_mdns_status, get_os_network_block_status,
+    list_peer_refs, list_peer_refs_inner, set_peer_address, set_peer_address_inner, start_pairing,
+    start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
+    update_peer_name_inner,
 };
 pub use tags::{
     add_tag, add_tag_inner, add_tags_by_ids, add_tags_by_ids_inner, list_all_tags_in_space,

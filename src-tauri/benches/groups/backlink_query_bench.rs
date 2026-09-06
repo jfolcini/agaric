@@ -1,7 +1,8 @@
 //! Criterion benchmarks for the backlink query pipeline:
 //!   - `eval_backlink_query`  — core filtered/sorted/paginated backlink lookup
 //!   - `list_property_keys`   — distinct property key listing
-//!   - `query_backlinks_filtered_inner` — Tauri command wrapper
+//!   - `count_backlinks_batch_inner` / `list_unlinked_references_inner` — the
+//!     command wrappers over the same edges
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
 

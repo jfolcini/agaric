@@ -32,7 +32,7 @@ import {
  *
  * ```
  * list_peer_refs: reads the peerRefs store, and advances a pending reveal
- * get_peer_ref / delete_peer_ref: read / remove from that same store
+ * delete_peer_ref: removes from that same store
  * confirm_pairing: arms a pending reveal — adds NO peer synchronously
  * update_peer_name / set_peer_address: still no-ops
  * ```

@@ -202,7 +202,7 @@ test.describe('Block-level undo/redo', () => {
   // FROM; it must NOT be part of the same undo group as the dedent, or the single
   // Ctrl+Z reverts BOTH (indent + dedent are both `move_block` by the same device,
   // and undo batches same-device ops within UNDO_GROUP_WINDOW_MS=500ms — see
-  // undo.ts / find_undo_group). The earlier "depth stays 0" trace failure was
+  // undo.ts / undo_page_group). The earlier "depth stays 0" trace failure was
   // exactly that group: undo reverted the dedent AND the scaffolding indent, so
   // the block landed back at root. Waiting past the 500ms window puts the dedent
   // in its own undo group, so Ctrl+Z reverts only the dedent.

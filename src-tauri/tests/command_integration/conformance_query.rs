@@ -889,18 +889,6 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
-        "get_blocks" => {
-            let rows = get_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "ids")).await?;
-            let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
-            RawResult {
-                rows: v.as_array().map_or_else(Vec::new, |a| {
-                    a.iter().map(|r| row_token(r, "id", BLOCK_ATTRS)).collect()
-                }),
-                has_more: None,
-                total_count: None,
-                next_cursor: None,
-            }
-        }
         "batch_resolve" => {
             let rows = batch_resolve_inner(
                 pool,
@@ -1362,7 +1350,7 @@ fn assert_unique_step_names(fixture_name: &str, steps: &[Value]) {
 ///
 /// `page_link_cache` is the only table any WIRED read command can write today.
 /// That is the conclusion of the write sweep recorded in
-/// [`reader_delegation_tests`] — see `the_write_sweep_is_still_over_twenty_arms`
+/// [`reader_delegation_tests`] — see `the_write_sweep_denominator_still_matches`
 /// there for the enumeration and for what was ruled out. The one writer is
 /// `list_page_links` → `list_page_links_inner_split_with_cap`'s lazy rebuild (a
 /// DELETE+INSERT), gated on the cache being empty while `block_links` is not.
@@ -1650,7 +1638,8 @@ mod reader_delegation_tests {
     ///
     /// ## What the hand sweep found, so the denominator is in the repo
     ///
-    /// All 20 arms were checked against their `#[tauri::command]`. Nineteen
+    /// All 19 arms (20 before #3264 retired `get_blocks`) were checked against
+    /// their `#[tauri::command]`. Eighteen
     /// reach the same function the command does (`list_page_links` reaches
     /// `list_page_links_inner`, whose whole body is
     /// `list_page_links_inner_split(pool, pool, …)` — the documented
@@ -1689,17 +1678,18 @@ mod reader_delegation_tests {
     /// command does. It says nothing about whether any of those readers WRITES,
     /// which is the premise the read-phase purity guard in
     /// [`super::derived_cache_digest`] rests on. That second sweep is recorded
-    /// separately, on [`the_write_sweep_is_still_over_twenty_arms`], because a
+    /// separately, on [`the_write_sweep_denominator_still_matches`], because a
     /// justification that cites the wrong sweep is a proof that is not in the
     /// repo at all.
     const QUERIES_RS: &str = include_str!("../../src/commands/blocks/queries.rs");
     const HARNESS_RS: &str = include_str!("conformance_query.rs");
 
     /// The number of commands wired into `run_step` when the WRITE sweep below
-    /// was taken. A 21st arm reddens
-    /// [`the_write_sweep_is_still_over_twenty_arms`], which is the only thing
+    /// was taken. A 20th arm reddens
+    /// [`the_write_sweep_denominator_still_matches`], which is the only thing
     /// that makes the sweep's conclusion a claim about the CURRENT code.
-    const SWEPT_ARM_COUNT: usize = 20;
+    // #3264 retired `get_blocks`, a plain SELECT, from the 20 arms swept.
+    const SWEPT_ARM_COUNT: usize = 19;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
@@ -1730,11 +1720,11 @@ mod reader_delegation_tests {
     ///     `&SqlitePool` and returns rows.
     ///
     /// This test cannot re-derive that by scanning source — a real answer
-    /// needs the call graph under 20 readers. What it CAN do is make the
+    /// needs the call graph under the readers. What it CAN do is make the
     /// sweep's denominator falsifiable, so the conclusion cannot quietly come
     /// to describe a set of arms that no longer exists.
     #[test]
-    fn the_write_sweep_is_still_over_twenty_arms() {
+    fn the_write_sweep_denominator_still_matches() {
         let (commands, arms) = wired_commands(HARNESS_RS);
         assert_eq!(
             commands.len(),
@@ -1748,7 +1738,7 @@ mod reader_delegation_tests {
         );
         // The walk must have reached the CATCH-ALL. Without this, a scanner
         // that stopped early — on a construct it mis-parsed — would report a
-        // short list, and "20" would be a coincidence between the arms it
+        // short list, and the count would be a coincidence between the arms it
         // managed to read and the arms that were swept.
         //
         // One arm more than commands, because every literal arm names exactly
@@ -1782,7 +1772,7 @@ mod reader_delegation_tests {
     /// filter it replaces (`line.starts_with('"') && line.ends_with("=> {")`)
     /// was defeatable by three arm shapes rustfmt writes without complaint,
     /// each of which would have added a command while leaving the denominator
-    /// at 20 — a ratchet whose whole purpose is to be falsifiable, silently
+    /// unchanged — a ratchet whose whole purpose is to be falsifiable, silently
     /// not falsified:
     ///
     ///   * an OR-PATTERN (`"a" | "b" => {`) — one line, two commands;

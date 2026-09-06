@@ -2404,6 +2404,11 @@ pub async fn redo_page_op_inner(
 ///
 /// * `AppError::Validation` — `depth < 0` or `window_ms < 0`.
 /// * Database errors propagated from sqlx.
+///
+/// #3264: the FE sizes and reverts a group in one `undo_page_group` call, so
+/// this is no longer a command. It stays as the sizing oracle for
+/// `undo_page_group_enumeration_matches_find_undo_group_differential`.
+#[cfg(any(test, feature = "test-util"))]
 #[instrument(skip(pool), err)]
 pub async fn find_undo_group_inner(
     pool: &SqlitePool,
@@ -2486,10 +2491,11 @@ pub async fn find_undo_group_inner(
 
 /// The size of the undo group seeded at `seed_rn`, as a raw count.
 ///
-/// Split out of [`find_undo_group_inner`] so that function stays under the
+/// Split out of `find_undo_group_inner` so that function stays under the
 /// line budget without an `#[expect(clippy::too_many_lines)]` (#4746): the
 /// query is ~65 of its lines and has no other caller, so lifting it costs
 /// nothing and the guards above it read on one screen.
+#[cfg(any(test, feature = "test-util"))]
 async fn undo_group_size(
     pool: &SqlitePool,
     page_id: &str,
@@ -2562,7 +2568,7 @@ async fn undo_group_size(
 /// writer-lock acquisition per op) with one command.
 ///
 /// This is the fused batch analogue of [`undo_page_op_inner`] +
-/// [`find_undo_group_inner`]:
+/// `find_undo_group_inner`:
 ///
 ///  1. The page subtree is resolved ONCE (the `page_blocks` CTE) and the
 ///     group's op refs are enumerated ONCE by the same `ordered_ops` +
@@ -3078,22 +3084,6 @@ pub async fn redo_page_op(
     )
     .await
     .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: compute the size of the consecutive same-device,
-/// within-window undo group starting at the Nth-most-recent undoable op.
-/// Delegates to [`find_undo_group_inner`]..
-#[tauri::command]
-#[specta::specta]
-pub async fn find_undo_group(
-    pool: State<'_, ReadPool>,
-    page_id: String,
-    depth: i64,
-    window_ms: i64,
-) -> Result<i32, AppError> {
-    find_undo_group_inner(&pool.0, &page_id, depth, window_ms)
-        .await
-        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: undo an entire consecutive same-device, within-window undo
