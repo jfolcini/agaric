@@ -43,11 +43,15 @@ export interface Tab {
   pageStack: PageEntry[]
   label: string
   /**
-   * The view that was on screen when this tab's page stack was OPENED — i.e.
-   * the route the user will be returned to once the stack is popped empty
-   * (in-page Back button, Android back gesture, delete-page, stale-page heal).
-   * Recorded by `navigateToPage` / `openInNewTab` on the push onto an empty
-   * stack and consumed (and cleared) by `goBack`.
+   * The view that was on screen when the user last entered this tab's page
+   * stack from outside the editor — i.e. the route the user will be returned
+   * to once the stack is popped empty (in-page Back button, Android back
+   * gesture, delete-page, stale-page heal). Recorded by `navigateToPage` /
+   * `openInNewTab` whenever a page is opened from a non-`page-editor` view
+   * (#4707 — including onto a stack left standing by an earlier view, and
+   * including a re-open of the page already on top, which is what makes
+   * Journal → page → Back land back on the journal) and consumed (and
+   * cleared) by `goBack`.
    *
    * Undefined means "unknown origin" — a tab persisted before this field
    * existed, or one opened while `page-editor` was already the current view
@@ -69,12 +73,12 @@ export interface Tab {
 let nextTabId = 1
 
 /**
- * #754 — per-tab page-stack depth cap. `navigateToPage` only dedups when
- * the SAME page is already at the top, so a long browsing session grows
- * the stack (and the persisted `agaric:tabs` blob) without bound. When a
- * push would exceed the cap the OLDEST entry is dropped — the back
- * gesture keeps its most recent 50 steps, which is far beyond any
- * realistic back-tracking while keeping the localStorage payload small.
+ * #754 — per-tab page-stack depth cap. `navigateToPage` holds one entry per
+ * DISTINCT page (#4707), so a long browsing session still grows the stack (and
+ * the persisted `agaric:tabs` blob) without bound. When a push would exceed
+ * the cap the OLDEST entry is dropped — the back gesture keeps its most recent
+ * 50 steps, which is far beyond any realistic back-tracking while keeping the
+ * localStorage payload small.
  */
 export const MAX_PAGE_STACK_DEPTH = 50
 
@@ -278,14 +282,18 @@ function setNavigationView(view: View): void {
 /**
  * The `enteredFrom` a tab should carry after a page is pushed onto it (#4287).
  *
- * Only the push onto an EMPTY stack opens a stack, so only that push records
- * an origin; deeper pushes keep the origin of the stack's bottom entry. A push
- * made while `page-editor` is already the current view has no meaningful
- * origin to record (the editor is not a route to return to), so the existing
- * value is kept.
+ * A push made while `page-editor` is already the current view is a deeper step
+ * INSIDE the open stack: it has no meaningful origin of its own (the editor is
+ * not a route to return to), so the stack keeps the origin it was opened with.
+ * Every other push comes from a real route — journal, pages, search, tags, … —
+ * and that route becomes the new origin.
+ *
+ * #4707 — there is deliberately no "only onto an EMPTY stack" guard here.
+ * Leaving the editor for a top-level view does not clear the tab's page stack,
+ * so gating on emptiness meant the origin was almost never recorded and Back
+ * fell through to `DEFAULT_PAGE_EXIT_VIEW`.
  */
 function nextEnteredFrom(tab: Tab): View | undefined {
-  if (tab.pageStack.length > 0) return tab.enteredFrom
   return currentEntryView() ?? tab.enteredFrom
 }
 
@@ -515,14 +523,32 @@ export const useTabsStore = create<TabsStore>()(
           // `page-editor` so clicking the same page in the browser
           // actually re-renders it instead of leaving the user stranded
           // on the previous view.
+          //
+          // #4707 — that switched-away case is a fresh entry into the stack,
+          // so it records its origin like any other; without this, Back from
+          // the page you just re-opened from the journal lands on the pages
+          // list. Re-clicking from inside the editor leaves the origin alone,
+          // so the branch stays a pure no-op there.
+          const entered = nextEnteredFrom(activeTab)
+          if (entered !== activeTab.enteredFrom) {
+            const tabsWithOrigin = [...tabs]
+            tabsWithOrigin[activeTabIndex] = { ...activeTab, enteredFrom: entered }
+            set(spliceTabs(state, tabsWithOrigin, activeTabIndex))
+          }
           setNavigationView('page-editor')
           setNavigationSelectedBlockId(blockId ?? null)
           return
         }
 
+        // #4707 — dedup used to test the TOP entry only, so browsing back and
+        // forth between the same handful of pages queued each of them several
+        // times over (a reported stack held 28 entries for 18 distinct pages)
+        // and Back replayed every copy on the way out. Dropping the earlier
+        // copy rather than truncating the stack back to it keeps the pages
+        // visited in between reachable by Back.
         // #754 — drop-oldest cap so the back stack (and its persisted
         // blob) can't grow without bound. See `MAX_PAGE_STACK_DEPTH`.
-        const pushed = [...pageStack, { pageId, title }]
+        const pushed = [...pageStack.filter((entry) => entry.pageId !== pageId), { pageId, title }]
         const newStack =
           pushed.length > MAX_PAGE_STACK_DEPTH
             ? pushed.slice(pushed.length - MAX_PAGE_STACK_DEPTH)

@@ -256,8 +256,8 @@ describe('tabs persist merge (#823 — same-version blobs bypass migrate)', () =
 })
 
 // ---------------------------------------------------------------------------
-// #754 — pageStack depth cap. `navigateToPage` only dedups the SAME page at
-// the top, so a long browsing session previously grew the stack (and the
+// #754 — pageStack depth cap. `navigateToPage` holds one entry per DISTINCT
+// page (#4707), so a long browsing session still grows the stack (and the
 // persisted blob) without bound. The cap drops the OLDEST entry.
 // ---------------------------------------------------------------------------
 
