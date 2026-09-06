@@ -39,7 +39,6 @@ import { useSpaceStore } from '@/stores/space'
 interface UsePageCreationParams {
   wireFilters: FilterPrimitive[]
   reload: () => void
-  pages: (BlockRow | PageWithMetadataRow)[]
   setPages: Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>
   setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
   onPageSelect?: ((pageId: string, title?: string) => void) | undefined
@@ -58,7 +57,6 @@ interface UsePageCreationResult {
 export function usePageCreation({
   wireFilters,
   reload,
-  pages,
   setPages,
   setDisplayTotalCount,
   onPageSelect,
@@ -103,6 +101,21 @@ export function usePageCreation({
       }
       setIsCreating(true)
       try {
+        // #4723 — `create_page_in_space` RESOLVES an existing title to that
+        // page instead of creating one. The paginated list only holds the
+        // loaded window, so ask the space for every page before creating:
+        // a resolve beyond the load-more boundary would otherwise prepend a
+        // duplicate row and bump the count.
+        const spacePages = unwrap(
+          await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
+        )
+        const existing = spacePages.find((page) => page.content === name)
+        if (existing) {
+          setNewPageName('')
+          onPageSelect?.(existing.id, name)
+          setIsCreating(false)
+          return
+        }
         const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
         // #4338 — a page the user has just NAMED is the strongest picker
         // candidate there is; publish it so a warm `pagesListRef` can offer it
@@ -119,8 +132,7 @@ export function usePageCreation({
         // optimistic path is kept for the unfiltered case (the common one).
         if (wireFilters.length > 0) {
           reload()
-        } else if (!pages.some((p) => p.id === newId)) {
-          // #4723 — an existing title resolves to that page; it is already listed.
+        } else {
           const newPage: BlockRow = {
             id: newId,
             block_type: 'page',
@@ -156,7 +168,7 @@ export function usePageCreation({
       }
       setIsCreating(false)
     },
-    [newPageName, pages, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
+    [newPageName, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
   )
 
   const handleCreateUnder = useCallback((namespacePath: string) => {

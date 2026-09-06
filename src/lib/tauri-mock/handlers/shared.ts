@@ -68,15 +68,10 @@ export function findLivePageByTitle(
   for (const b of blocks.values()) {
     const id = b['id'] as string
     if (b['block_type'] !== 'page' || b['deleted_at'] || id === excludeId) continue
-    if (b['content'] !== content || pageSpaceOf(id) !== spaceId) continue
+    if (b['content'] !== content || ownerSpaceOf(b) !== spaceId) continue
     return id
   }
   return null
-}
-
-/** A page's mock space membership: its `space` ref property, or null. */
-export function pageSpaceOf(id: string): string | null {
-  return (properties.get(id)?.get('space')?.['value_ref'] as string | null) ?? null
 }
 
 /** Shorthand for a mock `invalid_operation` rejection — mirrors `AppError::InvalidOperation(...)` (#2463 kind-parity rule). */

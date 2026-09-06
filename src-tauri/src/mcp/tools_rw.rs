@@ -387,9 +387,10 @@ fn tool_desc_add_tag() -> ToolDescription {
 fn tool_desc_create_page() -> ToolDescription {
     ToolDescription {
         name: TOOL_CREATE_PAGE.to_string(),
-        description: "Create a new top-level page with the given title in the given space. The \
-                      page has no parent (pages are always top-level in Agaric's model) and \
-                      lands with its `space` property set in a single transaction."
+        description: "Create a new top-level page with the given title in the given space, or, \
+                      when a live page with that title already exists in the space, return that \
+                      page's id. The page has no parent (pages are always top-level in Agaric's \
+                      model) and lands with its `space` property set in a single transaction."
             .to_string(),
         input_schema: json!({
             "type": "object",

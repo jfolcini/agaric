@@ -19,6 +19,9 @@ import { useSpaceStore } from '@/stores/space'
 // `(parentId, content, spaceId)`; the shim wraps a fulfilment in the
 // `{ status: 'ok', data }` envelope `unwrap` expects.
 const mockedCreate = vi.hoisted(() => vi.fn())
+// #4723 — the create path asks the space for its full page list first, so an
+// existing title never reaches `createPageInSpace`.
+const mockedListPages = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -28,6 +31,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreate(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListPages(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -52,10 +57,7 @@ interface Harness {
   onPageSelect: ReturnType<typeof vi.fn>
 }
 
-function makeHarness(
-  wireFilters: FilterPrimitive[] = [],
-  pages: Row[] = [],
-): Harness & {
+function makeHarness(wireFilters: FilterPrimitive[] = []): Harness & {
   render: () => ReturnType<typeof renderHook<ReturnType<typeof usePageCreation>, void>>
 } {
   const setPages = vi.fn()
@@ -72,7 +74,6 @@ function makeHarness(
         usePageCreation({
           wireFilters,
           reload,
-          pages,
           setPages: setPages as unknown as Dispatch<SetStateAction<Row[]>>,
           setDisplayTotalCount: setDisplayTotalCount as unknown as Dispatch<
             SetStateAction<number | undefined>
@@ -85,6 +86,7 @@ function makeHarness(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedListPages.mockResolvedValue([])
   useSpaceStore.setState({ currentSpaceId: 'SPACE_A', isReady: true })
 })
 
@@ -120,11 +122,12 @@ describe('usePageCreation', () => {
     expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000000', 'My Page')
   })
 
-  // #4723 — an existing title resolves to that page on the backend; a page
-  // already in the list must not be listed twice or counted again.
-  it('neither prepends nor bumps the count when the create resolves to a listed page', async () => {
-    mockedCreate.mockResolvedValue('OLD')
-    const h = makeHarness([], [{ id: 'OLD' } as Row])
+  // #4723 — an existing title resolves to that page on the backend, so the
+  // create is skipped entirely: a resolve past the loaded window would
+  // otherwise prepend a duplicate row and bump the count.
+  it('selects the existing page and never calls create when the title already exists in the space', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
+    const h = makeHarness([])
     const { result } = h.render()
 
     act(() => {
@@ -134,6 +137,7 @@ describe('usePageCreation', () => {
       await result.current.handleCreatePage()
     })
 
+    expect(mockedCreate).not.toHaveBeenCalled()
     expect(h.setPages).not.toHaveBeenCalled()
     expect(h.setDisplayTotalCount).not.toHaveBeenCalled()
     expect(h.reload).not.toHaveBeenCalled()

@@ -814,6 +814,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -865,12 +866,51 @@ describe('TemplatesView', () => {
       expect(legacyCreateBlockPageCalls).toHaveLength(0)
     })
 
+    // #4723 — `create_page_in_space` resolves an existing title to that page,
+    // so stamping the returned id would silently convert an ordinary page
+    // into a template (and drop it from agenda queries).
+    it('refuses to create when the space already holds a page with that title', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') {
+          return [
+            {
+              id: 'P_EXISTING',
+              content: 'My Template',
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ]
+        }
+        return emptyPage
+      })
+
+      render(<TemplatesView />)
+
+      const input = await screen.findByPlaceholderText('New template name...')
+      await user.type(input, 'My Template')
+      await user.click(screen.getByRole('button', { name: /create template/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          'A page titled "My Template" already exists in this space',
+        )
+      })
+      const commands = mockedInvoke.mock.calls.map(([cmd]) => cmd)
+      expect(commands).not.toContain('create_page_in_space')
+      expect(commands).not.toContain('set_property')
+    })
+
     // #4338 — a template IS a page: `list_all_pages_in_space`, the query that
     // fills the `[[` picker's cache, has no template filter, so a warm cache
     // that lacks this row is simply wrong about the space.
     it("publishes an 'added' event before the template property is set", async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -919,6 +959,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') throw new Error('property fail')
         return emptyPage
@@ -955,6 +996,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -988,6 +1030,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') {
           return {
@@ -1017,6 +1060,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') throw new Error('backend fail')
         return emptyPage
       })
@@ -1040,6 +1084,7 @@ describe('TemplatesView', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage
         if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') return 'T_NEW'
         if (cmd === 'set_property') throw new Error('property fail')
         return emptyPage

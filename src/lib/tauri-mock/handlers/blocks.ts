@@ -20,7 +20,7 @@ import {
   invalidOperationRejection,
   nextCohortMarker,
   notFoundRejection,
-  pageSpaceOf,
+  ownerSpaceOf,
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
@@ -709,7 +709,7 @@ export const blocksHandlers = {
     // #4723 — page titles are unique per space: mirrors the backend's
     // `reject_duplicate_page_title` (the page itself is not its own clash).
     if (b['block_type'] === 'page') {
-      const spaceId = pageSpaceOf(blockId)
+      const spaceId = ownerSpaceOf(b)
       const toText = a['toText'] as string
       if (spaceId !== null && findLivePageByTitle(toText, spaceId, blockId) !== null) {
         throw appErrorRejection({

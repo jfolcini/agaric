@@ -221,7 +221,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   } = usePageCreation({
     wireFilters,
     reload,
-    pages,
     setPages,
     setDisplayTotalCount,
     onPageSelect,
