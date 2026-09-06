@@ -54,11 +54,13 @@
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
 //! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved_conn` (the snapshot-RESET arm, #4218) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
+//! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
 //! cache, the projected-agenda cache, `block_tag_refs`,
-//! `tags_cache.usage_count`, `blocks.space_id` re-derivation, and the FTS
-//! index.
+//! `tags_cache.usage_count`, and `blocks.space_id` re-derivation. All five are
+//! blocked on #4679: today's B6 generator cannot reach them, so an oracle over
+//! any of them would pass unconditionally.
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -210,6 +212,21 @@ pub struct OracleCoverage {
     /// never writes a `[[ULID]]` token leaves `block_links` empty, and an
     /// oracle over an always-empty roll-up is worthless.
     pub page_link_edges: i64,
+    /// Rows in `fts_blocks` — what incremental maintenance produced. Counts
+    /// ROWS, not distinct blocks, so a duplicate (#345 / C6) shows up here as
+    /// well as in the divergence list.
+    pub fts_blocks_rows: i64,
+    /// Blocks a from-base rebuild says MUST be indexed — live, with non-NULL
+    /// content.
+    ///
+    /// The FTS artefact compares a map of this size against the index's key
+    /// set, so a zero means the membership diff was `{} == {}`.
+    pub fts_indexable_blocks: i64,
+    /// Tombstoned blocks that still carry content — rows [`reconcile`] declines
+    /// to report as EXTRA because nothing in production removes them (#4733).
+    /// Counted so the tolerance is visible: a fixture where this is large and
+    /// `fts_indexable_blocks` is small is auditing very little.
+    pub fts_tombstoned_rows_tolerated: i64,
 }
 
 /// Count the artefact rows the oracle is auditing.
@@ -242,6 +259,15 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     // from one computation so they cannot drift apart.
     let page_link_edges =
         i64::try_from(rebuild_page_link_cache_from_base(pool).await?.len()).unwrap_or(i64::MAX);
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let fts_blocks_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(pool)
+        .await?;
+    // Folded, not counted in SQL — same reason as `page_link_edges`.
+    let fts = rebuild_fts_index_from_base(pool).await?;
+    let fts_indexable_blocks = i64::try_from(fts.expected.len()).unwrap_or(i64::MAX);
+    let fts_tombstoned_rows_tolerated =
+        i64::try_from(fts.tombstoned_with_content.len()).unwrap_or(i64::MAX);
 
     // Both page-shaped counters come from the SAME Rust folds the artefacts
     // use, so "the fixture covers this" and "the oracle audited this" can
@@ -266,6 +292,9 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         attachment_blob_rows,
         page_link_cache_rows,
         page_link_edges,
+        fts_blocks_rows,
+        fts_indexable_blocks,
+        fts_tombstoned_rows_tolerated,
     })
 }
 
@@ -1866,6 +1895,256 @@ pub async fn settle_block_links_unresolved(pool: &SqlitePool) -> Result<(), AppE
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 8 — `fts_blocks`, the full-text search index (#3345)
+// ---------------------------------------------------------------------------
+
+/// `blocks.block_type` for a tag block — the rows whose content is a tag NAME.
+const TAG_BLOCK_TYPE: &str = "tag";
+
+/// Fold the tag-name and page-title reference maps out of the `blocks` dump.
+///
+/// Production loads these with two `SELECT id, content FROM blocks WHERE
+/// block_type = … AND deleted_at IS NULL` queries (`fts::strip::load_ref_maps`,
+/// `pub(crate)` and therefore unreachable from here anyway). Folding them from
+/// the same flat dump every other artefact uses keeps the whole rebuild on one
+/// base-table read and keeps the predicate in Rust where it can be compared
+/// against, rather than delegated to the same SQL the maintainer runs.
+///
+/// A NULL-content tag or page contributes no entry: an unresolvable `#[ULID]`
+/// / `[[ULID]]` token strips to the empty string on both sides.
+fn fold_ref_maps(
+    blocks: &[BaseBlock],
+) -> (
+    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, String>,
+) {
+    let mut tag_names = std::collections::HashMap::new();
+    let mut page_titles = std::collections::HashMap::new();
+    for block in blocks {
+        if block.deleted_at.is_some() {
+            continue;
+        }
+        let Some(content) = block.content.clone() else {
+            continue;
+        };
+        match block.block_type.as_str() {
+            TAG_BLOCK_TYPE => {
+                tag_names.insert(block.id.clone(), content);
+            }
+            PAGE_BLOCK_TYPE => {
+                page_titles.insert(block.id.clone(), content);
+            }
+            _ => {}
+        }
+    }
+    (tag_names, page_titles)
+}
+
+/// What a from-base rebuild of the FTS index says, split by what production
+/// actually maintains.
+#[derive(Debug, Clone)]
+pub struct FtsRebuild {
+    /// `block_id` → `stripped`, for every block that MUST be indexed.
+    pub expected: BTreeMap<String, String>,
+    /// Tombstoned blocks that still carry content — the rows production leaves
+    /// behind and never removes. See [`rebuild_fts_index_from_base`] for why
+    /// [`reconcile`] tolerates them.
+    pub tombstoned_with_content: BTreeSet<String>,
+}
+
+/// Recompute the whole FTS index from `blocks` alone.
+///
+/// The membership rule, transcribed from the column semantics rather than from
+/// a maintainer's query: **a block has exactly one `fts_blocks` row iff it is
+/// live and its `content` is not NULL.** Every writer in
+/// `agaric_store::fts::index` observes it — the single-block upsert deletes
+/// when the row is absent, tombstoned, or content-less, and the vault-wide
+/// rebuild selects `WHERE deleted_at IS NULL AND content IS NOT NULL`. There
+/// is no `block_type` term and no conflict term: a tag block and a page block
+/// are indexed exactly like a content block.
+///
+/// # The projection is production's, and that is the point
+///
+/// The `stripped` VALUE is computed by calling production's own
+/// `strip_for_fts_with_maps`, so this rebuild is NOT independent of it — a
+/// specification bug in the strip rules is invisible here, because both sides
+/// have it. That is a deliberate line, not an oversight:
+///
+/// * `strip_for_fts_with_maps` is a PURE function of `(content, tag_names,
+///   page_titles)`. It has no per-op-type arms, so it is not the thing this
+///   module exists to audit; it is unit-tested in `fts/strip.rs` and fuzzed by
+///   `fuzz/fuzz_targets/fts_strip.rs` (#2945).
+/// * What IS hand-maintained per op arm — and therefore what this artefact
+///   audits — is *which blocks get reindexed and when*:
+///   `materializer::dispatch::invalidations_for_op` decides whether an op
+///   enqueues `UpdateFtsBlock`, `RemoveFtsBlock`, `ReindexFtsReferences`, a
+///   full `RebuildFtsIndex`, or nothing at all. Nothing writes this index
+///   inside `apply_op_tx` — same shape as `page_link_cache` (#3296).
+/// * A 400-line Rust transcription of markdown stripping, NFC normalisation,
+///   reference substitution and the `FTS_MAX_INDEXED_BYTES` cap would drift
+///   from production on its first bug fix and report the drift as a data
+///   divergence. That is a worse oracle, not a stronger one.
+///
+/// So the claim this artefact makes is precise: **membership, freshness and
+/// row multiplicity**, not projection semantics.
+///
+/// # A tombstoned block's row is tolerated, and that is production's rule
+///
+/// `DeleteBlock` soft-deletes the whole cohort but its dispatch arm emits
+/// `RemoveFtsBlock` for `record.block_id` ALONE, and `RebuildFtsIndex` is not a
+/// member of `FULL_CACHE_REBUILD_TASKS`. So every DESCENDANT of a deleted
+/// subtree keeps its row, and no maintainer ever removes it — this is not a
+/// deferral with a settling pass behind it, it is permanent until the next full
+/// rebuild (boot, or a large inbound sync).
+///
+/// It is not a wrong answer: every search read inner-joins `blocks` and filters
+/// `b.deleted_at IS NULL` (`fts/search/fetch.rs`, `fts/toggle_filter.rs`), so
+/// the row is unreachable. What it costs is index size and bm25 corpus
+/// statistics — tracked as #4733, not excused here.
+///
+/// [`reconcile`] therefore reports an EXTRA row only when the block is ABSENT
+/// from `blocks` or its `content` is NULL — the two shapes production really
+/// does maintain — and counts the tolerated ones in
+/// [`OracleCoverage::fts_tombstoned_rows_tolerated`] so the tolerance is
+/// measured rather than assumed. An oracle that fired on every ordinary delete
+/// would be muted within a week, and the four arms that matter (a live block
+/// missing from the index, a row for a purged or emptied block, a stale
+/// `stripped`, a duplicate) all survive intact. The rebuild's own
+/// `deleted_at IS NULL` term is pinned directly on the table instead, by
+/// `fts_index_reconciles_membership_in_both_directions_3345`.
+///
+/// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
+/// re-read on every call, which is what makes a stale row after a tag rename
+/// or a page retitle expressible: production propagates those through
+/// `ReindexFtsReferences`, and an arm that forgets to enqueue it leaves the
+/// old name sitting in `stripped` while this rebuild resolves the new one.
+pub async fn rebuild_fts_index_from_base(pool: &SqlitePool) -> Result<FtsRebuild, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let (tag_names, page_titles) = fold_ref_maps(&blocks);
+
+    let mut expected = BTreeMap::new();
+    let mut tombstoned_with_content = BTreeSet::new();
+    for block in &blocks {
+        let Some(content) = block.content.as_deref() else {
+            continue;
+        };
+        if block.deleted_at.is_some() {
+            tombstoned_with_content.insert(block.id.clone());
+            continue;
+        }
+        expected.insert(
+            block.id.clone(),
+            agaric_store::fts::strip::strip_for_fts_with_maps(
+                &block.id,
+                content,
+                &tag_names,
+                &page_titles,
+            ),
+        );
+    }
+    Ok(FtsRebuild {
+        expected,
+        tombstoned_with_content,
+    })
+}
+
+/// Read the maintained index, keeping EVERY row per `block_id`.
+///
+/// The multiplicity is the point. `fts_blocks` is an FTS5 virtual table, and
+/// FTS5 accepts no constraints at all — "exactly one row per `block_id`" holds
+/// only because every writer in `fts/index.rs` DELETEs before it INSERTs
+/// (#345 / C6). A writer that forgets produces duplicate search hits and
+/// inflated `bm25` weighting, and nothing fails at write time. The two guards
+/// that exist are narrow: `debug_assert_single_fts_row` is compiled out of
+/// release, and `assert_no_duplicate_fts_rows` is invoked from one targeted
+/// test on one write path. Folding the rows into a `Vec` lets [`reconcile`]
+/// report the duplicate on every path B6 drives.
+async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<String>>, AppError> {
+    // dynamic-sql: static SQL, test-only oracle read-back of the derived index.
+    let rows = sqlx::query_as::<_, (String, String)>("SELECT block_id, stripped FROM fts_blocks")
+        .fetch_all(pool)
+        .await?;
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (block_id, stripped) in rows {
+        out.entry(block_id).or_default().push(stripped);
+    }
+    Ok(out)
+}
+
+/// Run the FTS maintainers PRODUCTION's dispatch table says this op needs —
+/// and only those.
+///
+/// Same contract as [`settle_page_link_cache_for_op`], for the same reason:
+/// no arm of `apply_op_tx` writes `fts_blocks`, so the only thing that can be
+/// wrong is the per-op-type fan-out table. A driver running a FIXED list of
+/// FTS maintainers after every op would repair exactly the hand-maintained
+/// thing it is supposed to audit. This asks
+/// `materializer::dispatch::invalidations_for_op` instead and runs the tasks
+/// it names, through the same production functions
+/// `materializer::handlers::task_handlers` dispatches to. Returns how many it
+/// ran, so a caller can see "zero" for itself.
+///
+/// `FtsOptimize` is deliberately not run: it is an FTS5 index-compaction
+/// command with no effect on which rows exist or what they hold, enqueued on a
+/// metric threshold rather than by an op arm.
+///
+/// # What this does NOT cover
+///
+/// The task → function WIRING is bypassed, exactly as in
+/// [`settle_page_link_cache_for_op`]: this calls
+/// `agaric_store::fts::{update_fts_for_block_with_maps, remove_fts_for_block,
+/// reindex_fts_references, rebuild_fts_index}` directly rather than through
+/// `handle_background_task`, so deleting a call there leaves this green. Nor
+/// does it model the split read/write pool the handler prefers when one is
+/// available. Both are pinned elsewhere (`materializer/tests/agenda_fts_misc.rs`,
+/// `fts/tests.rs`); do not read a green B6 as evidence the handler is wired up.
+///
+/// `block_type_hint: None` models remote replay, inbound sync and boot — the
+/// same hint the apply-path proptest drivers carry.
+pub async fn settle_fts_for_op(
+    pool: &SqlitePool,
+    record: &agaric_store::op_log::OpRecord,
+    block_type_hint: Option<&str>,
+) -> Result<usize, AppError> {
+    use crate::materializer::MaterializeTask;
+
+    let tasks = crate::materializer::invalidations_for_op(record, block_type_hint, None)?;
+    let mut ran = 0usize;
+    for task in &tasks {
+        match task {
+            MaterializeTask::UpdateFtsBlock { block_id } => {
+                // The handler's own read: maps scoped to this block's refs
+                // (#418), fed to the `_with_maps` upsert.
+                let (tag_names, page_titles) =
+                    agaric_store::fts::load_ref_maps_for_block(pool, block_id).await?;
+                agaric_store::fts::update_fts_for_block_with_maps(
+                    pool,
+                    block_id,
+                    &tag_names,
+                    &page_titles,
+                )
+                .await?;
+                ran += 1;
+            }
+            MaterializeTask::RemoveFtsBlock { block_id } => {
+                agaric_store::fts::remove_fts_for_block(pool, block_id).await?;
+                ran += 1;
+            }
+            MaterializeTask::ReindexFtsReferences { block_id } => {
+                agaric_store::fts::reindex_fts_references(pool, block_id).await?;
+                ran += 1;
+            }
+            MaterializeTask::RebuildFtsIndex => {
+                agaric_store::fts::rebuild_fts_index(pool).await?;
+                ran += 1;
+            }
+            _ => {}
+        }
+    }
+    Ok(ran)
+}
+
+// ---------------------------------------------------------------------------
 // The oracle
 // ---------------------------------------------------------------------------
 
@@ -2089,6 +2368,74 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                 owner: PAGE_LINK_OWNER,
             });
         }
+    }
+
+    // --- Artefact 8: fts_blocks (#3345) --------------------------------------
+    //
+    // Last, and independent of everything above it: the index derives from
+    // `blocks.content` plus the tag/page reference maps, not from `page_id`,
+    // so it shares no key with the `pages_cache` family and cannot double-
+    // report an ownership drift.
+    const FTS_OWNER: &str = "update_fts_for_block(_with_maps) / remove_fts_for_block / \
+         reindex_fts_references / rebuild_fts_index (the UpdateFtsBlock, RemoveFtsBlock, \
+         ReindexFtsReferences and RebuildFtsIndex tasks — NOTHING maintains this index \
+         inside apply_op_tx) — and, one level up, the arm of \
+         materializer::dispatch::invalidations_for_op that decides whether any of them is \
+         enqueued at all: search reads fts_blocks EXCLUSIVELY, so a block missing from it \
+         is a block the user cannot find";
+    let fts = rebuild_fts_index_from_base(pool).await?;
+    let expected_fts = &fts.expected;
+    let actual_fts = read_fts_blocks(pool).await?;
+    for (block_id, expected) in expected_fts {
+        match actual_fts.get(block_id) {
+            None => out.push(Divergence {
+                artefact: "fts_blocks.row",
+                key: block_id.clone(),
+                expected: format!("one indexed row, stripped={expected:?}"),
+                actual: "no row in fts_blocks — the block is unsearchable".to_owned(),
+                owner: FTS_OWNER,
+            }),
+            // #345 / C6: FTS5 carries no UNIQUE constraint, so the
+            // one-row-per-block invariant is convention held up by every
+            // writer's DELETE-before-INSERT. A second row is duplicate search
+            // hits and a skewed bm25 weight, and nothing failed at write time.
+            Some(rows) if rows.len() > 1 => out.push(Divergence {
+                artefact: "fts_blocks.duplicate_row",
+                key: block_id.clone(),
+                expected: "exactly one row (FTS5 cannot enforce it — every writer \
+                           DELETEs before it INSERTs)"
+                    .to_owned(),
+                actual: format!("{} rows: {rows:?}", rows.len()),
+                owner: FTS_OWNER,
+            }),
+            Some(rows) if rows[0] != *expected => out.push(Divergence {
+                artefact: "fts_blocks.stripped",
+                key: block_id.clone(),
+                expected: format!("{expected:?}"),
+                actual: format!("{:?}", rows[0]),
+                owner: FTS_OWNER,
+            }),
+            Some(_) => {}
+        }
+    }
+    for (block_id, rows) in &actual_fts {
+        // A tombstoned block's row is production's rule, not a divergence: the
+        // delete arm removes only the cohort ROOT and no vault-wide rebuild
+        // follows, so every descendant keeps its row for good (#4733). Search
+        // never returns it — the read path inner-joins `blocks` — so reporting
+        // it would fire on every ordinary delete for no user-visible fault.
+        if expected_fts.contains_key(block_id) || fts.tombstoned_with_content.contains(block_id) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "fts_blocks.row",
+            key: block_id.clone(),
+            expected: "no indexed row (the block is gone from `blocks`, or its content \
+                       is NULL)"
+                .to_owned(),
+            actual: format!("{} row(s) in fts_blocks: {rows:?}", rows.len()),
+            owner: FTS_OWNER,
+        });
     }
 
     Ok(out)

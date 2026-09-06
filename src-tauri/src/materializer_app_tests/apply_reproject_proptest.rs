@@ -1015,6 +1015,19 @@ proptest! {
                 .await
                 .expect("seed pages_cache rows");
 
+            // Same reason, for `fts_blocks` (#3345 Artefact 8): the three
+            // seeds are written into `blocks` directly rather than through the
+            // command path, so no dispatch task ever fired for them and the
+            // index would start empty. `rebuild_fts_index` is production's own
+            // vault-wide maintainer — the `RebuildFtsIndex` task, and what boot
+            // runs — so this seeds the index the way production would, without
+            // teaching the harness the membership rule. Only the SEEDS are
+            // covered by it; every chain op below is still indexed solely by
+            // whatever `invalidations_for_op` asks for.
+            agaric_store::fts::rebuild_fts_index(&pool)
+                .await
+                .expect("seed the fts_blocks index");
+
             let fallback_before = sql_only_fallback::count();
 
             let payloads = inject_link_tokens(prepare_chain(resolve_chain(&sketches)));
@@ -1040,6 +1053,7 @@ proptest! {
             let mut peak_inbound_count: i64 = 0;
             let mut peak_page_link_rows: i64 = 0;
             let mut page_link_maintainers_run: usize = 0;
+            let mut fts_maintainers_run: usize = 0;
             let mut same_page_move_hints: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
@@ -1111,6 +1125,18 @@ proptest! {
                     )
                     .await
                     .expect("page_link_cache fan-out");
+
+                // #3345 Artefact 8: `fts_blocks` has no synchronous arm either
+                // — the same dispatch table decides whether the four FTS tasks
+                // that are its only writers get enqueued. Ask that table and
+                // run exactly what it names, so an arm that forgets
+                // `UpdateFtsBlock` leaves the block unsearchable and the oracle
+                // reports it, instead of a fixed settle list quietly indexing
+                // it anyway.
+                fts_maintainers_run +=
+                    crate::reconciliation_oracle::settle_fts_for_op(&pool, &record, None)
+                        .await
+                        .expect("fts_blocks fan-out");
 
                 let context = format!("op #{index} ({op_type})");
                 if let Some(report) =
@@ -1244,6 +1270,42 @@ proptest! {
                  ever folded from base OR materialised — the page-link diff compared empty \
                  against empty, got {:?}",
                 chain_links,
+                coverage
+            );
+            // #3345 Artefact 8 non-vacuity, the same three independent places
+            // the page-link artefact uses:
+            //
+            //  1. production's fan-out table asked for at least one FTS
+            //     maintainer (zero would mean the settle was a no-op loop and
+            //     the index was never even attempted);
+            //  2. the from-base rebuild folded at least one indexable block (a
+            //     zero means the membership diff compared `{}` against `{}`);
+            //  3. the maintained index actually held rows.
+            //
+            // The chain seeds three live titled pages, so (2) and (3) hold with
+            // no ops at all; (1) needs a create.
+            //
+            // What B6 does NOT reach, stated so a green run is not over-read:
+            // every generated block is `block_type: "content"`, and the seeded
+            // pages and tag are never edited, so no chain renames a tag or
+            // retitles a page. The `ReindexFtsReferences` propagation arm —
+            // where a stale `stripped` outlives the name it resolved — is
+            // exercised only by
+            // `fts_index_reports_a_stale_reference_after_a_rename_3345` in
+            // `reconciliation_oracle/tests.rs`.
+            prop_assert!(
+                chain_creates == 0 || fts_maintainers_run > 0,
+                "chain created {} blocks but production's fan-out table asked for ZERO                  fts_blocks maintainers across the whole chain — the index was never                  maintained, so the oracle audited an artefact nothing writes",
+                chain_creates
+            );
+            prop_assert!(
+                coverage.fts_indexable_blocks >= 3,
+                "the FTS rebuild folded fewer than the 3 seeded live blocks with content,                  so the index membership diff compared near-empty sets, got {:?}",
+                coverage
+            );
+            prop_assert!(
+                coverage.fts_blocks_rows >= 3,
+                "fts_blocks must hold the seeded blocks for the oracle to observe anything,                  got {:?}",
                 coverage
             );
             Ok(())
