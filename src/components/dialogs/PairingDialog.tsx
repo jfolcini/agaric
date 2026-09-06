@@ -749,14 +749,12 @@ export function PairingDialog({
       // let the arm land behind it. Fixing one arm of a symmetric pair is
       // what created this family of bugs; both are moved.
       backendArmedRef.current = true
-      // remoteDeviceId is derived from the passphrase in the pairing protocol.
-      //
       // #3715 — queued at the command's DEFINITION like the other two, rather
       // than wrapped here at the call site. The behaviour was already correct,
       // but "is this queued?" was answerable only by reading every call site,
       // and a second one added later would have got no queueing with no test
       // to notice — the symptom is a rare ordering race, not a failure.
-      await pairingMutations.confirm(passphrase, '', scannedPeerRef.current)
+      await pairingMutations.confirm(passphrase, scannedPeerRef.current)
       syncSetState('idle')
       // #3469 (review) — take the "peers we already had" baseline HERE,
       // from an authoritative read at the moment the proof is armed, not

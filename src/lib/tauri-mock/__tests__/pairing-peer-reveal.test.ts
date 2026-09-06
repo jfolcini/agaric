@@ -45,7 +45,7 @@ function listPeerRefs(): Record<string, unknown>[] {
 }
 
 function confirmPairing(passphrase: string): void {
-  dispatch('confirm_pairing', { passphrase, remoteDeviceId: '' })
+  dispatch('confirm_pairing', { passphrase })
 }
 
 beforeEach(() => {

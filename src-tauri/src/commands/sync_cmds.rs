@@ -483,9 +483,6 @@ pub async fn start_pairing(
 #[specta::specta]
 pub async fn confirm_pairing(
     passphrase: String,
-    // Part of the IPC shape (`bindings.ts`), not of the pairing: since #3463
-    // the joiner learns the host's id from the pairing proof, not from here.
-    _remote_device_id: String,
     // #4037: the host a scanned QR named, or `None` when the passphrase was
     // typed. A candidate to race mDNS with, never a substitute for it.
     scanned_peer: Option<ScannedPeerCandidate>,
