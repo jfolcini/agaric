@@ -41,7 +41,7 @@ import {
   reconcileProvisionalMoveSuccess,
   rollbackProvisionalMove,
 } from '@/stores/page-blocks-move'
-import type { PageBlockState } from '@/stores/page-blocks-types'
+import type { DeleteBlockOptions, PageBlockState } from '@/stores/page-blocks-types'
 import { useUndoStore } from '@/stores/undo'
 
 /**
@@ -66,13 +66,23 @@ import { useUndoStore } from '@/stores/undo'
  * sites omit `opRefs`, pushing a positional-fallback undo entry (documented
  * fallback; `undoPageGroup` semantics unchanged for those flows). The
  * conditional forward keeps the ref-less call shape identical to pre-#2468.
+ *
+ * #4729 — `options.undoable = false` keeps the GRAPH half (the mutation really
+ * did change the link topology, so the cache must still be invalidated) while
+ * skipping the undo half entirely: no stack entry AND no redo invalidation.
+ * It is for housekeeping the user did not ask for — a cleanup that occupies
+ * the undo stack means the next Ctrl+Z reverts the cleanup instead of the
+ * user's own last action, and clearing `redoStack` would eat their Ctrl+Y for
+ * the same reason. The only caller is the leaked-empty-block cleanup's
+ * `remove`; every user-initiated action keeps the default.
  */
 function notifyUndoNewAction(
   rootParentId: string | null,
   opRefs?: OpRef[],
   coalesceKey?: string,
+  { undoable = true }: { undoable?: boolean } = {},
 ): void {
-  if (rootParentId) {
+  if (rootParentId && undoable) {
     const { onNewAction } = useUndoStore.getState()
     // Only forward `coalesceKey` when set (content edits) so the existing
     // call shape for every other action is unchanged (#2600).
@@ -324,8 +334,10 @@ export function createReducers({
       }
     },
 
-    remove: async (blockId: string) => {
+    remove: async (blockId: string, options?: DeleteBlockOptions) => {
       const { rootParentId } = get()
+      // #4729 — see `DeleteBlockOptions`. Default: a user-initiated delete.
+      const undoable = options?.undoable ?? true
 
       // #2849 — remove the block (and its descendants) OPTIMISTICALLY, BEFORE
       // the delete IPC, so the UI updates instantly instead of after the
@@ -370,7 +382,7 @@ export function createReducers({
         // Focus/selection cleanup is the caller's responsibility — all current
         // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
-        notifyUndoNewAction(rootParentId, resp.op_refs)
+        notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { undoable })
       } catch (err) {
         // Roll back the optimistic removal. Exact restore when nothing landed
         // since (the required pre-op state); otherwise reconcile via load() so

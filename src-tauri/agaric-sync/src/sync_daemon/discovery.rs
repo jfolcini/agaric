@@ -431,20 +431,6 @@ fn address_family_priority(ip: &std::net::IpAddr) -> u8 {
     }
 }
 
-/// Look up the stored TLS certificate hash for a peer.
-pub fn get_peer_cert_hash(peer_id: &str, peer_refs: &[PeerRef]) -> Option<String> {
-    peer_refs
-        .iter()
-        .find(|p| p.peer_id == peer_id)
-        .and_then(|p| p.cert_hash.clone())
-}
-
-/// Determine whether TOFU (Trust On First Use) should store a newly
-/// observed certificate hash.
-pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&str>) -> bool {
-    stored_hash.is_none() && observed_hash.is_some()
-}
-
 /// Process an mDNS discovery event. Updates the `discovered` map and
 /// returns the peer to sync with (if it's a new, paired peer).
 ///

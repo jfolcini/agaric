@@ -9,12 +9,39 @@
  * Extracted verbatim from BlockTree (#2930) — a mechanical move with zero
  * behavior change. The dialog MOUNTS themselves render in `<BlockTreeDialogs/>`,
  * fed by this hook's returned state + handlers.
+ *
+ * ## #4729 — these dialogs open ON TOP of a block that is about to be blank
+ *
+ * A slash command DELETES its trigger text before dispatching (see
+ * `slash-command.ts`), and so does the `{{` query picker. So `/query`,
+ * `/emoji` and `/assignee` on a block that held nothing else leave that block
+ * EMPTY, and the modal they open then takes focus — which blurs the editor,
+ * clears `focusedBlockId`, and hands the drop-on-blur cleanup a blank block to
+ * delete. The dialog's write-back (the `{{query …}}` expression, the picked
+ * emoji, the property value) then has no block left to land in.
+ *
+ * The overlays that DON'T have this problem — the date picker, the template
+ * picker, the block context menu, the formatting toolbar — are spared by
+ * `data-editor-portal` (see `useEditorBlur`): their blur never fires at all,
+ * so focus never leaves and the cleanup never runs. The four dialogs here
+ * deliberately do not carry that tag; they WANT the blur, because the editor
+ * must flush and unmount while a full modal owns the screen. So they take the
+ * other route: register the block in `preserveEmptyBlockIds` — the same
+ * exemption set `handleEnterSave` uses for the blank line an Enter-at-line-
+ * start deliberately leaves behind.
+ *
+ * Registration is SYNCHRONOUS in the open handler, before `startTransition`.
+ * The `queryBuilderOpen` / `emojiPickerOpen` state is deliberately NOT the
+ * signal: it is committed in a transition, while the blur that clears the
+ * focus is urgent, so the cleanup effect can run in a commit where the "a
+ * dialog is open" flag is still `false` — a guard reading it would fail open.
  */
-import type { Dispatch, SetStateAction } from 'react'
+import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { startTransition, useCallback, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
 import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
+import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 
 interface UseBlockDialogsParams {
@@ -24,6 +51,13 @@ interface UseBlockDialogsParams {
   pageStore: StoreApi<PageBlockState>
   /** Reload the page after a query-builder save lands. */
   load: () => Promise<void>
+  /**
+   * #4729 — BlockTree's set of block ids the focus-leave empty-block cleanup
+   * must skip exactly once. See the module docstring: each dialog that writes
+   * back into the block it was opened for registers that block here before
+   * taking focus.
+   */
+  preserveEmptyBlockIds: RefObject<Set<string>>
 }
 
 export interface UseBlockDialogsResult {
@@ -47,6 +81,7 @@ export function useBlockDialogs({
   focusedBlockId,
   pageStore,
   load,
+  preserveEmptyBlockIds,
 }: UseBlockDialogsParams): UseBlockDialogsResult {
   // ── History sheet state ────────────────────────────────────────────
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
@@ -63,18 +98,57 @@ export function useBlockDialogs({
   // insert the chosen native emoji at the caret of the focused block editor. ─
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
 
-  const handleShowHistory = useCallback((blockId: string) => {
-    setHistoryBlockId(blockId)
-  }, [])
+  /**
+   * #4729 — exempt `blockId` from the ONE focus-leave that opening a dialog
+   * over it is about to cause (see the module docstring).
+   *
+   * Gated on the block still holding focus, read LIVE from the store rather
+   * than from the render-captured `focusedBlockId` (a `useCallback` with an
+   * empty dep list would freeze that at the first render's value). A dialog
+   * opened from the gutter has already blurred the editor by the time it gets
+   * here — there is no focus-leave left to skip, so registering would leave an
+   * unconsumed id behind that eats a later, genuine cleanup of that block.
+   */
+  const preserveEmptyBlock = useCallback(
+    (blockId: string | null) => {
+      if (blockId === null) return
+      if (useBlockStore.getState().focusedBlockId !== blockId) return
+      preserveEmptyBlockIds.current.add(blockId)
+    },
+    [preserveEmptyBlockIds],
+  )
 
-  const handleShowProperties = useCallback((blockId: string) => {
-    setPropertyDrawerBlockId(blockId)
-  }, [])
+  const handleShowHistory = useCallback(
+    (blockId: string) => {
+      // No slash command routes here — the sheet is a gutter/context-menu
+      // affordance, so the live-focus gate below usually declines. Registered
+      // anyway because restoring a version IS a write-back into this block,
+      // and the sheet takes focus the same way the other three do.
+      preserveEmptyBlock(blockId)
+      setHistoryBlockId(blockId)
+    },
+    [preserveEmptyBlock],
+  )
+
+  const handleShowProperties = useCallback(
+    (blockId: string) => {
+      // #2656 — `/assignee` and `/location` (and their `Custom…` presets)
+      // collect their free-text value HERE, so this is a write-back path and
+      // not just a gutter affordance.
+      preserveEmptyBlock(blockId)
+      setPropertyDrawerBlockId(blockId)
+    },
+    [preserveEmptyBlock],
+  )
 
   // ── Query builder (#215) — /query opens the modal for the focused block;
   // on save, write the generated `{{query …}}` expression to that block. ──
   const openQueryBuilder = () => {
     setQueryBuilderBlockId(focusedBlockId)
+    // #4729 — the `{{` picker and `/query` both consumed their trigger text,
+    // so this block may already be blank. Claim it BEFORE the modal takes
+    // focus (module docstring); `handleQuerySave` below writes back into it.
+    preserveEmptyBlock(focusedBlockId)
     // Mark the open as a non-urgent transition: opening it synchronously
     // inside the slash-command handler blurs the editor while React is
     // mid-render, and the editor's blur flush (`flushSync` in useEditorBlur)
@@ -87,6 +161,9 @@ export function useBlockDialogs({
   // reason as the query builder (avoid a flushSync-in-render warning from
   // the editor blur flush when the dialog steals focus mid-commit). ──────────
   const openEmojiPicker = () => {
+    // #4729 — `handleEmojiSelect` writes into this block's editor, which only
+    // exists while the block does.
+    preserveEmptyBlock(focusedBlockId)
     startTransition(() => setEmojiPickerOpen(true))
   }
   // Insert the chosen native emoji at the caret via the active roving editor.

@@ -927,7 +927,9 @@ mod tests {
                 name, "spike-test-agent",
                 "request metadata clientInfo.name must reach ACTOR.scope",
             ),
-            Actor::User => panic!("expected Actor::Agent for the discover request"),
+            Actor::User | Actor::Housekeeping => {
+                panic!("expected Actor::Agent for the discover request")
+            }
         }
 
         let _ = client.cancel().await;
@@ -1043,7 +1045,9 @@ mod tests {
                     "ACTOR.scope must thread the rmcp clientInfo.name into the registry layer",
                 );
             }
-            Actor::User => panic!("expected Actor::Agent inside the rmcp dispatch path"),
+            Actor::User | Actor::Housekeeping => {
+                panic!("expected Actor::Agent inside the rmcp dispatch path")
+            }
         }
 
         // (c) one activity-feed entry was pushed with the right shape.

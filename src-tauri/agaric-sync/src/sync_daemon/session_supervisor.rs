@@ -1993,10 +1993,9 @@ pub async fn try_sync_with_peer(
     //    not "wrong certificate for the right device" but "a different device using
     //    this device's name" — an mDNS TXT record is a claim like any other.
     //
-    //    An unbound peer falls through to bind on success below. That TOFU is the same
-    //    one the old initiator performed with `upsert_peer_ref_with_cert`, and after an
-    //    upgrade it is the path by which every migrated pair re-acquires a binding,
-    //    since `0107` could not backfill a key from a certificate hash.
+    //    An unbound peer falls through to bind on success below. After an upgrade that
+    //    is the path by which every migrated pair re-acquires a binding, since `0107`
+    //    could not backfill a key from a certificate hash.
     let announced_key = endpoint_id.to_string();
     let pinned = peer_refs
         .iter()

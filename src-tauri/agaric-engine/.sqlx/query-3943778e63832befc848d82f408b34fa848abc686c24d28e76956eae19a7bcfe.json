@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.id AS \"id!: String\",\n                  (SELECT COUNT(*) FROM blocks k\n                   WHERE k.parent_id = p.id AND k.deleted_at IS NULL) AS \"live_children!: i64\"\n           FROM blocks p\n           WHERE p.id IN (SELECT value FROM json_each(?1))\n             AND p.block_type = 'page'",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "live_children!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3943778e63832befc848d82f408b34fa848abc686c24d28e76956eae19a7bcfe"
+}

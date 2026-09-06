@@ -13,12 +13,14 @@
 //! per-function docs. The `is_deleted` helper below is the one item here on a
 //! production path.
 
+mod empty_block_sweep;
 mod restore;
 mod trash;
 
 #[cfg(test)]
 mod proptest_b3;
 
+pub use empty_block_sweep::sweep_leaked_empty_blocks_at_boot;
 pub use restore::restore_block;
 pub use trash::cascade_soft_delete;
 
