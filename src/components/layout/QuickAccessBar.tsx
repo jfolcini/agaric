@@ -33,6 +33,7 @@ import { useTranslation } from 'react-i18next'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import { getPageDisplayName } from '@/lib/page-display'
 import { type PageRef, selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
@@ -83,11 +84,10 @@ export function QuickAccessBar(): React.ReactElement | null {
     const target = buttonRefs.current.get(focusedIndex)
     if (target == null) return
     target.focus()
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     target.scrollIntoView({
       block: 'nearest',
       inline: 'nearest',
-      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+      behavior: shouldReduceMotion() ? 'auto' : 'smooth',
     })
   }, [focusedIndex])
 

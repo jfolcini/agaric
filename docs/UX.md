@@ -53,7 +53,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **Announcer.** `announce()` (in `src/lib/announcer.ts`) writes to a singleton `role="status" aria-live="polite"` region. Identical strings within 500 ms are coalesced. Pass i18n keys, not English. Use the double-RAF pattern when announcing post-state-change.
 - **Focus management.** Radix dialogs / sheets / popovers trap focus automatically. Lists with multiple items use roving tabindex via `useListKeyboardNavigation`. Focus must be restored after a modal closes. Auto-focus the first input on dialog open.
 - **Editor blur boundary contract.** Any overlay anchored from inside the editor (popover, picker, calendar, drawer, context menu) must set `data-editor-portal=""` on its outermost portal node. `useEditorBlur` reads this attribute to know whether the focus shift should trigger an editor unmount. If you create a new overlay and it closes the editor on click, you forgot this attribute.
-- **Reduced motion.** A global CSS rule zeros every `transition`/`animation` and sets `scroll-behavior: auto` under `prefers-reduced-motion: reduce`. Hooks that orchestrate motion via JS (`useScrollToFocus`, `useAutoScrollOnDrag`, d3-force loops, `requestAnimationFrame` patterns) **must** check `window.matchMedia('(prefers-reduced-motion: reduce)')` themselves — the CSS rule does not cover them.
+- **Reduced motion.** A global CSS rule zeros every `transition`/`animation` and sets `scroll-behavior: auto` under `prefers-reduced-motion: reduce`. Hooks that orchestrate motion via JS (`useScrollToFocus`, `useAutoScrollOnDrag`, d3-force loops, `requestAnimationFrame` patterns) **must** call `shouldReduceMotion()` (`src/lib/preferences.ts`, re-exported from `@/hooks/useMotionPreference`) themselves — the CSS rule does not cover them, and the resolver also honours the app's own Animations preference (`off` / `full` override the OS query).
 - **`data-slot` for styling, `data-testid` for tests.** Never both on the same element.
 
 ## Keyboard model
@@ -160,7 +160,7 @@ Before shipping any UI change:
 5. **Focus restore** — auto-focus on overlay open, restore on close.
 6. **Hover + active** — both states on every enabled element.
 7. **Pointer events** — `onPointerDown`, never `onMouse*`.
-8. **Reduced motion** — JS-driven animations check `prefers-reduced-motion` manually.
+8. **Reduced motion** — JS-driven animations call `shouldReduceMotion()` manually.
 9. **High contrast** — respect `prefers-contrast: more`.
 10. **Dark mode** — every colour uses a semantic token.
 11. **Responsive** — test mobile breakpoint + safe-area + virtual keyboard.

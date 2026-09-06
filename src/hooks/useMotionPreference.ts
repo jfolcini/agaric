@@ -34,6 +34,14 @@ import {
 
 export type { MotionPreference } from '@/lib/preferences'
 
+/**
+ * Resolver for JS-driven motion sites; lives in `@/lib/preferences` (next to
+ * the preference definition) so `lib/`-tier callers can reach it without
+ * importing `hooks/`, and is re-exported here to sit beside
+ * `getMotionPreference`.
+ */
+export { shouldReduceMotion } from '@/lib/preferences'
+
 /** Numeric `--motion-scale` for the explicit (non-`system`) choices. */
 const MOTION_SCALE: Record<Exclude<MotionPreference, 'system'>, string> = {
   full: '1',

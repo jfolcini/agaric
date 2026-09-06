@@ -32,6 +32,7 @@ import {
   type UseListKeyboardNavigationOptions,
   useListKeyboardNavigation,
 } from '@/hooks/useListKeyboardNavigation'
+import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 
 export interface UseKeyboardNavigableListOptions {
   /** Enable Home/End keys (default: false). */
@@ -125,7 +126,7 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
     const el = items[focusedIndex]
     if (!el?.scrollIntoView) return
 
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    const reduced = shouldReduceMotion()
     const behavior: ScrollBehavior | undefined =
       scrollBehavior === 'smooth' && reduced ? 'auto' : scrollBehavior
 

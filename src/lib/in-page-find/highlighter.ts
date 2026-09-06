@@ -28,6 +28,7 @@
  */
 
 import type { FindMatch } from '@/lib/in-page-find/matcher'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 const HIGHLIGHT_ALL = 'find-match'
 const HIGHLIGHT_CURRENT = 'find-match-current'
@@ -193,20 +194,16 @@ export function clear(): void {
  * highlight. Uses the match's parent element's `scrollIntoView` —
  * Range itself has no scrollIntoView method.
  *
- * `behavior: 'smooth'` is suppressed when the user prefers reduced
- * motion (the `(prefers-reduced-motion: reduce)` media query). The
- * `block: 'center'` keeps the match away from sticky overlays
- * (the in-page-find toolbar lives at the top of the viewport, so
- * `block: 'start'` would scroll the match _under_ the toolbar).
+ * `behavior: 'smooth'` is suppressed when the user prefers reduced motion
+ * (`shouldReduceMotion()`). The `block: 'center'` keeps the match away from
+ * sticky overlays (the in-page-find toolbar lives at the top of the viewport,
+ * so `block: 'start'` would scroll the match _under_ the toolbar).
  */
 export function scrollIntoViewMatch(match: FindMatch): void {
   const parent = match.node.parentElement
   if (!parent) return
-  const reduceMotion =
-    typeof globalThis.matchMedia === 'function' &&
-    globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches
   parent.scrollIntoView({
-    behavior: reduceMotion ? 'auto' : 'smooth',
+    behavior: shouldReduceMotion() ? 'auto' : 'smooth',
     block: 'center',
     inline: 'nearest',
   })

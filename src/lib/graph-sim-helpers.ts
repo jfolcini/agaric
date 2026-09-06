@@ -16,6 +16,7 @@ import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-f
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { shouldReduceMotion } from '@/lib/preferences'
 import type { NodePosition, WorkerOutboundMessage } from '@/workers/graph-worker-types'
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -363,18 +364,15 @@ export function renderGraphElements(
  *
  * d3 transitions are rAF-driven JS, so the app's global
  * `@media (prefers-reduced-motion: reduce)` CSS rule cannot suppress them —
- * per `docs/UX.md`, JS-driven motion must consult `matchMedia` itself. A
- * zero-duration transition still APPLIES the transform, it just jumps
- * straight to the end state, so the zoom keeps working.
+ * per `docs/UX.md`, JS-driven motion must consult `shouldReduceMotion()`
+ * itself. A zero-duration transition still APPLIES the transform, it just
+ * jumps straight to the end state, so the zoom keeps working.
  *
- * The media query is read at CALL time (not cached at module load) so an OS
- * preference change mid-session takes effect immediately; `matchMedia` is
- * optional-chained for environments that do not provide it.
+ * Resolved at CALL time (not cached at module load) so an OS or preference
+ * change mid-session takes effect immediately.
  */
 export function reducedMotionDuration(ms: number): number {
-  const prefersReducedMotion =
-    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-  return prefersReducedMotion ? 0 : ms
+  return shouldReduceMotion() ? 0 : ms
 }
 
 export function setupZoomBehavior(

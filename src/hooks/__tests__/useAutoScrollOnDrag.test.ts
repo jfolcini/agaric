@@ -365,4 +365,37 @@ describe('useAutoScrollOnDrag', () => {
       window.matchMedia = originalMatchMedia
     }
   })
+
+  // 14. The app's own Animations=Off preference suppresses the loop too (#3285)
+  it('skips the RAF loop when the motion preference is "off" and the OS is not', () => {
+    const originalMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia
+    localStorage.setItem('agaric-motion', 'off')
+
+    try {
+      const container = makeContainer({ top: 100, bottom: 600 })
+      const ref = { current: container }
+
+      renderHook(() => useAutoScrollOnDrag(ref, true))
+
+      expect(rafCallbacks.size).toBe(0)
+
+      act(() => firePointerMove(105))
+      const initialScrollTop = container.scrollTop
+      act(() => flushRAF(1))
+      expect(container.scrollTop).toBe(initialScrollTop)
+    } finally {
+      localStorage.clear()
+      window.matchMedia = originalMatchMedia
+    }
+  })
 })

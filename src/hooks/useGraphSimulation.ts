@@ -43,6 +43,7 @@ import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
 import { useGraphZoom } from '@/hooks/useGraphZoom'
+import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import {
   applyRovingTabindex,
   attachNodeRovingKeys,
@@ -351,7 +352,7 @@ export function useGraphSimulation({
     const applyPositions = createApplyPositions(rendered.link, rendered.node)
     const detachZoom = attachZoom(svg, rendered.g)
 
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const prefersReducedMotion = shouldReduceMotion()
 
     const ctx: SimulationCtx = {
       simNodes: rendered.simNodes,

@@ -10,6 +10,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 /**
  * Stateful matchMedia mock that supports `change` listeners, so the test can
@@ -53,6 +54,7 @@ describe('usePrefersReducedMotion', () => {
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
+    localStorage.clear()
   })
 
   it('returns the initial matchMedia value', () => {
@@ -109,6 +111,27 @@ describe('usePrefersReducedMotion', () => {
     // again (the old DaySection code evaluated it in the render body, 7× per
     // WeeklyView render).
     expect(vi.mocked(window.matchMedia).mock.calls.length).toBe(callsAfterMount)
+
+    unmount()
+  })
+
+  it('updates when the in-app Animations preference changes after mount', () => {
+    mockReducedMotion(false)
+    const { result, unmount } = renderHook(() => usePrefersReducedMotion())
+    expect(result.current).toBe(false)
+
+    // `writePreference` broadcasts a synthetic `storage` event; the hook
+    // subscribes to it, so the Settings knob reaches mounted consumers
+    // without waiting for a remount or an OS-level change.
+    act(() => {
+      writePreference(PREFERENCES.motion, 'off')
+    })
+    expect(result.current).toBe(true)
+
+    act(() => {
+      writePreference(PREFERENCES.motion, 'system')
+    })
+    expect(result.current).toBe(false)
 
     unmount()
   })

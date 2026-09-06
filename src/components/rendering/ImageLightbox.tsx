@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
+import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
@@ -74,12 +75,8 @@ export function ImageLightbox({
   onOpenExternal,
 }: ImageLightboxProps): React.ReactElement | null {
   const { t } = useTranslation()
-  // Respect reduced-motion: skip the cross-fade transition (matches the
-  // codebase's inline matchMedia convention — see QuickAccessBar).
-  const reducedMotion =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  // Respect reduced-motion: skip the cross-fade transition.
+  const reducedMotion = shouldReduceMotion()
 
   const count = images.length
   // Guard against a stale/out-of-range index (e.g. attachment list changed).
