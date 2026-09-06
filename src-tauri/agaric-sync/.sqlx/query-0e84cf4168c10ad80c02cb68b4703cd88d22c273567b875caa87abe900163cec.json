@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\", b.space_id\n           FROM blocks b\n           WHERE b.block_type = 'content'\n             AND b.deleted_at IS NULL\n             AND b.parent_id IS NULL\n             AND b.page_id IS NULL\n             AND (\n                    TRIM(COALESCE(b.content, ''), ?1) <> ''\n                 OR b.todo_state IS NOT NULL\n                 OR b.priority IS NOT NULL\n                 OR b.due_date IS NOT NULL\n                 OR b.scheduled_date IS NOT NULL\n                 OR EXISTS (SELECT 1 FROM block_properties p WHERE p.block_id = b.id)\n                 OR EXISTS (SELECT 1 FROM block_tags t WHERE t.block_id = b.id)\n                 OR EXISTS (\n                     SELECT 1 FROM blocks k\n                     WHERE k.parent_id = b.id AND k.deleted_at IS NULL\n                 )\n             )\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "0e84cf4168c10ad80c02cb68b4703cd88d22c273567b875caa87abe900163cec"
+}

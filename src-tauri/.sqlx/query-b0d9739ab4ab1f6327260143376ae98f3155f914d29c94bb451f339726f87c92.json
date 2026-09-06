@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.space_id, b.content AS \"date!: String\", MIN(b.id) AS \"keeper!: String\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.content LIKE '____-__-__'\n             AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'\n             AND NOT EXISTS (SELECT 1 FROM spaces s WHERE s.id = b.id)\n           GROUP BY b.space_id, b.content\n           HAVING COUNT(*) > 1\n           ORDER BY b.space_id, b.content",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "date!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "keeper!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "b0d9739ab4ab1f6327260143376ae98f3155f914d29c94bb451f339726f87c92"
+}

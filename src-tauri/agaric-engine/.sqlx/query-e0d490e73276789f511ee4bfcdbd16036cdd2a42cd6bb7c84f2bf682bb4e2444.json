@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: String\" FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.content = ?1\n             AND b.space_id IS ?2\n             AND b.id <> ?3\n             AND NOT EXISTS (SELECT 1 FROM spaces s WHERE s.id = b.id)\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e0d490e73276789f511ee4bfcdbd16036cdd2a42cd6bb7c84f2bf682bb4e2444"
+}

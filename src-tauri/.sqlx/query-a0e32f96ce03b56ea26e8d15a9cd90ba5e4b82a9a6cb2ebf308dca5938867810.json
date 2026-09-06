@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.id AS \"id!: String\" FROM blocks c\n           WHERE c.deleted_at IS NULL\n             AND c.parent_id IN (SELECT value FROM json_each(?1))\n           ORDER BY c.parent_id, c.position, c.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a0e32f96ce03b56ea26e8d15a9cd90ba5e4b82a9a6cb2ebf308dca5938867810"
+}

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT parent_id, page_id FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "parent_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "name": "page_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "ae6f9aa6a970d4f009a33b3bf26459fc29295e474595d9ecdf3886936b012df0"
+}
