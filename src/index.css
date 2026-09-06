@@ -1379,6 +1379,18 @@
   text-decoration: line-through;
 }
 
+/* #4708 — two chips inserted back to back now sit directly against each
+   other, because the pickers no longer append a trailing space. Same-type
+   chips share a background colour, so `[[Alpha]][[Bravo]]` renders as two
+   touching pills that read as one. An adjacent-sibling rule is the narrow
+   fix: it matches only a chip that directly follows another chip, so the
+   comma in `[[Alpha]],` — the case the trailing space was removed FOR — is
+   a text node and stays tight against the pill. */
+:is(.block-link-chip, .tag-ref-chip, .block-ref-chip)
+  + :is(.block-link-chip, .tag-ref-chip, .block-ref-chip) {
+  margin-left: 0.25em;
+}
+
 /* Block link chips — [[ULID]] rendered as clickable page title chips */
 .block-link-chip {
   @apply inline-flex items-center rounded-md bg-primary/20 text-primary font-semibold;
