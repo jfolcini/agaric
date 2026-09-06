@@ -308,6 +308,25 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // ── Boundary steps over the property and tag filters (#3827) ──
+  query_by_property: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  query_by_tags: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  query_by_tag_expr: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   search_blocks: { rows: PAGED, token: ID_TOKEN, hasMoreKey: 'has_more', totalKey: 'total_count' },
   list_unfinished_tasks: {
     rows: PAGED,
@@ -413,9 +432,9 @@ const WIRE: Readonly<Record<string, WireShape>> = {
 
 /**
  * Where a command's opaque page cursor lives in its args (mirror of
- * `cursor_path` in the Rust twin) — `list_blocks` and `run_advanced_query` nest
- * every query param under their request DTO, everything else takes a top-level
- * `cursor`.
+ * `cursor_path` in the Rust twin) — `list_blocks`, `run_advanced_query` and
+ * `query_by_property` nest every query param under their request DTO,
+ * everything else takes a top-level `cursor`.
  *
  * `run_advanced_query` was missing here until #3893 added the first fixture
  * that chains it: `AdvancedQueryRequest.cursor` is a field of the DTO, so a
@@ -423,7 +442,9 @@ const WIRE: Readonly<Record<string, WireShape>> = {
  * silently have been the FIRST page again.
  */
 function cursorPath(command: string): readonly string[] {
-  return command === 'list_blocks' || command === 'run_advanced_query'
+  return command === 'list_blocks' ||
+    command === 'run_advanced_query' ||
+    command === 'query_by_property'
     ? ['request', 'cursor']
     : ['cursor']
 }

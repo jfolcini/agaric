@@ -51,6 +51,18 @@ vi.mock('@/components/editor/BlockTree', () => ({
   },
 }))
 
+// ── Mock EmbeddedBlockTree ──────────────────────────────────────────
+// The read-only renderer PageEditor uses for a tag page's legacy children.
+// Mocked for the same reason BlockTree is: it pulls in the whole
+// RichContentRenderer chain.
+let capturedEmbeddedRows: readonly { id: string }[] | undefined
+vi.mock('@/components/editor/embed/EmbeddedBlockTree', () => ({
+  EmbeddedBlockTree: (props: { rows: readonly { id: string }[] }) => {
+    capturedEmbeddedRows = props.rows
+    return <div data-testid="embedded-block-tree" data-row-count={props.rows.length} />
+  },
+}))
+
 // ── Mock PageHeader ─────────────────────────────────────────────────
 let capturedPageHeaderProps: { pageId: string; title: string; onBack?: () => void } | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
@@ -138,7 +150,9 @@ vi.mock('lucide-react', () => ({
 
 import { toast } from 'sonner'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makePage } from '@/__tests__/fixtures'
+import type { InvokeHandler } from '@/__tests__/helpers/invoke'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageEditor } from '@/components/pages/PageEditor'
 import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
@@ -153,9 +167,20 @@ const TEST_SPACE_ID = '01TESTSPACE0000000000000XX'
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 
+/** `mockInvokeCommands` plus the `get_block` every PageEditor mount issues (#4725). */
+function stubInvoke(handlers: Readonly<Record<string, InvokeHandler>> = {}): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      get_block: (args) => makePage({ id: args['blockId'] as string }),
+      ...handlers,
+    }),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
+  capturedEmbeddedRows = undefined
   capturedAutoCreateFirstBlock = undefined
   capturedOnRevealSettled = undefined
   capturedRevealNonce = undefined
@@ -188,6 +213,7 @@ beforeEach(() => {
   // is null. Seed a non-null space so existing tests keep driving the
   // IPC path.
   useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
+  stubInvoke()
 })
 
 describe('PageEditor', () => {
@@ -277,12 +303,14 @@ describe('PageEditor', () => {
     const user = userEvent.setup()
 
     // Mock createBlock response for the new block
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'B2',
-      block_type: 'content',
-      content: '',
-      parent_id: 'PAGE_1',
-      position: 1,
+    stubInvoke({
+      create_block: () => ({
+        id: 'B2',
+        block_type: 'content',
+        content: '',
+        parent_id: 'PAGE_1',
+        position: 1,
+      }),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -338,12 +366,14 @@ describe('PageEditor', () => {
     // Mock createBlock response for the new block. —
     // there is no longer a follow-up list_blocks IPC; the row is spliced
     // into the local store via pageStore.appendBlock(row).
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'B1',
-      block_type: 'content',
-      content: '',
-      parent_id: 'PAGE_1',
-      position: 0,
+    stubInvoke({
+      create_block: () => ({
+        id: 'B1',
+        block_type: 'content',
+        content: '',
+        parent_id: 'PAGE_1',
+        position: 0,
+      }),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -380,12 +410,14 @@ describe('PageEditor', () => {
     const user = userEvent.setup()
 
     // Mock createBlock response — the new block should be under PAGE_1
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'B4',
-      block_type: 'content',
-      content: '',
-      parent_id: 'PAGE_1',
-      position: 1,
+    stubInvoke({
+      create_block: () => ({
+        id: 'B4',
+        block_type: 'content',
+        content: '',
+        parent_id: 'PAGE_1',
+        position: 1,
+      }),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -452,7 +484,7 @@ describe('PageEditor', () => {
 
     // Per-page store starts empty
 
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+    stubInvoke({ create_block: () => Promise.reject(new Error('backend error')) })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
@@ -556,13 +588,18 @@ describe('PageEditor background pointerdown', () => {
 })
 
 describe('PageEditor BlockTree auto-creation prop', () => {
-  it('renders BlockTree with default autoCreateFirstBlock (not explicitly set)', () => {
+  it('withholds auto-creation until the page block type is known, then enables it', async () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     const blockTree = screen.getByTestId('block-tree')
     expect(blockTree).toBeInTheDocument()
-    // PageEditor does not pass autoCreateFirstBlock, so BlockTree uses the default (true)
-    expect(capturedAutoCreateFirstBlock).toBeUndefined()
+    // #4725 — the type is unknown on the first commit, and a tag must never be
+    // seeded with a first block, so auto-creation waits for the verdict.
+    expect(capturedAutoCreateFirstBlock).toBe(false)
+
+    await waitFor(() => {
+      expect(capturedAutoCreateFirstBlock).toBe(true)
+    })
   })
 
   it('manual add block works when page is empty and creates block directly', async () => {
@@ -572,12 +609,14 @@ describe('PageEditor BlockTree auto-creation prop', () => {
 
     // Mock createBlock only — splices the returned row
     // into the per-page store instead of triggering a follow-up list_blocks.
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'FIRST_BLOCK',
-      block_type: 'content',
-      content: '',
-      parent_id: 'PAGE_1',
-      position: 0,
+    stubInvoke({
+      create_block: () => ({
+        id: 'FIRST_BLOCK',
+        block_type: 'content',
+        content: '',
+        parent_id: 'PAGE_1',
+        position: 0,
+      }),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -605,6 +644,57 @@ describe('PageEditor BlockTree auto-creation prop', () => {
     await waitFor(() => {
       expect(useBlockStore.getState().focusedBlockId).toBe('FIRST_BLOCK')
     })
+  })
+})
+
+describe('PageEditor tag page is read-only (#4725)', () => {
+  /** `get_block` answering "this page is a tag block". */
+  function stubTagPage(): void {
+    stubInvoke({
+      get_block: (args) =>
+        makePage({ id: args['blockId'] as string, block_type: 'tag', content: 'urgent' }),
+    })
+  }
+
+  it('renders no block tree and no add-block button', async () => {
+    stubTagPage()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: /add block/i })).not.toBeInTheDocument()
+  })
+
+  it('renders legacy children read-only', async () => {
+    stubTagPage()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    act(() => {
+      getPageStore('TAG_1')?.setState({
+        blocks: [makeBlock({ id: 'LEGACY', content: 'stray', parent_id: 'TAG_1', position: 0 })],
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('embedded-block-tree')).toBeInTheDocument()
+    })
+    expect(capturedEmbeddedRows?.map((r) => r.id)).toEqual(['LEGACY'])
+    expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    stubTagPage()
+
+    const { container } = render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })
 

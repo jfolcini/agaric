@@ -241,6 +241,39 @@ async fn create_block_deleted_parent_returns_not_found() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_under_tag_parent_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "CB_TAG_PAR", "tag", "urgent", None, Some(1)).await;
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some("CB_TAG_PAR".into()),
+        Some(1),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "the tag view is read-only, so a create under a tag should be rejected, got: {result:?}"
+    );
+
+    let children: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM blocks WHERE parent_id = ?",
+        "CB_TAG_PAR"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(children, 0, "the tag should still have no children");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_block_writes_op_to_op_log() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -4247,6 +4280,48 @@ async fn move_block_to_deleted_parent_returns_error() {
         matches!(result, Err(AppError::NotFound(_))),
         "moving to a deleted parent should return NotFound"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_to_tag_parent_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "MV_TAG_PAGE", "page", "page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "MV_TAG_BLK",
+        "content",
+        "block",
+        Some("MV_TAG_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "MV_TAG_PAR", "tag", "urgent", None, Some(2)).await;
+
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_TAG_BLK".into(),
+        Some("MV_TAG_PAR".into()),
+        1,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "the tag view is read-only, so a move under a tag should be rejected, got: {result:?}"
+    );
+
+    let children: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM blocks WHERE parent_id = ?",
+        "MV_TAG_PAR"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(children, 0, "the tag should still have no children");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

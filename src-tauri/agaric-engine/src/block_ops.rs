@@ -270,14 +270,22 @@ pub async fn create_block_in_tx(
     // A concurrent purge_block could physically delete the parent between
     // our check and the INSERT, violating the FK constraint.
     if let Some(ref pid) = parent_id {
-        let exists = sqlx::query!(
-            r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        let parent = sqlx::query!(
+            "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
             pid
         )
         .fetch_optional(&mut **tx)
         .await?;
-        if exists.is_none() {
+        let Some(parent) = parent else {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
+        };
+
+        // #4725 — a tag holds the blocks tagged with it, never children of
+        // its own, so a create under one only leaves a block nothing renders.
+        if parent.block_type == "tag" {
+            return Err(AppError::validation(format!(
+                "cannot create a block under tag '{pid}': the tag view is read-only"
+            )));
         }
 
         // Enforce `MAX_BLOCK_DEPTH` on the create path. The new block

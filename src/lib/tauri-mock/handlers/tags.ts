@@ -123,6 +123,84 @@ function inheritedTagIds(blockId: string): string[] {
   return [...out].toSorted().slice(0, BLOCK_TAG_CAP)
 }
 
+/**
+ * Faithful twin of `tag_query::eval_tag_query` (#3827). A block holds a tag
+ * through `block_tags`, through a content ref (`block_tag_refs`, which the
+ * mock does not populate) and, with `includeInherited`, through
+ * `block_tag_inherited`. `Prefix` resolves through `tags_cache`, i.e. only
+ * `block_type = 'tag'` blocks with content, matched case-insensitively.
+ * `Not` is the complement over EVERY live block — pages and tag blocks
+ * included — because it compiles to `b.id NOT IN (<inner>)`. The projection
+ * applies the space scope and `blockType`, then orders `b.id ASC`.
+ */
+function evalTagQuery(
+  expr: TagExprNode,
+  a: Record<string, unknown>,
+): { items: Record<string, unknown>[]; next_cursor: null; has_more: false; total_count: null } {
+  const includeInherited = Boolean(a['includeInherited'])
+  const blockType = (a['blockType'] as string | null) ?? null
+  const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+  const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+
+  const prefixTagIds = (prefix: string): Set<string> => {
+    const lp = prefix.toLowerCase()
+    const ids = new Set<string>()
+    for (const [, b] of blocks) {
+      if (
+        b['block_type'] === 'tag' &&
+        !b['deleted_at'] &&
+        typeof b['content'] === 'string' &&
+        (b['content'] as string).toLowerCase().startsWith(lp)
+      ) {
+        ids.add(b['id'] as string)
+      }
+    }
+    return ids
+  }
+  const tagsOf = (blockId: string): Set<string> => {
+    const held = refInclusiveTags(blockId)
+    if (!includeInherited) return held
+    const all = new Set(held)
+    for (const t of inheritedTagIds(blockId)) all.add(t)
+    return all
+  }
+  const matches = (blockId: string, node: TagExprNode): boolean => {
+    switch (node.type) {
+      case 'Tag': {
+        return tagsOf(blockId).has(node.value)
+      }
+      case 'Prefix': {
+        const wanted = prefixTagIds(node.value)
+        for (const t of tagsOf(blockId)) if (wanted.has(t)) return true
+        return false
+      }
+      case 'And': {
+        // `And([])` resolves to the EMPTY set on the backend, not to every block.
+        return node.value.length > 0 && node.value.every((child) => matches(blockId, child))
+      }
+      case 'Or': {
+        return node.value.some((child) => matches(blockId, child))
+      }
+      case 'Not': {
+        return !matches(blockId, node.value)
+      }
+    }
+  }
+
+  const items = [...blocks.values()].filter((b) => {
+    if (b['deleted_at']) return false
+    if (blockType !== null && b['block_type'] !== blockType) return false
+    if (spaceId !== null) {
+      const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+      const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+      if (ownerSpace !== spaceId) return false
+    }
+    return matches(b['id'] as string, expr)
+  })
+  items.sort((x, y) => String(x['id']).localeCompare(String(y['id'])))
+  return { items, next_cursor: null, has_more: false, total_count: null }
+}
+
 export const tagsHandlers = {
   add_tag: (args) => {
     const a = args as Record<string, unknown>
@@ -189,124 +267,39 @@ export const tagsHandlers = {
     return count
   },
 
+  // `query_by_tags` is `query_by_tag_expr` with the expression built the way
+  // `query_by_tags_inner` builds it: every tag id a `Tag` leaf, every prefix a
+  // `Prefix` leaf, then `and` → `And`, `not` → `Not(Or(...))`, anything else
+  // → `Or`; no leaves at all short-circuits to an empty page.
   query_by_tags: (args) => {
     const a = args as Record<string, unknown>
-    const tagIds = (a['tagIds'] as string[]) ?? []
-    const prefixes = (a['prefixes'] as string[] | null) ?? []
-    const mode = ((a['mode'] as string) ?? 'and').toLowerCase()
-    // `blockType` push-down: restrict to a single
-    // block_type. `null` / `undefined` keeps the unfiltered behaviour.
-    const blockType = (a['blockType'] as string | null) ?? null
-    // Honour `scope: SpaceScope` (mirrors `query_by_tags_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-
-    // Resolve prefixes to tag IDs by matching tag block content
-    const resolvedFromPrefix: string[] = []
-    for (const prefix of prefixes) {
-      const lp = prefix.toLowerCase()
-      for (const [, b] of blocks) {
-        if (
-          b['block_type'] === 'tag' &&
-          !b['deleted_at'] &&
-          ((b['content'] as string) ?? '').toLowerCase().startsWith(lp)
-        ) {
-          resolvedFromPrefix.push(b['id'] as string)
-        }
-      }
+    const leaves: TagExprNode[] = [
+      ...((a['tagIds'] as string[] | null) ?? []).map((value): TagExprNode => ({
+        type: 'Tag',
+        value,
+      })),
+      ...((a['prefixes'] as string[] | null) ?? []).map((value): TagExprNode => ({
+        type: 'Prefix',
+        value,
+      })),
+    ]
+    if (leaves.length === 0) {
+      return { items: [], next_cursor: null, has_more: false, total_count: null }
     }
-
-    const allTagIds = [...tagIds, ...resolvedFromPrefix]
-
-    const items = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      if (blockType !== null && b['block_type'] !== blockType) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      // Ref-inclusive (`block_tags` ∪ `block_tag_refs`), mirroring
-      // `query_by_tags_inner`.
-      const tags = refInclusiveTags(b['id'] as string)
-      if (tags.size === 0) return false
-      if (allTagIds.length === 0) return false
-      if (mode === 'or') {
-        return allTagIds.some((tid) => tags.has(tid))
-      }
-      // Default: AND — block must have ALL specified tags
-      return allTagIds.every((tid) => tags.has(tid))
-    })
-    return { items, next_cursor: null, has_more: false, total_count: null }
+    const mode = ((a['mode'] as string) ?? 'or').toLowerCase()
+    const expr: TagExprNode =
+      mode === 'and'
+        ? { type: 'And', value: leaves }
+        : mode === 'not'
+          ? { type: 'Not', value: { type: 'Or', value: leaves } }
+          : { type: 'Or', value: leaves }
+    return evalTagQuery(expr, a)
   },
 
   // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
-  // Faithful minimal twin of `query_by_tag_expr_inner` -> `eval_tag_query`:
-  // recursively evaluates the adjacently-tagged `TagExpr` tree (the same wire
-  // shape specta emits: `{ type, value }`) per non-deleted block. `Not`
-  // complements over the visible block universe (matches the backend's
-  // set-complement semantics), `Prefix` resolves to tag ids by tag-content
-  // prefix. Scope / block_type filtering mirror `query_by_tags` above.
   query_by_tag_expr: (args) => {
     const a = args as Record<string, unknown>
-    const expr = a['expr'] as TagExprNode
-    const blockType = (a['blockType'] as string | null) ?? null
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-
-    // Resolve a `Prefix` leaf to the set of tag ids whose tag-block content
-    // starts with the prefix (case-insensitive), mirroring the SQL LIKE leaf.
-    const prefixTagIds = (prefix: string): Set<string> => {
-      const lp = prefix.toLowerCase()
-      const ids = new Set<string>()
-      for (const [, b] of blocks) {
-        if (
-          b['block_type'] === 'tag' &&
-          !b['deleted_at'] &&
-          ((b['content'] as string) ?? '').toLowerCase().startsWith(lp)
-        ) {
-          ids.add(b['id'] as string)
-        }
-      }
-      return ids
-    }
-
-    // Does block `blockId` satisfy `node`? Recurses over And/Or/Not.
-    const matches = (blockId: string, node: TagExprNode): boolean => {
-      const tags = blockTags.get(blockId)
-      switch (node.type) {
-        case 'Tag': {
-          return tags?.has(node.value) ?? false
-        }
-        case 'Prefix': {
-          if (!tags || tags.size === 0) return false
-          const wanted = prefixTagIds(node.value)
-          for (const t of tags) if (wanted.has(t)) return true
-          return false
-        }
-        case 'And': {
-          return node.value.every((child) => matches(blockId, child))
-        }
-        case 'Or': {
-          return node.value.some((child) => matches(blockId, child))
-        }
-        case 'Not': {
-          return !matches(blockId, node.value)
-        }
-      }
-    }
-
-    const items = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      if (blockType !== null && b['block_type'] !== blockType) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      return matches(b['id'] as string, expr)
-    })
-    return { items, next_cursor: null, has_more: false, total_count: null }
+    return evalTagQuery(a['expr'] as TagExprNode, a)
   },
 
   list_tags_by_prefix: (args) => {
