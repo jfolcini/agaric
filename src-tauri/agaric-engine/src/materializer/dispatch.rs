@@ -506,6 +506,50 @@ fn inbound_sync_block_tag_refs_tasks(
     }
 }
 
+/// #4293: the third per-block fan-out shares the budget the two above
+/// document — the combined inline fan-out stays at `≤ 3 * BACKGROUND_CAPACITY/4`
+/// only because above this size all three collapse to one task each.
+pub const SYNC_BLOCK_LINKS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
+
+/// #4293: choose the `block_links`-reindex task(s) for an inbound-sync import
+/// that changed `changed_blocks`. The inbound Loro path projects block content
+/// but never re-derives the link table (`projection.rs` says the caller must
+/// run `cache::reindex_*` afterwards, and nothing did), so a peer creating the
+/// page a local block links to left that `[[ULID]]` dead until something local
+/// touched one of the two blocks. `ReindexBlockLinks` runs both halves: the
+/// block's own edges, and `resolve_referrers_of` for everyone waiting on it.
+///
+/// Same threshold as the siblings, different fallback: there is no vault-wide
+/// `block_links` rebuild (`RebuildPageLinkCache` folds the table, it does not
+/// re-derive it), so above the threshold this is ONE `ReindexBlockLinksBatch`
+/// carrying every id. Per block inline, a snapshot import would either shed
+/// all but `BACKGROUND_CAPACITY` tasks into one retry-row INSERT each on the
+/// two-connection write pool (which times out and drops them), or — with
+/// blocking sends — park the session inside its own dispatch timeout and drop
+/// the tail with nothing persisted. One task, one blocking send, and the loop
+/// runs in the consumer.
+fn inbound_sync_block_links_tasks(
+    changed_blocks: &[agaric_core::ulid::BlockId],
+) -> Vec<MaterializeTask> {
+    if changed_blocks.is_empty() {
+        Vec::new()
+    } else if changed_blocks.len() > SYNC_BLOCK_LINKS_PER_BLOCK_MAX {
+        vec![MaterializeTask::ReindexBlockLinksBatch {
+            block_ids: changed_blocks
+                .iter()
+                .map(|block_id| Arc::from(block_id.as_str()))
+                .collect(),
+        }]
+    } else {
+        changed_blocks
+            .iter()
+            .map(|block_id| MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from(block_id.as_str()),
+            })
+            .collect()
+    }
+}
+
 impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         sender_or_closed(
@@ -759,30 +803,21 @@ impl Materializer {
         for task in inbound_sync_block_tag_refs_tasks(changed_blocks) {
             self.try_enqueue_background(task)?;
         }
-        // #4293: `block_links`. The inbound Loro path projects block content
-        // but never re-derives the link table — `projection.rs` says the caller
-        // must run `cache::reindex_*` afterwards, and nothing here did. So a
-        // peer creating the page a local block links to left that `[[ULID]]`
-        // dead until someone touched one of the two blocks locally. One
-        // `ReindexBlockLinks` per changed block runs both halves of that
-        // handler: the block's own edges, and `resolve_referrers_of` for
-        // everyone recorded as waiting on it.
-        //
-        // No threshold, unlike the two fan-outs above, because neither
-        // fallback shape exists: `RebuildPageLinkCache` (already in the
-        // debounced set this call arms) rolls UP from `block_links` and never
-        // re-parses content, so it cannot discharge unresolved debt. The
-        // blocking enqueue is what makes the unbounded count safe: a snapshot
-        // import hands this every block in the vault, and `try_enqueue` would
-        // shed all but `BACKGROUND_CAPACITY` of them into one retry-queue
-        // INSERT each on the two-connection write pool, which times out and
-        // drops the very reindex this exists to guarantee. On an incremental
-        // import the channel has room and the two shapes are the same send.
-        for block_id in changed_blocks {
-            self.enqueue_background(MaterializeTask::ReindexBlockLinks {
-                block_id: Arc::from(block_id.as_str()),
-            })
-            .await?;
+        // #4293: `block_links`, the pure selector [`inbound_sync_block_links_tasks`]
+        // (which carries the why). Per-block tasks take the non-blocking send
+        // like `ReindexBlockTagRefs` above — `RetryKind::from_task` maps them,
+        // so a shed at this size persists and the sweeper re-drives it. The
+        // batch takes the blocking send like `RebuildFtsIndex`: one slot, not
+        // persistable, so it must not be shed.
+        for task in inbound_sync_block_links_tasks(changed_blocks) {
+            match task {
+                MaterializeTask::ReindexBlockLinksBatch { .. } => {
+                    self.enqueue_background(task).await?;
+                }
+                _ => {
+                    self.try_enqueue_background(task)?;
+                }
+            }
         }
         Ok(())
     }
@@ -2061,6 +2096,9 @@ mod tests {
             MaterializeTask::ReindexBlockLinks { block_id } => {
                 format!("ReindexBlockLinks({block_id})")
             }
+            MaterializeTask::ReindexBlockLinksBatch { block_ids } => {
+                format!("ReindexBlockLinksBatch({})", block_ids.len())
+            }
             MaterializeTask::ReindexBlockTagRefs { block_id } => {
                 format!("ReindexBlockTagRefs({block_id})")
             }
@@ -2218,6 +2256,41 @@ mod tests {
             vec!["RebuildBlockTagRefsCache".to_string()],
             "above threshold must collapse to one full rebuild",
         );
+    }
+
+    // ── #4293 inbound_sync_block_links_tasks (same threshold, batch fallback) ──
+
+    #[test]
+    fn inbound_sync_block_links_tasks_empty_is_noop() {
+        assert!(inbound_sync_block_links_tasks(&[]).is_empty());
+    }
+
+    #[test]
+    fn inbound_sync_block_links_tasks_at_threshold_is_per_block() {
+        let changed: Vec<_> = (0..SYNC_BLOCK_LINKS_PER_BLOCK_MAX)
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_block_links_tasks(&changed);
+        assert_eq!(tasks.len(), SYNC_BLOCK_LINKS_PER_BLOCK_MAX);
+        assert!(
+            tasks
+                .iter()
+                .all(|t| matches!(t, MaterializeTask::ReindexBlockLinks { .. })),
+            "at the threshold every task is still a per-block reindex"
+        );
+    }
+
+    #[test]
+    fn inbound_sync_block_links_tasks_large_set_is_one_batch_carrying_every_id() {
+        let changed: Vec<_> = (0..=SYNC_BLOCK_LINKS_PER_BLOCK_MAX)
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_block_links_tasks(&changed);
+        let [MaterializeTask::ReindexBlockLinksBatch { block_ids }] = tasks.as_slice() else {
+            panic!("above threshold must be exactly one batch task, got {tasks:?}");
+        };
+        assert_eq!(block_ids.len(), SYNC_BLOCK_LINKS_PER_BLOCK_MAX + 1);
+        assert_eq!(&*block_ids[0], changed[0].as_str());
     }
 
     // ── create_block ─────────────────────────────────────────────────

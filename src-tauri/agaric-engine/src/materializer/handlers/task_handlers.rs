@@ -651,6 +651,19 @@ async fn handle_background_task_inner(
             // pages after the diff + rollup commit.
             run_reindex_block_links(pool, read_pool, block_id, metrics).await
         }
+        MaterializeTask::ReindexBlockLinksBatch { block_ids } => {
+            // Every block gets its turn even when one fails: the batch is not
+            // persisted for retry, so an early `?` would drop the tail. The
+            // first error is still returned so the failure is counted.
+            let mut first_err = None;
+            for block_id in block_ids.iter() {
+                if let Err(e) = run_reindex_block_links(pool, read_pool, block_id, metrics).await {
+                    tracing::warn!(error = %e, block_id = %block_id, "ReindexBlockLinksBatch: one block failed — continuing");
+                    first_err.get_or_insert(e);
+                }
+            }
+            first_err.map_or(Ok(()), Err)
+        }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
             // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND
             // make the dependent `tags_cache.usage_count` refresh DURABLE and

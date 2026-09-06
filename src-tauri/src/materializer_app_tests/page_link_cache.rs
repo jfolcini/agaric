@@ -2629,3 +2629,64 @@ async fn a_target_created_by_a_peer_relinks_its_referrers_4293() {
 
     mat.shutdown();
 }
+
+/// #4293, the large-import half. Above `SYNC_BLOCK_LINKS_PER_BLOCK_MAX`
+/// changed blocks the fan-out is one `ReindexBlockLinksBatch` on a single
+/// blocking send — not a blocking send per block inside the session's
+/// dispatch budget, and not a per-block shed storm through the retry queue.
+/// Every source's OWN outbound edge is what is asserted, the half a remotely
+/// created block needs from this task in the first place.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_snapshot_sized_import_relinks_every_changed_block_4293() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    for (id, title) in [(REMOTE_PAGE_P, "P"), (REMOTE_TARGET_T, "T")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let n = agaric_engine::materializer::SYNC_BLOCK_LINKS_PER_BLOCK_MAX + 1;
+    let sources: Vec<String> = (0..n).map(|i| format!("01C4{i:0>22}")).collect();
+    for (i, id) in sources.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("see [[{REMOTE_TARGET_T}]]"))
+        .bind(REMOTE_PAGE_P)
+        .bind(REMOTE_PAGE_P)
+        .bind(i as i64 + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let changed: Vec<_> = sources
+        .iter()
+        .map(|id| agaric_core::ulid::BlockId::test_id(id))
+        .collect();
+
+    mat.enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let edges = all_edges(&pool).await;
+    assert_eq!(
+        edges.len(),
+        n,
+        "#4293: every one of the {n} remotely changed blocks must carry its own edge"
+    );
+    assert!(
+        edges.iter().all(|(_, target)| target == REMOTE_TARGET_T),
+        "every edge points at T"
+    );
+
+    mat.shutdown();
+}

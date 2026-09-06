@@ -79,6 +79,7 @@ pub use handlers::apply_op_projected;
 // divergence instead of an untested assumption. Test-only: `dispatch` is a
 // private module and nothing outside the materializer reads the table in a
 // production build.
+pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::invalidations_for_op;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
@@ -176,6 +177,17 @@ pub enum MaterializeTask {
     RebuildAgendaCache,
     ReindexBlockLinks {
         block_id: Arc<str>,
+    },
+    /// #4293: the inbound-sync shape of [`Self::ReindexBlockLinks`] above the
+    /// per-block threshold — every changed block of one import, run as a loop
+    /// in the consumer. FTS and tag-refs collapse to a vault-wide rebuild
+    /// there; `block_links` has none (`RebuildPageLinkCache` folds the table,
+    /// it does not re-derive it), so the batch is the single task that keeps
+    /// a snapshot-sized fan-out off the dispatch path. Not persisted by the
+    /// retry queue, like `RebuildFtsIndex`: it is enqueued with one blocking
+    /// send, never shed.
+    ReindexBlockLinksBatch {
+        block_ids: Arc<[Arc<str>]>,
     },
     /// Incremental reindex of `block_tag_refs` for a single
     /// block after a content mutation. Mirrors `ReindexBlockLinks`.
