@@ -147,9 +147,11 @@ where
 // ---------------------------------------------------------------------------
 
 pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split};
+#[cfg(test)]
+pub(crate) use block_links::rebuild_block_links_unresolved_conn;
 pub use block_links::{
-    rebuild_block_links_unresolved, rebuild_block_links_unresolved_conn, reindex_block_links,
-    reindex_block_links_conn, reindex_block_links_split, unresolved_link_sources,
+    rebuild_block_links_unresolved, reindex_block_links, reindex_block_links_conn,
+    reindex_block_links_split, unresolved_link_sources,
 };
 pub use block_tag_refs::{
     rebuild_block_tag_refs_cache, rebuild_block_tag_refs_cache_split, reindex_block_tag_refs,
@@ -218,7 +220,7 @@ use sqlx::SqlitePool;
 /// Running them before page_ids is populated would silently include or
 /// exclude template-page blocks until something else triggered another
 /// rebuild — eventual consistency, not data loss, but visible to the
-/// user. The snapshot/restore enqueue array mirrors this ordering.
+/// user. `FULL_CACHE_REBUILD_TASKS` mirrors this ordering.
 ///
 /// Ordering note: `rebuild_block_tag_refs_cache` runs **before**
 /// `rebuild_tags_cache` because the tags-cache usage-count subquery
@@ -240,10 +242,10 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
     // #417: the title/orphan rebuild above no longer carries the count
-    // UPDATE (it was gated out of the per-op path). The production RESET
-    // path enqueues `RebuildPagesCacheCounts` separately after
-    // `RebuildPagesCache`; this convenience wrapper mirrors that ordering
-    // by recomputing the two count columns in its own tx right after.
+    // UPDATE (it was gated out of the per-op path). Production enqueues
+    // `RebuildPagesCacheCounts` separately after `RebuildPagesCache`; this
+    // convenience wrapper mirrors that ordering by recomputing the two
+    // count columns in its own tx right after.
     {
         let mut tx = crate::db::begin_immediate_logged(pool, "rebuild_all_pages_counts").await?;
         recompute_all_pages_cache_counts(&mut tx).await?;

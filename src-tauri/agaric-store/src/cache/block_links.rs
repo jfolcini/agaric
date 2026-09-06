@@ -210,45 +210,16 @@ const UNRESOLVED_REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 /// one — so it cannot put a row in the table that a reindex of that source
 /// would not. What it changes is WHEN, not HOW MUCH.
 ///
-/// The lifecycle stays as narrow as the issues asked for: the connection form
-/// has exactly one production caller (the snapshot RESET), and the pool form
-/// below has none — it exists for the #4229 oracle's settle. No new task kind,
-/// no new queue, no periodic trigger.
-///
-/// # Why the restore called this in-transaction
-///
-/// The snapshot RESET (deleted in #4699) wiped this table, and before #4218
-/// nothing refilled it: the snapshot format carried no rows for it, and the
-/// restore's wipe-list / post-restore-rebuild pairing — the mechanism that
-/// repopulated every OTHER wiped cache — never
-/// listed it. A restored vault therefore inherited the sender's `block_links`
-/// with no record of what that edge set was missing, which is #4118's
-/// permanent loss reintroduced on the restore path.
-///
-/// A post-commit rebuild task would have closed it, and is what the sibling
-/// caches use. This runs in the restore's own transaction instead, for two
-/// reasons that do not apply to those siblings:
-///
-/// * the enqueue half is best-effort by design — every post-snapshot enqueue
-///   failure is logged and swallowed so a shutdown-in-progress cannot fault an
-///   already-durable restore — so a task would leave the index permanently
-///   empty on exactly the path that is hardest to notice;
-/// * the paired-edit hazard `restore.rs` documents ("a new cache table still
-///   requires paired edits, now in two files instead of one") is the very
-///   thing that went wrong here. The wipe and the rebuild now sit in one
-///   crate, in one transaction, three lines apart in the caller.
-///
-/// The added cost is one pass of the link regex over the restored content
-/// inside a transaction that is already inserting every one of those rows, and
-/// the parsed pairs are a strict subset of what the decoded `SnapshotData` is
-/// already holding in memory at that moment.
+/// No production path calls this since the snapshot RESET went (#4699): the
+/// pool form below is the reconciliation oracle's settle (#4229) and the #4218
+/// store test's subject. No new task kind, no new queue, no periodic trigger.
 ///
 /// Returns the number of obligation rows written.
 ///
 /// # Errors
 /// Returns [`AppError`] if the wipe, the content scan, or any chunked INSERT
 /// fails.
-pub async fn rebuild_block_links_unresolved_conn(
+pub(crate) async fn rebuild_block_links_unresolved_conn(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
     sqlx::query!("DELETE FROM block_links_unresolved")
@@ -338,7 +309,7 @@ pub async fn rebuild_block_links_unresolved_conn(
     Ok(inserted)
 }
 
-/// Pool-scoped [`rebuild_block_links_unresolved_conn`]: opens its own
+/// Pool-scoped form of the rebuild above: opens its own
 /// `BEGIN IMMEDIATE` transaction so the wipe and the refill are one atomic
 /// step, and reports through the standard rebuild instrumentation.
 ///

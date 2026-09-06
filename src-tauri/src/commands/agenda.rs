@@ -318,8 +318,6 @@ pub async fn list_projected_agenda_inner_with_today(
         .as_ref()
         .and_then(|(_, t)| t.as_deref())
         .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
-    let cache_complete_for_range =
-        cache_covers_range && rebuild_today == Some(today) && range_start >= today;
 
     // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
     // before the rebuild's reference date, so a range that starts before
@@ -339,6 +337,9 @@ pub async fn list_projected_agenda_inner_with_today(
         )
         .await;
     }
+    // Past that guard the range lies inside the advertised span, so the one
+    // thing left to prove about the cache is that today's rebuild wrote it.
+    let cache_is_fresh = rebuild_today == Some(today);
 
     // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
     //
@@ -447,9 +448,8 @@ pub async fn list_projected_agenda_inner_with_today(
     // thing the SLO probe was measuring.
     //
     // Since #2601 there is a direct signal, so the proxy is no longer
-    // needed: `cache_complete_for_range` means a rebuild has run (the
-    // horizon row exists) and this range lies inside the span that rebuild
-    // guarantees complete. An empty result over a complete range is a true
+    // needed: `cache_is_fresh` means today's rebuild wrote the span this
+    // range lies inside. An empty result over a complete range is a true
     // empty, and the projector — which is exhaustive over the same range —
     // would return exactly the same empty page, just slowly.
     //
@@ -468,7 +468,7 @@ pub async fn list_projected_agenda_inner_with_today(
     // not actually avoid it — it surfaced such a block only when no OTHER
     // block projected into the window, which is inconsistent rather than
     // fresh.
-    if cached.is_empty() && after.is_none() && !cache_complete_for_range {
+    if cached.is_empty() && after.is_none() && !cache_is_fresh {
         return list_projected_agenda_on_the_fly(
             pool,
             range_start,
