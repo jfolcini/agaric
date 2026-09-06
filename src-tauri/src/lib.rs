@@ -32,6 +32,7 @@ pub mod mcp;
 // materializer once #4502 moved that down); the app keeps the path.
 pub use agaric_sync::recovery;
 pub mod recurrence;
+pub mod repair;
 pub mod soft_delete;
 pub mod spaces;
 // #2621 (agaric-sync split): the Tauri-backed sinks (`TauriEventSink`,
@@ -1190,9 +1191,10 @@ fn recover_and_bootstrap(
     Ok(report)
 }
 
-/// Boot-phase 5b — the per-space bootstrap (boot-fatal) and the best-effort
-/// empty-block sweep that runs right after it. Split out of
-/// [`recover_and_bootstrap`] (#4639) when the sweep landed.
+/// Boot-phase 5b — the per-space bootstrap (boot-fatal), then the two
+/// best-effort passes that run right after it: the empty-block sweep and
+/// the unreachable-content repairs. Split out of [`recover_and_bootstrap`]
+/// (#4639) when the sweep landed.
 fn bootstrap_spaces_and_sweep(
     pools: &db::DbPools,
     device_id: &str,
@@ -1217,6 +1219,16 @@ fn bootstrap_spaces_and_sweep(
     // starting, and it is load-bearing for no invariant. After
     // `bootstrap_spaces` so every candidate's page already has its space.
     tauri::async_runtime::block_on(soft_delete::sweep_leaked_empty_blocks_at_boot(
+        &pools.write,
+        device_id,
+        materializer,
+    ));
+
+    // #4728 / #4715 — re-home orphaned content, merge duplicate journal
+    // pages. Same contract as the sweep: best-effort, one transaction per
+    // repair, never boot-fatal. After the sweep so the bare orphans it
+    // deletes are already gone when the orphan repair selects what is left.
+    tauri::async_runtime::block_on(repair::repair_unreachable_content_at_boot(
         &pools.write,
         device_id,
         materializer,
