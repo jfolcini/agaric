@@ -29,7 +29,8 @@
  * `import()`, not a network fetch — Tauri serves everything from disk), so
  * this renders a brief "Loading emoji…" placeholder rather than blocking; the
  * search box, skin-tone swatches, and Recents strip (none of which need the
- * dataset) still mount immediately.
+ * dataset) still mount immediately. If that import rejects, the grid shows a
+ * failure message with a Retry that re-runs the load (#4628).
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -48,6 +49,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ListErrorState } from '@/components/common/ListViewState'
 import {
   applySkinTone,
   computeTonableBases,
@@ -199,21 +201,28 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   // remounting this component (e.g. reopening the dialog) after the first
   // load resolves this effect near-instantly from the cached promise.
   const [dataset, setDataset] = useState<EmojiDataset | null>(null)
-  useEffect(() => {
-    let cancelled = false
+  const [loadFailed, setLoadFailed] = useState(false)
+  // Stable (no deps) so a rerender never re-runs the mount effect below.
+  const loadDataset = useCallback((isStale?: () => boolean) => {
+    setLoadFailed(false)
     loadEmojiDataset()
       .then((d) => {
-        if (!cancelled) setDataset(d)
+        if (!isStale?.()) setDataset(d)
       })
       .catch((err: unknown) => {
-        // A failed dynamic import leaves the grid on its loading placeholder
-        // forever (#4628); log it rather than dropping an unhandled rejection.
+        // A failed dynamic import used to leave the grid on its loading
+        // placeholder forever (#4628); surface it as a retryable error.
         logger.error('EmojiPicker', 'Failed to load emoji dataset', undefined, err)
+        if (!isStale?.()) setLoadFailed(true)
       })
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    loadDataset(() => cancelled)
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadDataset])
   const isLoading = dataset == null
   const tonable = useMemo(
     () => (dataset == null ? NO_TONABLE_BASES : computeTonableBases(dataset.flat)),
@@ -501,98 +510,106 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
         </div>
       )}
 
-      <div className="relative">
-        {activeGroup !== null && (
+      {loadFailed ? (
+        <ListErrorState
+          message={t('emojiPicker.loadFailed')}
+          onRetry={() => loadDataset()}
+          testId="emoji-load-failed"
+        />
+      ) : (
+        <div className="relative">
+          {activeGroup !== null && (
+            <div
+              // Decorative: the inline header rows carry the real group semantics;
+              // this is a visual pin only (hence aria-hidden), so screen readers
+              // don't hear the group name twice.
+              aria-hidden="true"
+              data-testid="emoji-sticky-group"
+              className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-popover/95 px-1 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+            >
+              {groupLabel(t, activeGroup)}
+            </div>
+          )}
           <div
-            // Decorative: the inline header rows carry the real group semantics;
-            // this is a visual pin only (hence aria-hidden), so screen readers
-            // don't hear the group name twice.
-            aria-hidden="true"
-            data-testid="emoji-sticky-group"
-            className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-popover/95 px-1 pt-2 pb-1 text-xs font-medium text-muted-foreground"
+            ref={scrollRef}
+            role="grid"
+            aria-label={t('emojiPicker.grid')}
+            className="h-64 overflow-y-auto"
+            data-testid="emoji-grid"
+            // Programmatically focusable (not a tab stop) so the grid can host
+            // the arrow-key handler; the roving cell keeps the single tabindex 0.
+            tabIndex={-1}
+            onKeyDown={handleGridKeyDown}
           >
-            {groupLabel(t, activeGroup)}
-          </div>
-        )}
-        <div
-          ref={scrollRef}
-          role="grid"
-          aria-label={t('emojiPicker.grid')}
-          className="h-64 overflow-y-auto"
-          data-testid="emoji-grid"
-          // Programmatically focusable (not a tab stop) so the grid can host
-          // the arrow-key handler; the roving cell keeps the single tabindex 0.
-          tabIndex={-1}
-          onKeyDown={handleGridKeyDown}
-        >
-          {isLoading && (
-            <p
-              data-testid="emoji-loading"
-              className="px-3 py-10 text-center text-sm text-muted-foreground"
-            >
-              {t('emojiPicker.loading')}
-            </p>
-          )}
-          {!isLoading && noResults && (
-            <p
-              data-testid="emoji-no-results"
-              className="px-3 py-10 text-center text-sm text-muted-foreground"
-            >
-              {t('emojiPicker.noResults', { query: query.trim() })}
-            </p>
-          )}
-          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
-            {virtualItems.map((vi) => {
-              const row = rows[vi.index]
-              if (row === undefined) return null
-              return (
-                <div
-                  key={row.key}
-                  data-index={vi.index}
-                  ref={virtualizer.measureElement}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${vi.start}px)`,
-                  }}
-                >
-                  {row.kind === 'header' ? (
-                    <p className="px-1 pt-2 text-xs font-medium text-muted-foreground">
-                      {groupLabel(t, row.group)}
-                    </p>
-                  ) : (
-                    /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
-                    <div role="row" className="flex gap-0.5">
-                      {row.entries.map((entry, col) => {
-                        const char = applySkinTone(entry.char, skinTone, tonable)
-                        const isFocused = vi.index === focusedRowIndex && col === focused.c
-                        return (
-                          <button
-                            key={entry.name}
-                            type="button"
-                            role="gridcell"
-                            data-cell={`${vi.index}-${col}`}
-                            aria-label={entry.name}
-                            title={`:${entry.name}:`}
-                            tabIndex={isFocused ? 0 : -1}
-                            onClick={() => handleSelect(entry)}
-                            className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
-                          >
-                            {char}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    /* oxlint-enable jsx-a11y/prefer-tag-over-role */
-                  )}
-                </div>
-              )
-            })}
+            {isLoading && (
+              <p
+                data-testid="emoji-loading"
+                className="px-3 py-10 text-center text-sm text-muted-foreground"
+              >
+                {t('emojiPicker.loading')}
+              </p>
+            )}
+            {!isLoading && noResults && (
+              <p
+                data-testid="emoji-no-results"
+                className="px-3 py-10 text-center text-sm text-muted-foreground"
+              >
+                {t('emojiPicker.noResults', { query: query.trim() })}
+              </p>
+            )}
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+              {virtualItems.map((vi) => {
+                const row = rows[vi.index]
+                if (row === undefined) return null
+                return (
+                  <div
+                    key={row.key}
+                    data-index={vi.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${vi.start}px)`,
+                    }}
+                  >
+                    {row.kind === 'header' ? (
+                      <p className="px-1 pt-2 text-xs font-medium text-muted-foreground">
+                        {groupLabel(t, row.group)}
+                      </p>
+                    ) : (
+                      /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
+                      <div role="row" className="flex gap-0.5">
+                        {row.entries.map((entry, col) => {
+                          const char = applySkinTone(entry.char, skinTone, tonable)
+                          const isFocused = vi.index === focusedRowIndex && col === focused.c
+                          return (
+                            <button
+                              key={entry.name}
+                              type="button"
+                              role="gridcell"
+                              data-cell={`${vi.index}-${col}`}
+                              aria-label={entry.name}
+                              title={`:${entry.name}:`}
+                              tabIndex={isFocused ? 0 : -1}
+                              onClick={() => handleSelect(entry)}
+                              className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
+                            >
+                              {char}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      /* oxlint-enable jsx-a11y/prefer-tag-over-role */
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

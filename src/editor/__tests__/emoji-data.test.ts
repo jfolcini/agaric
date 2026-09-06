@@ -164,6 +164,36 @@ describe('emoji-data', () => {
       expect(a.flat[0]?.name).toBe('fixture_emoji')
     })
 
+    // #4628 — the memo used to keep the REJECTED promise, so a failed chunk
+    // load was permanent: every later call (a retry, a reopened picker)
+    // replayed the same error and the grid could never recover.
+    it('loadEmojiDataset clears the memo on rejection, so the next call re-imports', async () => {
+      vi.resetModules()
+      let attempts = 0
+      vi.doMock('../emoji-data.generated', () => {
+        attempts++
+        if (attempts === 1) throw new Error('chunk load failed')
+        return {
+          EMOJI_DATA: [
+            { group: 'Test', emoji: [{ c: '\u{1F600}', n: 'fixture_emoji', k: ['fixture'] }] },
+          ],
+        }
+      })
+      const mod = await import('@/editor/emoji-data')
+
+      // Vitest wraps a throwing mock factory in its own Error, so assert on
+      // the rejection itself rather than the message.
+      await expect(mod.loadEmojiDataset()).rejects.toBeInstanceOf(Error)
+      expect(attempts).toBe(1)
+      expect(mod.peekEmojiDataset()).toBeNull()
+
+      const retried = await mod.loadEmojiDataset()
+
+      expect(attempts).toBe(2)
+      expect(retried.flat[0]?.name).toBe('fixture_emoji')
+      expect(mod.peekEmojiDataset()).toBe(retried)
+    })
+
     it('peekEmojiDataset synchronously reflects the resolved dataset once loadEmojiDataset settles', async () => {
       vi.resetModules()
       const mod = await import('@/editor/emoji-data')

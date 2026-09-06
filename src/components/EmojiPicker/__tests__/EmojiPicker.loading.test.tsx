@@ -5,13 +5,18 @@
  * `loadEmojiDataset()` resolves, then populate the grid once it does —
  * instead of racing the async gap or crashing on it.
  *
+ * #4628 extends that to the failure window: when the load rejects the grid
+ * swaps the placeholder for a retryable error.
+ *
  * A dedicated file (rather than a case in `EmojiPicker.test.tsx`) because the
  * `vi.mock('@/editor/emoji-data', …)` factory below holds the dataset promise
  * open until the test manually resolves it — every other EmojiPicker test
  * wants the real, already-resolving loader, not a deferred one.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import type { EmojiDataset } from '@/editor/emoji-data'
@@ -82,26 +87,51 @@ describe('<EmojiPicker> — lazy dataset loading window (#2671)', () => {
     expect(screen.getByRole('tablist', { name: /emoji categories/i })).toBeInTheDocument()
   })
 
-  // #4445 — the loader is a dynamic `import()`, so it CAN reject (a chunk that
-  // fails to fetch). Without a `.catch` that rejection was unhandled: no log,
-  // no toast, and the grid sits on its placeholder with nothing to diagnose.
-  it('logs the failure and keeps the picker usable when the dataset load rejects', async () => {
+  // #4628 — the loader is a dynamic `import()`, so it CAN reject (a chunk that
+  // fails to fetch). The failure needs its own state: the loading placeholder
+  // is a dead end (`loadEmojiDataset()` used to memoize the rejection, so even
+  // reopening the picker replayed it). Show a message with a Retry that
+  // actually re-runs the load.
+  it('replaces the loading placeholder with a retryable error when the dataset load rejects', async () => {
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
     const loadErr = new Error('chunk load failed')
 
-    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const { container } = render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     rejectDataset?.(loadErr)
 
-    await waitFor(() => {
-      expect(errorSpy).toHaveBeenCalledWith(
-        'EmojiPicker',
-        'Failed to load emoji dataset',
-        undefined,
-        loadErr,
-      )
-    })
-    // The picker stays mounted on its loading placeholder rather than crashing.
+    const failure = await screen.findByTestId('emoji-load-failed')
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(
+      'EmojiPicker',
+      'Failed to load emoji dataset',
+      undefined,
+      loadErr,
+    )
+    // The failure REPLACES the placeholder — the two must never coexist.
+    expect(screen.queryByTestId('emoji-loading')).not.toBeInTheDocument()
+    // role="alert" (from the shared ListErrorState card): a change this far
+    // from the user's focus is only announced if it is a live region.
+    expect(screen.getByRole('alert')).toBe(failure)
+    expect(failure).toHaveTextContent('Failed to load emoji')
+    // The rest of the picker stays usable rather than crashing.
     expect(screen.getByRole('searchbox', { name: /search emoji/i })).toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
+
+    // Retry re-invokes the loader (the memo clear in `loadEmojiDataset()` is
+    // what makes that second call a real re-import) and returns to loading.
+    await userEvent.click(within(failure).getByRole('button', { name: 'Retry' }))
+    expect(loadCalls).toBe(2)
+    expect(screen.queryByTestId('emoji-load-failed')).not.toBeInTheDocument()
     expect(screen.getByTestId('emoji-loading')).toBeInTheDocument()
+
+    // Settling the retry's promise populates the grid, as a first load would.
+    const actual =
+      await vi.importActual<typeof import('@/editor/emoji-data')>('@/editor/emoji-data')
+    const dataset = await actual.loadEmojiDataset()
+    resolveDataset?.(dataset)
+
+    expect(await screen.findByRole('gridcell', { name: 'grinning' })).toBeInTheDocument()
+    expect(screen.queryByTestId('emoji-loading')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('emoji-load-failed')).not.toBeInTheDocument()
   })
 })
