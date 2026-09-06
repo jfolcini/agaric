@@ -77,21 +77,41 @@ pub async fn apply_op_projected_with_mode(
         // device is only sound when the entire op_log belongs to that ONE
         // device — otherwise the cursor jumps past another device's
         // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
-        // silently drops them. The batch arm rejects a mixed-device batch in
-        // every build by inspecting the records it already holds; this
-        // single-op path has no equivalent release check, because deciding
-        // "is the whole op_log one device" costs an extra `MIN`/`MAX` query
-        // over `op_log` on EVERY applied op. That per-op query is the reason
-        // this stays `debug_assert!` (AGENTS.md "Patterns caught in review"
-        // 5). Boot replay (`recovery::replay`, #412) hard-errors on a
-        // multi-device op_log in every build, but only at boot. Remove once
-        // the per-device watermark cursor ships.
+        // silently drops them. Remove once the per-device watermark cursor
+        // ships.
+        //
+        // #4661 — a REPLICATED record (migration 0099 stamps every foreign
+        // op `is_replicated = 1`) may not advance the cursor: refuse it in every
+        // build with the batch arm's error class. A record with no `op_log` row
+        // is not refused; only op-log rows carry provenance, and the rowless
+        // population is the projection tests' synthetic records.
+        let locally_authored: Option<bool> = sqlx::query_scalar!(
+            r#"SELECT is_replicated = 0 AS "local!: bool"
+               FROM op_log WHERE device_id = ? AND seq = ?"#,
+            record.device_id,
+            record.seq,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if locally_authored == Some(false) {
+            return Err(AppError::InvalidOperation(format!(
+                "apply_op_projected refuses to advance the single global apply cursor for \
+                 device {:?} seq {}: the record is a replicated op_log row, which is audit \
+                 metadata and is never applied. The cursor cannot represent per-device \
+                 watermarks — per-device cursor partitioning is required (backend audit #412)",
+                record.device_id, record.seq,
+            )));
+        }
+        // DEBUG only: the whole-log predicate below is a scan (~10 ms per
+        // applied op at 100K rows against ~20 µs for the point lookup), the
+        // AGENTS.md hot-check exemption; it also catches a foreign row the
+        // dormant strict ingest (`dag::insert_remote_op`) would leave
+        // `is_replicated = 0`.
         #[cfg(debug_assertions)]
         {
-            // #2282 — index-backed O(log N) single-device probe. The op_log PK
-            // `(device_id, seq)` indexes `device_id`, so `MIN`/`MAX` are
-            // first/last index seeks: equal MIN and MAX ⇒ the whole log is one
-            // device (COALESCE handles the empty log — vacuously single-device).
+            // #2282 — `MIN`/`MAX` over the locally-authored rows: equal MIN and
+            // MAX ⇒ the whole log is one device (COALESCE handles the empty log
+            // — vacuously single-device).
             //
             // #2481: `is_replicated = 0` — replicated foreign audit rows
             // legitimately live in op_log now (audit-only replication) but are

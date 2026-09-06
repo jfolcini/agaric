@@ -49,6 +49,10 @@ pub mod sql_only;
 // `count` so the coordinator's status builder keeps reading the same static.
 pub mod sql_only_fallback;
 
+// #4661 — the release-build single-device guard on the apply cursor.
+#[cfg(test)]
+mod cursor_guard_tests;
+
 // Private glob re-exports so sibling submodules resolve cross-module calls
 // through their own `use super::*;` (e.g. `kernel::apply_op_tx` calling
 // `loro_apply::apply_create_block_via_loro` or `pages_cache::maintain_…`).
