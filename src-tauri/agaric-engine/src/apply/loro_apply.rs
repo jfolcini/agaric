@@ -4,6 +4,47 @@
 
 use super::*;
 
+/// The one create routing, shared with `merge::engine_apply` so the two cannot
+/// drift (#4783).
+///
+/// #400: new ops carry a 0-based `index`; pre-#400 ops carry the legacy sparse
+/// `position` (mapped to a slot); neither ⇒ append.
+///
+/// #4688: the append goes through the index path, past every current sibling.
+/// Routing it through the legacy sort as `i64::MAX` tied it against every
+/// earlier bare append (they all carry `i64::MAX`) and fell through to the
+/// block-id tiebreak — random inside one millisecond, so a fast import landed
+/// siblings in ULID order.
+pub(crate) fn route_create(
+    engine: &mut crate::loro::engine::LoroEngine,
+    p: &CreateBlockPayload,
+    parent: Option<&str>,
+) -> Result<(), AppError> {
+    match (p.index, p.position) {
+        (Some(index), _) => engine.apply_create_block_at(
+            p.block_id.as_str(),
+            &p.block_type,
+            &p.content,
+            parent,
+            usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+        ),
+        (None, None) => engine.apply_create_block_at(
+            p.block_id.as_str(),
+            &p.block_type,
+            &p.content,
+            parent,
+            usize::MAX,
+        ),
+        (None, Some(position)) => engine.apply_create_block(
+            p.block_id.as_str(),
+            &p.block_type,
+            &p.content,
+            parent,
+            position,
+        ),
+    }
+}
+
 /// Apply CreateBlock through the engine then project to SQL.
 ///
 /// 1. Resolves the block's space (parent_id-based for content blocks;
@@ -133,37 +174,7 @@ pub async fn apply_create_block_via_loro(
         if parent_absent {
             None
         } else {
-            // #400 routing: new ops carry a 0-based `index`; pre-#400 ops carry
-            // the legacy sparse `position` (mapped to a slot); neither ⇒ append.
-            //
-            // #4688: the append goes through the index path, past every current
-            // sibling. Routing it through the legacy sort as `i64::MAX` tied it
-            // against every earlier bare append (they all carry `i64::MAX`) and
-            // fell through to the block-id tiebreak — random inside one
-            // millisecond, so a fast import landed siblings in ULID order.
-            match (p.index, p.position) {
-                (Some(index), _) => engine.apply_create_block_at(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                )?,
-                (None, None) => engine.apply_create_block_at(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    usize::MAX,
-                )?,
-                (None, Some(position)) => engine.apply_create_block(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    position,
-                )?,
-            }
+            route_create(engine, p, parent)?;
             let snap_opt = engine.read_block(p.block_id.as_str())?;
             // Authoritative sibling order for the dense-rank reprojection.
             let siblings = engine.children_ordered_block_ids(parent)?;

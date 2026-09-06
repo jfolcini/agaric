@@ -93,29 +93,9 @@ pub fn engine_apply(
     let dispatch_result: Result<(), agaric_core::error::AppError> = match op {
         agaric_store::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
-            // #400/#603 routing — MUST mirror
-            // `materializer::handlers::apply_create_block_via_loro` exactly:
-            // new-scheme ops carry a 0-based `index` (slot-based apply);
-            // pre-#400 ops carry the legacy sparse `position`; neither ⇒
-            // append at the end. Routing a new-scheme op through the legacy
-            // position path converges engine sibling order toward ULID order
-            // on re-apply (#603).
-            match p.index {
-                Some(index) => engine.apply_create_block_at(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                ),
-                None => engine.apply_create_block(
-                    p.block_id.as_str(),
-                    &p.block_type,
-                    &p.content,
-                    parent,
-                    p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
-                ),
-            }
+            // #400/#603/#4688: the same routing `apply_create_block_via_loro`
+            // uses, so re-apply cannot converge sibling order toward ULID order.
+            crate::apply::loro_apply::route_create(engine, p, parent)
         }
         agaric_store::op::OpPayload::EditBlock(p) => {
             engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)

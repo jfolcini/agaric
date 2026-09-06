@@ -118,8 +118,8 @@
 // `__tests__/`, `/tests/`) and `.d.ts`. The wrapper layer itself —
 // `src/lib/tauri.ts` and everything under `src/lib/tauri/` — is also
 // excluded from the scan. Without this exclusion, the wrapper's own
-// internal cross-submodule imports (e.g. `src/lib/tauri/history.ts` and
-// `search.ts` importing `@/lib/tauri/_shared`) would start counting as
+// internal cross-submodule imports (e.g. `src/lib/tauri/search.ts`
+// importing `@/lib/tauri/_shared`) would start counting as
 // soon as submodule detection
 // was widened, even though they are not app code depending on the
 // wrapper — they ARE the wrapper.

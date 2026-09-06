@@ -96,14 +96,10 @@ impl SyncEventSink for SpacePlacementSink {
                             "placed space-less blocks after inbound sync"
                         );
                         // The rebuilds are what turn a raw `#[ULID]` back into
-                        // a tag; signal only once they have drained.
-                        if let Err(e) = materializer.flush_background().await {
-                            tracing::warn!(
-                                peer_id = %peer,
-                                error = %e,
-                                "placement rebuilds did not drain; signalling anyway"
-                            );
-                        }
+                        // a tag; signal only once they have drained. The wait
+                        // fails only on shutdown, when the signal has no
+                        // listener either.
+                        let _ = materializer.flush_background().await;
                         view.emit_blocks_changed(Vec::new());
                     }
                     // Non-fatal: the boot pass remains the backstop.
@@ -307,6 +303,68 @@ mod tests {
             space_of(&pool, &page_id).await,
             Some(SPACE_PERSONAL_ULID.to_string())
         );
+        materializer.shutdown();
+    }
+
+    /// Records, at the moment of the signal, how many background tasks the
+    /// materializer had finished.
+    struct DrainedAtSignal {
+        materializer: Materializer,
+        drained: std::sync::Mutex<Vec<u64>>,
+    }
+
+    impl ViewChangeEmitter for DrainedAtSignal {
+        fn emit_blocks_changed(&self, _changed_page_ids: Vec<String>) {
+            let n = self
+                .materializer
+                .metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed);
+            self.drained.lock().unwrap().push(n);
+        }
+
+        fn emit_property_changed(&self, _block_id: String, _changed_keys: Vec<String>) {}
+    }
+
+    /// #4785 — the signal waits for the placement's own rebuilds. On the
+    /// current-thread runtime nothing runs between the enqueue and the emit
+    /// unless the sink awaits the drain barrier, so a signal that does not
+    /// wait sees the count it started with.
+    #[tokio::test]
+    async fn the_signal_waits_for_the_placement_rebuilds_4785() {
+        let (pool, _dir) = seeded_pool().await;
+        let tag_id = seed_synced_in_orphan_tag(&pool).await;
+        let materializer = Materializer::new(pool.clone());
+        let before = materializer
+            .metrics()
+            .bg_processed
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let view = Arc::new(DrainedAtSignal {
+            materializer: materializer.clone(),
+            drained: std::sync::Mutex::new(Vec::new()),
+        });
+        let sink = SpacePlacementSink::new(
+            Arc::new(RecordingEventSink(std::sync::Mutex::new(Vec::new()))),
+            pool.clone(),
+            pool.clone(),
+            DEV.into(),
+            materializer.clone(),
+            view.clone(),
+        );
+
+        sink.on_sync_event(complete(None));
+        let task = sink.last_task.lock().unwrap().take().expect("spawned");
+        task.await.unwrap();
+
+        // The two tag-ref rebuilds and the drain barrier itself.
+        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 3]);
+        // ...and those rebuilds are what made the tag resolvable.
+        let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(refs, 1);
         materializer.shutdown();
     }
 
