@@ -12,6 +12,31 @@ import type { FlatBlock } from '@/lib/tree-utils'
 
 export type { FlatBlock }
 
+/**
+ * #4729 — options for `PageBlockState.remove`.
+ *
+ * `undoable: false` marks the delete as HOUSEKEEPING: one the app decided on,
+ * not one the user asked for. The `DeleteBlock` op is still appended, the row
+ * is still soft-deleted, it still syncs and it still lands in Trash — the ONLY
+ * difference is that the undo store is not notified, so the delete neither
+ * takes the next Ctrl+Z nor invalidates a pending Ctrl+Y.
+ *
+ * That is deliberate, and it is the point: an invisible cleanup that occupies
+ * the undo stack means the user's next Ctrl+Z reverts the cleanup instead of
+ * their own last edit. A block removed this way is not Ctrl+Z-recoverable;
+ * Trash is its recovery affordance, which is the right one for something the
+ * user never asked for and did not see happen.
+ *
+ * The only caller is the leaked-empty-block cleanup that fires on focus-leave
+ * (`src/lib/empty-block-cleanup.ts`). Every user-initiated delete —
+ * `handleDeleteBlock`, the merge paths, Escape-cancel, swipe-delete — keeps
+ * the default and stays undoable.
+ */
+export interface DeleteBlockOptions {
+  /** Default `true`. `false` = housekeeping (see the interface doc). */
+  undoable?: boolean
+}
+
 export interface PageBlockState {
   /** Ordered flat-tree of blocks for this page (depth-annotated). */
   blocks: FlatBlock[]
@@ -51,8 +76,12 @@ export interface PageBlockState {
    * save-failed toast is shown). Callers that need a context-specific error
    * (e.g. the query builder) can branch on the returned boolean. */
   edit: (blockId: string, content: string) => Promise<boolean>
-  /** Delete a block (and its descendants from the flat tree). */
-  remove: (blockId: string) => Promise<void>
+  /**
+   * Delete a block (and its descendants from the flat tree).
+   *
+   * `options` defaults to a user-initiated delete — see {@link DeleteBlockOptions}.
+   */
+  remove: (blockId: string, options?: DeleteBlockOptions) => Promise<void>
 
   /**
    * Auto-split: given a block ID and markdown with newlines, split into

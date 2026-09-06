@@ -153,8 +153,11 @@ export interface DeleteIfLeakedEmptyParams {
    * it). Deleting MUST go through it: it appends the `delete_block` op that
    * the Loro doc and the op log are projections of. A direct store mutation
    * would diverge and be reverted on the next sync.
+   *
+   * Called with `{ undoable: false }` — see the call in
+   * {@link deleteBlockIfLeakedEmpty}.
    */
-  remove: (blockId: string) => Promise<void>
+  remove: (blockId: string, options?: { undoable?: boolean }) => Promise<void>
   /**
    * Read the live flat tree. Called once up front and again after the metadata
    * probe resolves, so the decision is made on the tree as it is at each point
@@ -215,7 +218,14 @@ export async function deleteBlockIfLeakedEmpty({
   if (!isLeakedEmptyCandidate({ blocks: readBlocks(), blockId, zoomedBlockId })) return false
 
   try {
-    await remove(blockId)
+    // `undoable: false` — this delete is HOUSEKEEPING. The user clicked away
+    // from a blank block; they did not ask for a delete, and they must not
+    // have to spend their next Ctrl+Z on undoing one they never saw (nor lose
+    // a pending Ctrl+Y to it — `onNewAction` also clears the redo stack).
+    // Everything else about the delete is unchanged: the `DeleteBlock` op is
+    // appended, the row is soft-deleted, it syncs, and it is recoverable from
+    // Trash — which is the right affordance for a cleanup.
+    await remove(blockId, { undoable: false })
   } catch (err: unknown) {
     logger.warn('emptyBlockCleanup', 'failed to delete leaked empty block', { blockId }, err)
     return false

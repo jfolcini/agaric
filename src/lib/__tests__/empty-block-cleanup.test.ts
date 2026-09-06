@@ -69,7 +69,9 @@ async function runCleanup(
     truncated?: boolean
   } = {},
 ) {
-  const remove = vi.fn(async () => {})
+  const remove = vi.fn<(blockId: string, options?: { undoable?: boolean }) => Promise<void>>(
+    async () => {},
+  )
   const blockId = opts.blockId ?? 'EMPTY'
   const deleted = await deleteBlockIfLeakedEmpty({
     blockId,
@@ -97,7 +99,7 @@ describe('a leaked empty block', () => {
   it('is deleted when it loses focus', async () => {
     const { remove, deleted } = await runCleanup(leakedPage())
     expect(deleted).toBe(true)
-    expect(remove).toHaveBeenCalledWith('EMPTY')
+    expect(remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
   })
 
   it('is deleted through the passed-in remove action, not by any other route', async () => {
@@ -107,7 +109,24 @@ describe('a leaked empty block', () => {
     // the delete would be reverted or conflict on the next sync.
     const { remove } = await runCleanup(leakedPage())
     expect(remove).toHaveBeenCalledTimes(1)
-    expect(remove.mock.calls[0]).toEqual(['EMPTY'])
+    expect(remove.mock.calls[0]).toEqual(['EMPTY', { undoable: false }])
+  })
+
+  it('is deleted as HOUSEKEEPING — the delete does not take the user’s undo slot', async () => {
+    // #4729 follow-up. The user clicked away from a blank block; they did not
+    // ask for a delete. Routing it through the normal undo notification made
+    // it the top undo entry, so their next Ctrl+Z reverted an invisible
+    // cleanup instead of their own last action — and `onNewAction` also clears
+    // the redo stack, so it ate a pending Ctrl+Y too. `{ undoable: false }` is
+    // the whole of the difference: the `DeleteBlock` op is still appended, the
+    // row is still soft-deleted, it still syncs, and it is still recoverable
+    // from Trash. The store-side pair of this assertion (suppressed here,
+    // still notified for a user-initiated delete) lives in
+    // `page-blocks.undo-registry.test.ts`.
+    const { remove, deleted } = await runCleanup(leakedPage())
+    expect(deleted).toBe(true)
+    const options = remove.mock.calls[0]?.[1]
+    expect(options).toEqual({ undoable: false })
   })
 
   it('is deleted even when it is stranded between two non-empty blocks', async () => {
@@ -119,7 +138,7 @@ describe('a leaked empty block', () => {
       makeBlock({ id: 'B', content: 'after', position: 2 }),
     ]
     const { remove } = await runCleanup(blocks)
-    expect(remove).toHaveBeenCalledWith('EMPTY')
+    expect(remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
   })
 
   it('survives when it still has text', async () => {
@@ -230,7 +249,7 @@ describe('guard — last remaining block of its page', () => {
       makeBlock({ id: 'KEEP', content: 'sibling', parent_id: 'ZOOMROOT', depth: 1, position: 1 }),
     ]
     const { remove } = await runCleanup(blocks, { zoomedBlockId: 'ZOOMROOT' })
-    expect(remove).toHaveBeenCalledWith('EMPTY')
+    expect(remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
   })
 })
 

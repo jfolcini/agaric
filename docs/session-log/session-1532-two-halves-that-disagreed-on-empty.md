@@ -131,3 +131,44 @@ query failure (`element(s) not found` for the whole result) is what separates th
 
 Worth keeping: two red e2e tests in one run, both plausibly the new feature's fault, and the
 distinguishing evidence was in the assertion text rather than in any reasoning about the code.
+
+## Housekeeping took the user's undo slot
+
+e2e again: click "Add block", click away, Ctrl+Z, Ctrl+Y — six blocks expected, five present.
+
+The cleanup deletes through the ordinary `remove`, which calls `notifyUndoNewAction`. So the
+cleanup's delete took a slot on the undo stack, and the user's next Ctrl+Z undid an invisible
+piece of housekeeping instead of their own last action. Ctrl+Y then re-applied it and the block
+stayed gone.
+
+An undo entry is a promise about what Ctrl+Z does, and a cleanup cannot keep it. The stack is a
+single ordered resource behind one keystroke: anything that takes a slot displaces the user's own
+action by one press, silently. And because this fires on *focus-leave*, it lands exactly when the
+user has looked away, so they cannot correlate the press with the effect. Soft-delete plus Trash
+costs a navigation but is addressable, inspectable and untimed; the undo stack is capped,
+invisible and order-dependent.
+
+Two things I had wrong in describing it. `onNewAction` does not only push — it also clears
+`redoStack`, so the cleanup was eating a pending Ctrl+Y as well as the next Ctrl+Z. In this test
+the ordering hides that, so fixing only the push would have turned the e2e green with half the bug
+still live. And "housekeeping must not be undoable" is the right rule with the wrong scope:
+`handleEscapeCancel` also auto-deletes a just-created empty block, and it *should* stay undoable,
+because Escape is an explicit cancel gesture — the user's action, not the app's. The flag is
+opt-in for that reason.
+
+## The same bug at boot, an order of magnitude worse
+
+The frontend undo stack is in memory and empty at boot, so the first `undo(pageId)` falls through
+to `undoPositional` → `undo_page_group({ depth: 0 })`, which enumerates the page's op log filtered
+only on `is_undo = 0 AND is_replicated = 0`, seeds at the newest op, and walks backwards through
+same-device ops in the window — up to a thousand.
+
+The sweep's ops satisfy every one of those conditions: local, non-replicated, non-undo, same
+device, written in one tightly-timestamped batch at boot. So they are the newest ops on any page
+it touched, and the *first* Ctrl+Z of the session seeds on one and resurrects the whole grouped
+batch.
+
+The frontend flag cannot reach this: it governs what gets pushed, and this path is what runs when
+nothing was pushed. Which is the generalisable part — suppressing an entry in the in-memory stack
+says nothing about a fallback that reconstructs intent from the log. Two mechanisms answer the
+same question, and only one of them was told about the change.
