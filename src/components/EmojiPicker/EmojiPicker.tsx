@@ -55,6 +55,7 @@ import {
   supportsSkinTone,
   type SkinToneId,
 } from '@/components/EmojiPicker/emoji-skin-tone'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   type EmojiDataset,
@@ -199,6 +200,12 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   // remounting this component (e.g. reopening the dialog) after the first
   // load resolves this effect near-instantly from the cached promise.
   const [dataset, setDataset] = useState<EmojiDataset | null>(null)
+  // #4628 — a rejected import used to leave the grid on its loading
+  // placeholder for good: the loader memoizes, so a remount got the same
+  // rejection back. The retry re-runs the effect; it re-imports because the
+  // loader forgets a rejected promise.
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   useEffect(() => {
     let cancelled = false
     loadEmojiDataset()
@@ -206,15 +213,18 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
         if (!cancelled) setDataset(d)
       })
       .catch((err: unknown) => {
-        // A failed dynamic import leaves the grid on its loading placeholder
-        // forever (#4628); log it rather than dropping an unhandled rejection.
         logger.error('EmojiPicker', 'Failed to load emoji dataset', undefined, err)
+        if (!cancelled) setLoadFailed(true)
       })
     return () => {
       cancelled = true
     }
+  }, [loadAttempt])
+  const retryLoad = useCallback(() => {
+    setLoadFailed(false)
+    setLoadAttempt((n) => n + 1)
   }, [])
-  const isLoading = dataset == null
+  const isLoading = dataset == null && !loadFailed
   const tonable = useMemo(
     () => (dataset == null ? NO_TONABLE_BASES : computeTonableBases(dataset.flat)),
     [dataset],
@@ -234,7 +244,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   const frequentRoving = useRovingTabindex()
   const { rows, total } = useMemo(() => buildRows(query, dataset), [query, dataset])
   const isSearching = query.trim() !== ''
-  const noResults = isSearching && total === 0
+  const noResults = dataset != null && isSearching && total === 0
 
   // Category-jump targets: the header-row index of each group, in render order.
   // Empty while searching (groups don't apply to a flat ranked result list), so
@@ -532,6 +542,17 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             >
               {t('emojiPicker.loading')}
             </p>
+          )}
+          {loadFailed && (
+            <div
+              data-testid="emoji-load-failed"
+              className="flex flex-col items-center gap-2 px-3 py-10 text-center text-sm text-muted-foreground"
+            >
+              <p>{t('emojiPicker.loadFailed')}</p>
+              <Button type="button" variant="outline" size="sm" onClick={retryLoad}>
+                {t('emojiPicker.retry')}
+              </Button>
+            </div>
           )}
           {!isLoading && noResults && (
             <p

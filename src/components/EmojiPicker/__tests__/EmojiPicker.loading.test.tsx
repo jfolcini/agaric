@@ -11,6 +11,7 @@
  * wants the real, already-resolving loader, not a deferred one.
  */
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
@@ -83,9 +84,9 @@ describe('<EmojiPicker> — lazy dataset loading window (#2671)', () => {
   })
 
   // #4445 — the loader is a dynamic `import()`, so it CAN reject (a chunk that
-  // fails to fetch). Without a `.catch` that rejection was unhandled: no log,
-  // no toast, and the grid sits on its placeholder with nothing to diagnose.
-  it('logs the failure and keeps the picker usable when the dataset load rejects', async () => {
+  // fails to fetch). #4628 — a rejection is an error state with a retry, not a
+  // placeholder the user cannot tell from a slow load.
+  it('shows an error with a retry when the dataset load rejects, and the retry re-imports', async () => {
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
     const loadErr = new Error('chunk load failed')
 
@@ -100,8 +101,23 @@ describe('<EmojiPicker> — lazy dataset loading window (#2671)', () => {
         loadErr,
       )
     })
-    // The picker stays mounted on its loading placeholder rather than crashing.
+    // The picker stays mounted, and the placeholder gives way to the error.
     expect(screen.getByRole('searchbox', { name: /search emoji/i })).toBeInTheDocument()
+    expect(await screen.findByTestId('emoji-load-failed')).toBeInTheDocument()
+    expect(screen.queryByTestId('emoji-loading')).not.toBeInTheDocument()
+    expect(loadCalls).toBe(1)
+
+    // Retry asks the loader again — a second attempt, not the memoized
+    // rejection — and the grid populates once that one resolves.
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(loadCalls).toBe(2)
+    expect(screen.queryByTestId('emoji-load-failed')).not.toBeInTheDocument()
     expect(screen.getByTestId('emoji-loading')).toBeInTheDocument()
+
+    const actual =
+      await vi.importActual<typeof import('@/editor/emoji-data')>('@/editor/emoji-data')
+    resolveDataset?.(await actual.loadEmojiDataset())
+    expect(await screen.findByRole('gridcell', { name: 'grinning' })).toBeInTheDocument()
+    expect(screen.queryByTestId('emoji-loading')).not.toBeInTheDocument()
   })
 })

@@ -98,11 +98,18 @@ let resolvedDataset: EmojiDataset | null = null
  * load (#2671).
  */
 export function loadEmojiDataset(): Promise<EmojiDataset> {
-  datasetPromise ??= import('@/editor/emoji-data.generated').then(({ EMOJI_DATA }) => {
-    const dataset = buildDataset(EMOJI_DATA)
-    resolvedDataset = dataset
-    return dataset
-  })
+  datasetPromise ??= import('@/editor/emoji-data.generated')
+    .then(({ EMOJI_DATA }) => {
+      const dataset = buildDataset(EMOJI_DATA)
+      resolvedDataset = dataset
+      return dataset
+    })
+    .catch((err: unknown) => {
+      // #4628 — a memoized rejection would hand every later caller the same
+      // dead promise; forgetting it is what lets a retry re-import.
+      datasetPromise = null
+      throw err
+    })
   return datasetPromise
 }
 

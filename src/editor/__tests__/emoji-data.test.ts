@@ -164,6 +164,32 @@ describe('emoji-data', () => {
       expect(a.flat[0]?.name).toBe('fixture_emoji')
     })
 
+    it('forgets a rejected import so the next call re-imports (#4628)', async () => {
+      vi.resetModules()
+      let attempts = 0
+      vi.doMock('../emoji-data.generated', () => {
+        attempts++
+        if (attempts === 1) throw new Error('chunk load failed')
+        return {
+          EMOJI_DATA: [
+            { group: 'Test', emoji: [{ c: '\u{1F600}', n: 'fixture_emoji', k: ['fixture'] }] },
+          ],
+        }
+      })
+      const mod = await import('@/editor/emoji-data')
+
+      // vitest wraps a throwing mock factory in its own message, so assert the
+      // rejection and the attempt count rather than the text.
+      await expect(mod.loadEmojiDataset()).rejects.toThrow()
+      expect(attempts).toBe(1)
+      expect(mod.peekEmojiDataset()).toBeNull()
+
+      const dataset = await mod.loadEmojiDataset()
+      expect(attempts).toBe(2)
+      expect(dataset.flat[0]?.name).toBe('fixture_emoji')
+      expect(mod.peekEmojiDataset()).toBe(dataset)
+    })
+
     it('peekEmojiDataset synchronously reflects the resolved dataset once loadEmojiDataset settles', async () => {
       vi.resetModules()
       const mod = await import('@/editor/emoji-data')

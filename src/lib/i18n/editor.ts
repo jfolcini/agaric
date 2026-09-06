@@ -223,6 +223,8 @@ export const editor: Record<string, string> = {
   // #2671 — the ~150 KB dataset now lazy-loads on first open; this covers the
   // brief window before it resolves.
   'emojiPicker.loading': 'Loading emoji…',
+  'emojiPicker.loadFailed': "Couldn't load the emoji set.",
+  'emojiPicker.retry': 'Retry',
   'emojiPicker.skinTone': 'Skin tone',
   'emojiPicker.skinTone.default': 'Default',
   'emojiPicker.skinTone.light': 'Light',
