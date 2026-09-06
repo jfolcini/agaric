@@ -378,7 +378,7 @@ impl SyncOrchestrator {
     /// equal: it also refuses a row that merely pre-existed, bound or not,
     /// where the bind still permits an unbound one (#4380).
     ///
-    /// "Same edges" is exact only while the claimed row's binding holds still
+    /// Either rule is exact only while the claimed row's binding holds still
     /// between the two askings, which is all a second read of a mutable table
     /// can promise. A concurrent session that binds the claimed id *after* this
     /// check and *before* the bind leaves the writes on a row that was genuinely
@@ -455,10 +455,12 @@ impl SyncOrchestrator {
     /// construction (`None.is_some_and(..)` is `false`), which is the hole
     /// #4251 closed.
     ///
-    /// A failed `list_peer_refs` denies, for the reason that function
-    /// documents: the evidence that the row is free is exactly what a failed
-    /// read does not have, and the cost of being wrong is one skipped
-    /// bookkeeping write that the next session redoes.
+    /// A failed `list_peer_refs` under rule 2 denies, for the reason that
+    /// function documents: the evidence that the row is free is exactly what a
+    /// failed read does not have, and the cost of being wrong is one skipped
+    /// bookkeeping write that the next session redoes. Rule 1's snapshot is the
+    /// other way round — a failed read at arm time is an empty set, i.e.
+    /// permissive; [`Self::with_unverified_claim_guard`] says why.
     ///
     /// # Residual: a refusal is keyed on the session, not the write
     ///

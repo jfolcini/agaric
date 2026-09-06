@@ -63,7 +63,6 @@ let editor: Editor | undefined
 afterEach(() => {
   editor?.destroy()
   editor = undefined
-  capturedCommands.clear()
 })
 
 function build(

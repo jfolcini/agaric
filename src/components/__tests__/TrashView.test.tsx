@@ -2299,7 +2299,7 @@ describe('TrashView screen reader announcements', () => {
     // id, so the likeliest cause of this failure is a stale listing (another
     // window restored one of these rows). Without a reload every retry hits
     // the same stale rows and fails identically, which is the shape the
-    // `restoreBlocksByIds` doc comment explicitly tells callers to avoid.
+    // restore handler's comment in `TrashView.tsx` explicitly avoids.
     // Asserted as "more than the initial load", so it cannot pass on the
     // mount fetch alone.
     await waitFor(() => {
