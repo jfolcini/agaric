@@ -2491,7 +2491,7 @@ pub async fn find_undo_group_inner(
 
 /// The size of the undo group seeded at `seed_rn`, as a raw count.
 ///
-/// Split out of [`find_undo_group_inner`] so that function stays under the
+/// Split out of `find_undo_group_inner` so that function stays under the
 /// line budget without an `#[expect(clippy::too_many_lines)]` (#4746): the
 /// query is ~65 of its lines and has no other caller, so lifting it costs
 /// nothing and the guards above it read on one screen.
@@ -2568,7 +2568,7 @@ async fn undo_group_size(
 /// writer-lock acquisition per op) with one command.
 ///
 /// This is the fused batch analogue of [`undo_page_op_inner`] +
-/// [`find_undo_group_inner`]:
+/// `find_undo_group_inner`:
 ///
 ///  1. The page subtree is resolved ONCE (the `page_blocks` CTE) and the
 ///     group's op refs are enumerated ONCE by the same `ordered_ops` +
