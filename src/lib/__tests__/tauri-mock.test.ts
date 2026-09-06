@@ -2324,6 +2324,25 @@ describe('count_backlinks_batch', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_backlinks_grouped', () => {
+  // #3264 — `total_count` is the unfiltered base set, `filtered_count` the
+  // narrowed one, so "Showing 1 of 5" says 5 and not 1.
+  it('keeps total_count unfiltered when a filter narrows the groups', () => {
+    for (const word of ['zebra', 'yak']) {
+      invoke('create_block', {
+        blockType: 'content',
+        content: `${word} [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+        parentId: SEED_IDS.PAGE_QUICK_NOTES,
+      })
+    }
+    const result = invoke('list_backlinks_grouped', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      filters: [{ type: 'Contains', query: 'zebra' }],
+    }) as { groups: Array<{ blocks: unknown[] }>; total_count: number; filtered_count: number }
+    expect(result.filtered_count).toBe(1)
+    expect(result.groups.flatMap((g) => g.blocks)).toHaveLength(1)
+    expect(result.total_count).toBeGreaterThan(result.filtered_count)
+  })
+
   it('returns backlinks grouped by source page', () => {
     const result = invoke('list_backlinks_grouped', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,

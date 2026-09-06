@@ -9,8 +9,7 @@
 //! Read-only, exercised at realistic page sizes. The seed mirrors
 //! `export_bench`'s direct-SQL shape (fast bulk insert in one tx) but
 //! additionally sets `page_id` + `space_id` because the command filters on
-//! those columns. IDs are real ULIDs (`BlockId::new()`) so the command's
-//! `BlockId::from_string` validation passes.
+//! those columns. IDs are real ULIDs (`BlockId::new()`).
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
@@ -57,10 +56,10 @@ async fn ensure_space(pool: &SqlitePool) {
 
 /// Seed a page block with `n` child content blocks, all carrying
 /// `page_id = <page>` and `space_id = TEST_SPACE_ID` so the page-scoped /
-/// space-scoped read filters select them. Returns `(page_id, child_ids)`.
+/// space-scoped read filters select them. Returns the page id.
 ///
 /// Children alternate short/long content to mimic a real page body.
-async fn seed_page(pool: &SqlitePool, n: usize) -> (String, Vec<String>) {
+async fn seed_page(pool: &SqlitePool, n: usize) -> String {
     ensure_space(pool).await;
 
     let page_id = BlockId::new().into_string();
@@ -80,7 +79,6 @@ async fn seed_page(pool: &SqlitePool, n: usize) -> (String, Vec<String>) {
     .await
     .unwrap();
 
-    let mut child_ids = Vec::with_capacity(n);
     for i in 0..n {
         let id = BlockId::new().into_string();
         let content = if i % 2 == 0 {
@@ -106,12 +104,10 @@ async fn seed_page(pool: &SqlitePool, n: usize) -> (String, Vec<String>) {
         .execute(&mut *tx)
         .await
         .unwrap();
-
-        child_ids.push(id);
     }
 
     tx.commit().await.unwrap();
-    (page_id, child_ids)
+    page_id
 }
 
 // ===========================================================================
@@ -126,7 +122,7 @@ fn bench_load_page_subtree(c: &mut Criterion) {
     for n_blocks in [50, 500, 2_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("subtree_{n_blocks}")));
-        let (page_id, _) = rt.block_on(seed_page(&pool, n_blocks));
+        let page_id = rt.block_on(seed_page(&pool, n_blocks));
 
         group.throughput(Throughput::Elements(n_blocks as u64));
         group.bench_with_input(

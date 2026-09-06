@@ -134,15 +134,16 @@ export const linksHandlers = {
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const backlinkItems = applyBacklinkFilters(
-      [...blocks.values()].filter(
-        (b) =>
-          !b['deleted_at'] &&
-          inSpaceScope(b, spaceId) &&
-          contentLinksTo(b['content'] as string | null, targetId),
-      ),
-      filterList,
+    // `total_count` is the unfiltered base set and `filtered_count` the
+    // narrowed one — two separate COUNTs on the backend
+    // (`eval_backlink_query_grouped`), and the "Showing N of M" copy.
+    const unfiltered = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        contentLinksTo(b['content'] as string | null, targetId),
     )
+    const backlinkItems = applyBacklinkFilters(unfiltered, filterList)
     // Group by parent_id (source page)
     const groupMap = new Map<string, Record<string, unknown>[]>()
     for (const item of backlinkItems) {
@@ -162,7 +163,7 @@ export const linksHandlers = {
       groups,
       next_cursor: null,
       has_more: false,
-      total_count: backlinkItems.length,
+      total_count: unfiltered.length,
       filtered_count: backlinkItems.length,
       truncated: false,
     }

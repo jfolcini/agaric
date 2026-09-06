@@ -1638,8 +1638,8 @@ mod reader_delegation_tests {
     ///
     /// ## What the hand sweep found, so the denominator is in the repo
     ///
-    /// All 20 arms (19 since #3264 retired `get_blocks`) were checked against
-    /// their `#[tauri::command]`. Nineteen
+    /// All 19 arms (20 before #3264 retired `get_blocks`) were checked against
+    /// their `#[tauri::command]`. Eighteen
     /// reach the same function the command does (`list_page_links` reaches
     /// `list_page_links_inner`, whose whole body is
     /// `list_page_links_inner_split(pool, pool, …)` — the documented
@@ -1685,7 +1685,7 @@ mod reader_delegation_tests {
     const HARNESS_RS: &str = include_str!("conformance_query.rs");
 
     /// The number of commands wired into `run_step` when the WRITE sweep below
-    /// was taken. A 21st arm reddens
+    /// was taken. A 20th arm reddens
     /// [`the_write_sweep_denominator_still_matches`], which is the only thing
     /// that makes the sweep's conclusion a claim about the CURRENT code.
     // #3264 retired `get_blocks`, a plain SELECT, from the 20 arms swept.

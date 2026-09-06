@@ -1289,7 +1289,6 @@ export const blocksHandlers = {
   },
 
   // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
   // First-child-per-parent batch
   //
   // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
