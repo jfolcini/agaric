@@ -1056,9 +1056,12 @@ jobs:
           # ONE saver, not 46 (#3393): every shard restores the same target
           # dir, and 46 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
-          # for no gain. `agaric` shard 0 is the saver because `agaric` is the
-          # package whose build the other shards benefit most from.
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.package == 'agaric' && matrix.shard == 0 }}
+          # for no gain. `agaric-engine` shard 0 is the saver because its
+          # build is a superset of `agaric-store`'s, and it has to be a
+          # package the matrix holds: the saver named `agaric` after #4499
+          # dropped that package, so no shard matched and every shard
+          # cold-built its baseline weekly (#4696).
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.package == 'agaric-engine' && matrix.shard == 0 }}
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
