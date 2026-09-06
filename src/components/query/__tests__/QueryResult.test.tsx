@@ -481,8 +481,10 @@ describe('QueryResult', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // PageLink breadcrumb navigation
-  it('clicking page title in breadcrumb navigates to the page via PageLink', async () => {
+  // #4737 — the row's page-title span is plain text now (see
+  // QueryResultList), so navigation goes through the row's own click/Enter
+  // handler (`onNavigate`) rather than a nested `PageLink` widget.
+  it('clicking a result row navigates to its page via onNavigate', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_tags_by_prefix') return []
       if (cmd === 'run_advanced_query') {
@@ -514,12 +516,17 @@ describe('QueryResult', () => {
     })
 
     const user = userEvent.setup()
-    render(<QueryResult expression="type:tag expr:test" />)
+    const onNavigate = vi.fn((pageId: string) => {
+      useTabsStore.getState().navigateToPage(pageId, 'Resolved Page')
+    })
+    render(<QueryResult expression="type:tag expr:test" onNavigate={onNavigate} />)
 
-    // Wait for the page title to appear as a link (PageLink)
-    const pageLink = await screen.findByRole('link', { name: 'Resolved Page' })
-    await user.click(pageLink)
+    // The page title still shows in the row, as plain text.
+    await screen.findByText('Resolved Page')
+    const row = screen.getByText('Result with breadcrumb').closest('[role="option"]')
+    await user.click(row as HTMLElement)
 
+    expect(onNavigate).toHaveBeenCalledWith('P1')
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
     expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
