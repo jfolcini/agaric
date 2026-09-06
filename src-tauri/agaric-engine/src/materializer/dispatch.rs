@@ -506,46 +506,6 @@ fn inbound_sync_block_tag_refs_tasks(
     }
 }
 
-/// #4293: choose the `block_links`-reindex task(s) for an inbound-sync import
-/// that changed `changed_blocks`.
-///
-/// The third sibling of [`inbound_sync_fts_tasks`] and
-/// [`inbound_sync_block_tag_refs_tasks`], driven off the same set — but it
-/// deliberately has **no large-import fallback**, and that asymmetry is the
-/// whole design.
-///
-/// Both siblings fall back to a single vault-wide rebuild above a threshold,
-/// because for them the full rebuild is by construction the union of the
-/// per-block results. No such task exists here. `RebuildPageLinkCache` — the
-/// only vault-wide link task, and already a member of the debounced
-/// `INBOUND_SYNC_CACHE_REBUILD_TASKS` this call arms — rolls *up from*
-/// `block_links` and never re-parses content, so it cannot discharge
-/// `block_links_unresolved` debt. `resolve_referrers_of`'s own docs make the
-/// same point about the hypothetical vault-wide `rebuild_block_links`: it
-/// fires on restore/purge-shaped events, not on "a target became linkable",
-/// so it would leave exactly the scenario this issue is about broken.
-///
-/// Enqueuing per-block unconditionally is safe because the shed is
-/// recoverable: `ReindexBlockLinks` is mapped by `RetryKind::from_task`, so a
-/// task the bounded channel drops is persisted to `materializer_retry_queue`
-/// and re-driven by the sweeper. A large import therefore trades promptness
-/// for durability rather than correctness — which is the right trade against
-/// today's behaviour, where the debt is never pushed at all.
-///
-/// `purged_blocks` is ignored for the same reason the siblings ignore it:
-/// `block_links`' FKs are `ON DELETE CASCADE` (migration 0061), so a purge
-/// removes the rows synchronously.
-fn inbound_sync_block_link_tasks(
-    changed_blocks: &[agaric_core::ulid::BlockId],
-) -> Vec<MaterializeTask> {
-    changed_blocks
-        .iter()
-        .map(|block_id| MaterializeTask::ReindexBlockLinks {
-            block_id: Arc::from(block_id.as_str()),
-        })
-        .collect()
-}
-
 impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         sender_or_closed(
@@ -799,19 +759,25 @@ impl Materializer {
         for task in inbound_sync_block_tag_refs_tasks(changed_blocks) {
             self.try_enqueue_background(task)?;
         }
-        // #4293: the push half of the unresolved-link protocol. The in-tx hook
-        // maintains a changed block's OUTBOUND edges and records the debt, but
-        // nothing told the referrers waiting on it as a TARGET — so a peer
-        // creating the page a local block links to left that `[[ULID]]` dead
-        // until someone touched one of the two blocks locally. Enqueuing
-        // `ReindexBlockLinks` per changed block runs both halves of the
-        // handler: the block's own reindex, and `resolve_referrers_of`.
-        // Shed-safe for the same reason as the tag-refs fan-out above —
-        // `RetryKind::from_task` maps this task, so a drop self-heals through
-        // the sweeper. See [`inbound_sync_block_link_tasks`] for why this one
-        // has no large-import fallback.
-        for task in inbound_sync_block_link_tasks(changed_blocks) {
-            self.try_enqueue_background(task)?;
+        // #4293: `block_links`. The inbound Loro path projects block content
+        // but never re-derives the link table — `projection.rs` says the caller
+        // must run `cache::reindex_*` afterwards, and nothing here did. So a
+        // peer creating the page a local block links to left that `[[ULID]]`
+        // dead until someone touched one of the two blocks locally. One
+        // `ReindexBlockLinks` per changed block runs both halves of that
+        // handler: the block's own edges, and `resolve_referrers_of` for
+        // everyone recorded as waiting on it.
+        //
+        // No threshold, unlike the two fan-outs above, because neither
+        // fallback shape exists: `RebuildPageLinkCache` (already in the
+        // debounced set this call arms) rolls UP from `block_links` and never
+        // re-parses content, so it cannot discharge unresolved debt. Safe
+        // unconditionally because `RetryKind::from_task` maps this task — a
+        // shed drop is persisted and re-driven by the sweeper.
+        for block_id in changed_blocks {
+            self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from(block_id.as_str()),
+            })?;
         }
         Ok(())
     }
