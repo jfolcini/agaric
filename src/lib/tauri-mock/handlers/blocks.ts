@@ -25,7 +25,6 @@ import {
   renumberSiblings,
   restoreCohort,
   validationRejection,
-  ownerSpaceOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
   attachmentBytes,
