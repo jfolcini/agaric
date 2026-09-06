@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH tokened AS (\n               SELECT\n                   b.content AS content,\n                   COALESCE(b.space_id, p.space_id) AS src_space\n                 FROM blocks b\n                 LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n                WHERE b.deleted_at IS NULL\n                  AND b.block_type <> 'tag'\n                  AND b.content LIKE '%#[%'\n           ),\n           refs AS (\n               SELECT t.id AS tag_id, t.space_id AS tag_space, k.src_space AS src_space\n                 FROM blocks t\n                 INNER JOIN tokened k\n                     ON k.content LIKE '%#[' || t.id || ']%'\n                WHERE t.block_type = 'tag'\n                  AND t.deleted_at IS NULL\n                  AND t.space_id IS NOT NULL\n                  AND k.src_space IS NOT NULL\n               UNION\n               SELECT t.id AS tag_id, t.space_id AS tag_space,\n                      COALESCE(b.space_id, p.space_id) AS src_space\n                 FROM block_tags bt\n                 INNER JOIN blocks t ON t.id = bt.tag_id\n                 INNER JOIN blocks b ON b.id = bt.block_id\n                 LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n                WHERE t.block_type = 'tag'\n                  AND t.deleted_at IS NULL\n                  AND t.space_id IS NOT NULL\n                  AND b.deleted_at IS NULL\n                  AND COALESCE(b.space_id, p.space_id) IS NOT NULL\n           )\n           SELECT tag_id AS \"tag_id!: String\", MIN(src_space) AS \"target_space!: String\"\n             FROM refs\n            GROUP BY tag_id, tag_space\n           HAVING COUNT(DISTINCT src_space) = 1\n              AND MIN(src_space) <> tag_space\n            ORDER BY tag_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "target_space!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "636d830c30d08dbdf3baf607f91ae91397d031534b86d14f5fc50deedc8c568c"
+}
