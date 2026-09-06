@@ -307,7 +307,12 @@ describe('PageBrowserRowRenderer — duplicate titles (#4709)', () => {
       baseProps({ kind: 'tree-page', node: dupLeaf, pageIndex: 0, depth: 0 }),
     )
     const cue = container.querySelector('[data-duplicate-title-cue]')
-    expect(cue?.textContent).toBe('May 5, 2026, 02:00 PM')
+    // Asserted structurally, not as an absolute string: `formatTimestamp`
+    // renders in the runner's local zone, so a literal like '02:00 PM' passes
+    // in CEST and fails in CI's UTC. What matters is that the cue carries a
+    // TIME as well as a date — the same-day test below is what pins that the
+    // time actually discriminates.
+    expect(cue?.textContent).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
   })
 
   it('separates two duplicates created on the SAME DAY', () => {
@@ -364,7 +369,7 @@ describe('PageBrowserRowRenderer — duplicate titles (#4709)', () => {
         ),
       )
       const cue = container.querySelector('[data-duplicate-title-cue]')
-      expect(cue?.textContent, `density=${density}`).toBe('May 5, 2026, 02:00 PM')
+      expect(cue?.textContent, `density=${density}`).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
       unmount()
     }
   })
