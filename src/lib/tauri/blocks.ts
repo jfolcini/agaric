@@ -169,44 +169,6 @@ export async function purgeBlock(blockId: string): Promise<PurgeResponse> {
 }
 
 /**
- * Restore a list of soft-deleted blocks in a single IPC.
- *
- * Mirrors `restoreBlock` but accepts an array of ids; the backend runs one
- * IMMEDIATE transaction with one op_log scope instead of N. Each id is
- * treated as a cascade root (matches the TrashView's `listTrash` source).
- * Missing ids are silently skipped; a LIVE (not soft-deleted) id REJECTS the
- * whole call with `InvalidOperation` and restores nothing (#3838 — it used to
- * be silently skipped, where `restoreBlock` refuses the same id), exactly as
- * `purgeBlocksByIds` rejects a live id. Callers sourcing ids from a trash
- * listing should reload on that error: it means the listing went stale.
- * Returns the number of blocks (roots + descendants) whose `deleted_at` was
- * actually cleared.
- */
-export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
-  const resp = unwrap(await commands.restoreBlocksByIds(blockIds))
-  return resp.affected_count
-}
-
-/**
- * Permanently purge a list of soft-deleted blocks in a
- * single IPC.
- *
- * Mirrors `purgeBlock` but accepts an array of ids; the backend runs one
- * IMMEDIATE transaction with the ~13-table cleanup chain executed once
- * instead of N times. Missing ids are silently skipped; a LIVE (not
- * soft-deleted) id REJECTS the whole call with `InvalidOperation` and
- * purges nothing (#3819 — it used to hard-delete that block's subtree with
- * no op and no sync), exactly as `purgeBlock` rejects the same id. Callers
- * sourcing ids from a trash listing should reload on that error: it means
- * the listing went stale. Returns the number of `blocks` rows physically
- * removed.
- */
-export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
-  const resp = unwrap(await commands.purgeBlocksByIds(blockIds))
-  return resp.affected_count
-}
-
-/**
  * Batch-fetch the first child of each parent block in a single IPC call.
  *
  * Collapses the TemplatesView preview-fetch N+1
