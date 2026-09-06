@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\", b.parent_id, b.position\n           FROM blocks b\n           WHERE b.block_type = 'content'\n             AND b.deleted_at IS NULL\n             AND b.id > ?1 AND b.id < ?2\n             AND TRIM(COALESCE(b.content, ''), ?3) = ''\n             AND b.todo_state IS NULL\n             AND b.priority IS NULL\n             AND b.due_date IS NULL\n             AND b.scheduled_date IS NULL\n             AND NOT EXISTS (\n                 SELECT 1 FROM blocks k\n                 WHERE k.parent_id = b.id AND k.deleted_at IS NULL\n             )\n             AND NOT EXISTS (SELECT 1 FROM block_properties p WHERE p.block_id = b.id)\n             AND NOT EXISTS (SELECT 1 FROM block_tags t WHERE t.block_id = b.id)\n             AND NOT EXISTS (SELECT 1 FROM block_tag_refs r WHERE r.source_id = b.id)\n             AND NOT EXISTS (\n                 SELECT 1 FROM op_log o\n                 WHERE o.block_id = b.id AND o.created_at >= ?4\n             )\n           ORDER BY b.id\n           LIMIT ?5",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "parent_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "name": "position",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "b3e4a36de30f35447c5b40f819a0145d44d9fcbb5553dc099b3dc444ec86ff7e"
+}

@@ -78,6 +78,7 @@ import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
+import { deleteBlockIfLeakedEmpty } from '@/lib/empty-block-cleanup'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -473,6 +474,11 @@ export function BlockTree({
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
+  // #4729 — ids the empty-block cleanup below must skip exactly once. Written
+  // by `handleEnterSave` when a caret split deliberately leaves the SOURCE
+  // block empty (Enter at the start of a line moves the text down and keeps
+  // the blank line in place); consumed by the cleanup effect.
+  const preserveEmptyBlockIds = useRef(new Set<string>())
 
   // ── Block-level dialog surfaces (#2930) ────────────────────────────
   // State + open/close/act handlers for the block-history sheet, property
@@ -1004,6 +1010,7 @@ export function BlockTree({
     moveDown,
     createBelow,
     justCreatedBlockIds,
+    preserveEmptyBlockIds,
     discardDraft: handleDiscardDraft,
     t,
   })
@@ -1085,20 +1092,48 @@ export function BlockTree({
     t,
   })
 
-  // ── Empty-block cleanup: delete just-created blocks left empty ─────
+  // ── Empty-block cleanup: drop a leaked empty block on focus-leave ───
+  // #4729 Part 1. This effect used to fire ONLY for blocks the user had just
+  // created with Enter (`justCreatedBlockIds`) and checked only that the
+  // content was blank. Both halves of that were wrong: every OTHER way of
+  // leaving a block empty (clearing its text and clicking away, the add-block
+  // button, a template row) leaked a permanent row — 47% of the live content
+  // blocks in a real vault are empty and 106 of them sit stranded between two
+  // non-empty blocks — while a just-created block that had been given a due
+  // date from the gutter was deleted anyway, because blank content was the
+  // only test.
+  //
+  // Both are now the shared predicate in `empty-block-cleanup.ts` (the same
+  // one the backend boot sweep uses), which also carries the "carries nothing"
+  // metadata probe and the window-blur guard. The delete goes through the
+  // store's `remove` — the action that appends the op — never a store poke.
   useEffect(() => {
     const prevId = prevFocusedRef.current
     prevFocusedRef.current = focusedBlockId
+    if (!prevId || prevId === focusedBlockId) return
 
-    if (prevId && prevId !== focusedBlockId && justCreatedBlockIds.current.has(prevId)) {
-      justCreatedBlockIds.current.delete(prevId)
-      const block = pageStore.getState().blocksById.get(prevId)
-      if (block && (!block.content || block.content.trim() === '')) {
-        // The store's `remove` logs its own failure; never rejects.
-        void remove(prevId)
-      }
-    }
-  }, [focusedBlockId, remove, pageStore])
+    // Bookkeeping unchanged — leaving a block closes its "just created"
+    // window, which is what gates `handleEscapeCancel`'s own auto-delete.
+    justCreatedBlockIds.current.delete(prevId)
+
+    // Enter pressed at the START of a block deliberately leaves the source
+    // block empty and moves its text into a new sibling below. That empty
+    // block is the user's blank line, not a leak: deleting it would make the
+    // keystroke a visible no-op. `handleEnterSave` registers the id; this is
+    // the single consumption point.
+    if (preserveEmptyBlockIds.current.delete(prevId)) return
+
+    void deleteBlockIfLeakedEmpty({
+      blockId: prevId,
+      zoomedBlockId,
+      remove,
+      readBlocks: () => pageStore.getState().blocks,
+      isPageTruncated: () => pageStore.getState().truncatedTotal !== null,
+      // A click away and straight back during the metadata probe must not
+      // delete the block out from under a caret that is already back in it.
+      isStillBlurred: () => useBlockStore.getState().focusedBlockId !== prevId,
+    })
+  }, [focusedBlockId, remove, pageStore, zoomedBlockId])
 
   // ── Extracted keyboard shortcuts (document-level keydown listeners) ─
   useBlockTreeKeyboardShortcuts({

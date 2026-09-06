@@ -108,6 +108,15 @@ pub mod recurrence;
 /// `crate::spaces::…` so those call sites resolve unchanged.
 pub mod spaces;
 
+/// Boot-time sweep of leaked empty blocks (#4729 part 2): the eight-guard
+/// deletion predicate, the age floor and per-boot cap, and the cursor that
+/// keeps every boot after the first off a full `blocks` walk. Emits
+/// `DeleteBlock` ops through `apply_op_projected` — never a raw tombstone
+/// write. The app's `soft_delete::empty_block_sweep` drives it after
+/// `bootstrap_spaces`, in a non-fatal `CommandTx` of its own, and runs the
+/// post-commit engine fan-out.
+pub mod empty_blocks;
+
 /// The op-log DAG-traversal core (#2621 THE INVERSION) — the edit-chain /
 /// merge primitives over the op_log: hash-verified remote-op ingest
 /// (`insert_remote_op` + the shared `ingest_remote_record` core, and the

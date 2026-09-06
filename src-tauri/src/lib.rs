@@ -1198,6 +1198,19 @@ fn recover_and_bootstrap(
         tracing::warn!(error = %e, "failed to enqueue projected agenda cache rebuild at boot");
     }
 
+    bootstrap_spaces_and_sweep(pools, device_id, materializer)?;
+
+    Ok(report)
+}
+
+/// Boot-phase 5b — the per-space bootstrap (boot-fatal) and the best-effort
+/// empty-block sweep that runs right after it. Split out of
+/// [`recover_and_bootstrap`] (#4639) when the sweep landed.
+fn bootstrap_spaces_and_sweep(
+    pools: &db::DbPools,
+    device_id: &str,
+    materializer: &materializer::Materializer,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Phase 1: seed the two default spaces (Personal + Work) and
     // migrate every pre-existing page into Personal. Idempotent across
     // boots via an internal fast-path check. Failure is boot-fatal:
@@ -1212,7 +1225,16 @@ fn recover_and_bootstrap(
         return Err(Box::new(e));
     }
 
-    Ok(report)
+    // #4729 part 2 — soft-delete leaked empty blocks. Best-effort, in a
+    // transaction of its own: a cleanup must never keep the app from
+    // starting, and it is load-bearing for no invariant. After
+    // `bootstrap_spaces` so every candidate's page already has its space.
+    tauri::async_runtime::block_on(soft_delete::sweep_leaked_empty_blocks_at_boot(
+        &pools.write,
+        device_id,
+        materializer,
+    ));
+    Ok(())
 }
 
 /// #1255 — surface a degraded boot to the user.
