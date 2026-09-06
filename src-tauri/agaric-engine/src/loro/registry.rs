@@ -148,7 +148,7 @@ pub struct LoroEngineRegistry {
     ///
     /// `save_all_engines` collects O(1) doc handles, drops the registry
     /// lock, then persists each export with its own awaited INSERT. A
-    /// snapshot-RESET (`apply_snapshot` + `reload_registry_from_db`) that
+    /// wholesale wipe + `reload_registry_from_db` (the #4699-deleted RESET) that
     /// lands inside that collect→write span would otherwise let the saver
     /// re-persist PRE-reset engine state into the freshly wiped
     /// `loro_doc_state` (the #779 resurrection, via the periodic tick or
@@ -444,7 +444,7 @@ impl LoroEngineRegistry {
     /// Drop every registered engine (#607).
     ///
     /// Used by [`crate::loro::snapshot::reload_registry_from_db`] after a
-    /// snapshot RESET (`apply_snapshot`) wiped `loro_doc_state`: the live
+    /// wholesale wipe (the #4699-deleted snapshot RESET) of `loro_doc_state`: the live
     /// engines still hold the pre-reset CRDT lineage and must be dropped so
     /// neither the periodic `save_all_engines` tick nor the `RunEvent::Exit`
     /// save can persist stale state over the post-reset SQL. Subsequent

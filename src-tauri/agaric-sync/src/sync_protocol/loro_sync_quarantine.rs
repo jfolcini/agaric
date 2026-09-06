@@ -338,11 +338,12 @@ pub async fn read_quarantined_bytes(
 /// possible at any time, by a human or a diagnostic tool, without a schema
 /// migration or a rebuild.
 ///
-/// # A snapshot catch-up empties this table (#3243)
+/// # A snapshot catch-up does not touch this table
 ///
-/// `snapshot::restore::apply_snapshot`'s RESET path deletes
-/// `loro_sync_quarantine` alongside `loro_sync_inbox`, so there is never a row
-/// left to re-admit pre-reset bytes from under the retired #792 peer epoch.
+/// The snapshot RESET used to delete `loro_sync_quarantine` alongside
+/// `loro_sync_inbox` (#3243, so no row could re-admit pre-reset bytes under
+/// the retired #792 peer epoch); #4699 deleted the RESET, and the Loro
+/// catch-up leaves quarantined slots where they are.
 ///
 /// The move is transactional in the same direction as
 /// [`note_unresolved_slot`]'s: the inbox row is inserted and the quarantine row

@@ -4,9 +4,9 @@
 //!
 //! [`crate::loro::engine::peer_id_from_device_id`] maps the device id
 //! to a deterministic Loro `PeerID` — deliberately stable across boots
-//! so a device's op history stays credited to one peer. A snapshot
-//! RESET (#607, the app-layer `snapshot::apply_snapshot`) breaks
-//! the assumption behind that stability: it wipes `loro_doc_state`, so
+//! so a device's op history stays credited to one peer. The snapshot
+//! RESET (#607; deleted with the blob in #4699) broke the assumption
+//! behind that stability: it wiped `loro_doc_state`, so
 //! the engines reload EMPTY and restart op counters at 0 under the
 //! SAME peer id, forking the `(peer, counter)` space against this
 //! device's pre-reset ops still held by peers. Outbound, peers then
@@ -21,21 +21,18 @@
 //! * Epoch `0` — the implicit value for every existing vault (the row
 //!   is absent) — keeps the legacy `peer_id_from_device_id` mapping
 //!   byte-for-byte, so upgrading never re-keys a healthy device.
-//! * [`bump_peer_epoch`] runs INSIDE the RESET transaction, atomically
-//!   with the `loro_doc_state` wipe: post-reset engines derive a fresh
-//!   `PeerID` via [`crate::loro::engine::peer_id_for_epoch`], whose
-//!   counters can safely restart at 0. A crash between the RESET
-//!   commit and the in-memory registry reload is covered — the next
-//!   boot reads the already-bumped epoch.
+//! * The RESET bumped the epoch inside its own transaction, atomically
+//!   with the wipe, so post-reset engines derived a fresh `PeerID` via
+//!   [`crate::loro::engine::peer_id_for_epoch`]. Nothing bumps it any more
+//!   (#4699), but a vault that went through a RESET before then carries
+//!   epoch ≥ 1, which is why the read path stays.
 //!
-//! The in-memory holder is `LoroEngineRegistry::peer_epoch`
-//! (loaded at boot in `crate::run`, refreshed by
-//! [`crate::loro::snapshot::reload_registry_from_db`] right after a
-//! RESET).
+//! The in-memory holder is `LoroEngineRegistry::peer_epoch`, loaded at
+//! boot in `crate::run`.
 
 use std::time::Duration;
 
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
 
@@ -158,36 +155,6 @@ where
     Err(AppError::from(err))
 }
 
-/// Increment the persisted peer-id epoch inside the caller's
-/// transaction and return the new value.
-///
-/// Called from `apply_snapshot` (the RESET path) in the SAME
-/// transaction that wipes `loro_doc_state`, so "CRDT history gone" and
-/// "peer id retired" commit atomically — there is no crash window in
-/// which a wiped vault could boot back onto the old peer id and fork
-/// the `(peer, counter)` space (#792).
-pub async fn bump_peer_epoch(tx: &mut Transaction<'_, Sqlite>) -> Result<u64, AppError> {
-    let now = agaric_store::db::now_ms();
-    let new_value: String = sqlx::query_scalar(
-        "INSERT INTO app_settings (key, value, updated_at) \
-         VALUES (?, '1', ?) \
-         ON CONFLICT(key) DO UPDATE SET \
-             value = CAST(CAST(value AS INTEGER) + 1 AS TEXT), \
-             updated_at = ? \
-         RETURNING value",
-    )
-    .bind(PEER_EPOCH_KEY)
-    .bind(now)
-    .bind(now)
-    .fetch_one(&mut **tx)
-    .await?;
-    new_value.parse::<u64>().map_err(|e| {
-        AppError::validation(format!(
-            "loro: peer_epoch bump produced non-u64 value {new_value:?}: {e}"
-        ))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,46 +171,6 @@ mod tests {
     async fn load_peer_epoch_defaults_to_zero_when_row_absent_792() {
         let (pool, _dir) = test_pool().await;
         assert_eq!(load_peer_epoch(&pool).await.expect("load"), 0);
-    }
-
-    /// Each bump increments by exactly 1 and the bumped value is what a
-    /// subsequent load observes — the boot path's source of truth.
-    #[tokio::test]
-    async fn bump_peer_epoch_increments_and_persists_792() {
-        let (pool, _dir) = test_pool().await;
-
-        let mut tx = pool.begin().await.expect("begin");
-        let first = bump_peer_epoch(&mut tx).await.expect("bump 1");
-        tx.commit().await.expect("commit");
-        assert_eq!(first, 1, "first bump seeds the row at 1");
-        assert_eq!(load_peer_epoch(&pool).await.expect("load"), 1);
-
-        let mut tx = pool.begin().await.expect("begin");
-        let second = bump_peer_epoch(&mut tx).await.expect("bump 2");
-        tx.commit().await.expect("commit");
-        assert_eq!(second, 2, "second bump increments the existing row");
-        assert_eq!(load_peer_epoch(&pool).await.expect("load"), 2);
-    }
-
-    /// A rolled-back bump must leave the persisted epoch untouched —
-    /// this is what makes bumping inside the RESET tx atomic with the
-    /// `loro_doc_state` wipe (a failed `apply_snapshot` rolls both
-    /// back; the engines reload onto the OLD epoch, matching the
-    /// restored pre-reset `loro_doc_state` rows).
-    #[tokio::test]
-    async fn bump_peer_epoch_rolls_back_with_the_tx_792() {
-        let (pool, _dir) = test_pool().await;
-
-        let mut tx = pool.begin().await.expect("begin");
-        let bumped = bump_peer_epoch(&mut tx).await.expect("bump");
-        assert_eq!(bumped, 1);
-        tx.rollback().await.expect("rollback");
-
-        assert_eq!(
-            load_peer_epoch(&pool).await.expect("load"),
-            0,
-            "a rolled-back RESET must not retire the peer id"
-        );
     }
 
     /// An unparseable epoch value degrades to 0 with a warn rather than

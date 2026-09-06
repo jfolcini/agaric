@@ -108,8 +108,9 @@ pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
 ///
 /// ## Why an epoch exists
 ///
-/// A snapshot RESET (#607, `crate::snapshot::restore::apply_snapshot`)
-/// wipes `loro_doc_state` and reloads the per-space engines EMPTY. A
+/// The snapshot RESET (#607; deleted in #4699 — a vault that went through
+/// one keeps its bumped epoch) wiped `loro_doc_state` and reloaded the
+/// per-space engines EMPTY. A
 /// fresh doc restarts Loro op counters at 0 — if it kept the same
 /// deterministic `PeerID`, every post-reset op would mint `(peer,
 /// counter)` ids that *collide* with this device's pre-reset ops still

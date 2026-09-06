@@ -888,7 +888,7 @@ async fn all_edges(pool: &SqlitePool) -> Vec<(String, String)> {
 /// reindexer has exactly ONE trigger: a change to the SOURCE's content. Only
 /// `CreateBlock` and `EditBlock` enqueue `ReindexBlockLinks`, both keyed on
 /// the source. There is no vault-wide `rebuild_block_links` behind it —
-/// `truncate_block_links`' only caller is agaric-sync's snapshot-restore wipe
+/// the one wholesale wipe of it went with the snapshot restore (#4699)
 /// — and every downstream artefact (`page_link_cache`,
 /// `pages_cache.inbound_link_count`) folds `block_links` as ground truth, so
 /// the loss is self-consistent and invisible. The edge was gone permanently.

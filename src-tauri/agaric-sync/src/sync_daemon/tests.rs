@@ -5239,7 +5239,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // initiator MERGES it into its own engine and reprojects SQL. Thread the
     // initiator's live registry so `apply_remote` has an engine to merge into.
     let init_state = init_mat.loro_state();
-    let outcome = crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
+    crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
         &mut client.send,
         &mut client.recv,
         &init_pool,
@@ -5254,14 +5254,6 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     )
     .await
     .expect("catch-up must succeed end-to-end");
-
-    assert!(
-        matches!(
-            outcome,
-            crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { .. }
-        ),
-        "expected Applied, got {outcome:?}"
-    );
 
     // Let the server task finish cleanly.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_task).await;

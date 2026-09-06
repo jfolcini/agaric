@@ -18,9 +18,9 @@
 //!   retention window is purged to **zero** rows (#3310). The IPC
 //!   `MIN_RETENTION_DAYS` guard bounds only the window, not the outcome: a
 //!   90-day-retention vault left untouched for a quarter reaches it too.
-//! * [`super::truncate`] (the snapshot RESET) — an unbounded `DELETE FROM
-//!   op_log` (#3998). Its only production caller is the paired-peer snapshot
-//!   catch-up in `agaric-sync`'s `snapshot_transfer`.
+//! * The snapshot RESET's unbounded `DELETE FROM op_log` (#3998) — deleted
+//!   in #4699; the marks it recorded stay valid on a vault that went through
+//!   one.
 //!
 //! After either wipe the allocator restarted the device at `seq = 1` with
 //! `parent_seqs = NULL`, re-minting op addresses the device had already
@@ -37,13 +37,11 @@
 //!
 //! We persist a monotone per-device high-water mark in `app_settings` — the
 //! same table, and for the same reason, that #792 uses for
-//! `loro.peer_id_epoch`: **the RESET does not wipe it**
-//! (`apply_snapshot`'s wipe list covers the cache tables plus the core
-//! tables it re-populates from the snapshot; `app_settings` is deliberately
-//! excluded so exactly this kind of identity state can outlive the swap).
+//! `loro.peer_id_epoch`: a wholesale wipe leaves `app_settings` alone, so
+//! exactly this kind of identity state outlives it.
 //!
-//! * Both wipe helpers call [`capture_device_frontier`] /
-//!   [`capture_all_frontiers`] **before** their DELETE, in the caller's
+//! * The wipe helper calls [`capture_device_frontier`] **before** its
+//!   DELETE, in the caller's
 //!   transaction, so the mark and the wipe commit or roll back together.
 //! * [`next_seq_for_device`] allocates from
 //!   `MAX(MAX(seq) over surviving rows, durable mark) + 1`, so the counter
@@ -84,10 +82,9 @@
 //!
 //! ## Marks are recorded for EVERY device, but only ever READ for the local one
 //!
-//! [`capture_all_frontiers`] records a mark for every `device_id` present in
-//! `op_log`, including remote peers whose audit rows the RESET is about to
-//! drop, because [`super::truncate`] has no notion of "which device is
-//! local". Those extra rows are inert: the only reader is the local-append
+//! A mark may exist for a remote `device_id` too (the #4699-deleted RESET's
+//! wipe recorded every device present in `op_log`, having no notion of
+//! "which device is local"). Those extra rows are inert: the only reader is the local-append
 //! allocator, and this device never appends under a peer's `device_id`
 //! (remote rows arrive through `ingest_remote_op_in_tx`, which carries an
 //! explicit `seq`). In particular the mark is deliberately NOT consulted by
@@ -308,29 +305,6 @@ pub(super) async fn capture_device_frontier(
     .fetch_one(&mut *conn)
     .await?;
     record_high_water(conn, device_id, max_seq).await
-}
-
-/// Capture the current `MAX(seq)` of EVERY device into its durable mark.
-///
-/// Called by [`super::truncate`] immediately BEFORE its unbounded DELETE.
-/// `truncate` does not know which `device_id` is local (see the module docs
-/// on why recording the remote ones is inert), so it records them all.
-///
-/// # Errors
-/// Returns [`AppError`] if the read or any upsert fails.
-pub(super) async fn capture_all_frontiers(
-    conn: &mut sqlx::SqliteConnection,
-) -> Result<(), AppError> {
-    let rows = sqlx::query!(
-        r#"SELECT device_id AS "device_id!: String", MAX(seq) AS "frontier!: i64"
-           FROM op_log GROUP BY device_id"#,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    for row in rows {
-        record_high_water(&mut *conn, &row.device_id, row.frontier).await?;
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

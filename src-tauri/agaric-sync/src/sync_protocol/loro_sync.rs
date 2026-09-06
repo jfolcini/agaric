@@ -526,8 +526,9 @@ pub async fn apply_remote(
     // wrong causal prefix — panicking inside loro-internal 1.12 (debug
     // assertions) or silently corrupting state (release). Short-circuit
     // into the snapshot-fallback path instead: the daemon-level
-    // catch-up applies the peer's SQL snapshot, and `apply_snapshot`
-    // now bumps the peer-id epoch, permanently healing the fork.
+    // catch-up merges the peer's Loro snapshot (#2503). The SQL RESET
+    // that used to run here also bumped the peer-id epoch; #4699 deleted
+    // it, and the Loro merge does not bump anything.
     //
     // #3213: the same decode also recovers the frontier this blob DECLARES,
     // which becomes the condition for deleting its write-ahead slot below —
