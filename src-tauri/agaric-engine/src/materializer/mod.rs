@@ -117,10 +117,8 @@ pub use handlers::{
     GC_RACE_RENDEZVOUS, handle_background_task, handle_background_task_metered,
     handle_foreground_task,
 };
-// Pinned from `agaric-sync`, which sees both halves of each pair: the snapshot
-// RESET wipe list against the post-restore rebuild set, and the transport
+// Pinned from `agaric-sync`, which sees both halves of the pair: the transport
 // receive timeout against the attachment temp-file reap window.
-pub use coordinator::POST_SNAPSHOT_CACHE_REBUILDS;
 pub use handlers::TRANSFER_TEMP_REAP_AFTER;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -219,13 +217,13 @@ pub enum MaterializeTask {
         block_id: Arc<str>,
     },
     /// Full-vault recompute of `block_tag_refs`. Fires on
-    /// delete / restore / purge and from `apply_snapshot` / boot-time
-    /// "table is empty" fallback.
+    /// delete / restore / purge and from the boot-time "table is empty"
+    /// fallback.
     RebuildBlockTagRefsCache,
     /// Full-vault recompute of `page_link_cache`
     /// (the page-level roll-up of `block_links`). Fires on delete /
-    /// restore / purge and from `apply_snapshot` / boot-time "table
-    /// is empty" fallback. Per-content-edit invalidation rolls up
+    /// restore / purge and from the boot-time "table is empty" fallback.
+    /// Per-content-edit invalidation rolls up
     /// inside the [`MaterializeTask::ReindexBlockLinks`] handler.
     RebuildPageLinkCache,
     Barrier(Arc<tokio::sync::Notify>),

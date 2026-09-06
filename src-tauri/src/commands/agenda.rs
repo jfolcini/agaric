@@ -455,12 +455,11 @@ pub async fn list_projected_agenda_inner_with_today(
     //
     // The cold-cache case the probe was written for is untouched: a device
     // that has never rebuilt has no horizon row, so `cache_covers_range` is
-    // false and the guard above already routed it to the projector. The same
-    // holds for the one path that empties the cache outside a rebuild — a
-    // snapshot RESET, whose `CACHE_TABLES` wipe includes
-    // `projected_agenda_horizon` precisely so that the advertised span can
-    // never outlive the rows backing it (#2601's atomicity invariant, which
-    // this branch now depends on for correctness and not merely for speed).
+    // false and the guard above already routed it to the projector. Nothing
+    // empties the cache outside a rebuild, and a rebuild writes the horizon
+    // row in the same transaction as the rows it advertises (#2601's
+    // atomicity invariant, which this branch now depends on for correctness
+    // and not merely for speed).
     //
     // Freshness: a repeating block created since the last rebuild is not in
     // the cache, so it is not in this page. That is the same staleness every
