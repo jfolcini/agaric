@@ -614,11 +614,6 @@ export function checkFilerPlumbing({ lines, push }) {
     return
   }
 
-  // `LANE_AUTHORITATIVE` only. This guard's single subject is the mutation
-  // filer, which since the per-lane split does not read `CRON_EQUIVALENT`
-  // at all — accepting it too left an alternative with no caller, i.e. one
-  // more spelling that could silently satisfy the check.
-  const AUTHORITY_ENV = /LANE_AUTHORITATIVE/
   const jobIf = lines.find((l) => /^ {4}if:/.test(l)) ?? ''
   if (/event_name\s*==\s*'schedule'/.test(jobIf)) {
     push(
@@ -627,6 +622,11 @@ export function checkFilerPlumbing({ lines, push }) {
     )
   } else {
     const run = filerRunLines(lines)
+    // `LANE_AUTHORITATIVE` only. This guard's single subject is the mutation
+    // filer, which since the per-lane split does not read `CRON_EQUIVALENT`
+    // at all — accepting it too left an alternative with no caller, i.e. one
+    // more spelling that could silently satisfy the check.
+    const AUTHORITY_ENV = /LANE_AUTHORITATIVE/
     if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => AUTHORITY_ENV.test(l)))) {
       push(
         'filer-dispatch-writes',

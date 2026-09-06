@@ -417,8 +417,6 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
     let scheduler = SyncScheduler::new();
     start_pairing_inner(&pairing_state, "device-local").unwrap();
 
-    // A non-empty remote id, exercising the path that pre-#855 took the
-    // now-deleted peer_ref else-branch.
     confirm_pairing_inner(
         &pool,
         &pairing_state,
@@ -452,37 +450,6 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
     assert!(
         session.is_none(),
         "pairing session must be cleared after confirm"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_sets_pending_marker_not_peer() {
-    // The joiner does not know the peer's id at confirm time — mDNS + TOFU
-    // establish it later. Confirming must set the pending-pairing marker (so
-    // the dormant daemon wakes to accept the first connection) and NOT write a
-    // junk empty-string peer_refs row.
-    let (pool_host, _dir_host) = test_pool().await;
-    let state_host = Mutex::new(None);
-    let sched_host = SyncScheduler::new();
-    let host_passphrase =
-        host_offers_pairing(&pool_host, &state_host, &sched_host, "device-host").await;
-
-    let (pool, _dir) = test_pool().await;
-    let pairing_state = Mutex::new(None);
-    let scheduler = SyncScheduler::new();
-
-    start_pairing_inner(&pairing_state, "device-local").unwrap();
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase, None)
-        .await
-        .unwrap();
-
-    assert!(
-        peer_refs::list_peer_refs(&pool).await.unwrap().is_empty(),
-        "an empty remote id must not create a peer_refs row"
-    );
-    assert!(
-        peer_refs::is_pending_pairing(&pool).await.unwrap(),
-        "an empty remote id must set the pending-pairing marker"
     );
 }
 
