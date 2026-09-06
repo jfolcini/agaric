@@ -2761,7 +2761,7 @@ fi
 # The per-category plan is `prek_skip_list` above, which CI's `lint` job reads
 # through `--print-skip` — one list, not two. A hook is skipped only when
 # the category it guards is absent from this push.
-# The nightly `full-suite` job in
+# The weekly `full-suite-prek` leg in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
 # suite over the whole tree as the backstop, and CI's `lint` job runs the
 # pre-commit stage over the whole tree on every PR; a latent breach in an
