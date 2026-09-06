@@ -10,6 +10,7 @@ import {
 } from '@/components/editor-toolbar/ImageResizeToolbar'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { formatSize } from '@/lib/attachment-utils'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
@@ -90,45 +91,6 @@ function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string):
   // the fetch and can abort the download. A 0ms timeout lets the browser pick
   // up the URL before it is freed — the standard blob-download pattern.
   setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-/**
- * One-shot viewport gate (#758 item 5) — returns `true` once the referenced
- * element has entered the viewport (+ rootMargin buffer), then stays `true`.
- *
- * `loading="lazy"` on the `<img>` was decorative: the full attachment bytes
- * were fetched over IPC in the mount effect regardless of visibility, which
- * hurts mobile memory on long pages. Gate the IPC read on actual viewport
- * entry instead. Mirrors `DaySection`'s `useEnteredViewport` pattern.
- */
-function useEnteredViewport<T extends HTMLElement>(
-  rootMargin = '200px 0px',
-): [boolean, React.RefObject<T | null>] {
-  // A runtime without `IntersectionObserver` has no gate to wait for, so it
-  // starts entered and loads eagerly.
-  const [entered, setEntered] = useState(() => typeof IntersectionObserver === 'undefined')
-  const ref = useRef<T | null>(null)
-
-  useEffect(() => {
-    if (entered) return
-    const el = ref.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setEntered(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [entered, rootMargin])
-
-  return [entered, ref]
 }
 
 export interface LightboxImage {
