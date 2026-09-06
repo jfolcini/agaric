@@ -105,10 +105,12 @@ export const propertiesHandlers = {
     }
     const rowKind = ROW_FIELD_KEYS[key]
     // SQL `a <op> b` on TEXT: NULL never compares true, except that the
-    // non-reserved `neq` predicate is written `IS NULL OR !=`.
+    // non-reserved `neq` predicate is written `IS NULL OR !=` (#384). Only
+    // the non-reserved path reaches this with a NULL: the reserved one
+    // returns on a NULL column first.
     const compare = (actual: string | null, wanted: string | null): boolean => {
       if (wanted === null) return true
-      if (actual === null) return operator === 'neq' && rowKind === undefined
+      if (actual === null) return operator === 'neq'
       switch (operator) {
         case 'neq': {
           return actual !== wanted

@@ -1144,14 +1144,14 @@ fn page_result_with(v: &Value, token: &dyn Fn(&Value) -> String) -> RawResult {
 /// is what a keyset-ordering divergence changes (#3821).
 fn cursor_path(command: &str) -> &'static [&'static str] {
     match command {
-        // `list_blocks` and `run_advanced_query` nest every query param under
-        // their request DTO. `run_advanced_query` was missing here until #3893
+        // `list_blocks`, `run_advanced_query` and `query_by_property` nest
+        // every query param under their request DTO. `run_advanced_query` was missing here until #3893
         // added the first fixture that chains it: `AdvancedQueryRequest::cursor`
         // is a field of the DTO (`agaric-store/src/query/mod.rs`), so a
         // top-level `args.cursor` would have been dropped on the floor and the
         // "second page" would silently have been the FIRST page again — a
         // pagination step that proves nothing while looking like it does.
-        "list_blocks" | "run_advanced_query" => &["request", "cursor"],
+        "list_blocks" | "run_advanced_query" | "query_by_property" => &["request", "cursor"],
         _ => &["cursor"],
     }
 }

@@ -175,7 +175,8 @@ function evalTagQuery(
         return false
       }
       case 'And': {
-        return node.value.every((child) => matches(blockId, child))
+        // `And([])` resolves to the EMPTY set on the backend, not to every block.
+        return node.value.length > 0 && node.value.every((child) => matches(blockId, child))
       }
       case 'Or': {
         return node.value.some((child) => matches(blockId, child))

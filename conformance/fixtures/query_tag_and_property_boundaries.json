@@ -334,6 +334,19 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "qbp_neq_matches_a_null_value_column",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "qbp_date_lt_excludes_bound",
       "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
       "total_count": null
@@ -568,6 +581,14 @@
         "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null"
       ],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_and_of_nothing_is_empty",
+      "rows": [],
+      "total_count": null
     }
   ],
   "name": "query_tag_and_property_boundaries",
@@ -769,6 +790,24 @@
       "command": "query_by_property",
       "comment": "`neq` over the rows that HOLD the key: `(bp.value_text IS NULL OR bp.value_text != ?)`, so it is the complement within `status` holders (S3, S5), never the complement of the vault. An implementation that ignores `operator` returns the `eq` set instead.",
       "name": "qbp_neq_text",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "operator": "neq",
+          "valueText": "x"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`neq` against a value that lives in the OTHER column: every `due` row holds its value in `value_date`, so `value_text` is NULL on all four, and `NULL != 'x'` is NULL, not TRUE. #384 writes the predicate `(bp.value_text IS NULL OR bp.value_text != ?)`, so all four holders come back; a mock that lets NULL fail `!=` returns nothing.",
+      "name": "qbp_neq_matches_a_null_value_column",
       "ordered": true
     },
     {
@@ -1176,6 +1215,23 @@
       "comment": "`NOT work` with inheritance on: S9 inherits `work` from S8, so it leaves the complement too (S1, S3, S4, S6, S10, S11, S12).",
       "name": "expr_not_with_inherited",
       "ordered": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "And",
+          "value": []
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "`And` over no children is the EMPTY set (`resolve.rs`), not the identity of intersection; a mock built on `[].every()` returns every live block.",
+      "expect_empty": true,
+      "name": "expr_and_of_nothing_is_empty"
     }
   ],
   "seed": {
