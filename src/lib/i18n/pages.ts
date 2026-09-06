@@ -69,6 +69,7 @@ export const pages: Record<string, string> = {
   'pageHeader.redoFailed': 'Redo failed',
   'pageHeader.pageRenamed': 'Page renamed',
   'pageHeader.renameFailed': 'Failed to rename page',
+  'pageHeader.renameDuplicateTitle': 'A page with this title already exists in this space',
   'pageHeader.aliases': 'Also known as:',
   'pageHeader.aliasUpdateFailed': 'Failed to update aliases',
   'pageHeader.loadAliasesFailed': 'Failed to load aliases',

@@ -31,7 +31,7 @@ Browse every page in the active space.
 - **Sort dropdown**: Alphabetical, Recent, Created, Recently modified, Most linked, Most content.
 - **Virtualised list**: scrolls smoothly even with thousands of pages.
 - **Multi-select** pages with `Ctrl/Shift+Click`; **batch delete** with confirmation.
-- **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title.
+- **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title. A title is unique within its space: renaming onto an existing title is refused, and creating one (including via `[[name]]`) opens the existing page.
 - **Starred pages**: starred pages appear in a separate flat list above the tree.
 
 To create a new page: sidebar footer → *New Page* button. The new page opens in the active tab.

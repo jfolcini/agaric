@@ -12,12 +12,15 @@
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import {
   type TypedHandlers,
+  appErrorRejection,
   assertValidReservedPropertyValue,
   deleteCohort,
+  findLivePageByTitle,
   insertAtSlotAndRenumber,
   invalidOperationRejection,
   nextCohortMarker,
   notFoundRejection,
+  pageSpaceOf,
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
@@ -700,8 +703,22 @@ export const blocksHandlers = {
 
   edit_block: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    const blockId = a['blockId'] as string
+    const b = blocks.get(blockId)
+    if (!b) throw notFoundRejection(`block '${blockId}' not found`)
+    // #4723 — page titles are unique per space: mirrors the backend's
+    // `reject_duplicate_page_title` (the page itself is not its own clash).
+    if (b['block_type'] === 'page') {
+      const spaceId = pageSpaceOf(blockId)
+      const toText = a['toText'] as string
+      if (spaceId !== null && findLivePageByTitle(toText, spaceId, blockId) !== null) {
+        throw appErrorRejection({
+          kind: 'validation',
+          code: 'DuplicatePageTitle',
+          message: `a page titled '${toText}' already exists in space '${spaceId}'`,
+        })
+      }
+    }
     const oldContent = b['content'] as string | null
     b['content'] = a['toText'] as string
     const op = pushOp('edit_block', {

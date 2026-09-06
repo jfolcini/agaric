@@ -39,6 +39,7 @@ import { useSpaceStore } from '@/stores/space'
 interface UsePageCreationParams {
   wireFilters: FilterPrimitive[]
   reload: () => void
+  pages: (BlockRow | PageWithMetadataRow)[]
   setPages: Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>
   setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
   onPageSelect?: ((pageId: string, title?: string) => void) | undefined
@@ -57,6 +58,7 @@ interface UsePageCreationResult {
 export function usePageCreation({
   wireFilters,
   reload,
+  pages,
   setPages,
   setDisplayTotalCount,
   onPageSelect,
@@ -117,7 +119,8 @@ export function usePageCreation({
         // optimistic path is kept for the unfiltered case (the common one).
         if (wireFilters.length > 0) {
           reload()
-        } else {
+        } else if (!pages.some((p) => p.id === newId)) {
+          // #4723 — an existing title resolves to that page; it is already listed.
           const newPage: BlockRow = {
             id: newId,
             block_type: 'page',
@@ -153,7 +156,7 @@ export function usePageCreation({
       }
       setIsCreating(false)
     },
-    [newPageName, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
+    [newPageName, pages, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
   )
 
   const handleCreateUnder = useCallback((namespacePath: string) => {

@@ -18,6 +18,7 @@ import {
   compareMetaRows,
   deriveLinkEdges,
   encodeNextCursor,
+  findLivePageByTitle,
   metaRowMatchesFilter,
   notFoundRejection,
   sortDiscriminator,
@@ -357,9 +358,14 @@ export const pagesHandlers = {
   // active space.
   create_page_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const id = fakeId()
     const parentId = (a['parentId'] as string | null) ?? null
     const spaceId = (a['spaceId'] as string | null) ?? null
+    const content = (a['content'] as string) ?? null
+    // #4723 — a title is unique among live pages of one space: an existing
+    // title resolves to that page (no row, no op), as the backend does.
+    const existing = findLivePageByTitle(content, spaceId)
+    if (existing !== null) return existing
+    const id = fakeId()
     const siblings = [...blocks.values()].filter(
       (b) => b['parent_id'] === parentId && !b['deleted_at'],
     )
@@ -367,7 +373,7 @@ export const pagesHandlers = {
     const row = {
       id,
       block_type: 'page',
-      content: (a['content'] as string) ?? null,
+      content,
       parent_id: parentId,
       page_id: id,
       position,

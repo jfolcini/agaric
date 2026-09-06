@@ -301,7 +301,8 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
 
   // ── Pages / spaces / property definitions ──
   create_page_in_space:
-    'a page is a root block (create_block); space scoping outside snapshot scope',
+    'a page is a root block (create_block); space scoping outside snapshot scope; the ' +
+    '#4723 resolve-to-existing-title is pinned mock-side by page-title-unique.test.ts',
   create_space: 'space registry outside the single-space conformance snapshot scope',
   move_blocks_to_space: 'cross-space move outside the single-space conformance snapshot scope',
   set_page_aliases: 'page-alias table outside the conformance snapshot scope',

@@ -29,6 +29,7 @@ import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
+import { validationCode } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { resolveAttachmentRefsForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -36,6 +37,7 @@ import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { editBlock, exportPageMarkdown, getBlock, setProperty } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -400,7 +402,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
-        notify.error(t('pageHeader.renameFailed'))
+        // #4723 — a title clash is the user's to resolve, so name it.
+        const duplicate = validationCode(err) === ValidationCode.DuplicatePageTitle
+        notify.error(t(duplicate ? 'pageHeader.renameDuplicateTitle' : 'pageHeader.renameFailed'))
         announce(t('announce.pageRenameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title

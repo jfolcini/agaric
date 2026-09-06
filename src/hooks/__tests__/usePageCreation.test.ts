@@ -52,7 +52,10 @@ interface Harness {
   onPageSelect: ReturnType<typeof vi.fn>
 }
 
-function makeHarness(wireFilters: FilterPrimitive[] = []): Harness & {
+function makeHarness(
+  wireFilters: FilterPrimitive[] = [],
+  pages: Row[] = [],
+): Harness & {
   render: () => ReturnType<typeof renderHook<ReturnType<typeof usePageCreation>, void>>
 } {
   const setPages = vi.fn()
@@ -69,6 +72,7 @@ function makeHarness(wireFilters: FilterPrimitive[] = []): Harness & {
         usePageCreation({
           wireFilters,
           reload,
+          pages,
           setPages: setPages as unknown as Dispatch<SetStateAction<Row[]>>,
           setDisplayTotalCount: setDisplayTotalCount as unknown as Dispatch<
             SetStateAction<number | undefined>
@@ -114,6 +118,26 @@ describe('usePageCreation', () => {
     expect(countUpdater(5)).toBe(6)
     expect(countUpdater(undefined)).toBeUndefined()
     expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000000', 'My Page')
+  })
+
+  // #4723 — an existing title resolves to that page on the backend; a page
+  // already in the list must not be listed twice or counted again.
+  it('neither prepends nor bumps the count when the create resolves to a listed page', async () => {
+    mockedCreate.mockResolvedValue('OLD')
+    const h = makeHarness([], [{ id: 'OLD' } as Row])
+    const { result } = h.render()
+
+    act(() => {
+      result.current.setNewPageName('My Page')
+    })
+    await act(async () => {
+      await result.current.handleCreatePage()
+    })
+
+    expect(h.setPages).not.toHaveBeenCalled()
+    expect(h.setDisplayTotalCount).not.toHaveBeenCalled()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onPageSelect).toHaveBeenCalledWith('OLD', 'My Page')
   })
 
   // #4338 — the Pages view has no `useBlockResolve()` to register with, so

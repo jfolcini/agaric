@@ -453,6 +453,47 @@ describe('PageHeader title editing', () => {
   })
 })
 
+describe('PageHeader duplicate-title rename (#4723)', () => {
+  // The backend refuses a rename to a title another live page in the same
+  // space carries, with the structured `DuplicatePageTitle` code. The header
+  // must name the clash (not the generic failure) and put the old title back.
+  it('shows the duplicate-title toast and restores the previous title', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'edit_block') {
+        throw {
+          kind: 'validation',
+          code: 'DuplicatePageTitle',
+          message: "a page titled 'Taken' already exists in space 'S'",
+        }
+      }
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Original Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Taken')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'A page with this title already exists in this space',
+      )
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith('Failed to rename page')
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
+    expect(mockedAnnounce).toHaveBeenCalledWith('Page rename failed')
+    expect(titleEl).toHaveTextContent('Original Title')
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
 describe('PageHeader tag management', () => {
   it('add tag via picker', async () => {
     const user = userEvent.setup()

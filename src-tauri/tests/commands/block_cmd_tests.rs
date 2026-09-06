@@ -990,6 +990,99 @@ async fn edit_block_prev_edit_picks_highest_seq_after_b1_rewrite() {
     );
 }
 
+/// A live `page` block titled `title`, stamped into `space_id`.
+async fn page_in_space(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    title: &str,
+    space_id: &str,
+) -> BlockId {
+    let page = create_block_inner(pool, DEV, mat, "page".into(), title.into(), None, None)
+        .await
+        .unwrap();
+    assign_to_space(pool, page.id.as_str(), space_id).await;
+    page.id
+}
+
+async fn page_content(pool: &SqlitePool, id: &BlockId) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT content FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #4723 — renaming a page to a title another live page of the same space
+/// carries is refused with `DuplicatePageTitle`, and nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rejects_duplicate_page_title_in_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    let _home = page_in_space(&pool, &mat, "Home", TEST_SPACE_ID).await;
+    let other = page_in_space(&pool, &mat, "Other", TEST_SPACE_ID).await;
+
+    let err = edit_block_inner(&pool, DEV, &mat, other.clone(), "Home".into())
+        .await
+        .expect_err("duplicate title in the same space must be refused");
+
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
+        "refusal must carry the DuplicatePageTitle code; got: {err:?}"
+    );
+    assert_eq!(page_content(&pool, &other).await.as_deref(), Some("Other"));
+}
+
+/// #4723 — the page being renamed is not its own clash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_page_rename_to_own_title() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    let home = page_in_space(&pool, &mat, "Home", TEST_SPACE_ID).await;
+
+    let row = edit_block_inner(&pool, DEV, &mat, home.clone(), "Home".into())
+        .await
+        .expect("a page may be renamed to its own title");
+
+    assert_eq!(row.content.as_deref(), Some("Home"));
+}
+
+/// #4723 — two pre-existing duplicates are legacy state; renaming one of
+/// them to a fresh title must still go through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_renaming_one_of_two_duplicates_to_fresh_title() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    let _first = page_in_space(&pool, &mat, "Home", TEST_SPACE_ID).await;
+    let second = page_in_space(&pool, &mat, "Home", TEST_SPACE_ID).await;
+
+    edit_block_inner(&pool, DEV, &mat, second.clone(), "Fresh".into())
+        .await
+        .expect("renaming a duplicate to a fresh title must succeed");
+
+    assert_eq!(page_content(&pool, &second).await.as_deref(), Some("Fresh"));
+}
+
+/// #4723 — uniqueness is per space: a title held in another space is free.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_page_title_held_in_other_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    let _home_a = page_in_space(&pool, &mat, "Home", TEST_SPACE_ID).await;
+    let other_b = page_in_space(&pool, &mat, "Other", TEST_SPACE_B_ID).await;
+
+    edit_block_inner(&pool, DEV, &mat, other_b.clone(), "Home".into())
+        .await
+        .expect("a cross-space title pair is legitimate");
+
+    assert_eq!(page_content(&pool, &other_b).await.as_deref(), Some("Home"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;

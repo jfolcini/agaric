@@ -38,6 +38,8 @@ export const ValidationCode = {
   PageNotInSpace: 'PageNotInSpace',
   /** Malformed `repeat` recurrence rule rejected at `set_property` (#3647). */
   InvalidRepeatRule: 'InvalidRepeatRule',
+  /** Page rename to a title another live page in the same space carries (#4723). */
+  DuplicatePageTitle: 'DuplicatePageTitle',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**
