@@ -167,9 +167,8 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
 ///
 /// # Why lowercase specifically, when `is_ascii_hexdigit` would be the reflex
 ///
-/// [`upsert_peer_ref_with_cert`] validates `cert_hash` with `is_ascii_hexdigit()`,
-/// which accepts `ABCD…` as readily as `abcd…`. Copying that here would be wrong, and
-/// wrong in the direction that hides: `EndpointId`'s `FromStr` is deliberately laxer
+/// That reflex accepts `ABCD…` as readily as `abcd…`, and here it would be wrong in
+/// the direction that hides: `EndpointId`'s `FromStr` is deliberately laxer
 /// than its `Display` — it also parses the 52-character base32 form — so a value that
 /// round-trips through `FromStr` is *not* necessarily the value `Display` produces.
 /// The migration's rule is that the write side encodes with `Display` and never echoes
@@ -310,9 +309,8 @@ pub async fn get_peer_ref_by_endpoint_id(
 /// authorized the key. Thereafter the binding is what
 /// [`get_peer_ref_by_endpoint_id`] reads and nothing re-derives it from the wire.
 ///
-/// Like [`upsert_peer_ref_with_cert`] this is an `INSERT … ON CONFLICT(peer_id) DO
-/// UPDATE` that touches only its own column, so re-binding a peer preserves
-/// `last_hash`, `synced_at`, `reset_count` and the rest.
+/// An `INSERT … ON CONFLICT(peer_id) DO UPDATE` that touches only its own column, so
+/// re-binding a peer preserves `last_hash`, `synced_at`, `reset_count` and the rest.
 ///
 /// # Why it refuses to re-point a key at a second peer
 ///
@@ -427,42 +425,6 @@ pub async fn upsert_peer_ref_in_tx(
         peer_id,
     )
     .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-/// Insert a new peer ref with a certificate hash (used during pairing).
-///
-/// Uses `INSERT … ON CONFLICT(peer_id) DO UPDATE` so re-pairing an existing
-/// peer updates only `cert_hash`. The other columns (`last_hash`,
-/// `synced_at`, `reset_count`, `last_address`, `device_name`) are
-/// **preserved** across re-pairing — this is the deliberate difference
-/// vs. an `INSERT OR REPLACE`, which would zero them out.
-pub async fn upsert_peer_ref_with_cert(
-    pool: &SqlitePool,
-    peer_id: &str,
-    cert_hash: &str,
-) -> Result<(), AppError> {
-    // #1602 — never persist a TOFU pin that isn't exactly 64 chars of hex (a
-    // SHA-256 hex digest). The same shape check ran on the read side, so a
-    // value this column accepts is a value the pin comparison can use.
-    // Callers derive `cert_hash` from the presented TLS cert (well-formed
-    // today), but rejecting a malformed pin keeps the write path from
-    // silently storing garbage that the read/pin path would later reject.
-    if cert_hash.len() != 64 || !cert_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(AppError::validation(format!(
-            "invalid cert_hash: expected 64-char hex SHA-256, got {} chars",
-            cert_hash.len()
-        )));
-    }
-    sqlx::query!(
-        "INSERT INTO peer_refs (peer_id, cert_hash)
-         VALUES (?, ?)
-         ON CONFLICT(peer_id) DO UPDATE SET cert_hash = excluded.cert_hash",
-        peer_id,
-        cert_hash,
-    )
-    .execute(pool)
     .await?;
     Ok(())
 }
@@ -952,8 +914,8 @@ pub async fn update_loro_vv_bytes_in_tx(
 /// is expected" marker.
 ///
 /// Set by `confirm_pairing` when the FE supplies no remote device_id (the QR
-/// carries only the passphrase; mDNS + TOFU establish the real peer on the
-/// first connection). Honored by
+/// carries a passphrase and an endpoint, never a device id; mDNS + TOFU
+/// establish the real peer on the first connection). Honored by
 /// `sync_daemon::SyncDaemon::should_start_active` so the dormant
 /// daemon wakes to *accept* that first inbound connection, and cleared once a
 /// real peer exists. This replaces the old hack of writing a junk
@@ -1550,163 +1512,6 @@ mod tests {
         assert!(
             peer.cert_hash.is_none(),
             "cert_hash must be NULL when upserted without cert"
-        );
-    }
-
-    #[tokio::test]
-    async fn upsert_with_cert_stores_cert_hash() {
-        let (pool, _dir) = test_pool().await;
-        let hash = "a".repeat(64);
-
-        upsert_peer_ref_with_cert(&pool, "peer-cert", &hash)
-            .await
-            .unwrap();
-
-        let peer = get_peer_ref(&pool, "peer-cert")
-            .await
-            .unwrap()
-            .expect("peer must exist after upsert_with_cert");
-        assert_eq!(
-            peer.cert_hash.as_deref(),
-            Some(hash.as_str()),
-            "cert_hash must match the provided hash"
-        );
-    }
-
-    #[tokio::test]
-    async fn upsert_with_cert_updates_existing_peer_cert_hash() {
-        let (pool, _dir) = test_pool().await;
-        let hash1 = "a".repeat(64);
-        let hash2 = "b".repeat(64);
-
-        // Create peer with first cert hash.
-        upsert_peer_ref_with_cert(&pool, "peer-update", &hash1)
-            .await
-            .unwrap();
-
-        // Update with second cert hash.
-        upsert_peer_ref_with_cert(&pool, "peer-update", &hash2)
-            .await
-            .unwrap();
-
-        let peer = get_peer_ref(&pool, "peer-update")
-            .await
-            .unwrap()
-            .expect("peer must exist");
-        assert_eq!(
-            peer.cert_hash.as_deref(),
-            Some(hash2.as_str()),
-            "cert_hash must be updated to second hash"
-        );
-    }
-
-    #[tokio::test]
-    async fn upsert_with_cert_accepts_uppercase_hex() {
-        // #1602 — the guard uses `is_ascii_hexdigit`, which accepts either
-        // case, so an uppercase 64-char hex pin must upsert cleanly.
-        let (pool, _dir) = test_pool().await;
-        let hash = "A".repeat(64);
-
-        upsert_peer_ref_with_cert(&pool, "peer-upper", &hash)
-            .await
-            .unwrap();
-
-        let peer = get_peer_ref(&pool, "peer-upper")
-            .await
-            .unwrap()
-            .expect("peer must exist after upsert_with_cert");
-        assert_eq!(peer.cert_hash.as_deref(), Some(hash.as_str()));
-    }
-
-    #[tokio::test]
-    async fn upsert_with_cert_rejects_malformed_hash_and_persists_nothing() {
-        // #1602 — a too-short, too-long, or non-hex pin must be rejected with
-        // an AppError::Validation, and the row must not be written at all.
-        let (pool, _dir) = test_pool().await;
-
-        let bad_hashes = [
-            "a".repeat(63),                 // too short
-            "a".repeat(65),                 // too long
-            String::new(),                  // empty
-            "g".repeat(64),                 // 64 chars but non-hex ('g')
-            format!("{}z", "a".repeat(63)), // 64 chars, trailing non-hex
-        ];
-
-        for (i, bad) in bad_hashes.iter().enumerate() {
-            let peer_id = format!("peer-bad-{i}");
-            let err = upsert_peer_ref_with_cert(&pool, &peer_id, bad)
-                .await
-                .expect_err("malformed cert_hash must be rejected");
-            assert!(
-                matches!(err, AppError::Validation { .. }),
-                "expected AppError::Validation for {bad:?}, got {err:?}"
-            );
-
-            // Nothing must have been persisted for this peer.
-            let row = get_peer_ref(&pool, &peer_id).await.unwrap();
-            assert!(
-                row.is_none(),
-                "no peer_refs row may be written for malformed hash {bad:?}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn upsert_with_cert_preserves_existing_sync_state() {
-        let (pool, _dir) = test_pool().await;
-
-        // Create peer and sync it.
-        upsert_peer_ref(&pool, "peer-preserve").await.unwrap();
-        update_on_sync(&pool, "peer-preserve", "h1", "s1")
-            .await
-            .unwrap();
-
-        // Now set cert hash — should not overwrite sync state.
-        let hash = "c".repeat(64);
-        upsert_peer_ref_with_cert(&pool, "peer-preserve", &hash)
-            .await
-            .unwrap();
-
-        let peer = get_peer_ref(&pool, "peer-preserve")
-            .await
-            .unwrap()
-            .expect("peer must exist");
-        assert_eq!(
-            peer.cert_hash.as_deref(),
-            Some(hash.as_str()),
-            "cert_hash must be set"
-        );
-        assert_eq!(
-            peer.last_hash.as_deref(),
-            Some("h1"),
-            "last_hash must be preserved after cert update"
-        );
-        assert_eq!(
-            peer.last_sent_hash.as_deref(),
-            Some("s1"),
-            "last_sent_hash must be preserved after cert update"
-        );
-        assert!(
-            peer.synced_at.is_some(),
-            "synced_at must be preserved after cert update"
-        );
-    }
-
-    #[tokio::test]
-    async fn list_peer_refs_includes_cert_hash() {
-        let (pool, _dir) = test_pool().await;
-        let hash = "d".repeat(64);
-
-        upsert_peer_ref_with_cert(&pool, "peer-list-cert", &hash)
-            .await
-            .unwrap();
-
-        let peers = list_peer_refs(&pool).await.unwrap();
-        assert_eq!(peers.len(), 1);
-        assert_eq!(
-            peers[0].cert_hash.as_deref(),
-            Some(hash.as_str()),
-            "list_peer_refs must include cert_hash"
         );
     }
 

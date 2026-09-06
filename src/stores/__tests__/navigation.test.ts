@@ -501,6 +501,64 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('tags')
     })
 
+    // ── #4707: the origin is recorded on EVERY push out of a real route,
+    // not only on a push onto an empty stack ──
+    it('returns to the journal when the page is opened onto a stack left standing by an earlier view', () => {
+      // The persisted state read off the reporting machine: the user is
+      // sitting in the journal, the tab underneath still holds a page stack
+      // from an earlier navigation, and no `enteredFrom` was ever recorded —
+      // switching views does not clear the stack, so every push landed on a
+      // non-empty one and the origin was never taken.
+      useNavigationStore.setState({ currentView: 'journal' })
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [
+              { pageId: 'OLD1', title: 'Old 1' },
+              { pageId: 'OLD2', title: 'Old 2' },
+            ],
+            label: 'Old 2',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBe('journal')
+
+      // Popping the leftover entries stays inside the editor…
+      useTabsStore.getState().goBack()
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+
+      // …and the last pop lands on the journal, not on the pages list.
+      useTabsStore.getState().goBack()
+      expect(selectPageStack(useTabsStore.getState())).toEqual([])
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+    })
+
+    it('re-opening the page already on top records the view it was re-opened from', () => {
+      useNavigationStore.getState().setView('pages')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+
+      // Re-clicking the page from inside the editor is not a new entry into
+      // the stack, so the recorded origin stands.
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBe('pages')
+
+      // Reaching it from the journal IS one. The same-page branch returns
+      // before the push, so it has to record the origin itself.
+      useNavigationStore.getState().setView('journal')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
+
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+    })
+
     it('re-entering from a different view records the NEW origin', () => {
       useNavigationStore.getState().setView('journal')
       useTabsStore.getState().navigateToPage('P1', 'Page 1')
@@ -957,6 +1015,109 @@ describe('useNavigationStore', () => {
       const state = useNavigationStore.getState()
       expect(useTabsStore.getState().activeTabIndex).toBe(1)
       expect(state.currentView).toBe('page-editor')
+    })
+
+    // ── #4732: a TabBar click from a non-editor view enters the tab's stack
+    // from a real route, so that route is the origin Back returns to. Same
+    // class as #4707, reached through a different affordance. ──
+    it('records the journal as the origin when the ACTIVE tab is clicked from the journal', () => {
+      useNavigationStore.setState({ currentView: 'journal', selectedBlockId: null })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().switchTab(0)
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBe('journal')
+
+      useTabsStore.getState().goBack()
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([])
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+    })
+
+    it('records the journal as the origin when a DIFFERENT tab is clicked from the journal', () => {
+      useNavigationStore.setState({ currentView: 'journal', selectedBlockId: null })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().switchTab(1)
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useTabsStore.getState().tabs[1]?.enteredFrom).toBe('journal')
+
+      // Popping a stack empty while ANOTHER tab is open closes the tab and
+      // stays in the editor (existing multi-tab semantics), so the origin
+      // recorded above is what Back reads once this is the last tab.
+      useTabsStore.getState().closeTab(0)
+      useTabsStore.getState().goBack()
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([])
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+    })
+
+    it('does not rewrite the tab list when the origin is already the view clicked from', () => {
+      // The `sameTab` branch performs no `set()` of its own; the origin write
+      // added by #4732 is gated on an actual change so `selectPageStack`
+      // subscribers are not handed a fresh array for a no-op click.
+      useNavigationStore.setState({ currentView: 'journal', selectedBlockId: null })
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+            label: 'Page 1',
+            enteredFrom: 'journal',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+      const before = useTabsStore.getState().tabs
+
+      useTabsStore.getState().switchTab(0)
+
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useTabsStore.getState().tabs).toBe(before)
+    })
+
+    it('keeps the stack’s original origin when the switch is made from INSIDE the editor', () => {
+      // The case `currentEntryView()` exists to protect: `page-editor` is not
+      // a route to return to, so a tab switch made from the editor must not
+      // overwrite (or clear) the origin the stack was opened with.
+      useNavigationStore.setState({ currentView: 'search', selectedBlockId: null })
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+            label: 'Page 1',
+            enteredFrom: 'search',
+          },
+          {
+            id: '1',
+            pageStack: [{ pageId: 'P2', title: 'Page 2' }],
+            label: 'Page 2',
+            enteredFrom: 'tags',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+      // Enter the editor on tab 0, then switch tabs from within it.
+      useNavigationStore.setState({ currentView: 'page-editor' })
+
+      useTabsStore.getState().switchTab(1)
+
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBe('search')
+      expect(useTabsStore.getState().tabs[1]?.enteredFrom).toBe('tags')
+
+      useTabsStore.getState().goBack()
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('search')
     })
   })
 

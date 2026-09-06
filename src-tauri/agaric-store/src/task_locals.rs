@@ -257,6 +257,16 @@ pub enum Actor {
         /// printed via `{:?}`.
         name: String,
     },
+    /// The app acting on its own behalf — a boot-time maintenance job that
+    /// writes ops nobody asked for (#4741: the leaked-empty-block sweep,
+    /// `agaric_engine::empty_blocks`). Its ops go through the normal
+    /// pipeline (replayed, synced, listed in History, restorable from
+    /// Trash) but are NOT the user's own edits, so the interactive
+    /// positional undo (`undo_page_group` and its siblings) must never
+    /// seed on or group them: the frontend undo stack is empty at boot,
+    /// the first Ctrl+Z falls through to the op log, and the sweep's batch
+    /// is the newest thing there.
+    Housekeeping,
 }
 
 impl fmt::Debug for Actor {
@@ -268,6 +278,7 @@ impl fmt::Debug for Actor {
         match self {
             Actor::User => f.write_str("User"),
             Actor::Agent { .. } => f.write_str("Agent"),
+            Actor::Housekeeping => f.write_str("Housekeeping"),
         }
     }
 }
@@ -275,7 +286,7 @@ impl fmt::Debug for Actor {
 impl Actor {
     /// Render this actor as the string written into `op_log.origin`
     /// (v2). `Actor::User` → `"user"`, `Actor::Agent { name }`
-    /// → `"agent:<name>"`.
+    /// → `"agent:<name>"`, `Actor::Housekeeping` → `"housekeeping"`.
     ///
     /// Consumed by [`crate::op_log::append_local_op_in_tx`] via
     /// [`current_actor`] + the `ACTOR` task-local. Outside an
@@ -287,13 +298,19 @@ impl Actor {
     ///
     /// The `"agent:"` prefix is deliberate: it keeps the column
     /// filterable by a simple `LIKE 'agent:%'` query in the activity
-    /// feed and reserves the un-prefixed namespace for future
-    /// non-agent origins (e.g., `"import"`, `"migration"`) without a
-    /// schema change.
+    /// feed and reserves the un-prefixed namespace for non-agent
+    /// origins without a schema change. `"housekeeping"` (#4741) is the
+    /// first of those; `"import"` / `"migration"` remain available.
+    ///
+    /// The interactive positional undo queries in
+    /// `commands::history` admit ONLY `'user'` and `'agent:%'` — an
+    /// allow-list, so a new tag added here is excluded from Ctrl+Z until
+    /// someone decides it belongs there, rather than silently undoable.
     pub fn origin_tag(&self) -> String {
         match self {
             Actor::User => "user".to_string(),
             Actor::Agent { name } => format!("agent:{name}"),
+            Actor::Housekeeping => "housekeeping".to_string(),
         }
     }
 }
@@ -367,6 +384,9 @@ mod actor_tests {
             Actor::Agent { name } => {
                 panic!("expected Actor::User outside any scope, got Agent({name:?})");
             }
+            Actor::Housekeeping => {
+                panic!("expected Actor::User outside any scope, got Housekeeping")
+            }
         }
     }
 
@@ -391,6 +411,7 @@ mod actor_tests {
                 assert_eq!(name, "test-agent", "agent name round-trips through scope");
             }
             Actor::User => panic!("expected Actor::Agent inside scope, got User"),
+            Actor::Housekeeping => panic!("expected Actor::Agent inside scope, got Housekeeping"),
         }
     }
 
@@ -474,6 +495,21 @@ mod actor_tests {
         assert_eq!(Actor::User.origin_tag(), "user");
     }
 
+    /// #4741: the housekeeping tag is un-prefixed (the namespace the
+    /// `"agent:"` prefix reserved for exactly this) and matches neither
+    /// arm of the positional-undo allow-list in `commands::history`.
+    #[test]
+    fn housekeeping_origin_tag_is_outside_the_undo_allow_list() {
+        let tag = Actor::Housekeeping.origin_tag();
+        assert_eq!(tag, "housekeeping");
+        assert_ne!(tag, Actor::User.origin_tag());
+        assert!(
+            !tag.starts_with("agent:"),
+            "must not read as an agent origin"
+        );
+        assert_eq!(format!("{:?}", Actor::Housekeeping), "Housekeeping");
+    }
+
     #[test]
     fn origin_tag_agent_has_agent_prefix() {
         let a = Actor::Agent {
@@ -526,7 +562,7 @@ mod actor_tests {
                     .scope(inner, async {
                         match current_actor() {
                             Actor::Agent { name } => name,
-                            Actor::User => String::new(),
+                            Actor::User | Actor::Housekeeping => String::new(),
                         }
                     })
                     .await

@@ -237,7 +237,9 @@ export function PagesTreeSection({
         <div className="pages-tree-section-content mt-1">
           {children.map((child) => (
             <PageTreeItem
-              key={child.fullPath}
+              // #4709 — `fullPath` is not unique across duplicate-title
+              // siblings; `nodeKey` is set on exactly those.
+              key={child.nodeKey ?? child.fullPath}
               node={child}
               depth={0}
               onNavigate={onNavigateToPage}

@@ -88,6 +88,7 @@ mod tests {
             let agent = match actor {
                 Actor::Agent { name } => name,
                 Actor::User => "<user>".to_string(),
+                Actor::Housekeeping => "<housekeeping>".to_string(),
             };
             Ok(json!({ "tool": name, "agent": agent }))
         })

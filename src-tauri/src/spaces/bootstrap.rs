@@ -27,7 +27,7 @@
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::materializer::Materializer;
+use crate::materializer::{MaterializeTask, Materializer};
 use agaric_core::error::AppError;
 use agaric_store::op_log::OpRecord;
 
@@ -42,7 +42,7 @@ use agaric_store::op_log::OpRecord;
 // app-side bootstrap stays their single canonical `crate::spaces::…` entry.
 pub use agaric_engine::spaces::{
     SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
-    migrate_orphan_tags_to_space,
+    migrate_orphan_tags_to_space, repair_misfiled_tag_spaces,
 };
 
 // The inner-core helpers driven by the shim below now live in the engine.
@@ -92,6 +92,12 @@ pub async fn bootstrap_spaces(
     // being discarded. Helpers append the `OpRecord`s into `records`,
     // which we drain into the tx's pending queue before commit.
     let mut tx = CommandTx::begin_immediate(pool, "bootstrap_spaces").await?;
+    // #2604 — rollback-safe engine apply. The misfiled-tag repair below
+    // prunes a tag out of one space's LoroDoc and hydrates it into another
+    // (#2907) inside this tx; if the commit then fails, the in-memory docs
+    // must be rewound so they never sit ahead of the rolled-back SQL. Same
+    // arming as `move_blocks_to_space_inner`, the canonical cross-space move.
+    tx.arm_engine_rollback(state);
     let mut records: Vec<OpRecord> = Vec::new();
 
     let (
@@ -180,12 +186,59 @@ pub async fn bootstrap_spaces(
     // so steady-state boots see zero candidates.
     let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
 
+    // Repair pass — move any tag an earlier, buggy run of the migration
+    // above parked in the WRONG space. That version decided placement by
+    // reading `block_tag_refs`, which `reindex_block_tag_refs` refuses to
+    // populate for a tag that has no space yet, so every orphan tag scored
+    // zero references and fell back to Personal regardless of where it was
+    // used. `migrate_orphan_tags_to_space` cannot undo that itself: it only
+    // considers tags with NO space, and these have one.
+    //
+    // Unlike its two neighbours this is gated to run ONCE per device
+    // (`repair.tag_space_misfiled.v1` in `app_settings`) — see the function's
+    // own doc for why. It is a genuine cross-space move, so it takes `state`
+    // and applies each `SetProperty(space)` through the engine (#2907 prune +
+    // hydrate), not a hand-rolled column UPDATE.
+    let tags_repaired = repair_misfiled_tag_spaces(&mut tx, state, device_id, &mut records).await?;
+
     // (#110) — couple every emitted op record to a
     // post-commit cache rebuild. Mirrors `flush_all_drafts_inner`.
     for record in records {
         tx.enqueue_background(record);
     }
     tx.commit_and_dispatch(materializer).await?;
+
+    // Placing or moving a tag only makes its references ADMISSIBLE; nothing
+    // above re-derives them. `SetProperty` dispatch enqueues no tag-ref work
+    // (narrow by design — `invalidations_for_op`), the per-block
+    // `ReindexBlockTagRefs` is keyed on the SOURCE block (the untouched blocks
+    // that carry `#[ULID]`), and the boot backstop in `lib.rs` fires only when
+    // `block_tag_refs` is ENTIRELY empty — one surviving row (a tag created in
+    // the space that uses it) retires it for good. So without this the moved
+    // tag shows up in its new space's tag list while the Tag filter, the
+    // backlink projection and `tags_cache.usage_count` — all of which UNION
+    // `block_tag_refs` — keep returning nothing for it, and the marker means
+    // nothing ever re-runs. Refs first, then the tags cache: `usage_count`
+    // UNIONs the refs table (ordering note on `cache::rebuild_all_caches`).
+    // Both tasks are durable/retryable (`'__GLOBAL__'` retry-queue sentinel),
+    // and the enqueue is best-effort like every other boot-time rebuild.
+    if tags_migrated + tags_repaired > 0 {
+        for task in [
+            MaterializeTask::RebuildBlockTagRefsCache,
+            MaterializeTask::RebuildTagsCache,
+        ] {
+            let name = format!("{task:?}");
+            if let Err(e) = materializer.try_enqueue_background(task) {
+                tracing::warn!(
+                    error = %e,
+                    task = %name,
+                    tags_migrated,
+                    tags_repaired,
+                    "failed to enqueue tag-ref rebuild after tag space migration/repair",
+                );
+            }
+        }
+    }
 
     let spaces_created = i32::from(personal_created) + i32::from(work_created);
     let is_space_props_set = i32::from(personal_is_space_set) + i32::from(work_is_space_set);
@@ -196,6 +249,7 @@ pub async fn bootstrap_spaces(
         accent_props_set,
         pages_migrated = migrated,
         tags_migrated,
+        tags_repaired,
         seeded_blocks_already_done,
         "spaces bootstrap complete"
     );
@@ -325,5 +379,290 @@ mod tests {
                 .unwrap(),
             "after restore, bootstrap must report complete (fast path)"
         );
+    }
+
+    // ----------------------------------------------------------------------
+    // The tag space migration / repair, observed the way the USER sees it:
+    // through the ref cache the move exists to unblock, and through the
+    // per-space Loro docs a peer would import. The engine-crate tests for the
+    // same functions stop at `blocks.space_id`; these do not.
+    // ----------------------------------------------------------------------
+
+    use agaric_engine::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
+    use agaric_store::pagination::PageRequest;
+    use agaric_store::space::SpaceId;
+    use agaric_store::tag_query::{TagExpr, eval_tag_query, list_all_tags_in_space};
+
+    async fn boot_pool() -> (SqlitePool, Materializer, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db_path: PathBuf = tmp.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        let mat = Materializer::new(pool.clone());
+        (pool, mat, tmp)
+    }
+
+    /// A tag block with `space_id = tag_space` (NULL = orphan).
+    async fn seed_tag(pool: &SqlitePool, name: &str, tag_space: Option<&str>) -> String {
+        let tag_id = agaric_core::ulid::BlockId::new().to_string();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'tag', ?, NULL, 1, NULL, ?)",
+        )
+        .bind(&tag_id)
+        .bind(name)
+        .bind(tag_space)
+        .execute(pool)
+        .await
+        .unwrap();
+        tag_id
+    }
+
+    /// A page in `space` with one content block whose text carries the
+    /// `#[tag_id]` token. Returns the content block's id.
+    async fn seed_reference(pool: &SqlitePool, space: &str, tag_id: &str) -> String {
+        let page_id = agaric_core::ulid::BlockId::new().to_string();
+        let content_id = agaric_core::ulid::BlockId::new().to_string();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'Standups', NULL, 1, ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(space)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, 2, ?, ?)",
+        )
+        .bind(&content_id)
+        .bind(format!("standup #[{tag_id}] with the team"))
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(space)
+        .execute(pool)
+        .await
+        .unwrap();
+        content_id
+    }
+
+    async fn clear_repair_marker(pool: &SqlitePool) {
+        sqlx::query("DELETE FROM app_settings WHERE key = 'repair.tag_space_misfiled.v1'")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn ref_row_count(pool: &SqlitePool, source_id: &str, tag_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? AND tag_id = ?")
+            .bind(source_id)
+            .bind(tag_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// What the user sees: the Tag filter in `space`, plus the tag list's
+    /// `usage_count` for `tag_id`.
+    async fn tag_filter_hits_and_usage(
+        pool: &SqlitePool,
+        space: &str,
+        tag_id: &str,
+    ) -> (Vec<String>, Option<i64>) {
+        let page = eval_tag_query(
+            pool,
+            &TagExpr::Tag(tag_id.to_owned()),
+            &PageRequest::new(None, None).unwrap(),
+            false,
+            Some(space),
+            None,
+        )
+        .await
+        .unwrap();
+        let hits = page
+            .items
+            .iter()
+            .map(|r| r.id.as_str().to_owned())
+            .collect();
+        let usage = list_all_tags_in_space(pool, space)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_id == tag_id)
+            .map(|t| t.usage_count);
+        (hits, usage)
+    }
+
+    /// The reported vault, end to end: `meet` sits in Personal, is referenced
+    /// only from Work, and `block_tag_refs` holds a row for an unrelated
+    /// correctly-filed tag — so the `lib.rs` empty-table backstop would not
+    /// fire either. After the repair boot the Tag filter must find the
+    /// referencing block and `usage_count` must be 1. `blocks.space_id` alone
+    /// was already green before the fix; the cache is what was missing.
+    #[tokio::test]
+    async fn repaired_tag_matches_the_tag_filter_after_boot() {
+        let (pool, mat, _tmp) = boot_pool().await;
+        // First boot on a vault with no tags: seeds the spaces, writes the
+        // repair marker.
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+
+        let meet = seed_tag(&pool, "meet", Some(SPACE_PERSONAL_ULID)).await;
+        let meet_ref = seed_reference(&pool, SPACE_WORK_ULID, &meet).await;
+        // `book`: created in the space that uses it, so it DOES have a ref
+        // row — the one row that disables the empty-table backstop.
+        let book = seed_tag(&pool, "book", Some(SPACE_WORK_ULID)).await;
+        let book_ref = seed_reference(&pool, SPACE_WORK_ULID, &book).await;
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+            .bind(&book_ref)
+            .bind(&book)
+            .execute(&pool)
+            .await
+            .unwrap();
+        clear_repair_marker(&pool).await;
+
+        // The boot that repairs.
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&meet)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space.as_deref(), Some(SPACE_WORK_ULID), "the move itself");
+        assert_eq!(
+            ref_row_count(&pool, &meet_ref, &meet).await,
+            1,
+            "the reference the cross-space gate used to refuse must now be in block_tag_refs"
+        );
+        let (hits, usage) = tag_filter_hits_and_usage(&pool, SPACE_WORK_ULID, &meet).await;
+        assert_eq!(
+            hits,
+            vec![meet_ref.clone()],
+            "the Work Tag filter must find the block"
+        );
+        assert_eq!(
+            usage,
+            Some(1),
+            "tags_cache.usage_count must count the reference"
+        );
+        // And the rebuild kept the unrelated correct row.
+        assert_eq!(ref_row_count(&pool, &book_ref, &book).await, 1);
+
+        mat.shutdown();
+    }
+
+    /// Same observation for the every-boot neighbour: an ORPHAN tag placed by
+    /// `migrate_orphan_tags_to_space` has the same starved cache, and the
+    /// gate is `tags_migrated + tags_repaired > 0`, so a placement alone must
+    /// trigger the rebuild too.
+    #[tokio::test]
+    async fn placed_orphan_tag_matches_the_tag_filter_after_boot() {
+        let (pool, mat, _tmp) = boot_pool().await;
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+
+        let qa = seed_tag(&pool, "qa", None).await;
+        let qa_ref = seed_reference(&pool, SPACE_WORK_ULID, &qa).await;
+
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(ref_row_count(&pool, &qa_ref, &qa).await, 1);
+        let (hits, usage) = tag_filter_hits_and_usage(&pool, SPACE_WORK_ULID, &qa).await;
+        assert_eq!(hits, vec![qa_ref]);
+        assert_eq!(usage, Some(1));
+
+        mat.shutdown();
+    }
+
+    /// #2907 for the repair: the tag must leave Personal's LoroDoc and join
+    /// Work's — on this device AND on a fresh peer importing both snapshots.
+    /// A hand-rolled `UPDATE blocks SET space_id` in front of the op leaves
+    /// it in both docs, and the marker means nothing ever corrects that.
+    #[tokio::test]
+    async fn repair_prunes_the_tag_from_the_old_space_doc_2907() {
+        let (pool, mat, _tmp) = boot_pool().await;
+        let state = mat.loro_state();
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+
+        // Put the tag in Personal through the production LOCAL path so it is
+        // genuinely a member of Personal's doc — exactly how the buggy
+        // migration's tags ended up there on a device whose engines were
+        // replayed from the op log.
+        let meet = seed_tag(&pool, "meet", None).await;
+        {
+            let mut tx = CommandTx::begin_immediate(&pool, "seed").await.unwrap();
+            agaric_engine::block_ops::set_property_in_tx(
+                &mut tx,
+                state,
+                DEV,
+                meet.clone(),
+                "space",
+                None,
+                None,
+                None,
+                Some(SPACE_PERSONAL_ULID.to_owned()),
+                None,
+            )
+            .await
+            .unwrap();
+            tx.commit_without_dispatch().await.unwrap();
+        }
+        let personal = SpaceId::from_trusted(SPACE_PERSONAL_ULID);
+        let work = SpaceId::from_trusted(SPACE_WORK_ULID);
+        {
+            let mut guard = state.registry.for_space(&personal, DEV).unwrap();
+            assert!(
+                guard.engine_mut().read_block(&meet).unwrap().is_some(),
+                "precondition: the tag is in Personal's doc before the repair"
+            );
+        }
+        seed_reference(&pool, SPACE_WORK_ULID, &meet).await;
+        clear_repair_marker(&pool).await;
+
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+
+        let personal_bytes = {
+            let mut guard = state.registry.for_space(&personal, DEV).unwrap();
+            let engine = guard.engine_mut();
+            assert!(
+                engine.read_block(&meet).unwrap().is_none(),
+                "the tag must be PRUNED from the old space's doc"
+            );
+            engine.export_snapshot().unwrap()
+        };
+        let work_bytes = {
+            let mut guard = state.registry.for_space(&work, DEV).unwrap();
+            let engine = guard.engine_mut();
+            assert_eq!(
+                engine
+                    .read_block(&meet)
+                    .unwrap()
+                    .expect("the tag must be hydrated into the new space's doc")
+                    .content,
+                "meet"
+            );
+            engine.export_snapshot().unwrap()
+        };
+
+        // A fresh peer importing each per-space snapshot: the tag must live
+        // ONLY in Work — no resurrection from the Personal doc.
+        let mut peer_personal =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("fresh-peer").unwrap();
+        peer_personal.import(&personal_bytes).unwrap();
+        assert!(
+            peer_personal.read_block(&meet).unwrap().is_none(),
+            "a peer importing the OLD doc must not see the moved tag"
+        );
+        let mut peer_work =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("fresh-peer").unwrap();
+        peer_work.import(&work_bytes).unwrap();
+        assert!(
+            peer_work.read_block(&meet).unwrap().is_some(),
+            "a peer importing the NEW doc must see the moved tag"
+        );
+
+        mat.shutdown();
     }
 }

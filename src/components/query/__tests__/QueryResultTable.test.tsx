@@ -6,10 +6,33 @@ import { axe } from 'vitest-axe'
 import { makeBlock } from '@/__tests__/fixtures'
 import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+
+/** Target of the `[[…]]` link in the #4719 rows below. */
+const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+
+// The content cell renders through the resolve store; stub the hook so the
+// chip has a title to show without standing a store up. (`AlertSection.test.tsx`
+// does the same for the agenda rows fixed by #4705.)
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) =>
+      id === LINKED_PAGE_ID ? 'Quarterly Plan' : undefined,
+    ),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
+}))
+
+/** The `resolveBlockTitle` PROP: same cache, so it agrees with the chips. */
+const resolveTitleProp = (id: string): string =>
+  id === LINKED_PAGE_ID ? 'Quarterly Plan' : unresolvedBlockLabel(id)
 
 const defaultColumns: TableColumn[] = [
   { key: 'content', label: 'Content' },
@@ -496,6 +519,137 @@ describe('QueryResultTable', () => {
         sortKey={null}
         sortDir="asc"
         onColumnSort={vi.fn()}
+      />,
+    )
+
+    const axeResults = await axe(container)
+    expect(axeResults).toHaveNoViolations()
+  })
+})
+
+/**
+ * #4719 — the content cell used to render `resolveBlockDisplay`'s plain
+ * `title`, and that string comes from `truncateContent`, which strips a
+ * `[[ULID]]`'s brackets and leaves the ULID. The fallback is the NORMAL path
+ * for a cross-page query row, so a cell whose block reads
+ * `follow up on [[01KP36…]]` showed the raw id. The cell renders rich content
+ * now, matching `QueryResultList` — the two share `QueryResultRowContent`.
+ */
+describe('QueryResultTable — rich content cell (#4719)', () => {
+  const linkedRow = () =>
+    makeBlock({
+      id: 'B1',
+      parent_id: 'P1',
+      page_id: 'P1',
+      todo_state: 'TODO',
+      content: `follow up on [[${LINKED_PAGE_ID}]]`,
+    })
+
+  // No `pageTitles` entry, so no `PageLink` in the row — the file's other axe
+  // test omits it too, and it is beside the point here.
+  const renderLinkedRow = () =>
+    render(
+      <QueryResultTable
+        results={[linkedRow()]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+        resolveBlockTitle={resolveTitleProp}
+      />,
+    )
+
+  it('renders the link target as a titled chip, never as a bare ULID', () => {
+    const { container } = renderLinkedRow()
+
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Quarterly Plan')
+    expect(container.textContent).not.toContain(LINKED_PAGE_ID)
+  })
+
+  it('keeps a correct accessible name on the cell button', () => {
+    // The button's label is an element tree now, so the name comes from
+    // `aria-label` — which resolves the same reference the chip does, so it
+    // still CONTAINS the visible text (WCAG 2.5.3).
+    //
+    // Asserted on the ATTRIBUTE: the chip resolves to the same string, so the
+    // computed name matches from the button's text content alone and a
+    // role-name query would stay green with the `aria-label` deleted.
+    renderLinkedRow()
+
+    const cellButton = screen.getByTestId('block-link-chip').closest('button')
+    expect(cellButton).toHaveAttribute('aria-label', 'follow up on Quarterly Plan')
+  })
+
+  it('resolves the name with no resolveBlockTitle prop — the AdvancedQuery path', () => {
+    // The prop is optional and two callers of the sibling list omit it while
+    // their rows still resolve chips; substituting the name through the prop
+    // alone left such a cell named after the raw ULID beside a chip reading
+    // "Quarterly Plan". See the `QueryResultList` twin.
+    render(
+      <QueryResultTable
+        results={[linkedRow()]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+      />,
+    )
+
+    const cellButton = screen.getByTestId('block-link-chip').closest('button')
+    expect(cellButton).toHaveAttribute('aria-label', 'follow up on Quarterly Plan')
+    expect(cellButton?.getAttribute('aria-label')).not.toContain(LINKED_PAGE_ID)
+  })
+
+  it('the cell button still navigates', async () => {
+    // The rich body must not swallow the click: the chips are inert
+    // (`interactive: false`), so the click reaches the button.
+    const onNavigate = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <QueryResultTable
+        results={[linkedRow()]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+        resolveBlockTitle={resolveTitleProp}
+        onNavigate={onNavigate}
+      />,
+    )
+
+    await user.click(screen.getByTestId('block-link-chip'))
+
+    expect(onNavigate).toHaveBeenCalledWith('P1')
+  })
+
+  it('has no a11y violations with a rich content cell', async () => {
+    // Guards the NEW markup (a rich body nested inside the cell's <button>),
+    // so it is green on the pre-fix code by construction. Falsifiable against
+    // the plausible WRONG fix, exactly as its `QueryResultList` twin: the
+    // markdown link renders `role="link"` unconditionally and picks up
+    // `tabIndex={0}` when the surface is interactive, so dropping
+    // `interactive: false` nests a focusable link inside the <button> and axe
+    // reports `nested-interactive`.
+    const { container } = render(
+      <QueryResultTable
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: 'P1',
+            page_id: 'P1',
+            todo_state: 'TODO',
+            content: `follow up on [[${LINKED_PAGE_ID}]] see [docs](https://example.com)`,
+          }),
+        ]}
+        columns={defaultColumns}
+        pageTitles={new Map()}
+        sortKey={null}
+        sortDir="asc"
+        onColumnSort={vi.fn()}
+        resolveBlockTitle={resolveTitleProp}
       />,
     )
 

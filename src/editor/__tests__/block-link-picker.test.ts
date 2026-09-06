@@ -666,12 +666,11 @@ describe('resolveBlockLinkFromSelection command', () => {
   })
 })
 
-// ── Suggestion plugin `command` — trailing-space behaviour ────────
+// ── Suggestion plugin `command` — insertion behaviour ─────────────
 //
 // After the user picks an item from the [[ suggestion popup, the chain must
-// be: deleteRange(range) → insertBlockLink(id) → insertContent(' ') → run().
-// The trailing space keeps the cursor on the same visual line, separated
-// from the chip by exactly one character.
+// be: deleteRange(range) → insertBlockLink(id) → run(). #4708: no trailing
+// space, so a comma typed next lands directly against the chip.
 
 describe('BlockLinkPicker suggestion command chain', () => {
   it('captured command invokes the correct chain (mock @tiptap/suggestion)', async () => {
@@ -726,19 +725,13 @@ describe('BlockLinkPicker suggestion command chain', () => {
       props: { id: 'ULID_PICK', label: 'Pick Me', isCreate: false },
     })
 
-    expect(calls).toEqual([
-      'focus',
-      'deleteRange:1-3',
-      'insertBlockLink:ULID_PICK',
-      'insertContent:" "',
-      'run',
-    ])
+    expect(calls).toEqual(['focus', 'deleteRange:1-3', 'insertBlockLink:ULID_PICK', 'run'])
 
     vi.doUnmock('@tiptap/suggestion')
     vi.resetModules()
   })
 
-  it('isCreate path deletes the trigger synchronously, then inserts token + space after onCreate resolves', async () => {
+  it('isCreate path deletes the trigger synchronously, then inserts the token after onCreate resolves', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
       | undefined
@@ -798,13 +791,10 @@ describe('BlockLinkPicker suggestion command chain', () => {
     await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith('Create me'))
     await vi.waitFor(() => expect(calls.length).toBeGreaterThan(3))
 
-    // Token + trailing space land at the captured (tracked) position.
+    // The token — and only the token — lands at the captured (tracked) position.
     expect(calls.slice(3)).toEqual([
       'focus',
-      `insertContentAt:5:${JSON.stringify([
-        { type: 'block_link', attrs: { id: 'CREATED_ULID' } },
-        { type: 'text', text: ' ' },
-      ])}`,
+      `insertContentAt:5:${JSON.stringify({ type: 'block_link', attrs: { id: 'CREATED_ULID' } })}`,
       'run',
     ])
 
@@ -818,7 +808,7 @@ describe('BlockLinkPicker suggestion command chain', () => {
 // These tests drive the exact chain that block-link-picker.command runs
 // through a real TipTap Editor (BlockLink + Document + Paragraph + Text,
 // no Suggestion plugin needed) and assert on the resulting doc shape:
-//   - the chip is followed by a single ' ' text node
+//   - the chip is the paragraph's only child (no trailing ' ' text node)
 //   - selection.from === doc.content.size (cursor at paragraph end)
 //   - doc has exactly one paragraph (no stray hard_break / paragraph split)
 
@@ -851,14 +841,12 @@ describe('BlockLinkPicker real-editor chain result', () => {
     })
   }
 
-  it('inserts block_link chip followed by a single space; cursor at end', () => {
+  it('inserts a bare block_link chip; cursor at end', () => {
     editor = buildEditor('[[foo')
     // `[[foo` occupies positions 1..6 inside the paragraph (0 is the
     // paragraph start token). The suggestion range on selection is this
     // span — mirror the real command's chain.
     editor.chain().focus().deleteRange({ from: 1, to: 6 }).insertBlockLink('ULID_OK').run()
-    // Apply the trailing space the fix appends:
-    editor.chain().focus().insertContent(' ').run()
 
     const doc = editor.state.doc
     // Exactly one paragraph — no paragraph split or hard_break leaked in.
@@ -866,12 +854,10 @@ describe('BlockLinkPicker real-editor chain result', () => {
     const paragraph = doc.child(0)
     expect(paragraph.type.name).toBe('paragraph')
 
-    // Paragraph children: [block_link, text(' ')] — exact count.
-    expect(paragraph.childCount).toBe(2)
+    // Paragraph children: [block_link] — exact count.
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('block_link')
     expect(paragraph.child(0).attrs['id']).toBe('ULID_OK')
-    expect(paragraph.child(1).type.name).toBe('text')
-    expect(paragraph.child(1).text).toBe(' ')
 
     // No hard_break anywhere in the doc.
     let hardBreakCount = 0
@@ -881,7 +867,7 @@ describe('BlockLinkPicker real-editor chain result', () => {
     expect(hardBreakCount).toBe(0)
 
     // Cursor sits at the end of the paragraph content (right after the
-    // inserted space), not on a new line/block. In ProseMirror terms:
+    // chip), not on a new line/block. In ProseMirror terms:
     //   - $from.parent is the paragraph
     //   - $from.parentOffset equals paragraph.content.size
     //   - selection.from === doc.content.size - 1 (doc.content.size
@@ -894,22 +880,15 @@ describe('BlockLinkPicker real-editor chain result', () => {
     expect(editor.state.selection.empty).toBe(true)
   })
 
-  it('full suggestion-command chain (deleteRange + insertBlockLink + insertContent(" ")) — single atomic run()', () => {
+  it('full suggestion-command chain (deleteRange + insertBlockLink) — single atomic run()', () => {
     editor = buildEditor('[[bar')
-    editor
-      .chain()
-      .focus()
-      .deleteRange({ from: 1, to: 6 })
-      .insertBlockLink('ULID_BAR')
-      .insertContent(' ')
-      .run()
+    editor.chain().focus().deleteRange({ from: 1, to: 6 }).insertBlockLink('ULID_BAR').run()
 
     const doc = editor.state.doc
     expect(doc.childCount).toBe(1)
     const paragraph = doc.child(0)
-    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('block_link')
-    expect(paragraph.child(1).text).toBe(' ')
     const $from = editor.state.selection.$from
     expect($from.parent.type.name).toBe('paragraph')
     expect($from.parentOffset).toBe(paragraph.content.size)

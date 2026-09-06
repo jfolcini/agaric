@@ -133,54 +133,76 @@ fn sync_start_pairing_returns_passphrase_and_qr() {
         "qr_svg must contain an SVG tag"
     );
 
-    // PairingInfo no longer carries host/port — mDNS owns
-    // discovery + address resolution end-to-end. Asserted here as a
-    // compile-time + structural check via the new test below.
+    // PairingInfo carries the passphrase and the rendered QR, never an
+    // address of its own — where this device is reachable rides inside the QR
+    // payload (#4037). Asserted structurally by the test below.
 
     // Session should be stored in state
     let session = pairing_state.lock().unwrap();
     assert!(session.is_some(), "pairing session must be stored in state");
 }
 
-/// Parse the QR JSON embedded in the pairing flow and assert the
-/// payload shape is exactly `{"v": 1, "passphrase": "..."}` — no `host`
-/// and no `port`. Locks down the wire format on the orchestration side
-/// (the unit-level encoder/parser test lives in `pairing.rs`).
+/// `start_pairing_inner` has nothing to advertise, so its QR is the
+/// passphrase-only v1 payload.
+///
+/// This is the *orchestration-side* pin: the unit-level shape assertions live
+/// in `pairing.rs`. It is not redundant with them, because it is the only
+/// place that ties the SVG a command actually returns to a payload — the two
+/// are compared as rendered bytes, so a command that stopped encoding what it
+/// claims to encode fails here even though `pairing_qr_payload` is fine.
+///
+/// #4037: `start_pairing_inner` is the variant that does NOT arm the pairing
+/// window. Arming is what wakes a dormant daemon into binding an endpoint, so
+/// this variant has no address to resolve and passes `None` by construction.
+/// The command the frontend actually calls is `start_pairing_armed_inner`,
+/// whose addressed and degraded paths are covered in `pairing.rs`.
 #[test]
-fn start_pairing_qr_payload_carries_only_passphrase_m34() {
+fn start_pairing_inner_qr_is_the_passphrase_only_payload_4037() {
     let pairing_state = Mutex::new(None);
     let info =
         start_pairing_inner(&pairing_state, "device-A").expect("start_pairing_inner must succeed");
 
-    // Re-derive the exact JSON the QR encodes (the SVG is opaque
-    // bytes, but `pairing_qr_payload` is what was rendered).
-    let payload = agaric_sync::pairing::pairing_qr_payload(&info.passphrase);
+    let payload = agaric_sync::pairing::pairing_qr_payload(&info.passphrase, None);
+    // `assert!`, not `assert_eq!`: a rendered QR is tens of kilobytes of path
+    // data and printing two of them on failure helps nobody.
+    assert!(
+        info.qr_svg
+            == agaric_sync::pairing::generate_qr_svg(&payload).expect("the payload renders"),
+        "the returned SVG must be the render of the payload asserted below, or the \
+         rest of this test says nothing about what the command emitted"
+    );
+
     let parsed: serde_json::Value =
         serde_json::from_str(&payload).expect("QR payload must be valid JSON");
     let object = parsed
         .as_object()
         .expect("QR payload must be a JSON object");
 
-    // Exact-count assertion: only `v` (schema version) and `passphrase`.
     assert_eq!(
         object.len(),
         2,
-        "QR payload must contain exactly two keys (v, passphrase), got: {:?}",
+        "the passphrase-only payload must contain exactly two keys (v, passphrase), \
+         got: {:?}",
         object.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        object.get("v").and_then(serde_json::Value::as_u64),
+        Some(u64::from(
+            agaric_sync::pairing::PAIRING_QR_VERSION_PASSPHRASE_ONLY
+        )),
+        "a payload with no endpoint declares v1, not the current version"
     );
     assert_eq!(
         object.get("passphrase").and_then(|v| v.as_str()),
         Some(info.passphrase.as_str()),
         "'passphrase' field must round-trip"
     );
-    assert!(
-        !object.contains_key("host"),
-        "QR payload must not contain 'host' — mDNS owns discovery"
-    );
-    assert!(
-        !object.contains_key("port"),
-        "QR payload must not contain 'port' — mDNS owns address resolution"
-    );
+    for absent in ["endpoint_id", "addrs", "host", "port"] {
+        assert!(
+            !object.contains_key(absent),
+            "a device with no bound endpoint must not advertise '{absent}'"
+        );
+    }
 }
 
 #[test]
@@ -277,7 +299,7 @@ async fn confirm_pairing_two_devices_converge_on_same_proof_3463() {
     );
 
     // B's user types the passphrase shown on A.
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_a.clone())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_a.clone(), None)
         .await
         .expect("#3463: the joiner must accept the HOST's passphrase");
 
@@ -336,7 +358,7 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
     assert_ne!(typed, passphrase_a);
     assert_ne!(typed, passphrase_b);
 
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, typed.into())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, typed.into(), None)
         .await
         .expect("arming a local marker is a local act and cannot fail on content");
 
@@ -361,7 +383,7 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
     // disagrees with the host's. Asserting it this way is stronger than asserting
     // a local error: it pins that the security boundary is the wire-side proof
     // comparison, not any local bookkeeping we could later relax again.
-    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_b.clone())
+    confirm_pairing_inner(&pool_b, &state_b, &sched_b, passphrase_b.clone(), None)
         .await
         .expect("arming a local marker is a local act and cannot fail on content");
 
@@ -397,9 +419,15 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
 
     // A non-empty remote id, exercising the path that pre-#855 took the
     // now-deleted peer_ref else-branch.
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.clone())
-        .await
-        .unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.clone(),
+        None,
+    )
+    .await
+    .unwrap();
 
     // #855: confirm no longer writes a peer_ref directly (the CN-spoof-prone
     // NULL-cert row is gone). It sets the pending-pairing marker carrying the
@@ -444,7 +472,7 @@ async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
     let scheduler = SyncScheduler::new();
 
     start_pairing_inner(&pairing_state, "device-local").unwrap();
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase)
+    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase, None)
         .await
         .unwrap();
 
@@ -489,6 +517,7 @@ async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
             &pairing_state,
             &scheduler,
             format!("wrong wrong wrong {attempt}"),
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("typo {attempt} must not be rationed, got {e:?}"));
@@ -496,9 +525,15 @@ async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
 
     // Now the correct passphrase, well past the retired budget.
     start_pairing_inner(&pairing_state, "device-local").unwrap();
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.clone())
-        .await
-        .expect("the correct passphrase must succeed however many typos preceded it");
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.clone(),
+        None,
+    )
+    .await
+    .expect("the correct passphrase must succeed however many typos preceded it");
 
     assert_eq!(
         peer_refs::get_pending_pairing_proof(&pool)
@@ -543,9 +578,15 @@ async fn confirm_pairing_pure_joiner_with_no_local_session_succeeds_3463() {
 
     let host_passphrase = "correct horse battery staple";
 
-    confirm_pairing_inner(&pool, &pairing_state, &scheduler, host_passphrase.into())
-        .await
-        .expect("#3463: a joiner with no local session must be able to confirm");
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        host_passphrase.into(),
+        None,
+    )
+    .await
+    .expect("#3463: a joiner with no local session must be able to confirm");
 
     // The marker must carry the proof of the passphrase the user typed, which is
     // what lets this device and the host converge.
@@ -587,7 +628,9 @@ async fn sync_cancel_pairing_clears_session() {
     );
 
     // Cancel
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
     assert!(
         pairing_state.lock().unwrap().is_none(),
         "pairing session must be cleared after cancel"
@@ -600,7 +643,7 @@ async fn sync_cancel_pairing_noop_when_no_session() {
     let pairing_state = Mutex::new(None);
 
     // Cancel with no active session — should succeed
-    let result = cancel_pairing_inner(&pool, &pairing_state).await;
+    let result = cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new()).await;
     assert!(
         result.is_ok(),
         "cancel_pairing with no session must succeed"
@@ -634,7 +677,9 @@ async fn sync_cancel_pairing_disarms_pending_pairing_row() {
          this attempt's own proof"
     );
 
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
 
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
@@ -670,6 +715,7 @@ async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_se
         &pairing_state,
         &scheduler,
         "correct horse battery staple".into(),
+        None,
     )
     .await
     .unwrap();
@@ -685,7 +731,9 @@ async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_se
         "confirm_pairing_inner must arm the pending-pairing marker"
     );
 
-    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+    cancel_pairing_inner(&pool, &pairing_state, &SyncScheduler::new())
+        .await
+        .unwrap();
 
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
@@ -760,6 +808,7 @@ async fn sync_pairing_commands_clear_the_backoff_that_would_swallow_their_wake_3
         &joiner_state,
         &joiner_scheduler,
         "correct horse battery staple".into(),
+        None,
     )
     .await
     .unwrap();

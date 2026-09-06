@@ -13,5 +13,6 @@
         ]
       }
     ]
-  }
+  },
+  "enabledMcpjsonServers": ["code-review-graph"]
 }

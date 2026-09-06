@@ -622,7 +622,11 @@ export const commands = {
 	 *  Tauri command: confirm pairing with a remote device.
 	 *  Stores the peer ref in the database and clears the pairing session.
 	 */
-	confirmPairing: (passphrase: string, remoteDeviceId: string) => typedError<null, AppError>(__TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId })),
+	confirmPairing: (passphrase: string, remoteDeviceId: string, scannedPeer: {
+	device_id: string,
+	endpoint_id: string,
+	addrs: string[],
+} | null) => typedError<null, AppError>(__TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId, scannedPeer })),
 	/**  Tauri command: cancel an in-progress pairing session. */
 	cancelPairing: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_pairing")),
 	/**
@@ -3068,9 +3072,10 @@ export type PageWithMetadataRow = {
 /**
  *  Response payload returned by [`start_pairing`].
  * 
- *  The QR payload + [`PairingInfo`] both carry only the passphrase.
- *  mDNS owns discovery + address resolution end-to-end; there is no
- *  scan-bootstrap path that would need a `host`/`port` here.
+ *  [`PairingInfo`] itself carries only the passphrase and the rendered QR.
+ *  Where this device is reachable rides inside the QR payload (#4037), not as
+ *  a field here: the joiner learns it by scanning, and a user typing the four
+ *  words has no address to type alongside them.
  */
 export type PairingInfo = {
 	passphrase: string,
@@ -3563,6 +3568,20 @@ export type RestoreToOpResult = {
 	non_reversible_skipped: number,
 	/**  Individual undo results for each reverted op. */
 	results: UndoResult[],
+};
+
+/**
+ *  The peer a joiner's camera read out of a v2 pairing QR (#4037).
+ * 
+ *  The wire shape of [`pairing_qr_payload`]'s v2 fields, carried back across
+ *  the IPC by `PairingDialog` so the daemon can dial the host it scanned. Every
+ *  field is a string because that is what came off a camera: nothing here has
+ *  been parsed or trusted yet, and [`Self::into_discovered`] is where it is.
+ */
+export type ScannedPeerCandidate = {
+	device_id: string,
+	endpoint_id: string,
+	addrs: string[],
 };
 
 /**

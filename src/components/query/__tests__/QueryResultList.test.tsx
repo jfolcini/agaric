@@ -5,11 +5,44 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { QueryResultList } from '@/components/query/QueryResultList'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+
+/** Target of the `[[…]]` link in the #4719 rows below. */
+const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+/** A link target whose page is NAMESPACED: the chip shows the leaf only. */
+const NAMESPACED_PAGE_ID = '01KP36KDG2NAMESPACEDPAGE01'
+
+// The row body renders through the resolve store; stub the hook so the chip
+// has a title to show without standing a store up. (`AlertSection.test.tsx`
+// does the same for the agenda rows fixed by #4705.)
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) =>
+      id === LINKED_PAGE_ID
+        ? 'Quarterly Plan'
+        : id === NAMESPACED_PAGE_ID
+          ? 'Work/Quarterly Plan'
+          : undefined,
+    ),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
+}))
+
+/** The `resolveBlockTitle` PROP: same cache, so it agrees with the chips. */
+const resolveTitleProp = (id: string): string =>
+  id === LINKED_PAGE_ID
+    ? 'Quarterly Plan'
+    : id === NAMESPACED_PAGE_ID
+      ? 'Work/Quarterly Plan'
+      : unresolvedBlockLabel(id)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -301,5 +334,193 @@ describe('QueryResultList', () => {
     render(<QueryResultList results={results} pageTitles={new Map()} />)
     const listbox = screen.getByRole('listbox', { name: t('query.resultsListLabel') })
     expect(listbox).toBeInTheDocument()
+  })
+})
+
+/**
+ * #4719 — the row used to render `resolveBlockDisplay`'s plain `title`, and
+ * that string comes from `truncateContent`, which strips a `[[ULID]]`'s
+ * brackets and leaves the ULID. The fallback is the NORMAL path for a
+ * cross-page query row, so `follow up on [[01KP36…]]` read as
+ * `follow up on 01KP36KDG2ABCDEFGHJKMNPQRS` with no way to tell what it
+ * pointed at. The row renders rich content now, as every other surface does.
+ */
+describe('QueryResultList — rich row content (#4719)', () => {
+  const linkedRow = () =>
+    makeBlock({
+      id: 'B1',
+      parent_id: 'P1',
+      page_id: 'P1',
+      content: `follow up on [[${LINKED_PAGE_ID}]]`,
+    })
+
+  // No `pageTitles` entry, so no `PageLink` in the row: a focusable <a> inside
+  // the `role="option"` is a PRE-EXISTING nested-interactive violation (the
+  // file's other axe test omits the page link for the same reason) and would
+  // mask the thing this axe check is here to watch.
+  const renderLinkedRow = () =>
+    render(
+      <QueryResultList
+        results={[linkedRow()]}
+        pageTitles={new Map()}
+        resolveBlockTitle={resolveTitleProp}
+      />,
+    )
+
+  it('renders the link target as a titled chip, never as a bare ULID', () => {
+    const { container } = renderLinkedRow()
+
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Quarterly Plan')
+    // Not merely "the chip is right": the id must be gone from the row
+    // ENTIRELY, which is the symptom the issue reports.
+    expect(container.textContent).not.toContain(LINKED_PAGE_ID)
+  })
+
+  it('keeps a correct accessible name on the role="option" row', () => {
+    // The visible text is now an element tree, so the name comes from
+    // `aria-label`. It resolves the same reference the chip does, so it still
+    // CONTAINS the visible text (WCAG 2.5.3) instead of naming the row after
+    // the raw id the chip no longer shows.
+    //
+    // Asserted on the ATTRIBUTE, not via `getByRole({ name })`: with the chip
+    // resolving to the same string, the computed name matches from the row's
+    // text content alone, so a role-name query passes with no `aria-label` at
+    // all and would not see it deleted.
+    renderLinkedRow()
+
+    const option = screen.getByTestId('query-result-item')
+    expect(option).toHaveAttribute('aria-label', 'follow up on Quarterly Plan')
+  })
+
+  it('names the row from aria-label, not from the chip text it abbreviates', () => {
+    // The case where the two genuinely differ, so the ROLE-NAME query below
+    // can only be satisfied by `aria-label`: a namespaced target renders the
+    // chip as its LEAF (`getPageDisplayName(…, 'leaf')`) while the name keeps
+    // the full path — a superset, which still satisfies 2.5.3.
+    render(
+      <QueryResultList
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: 'P1',
+            page_id: 'P1',
+            content: `follow up on [[${NAMESPACED_PAGE_ID}]]`,
+          }),
+        ]}
+        pageTitles={new Map()}
+        resolveBlockTitle={resolveTitleProp}
+      />,
+    )
+
+    expect(screen.getByTestId('block-link-chip')).toHaveTextContent('Quarterly Plan')
+    expect(screen.getByTestId('block-link-chip')).not.toHaveTextContent('Work/')
+    expect(
+      screen.getByRole('option', { name: 'follow up on Work/Quarterly Plan' }),
+    ).toBeInTheDocument()
+  })
+
+  it('names the row with the badge and page it also shows, not the body alone', () => {
+    // An `aria-label` REPLACES the contents as the accessible name, and the
+    // `role="option"` contains three visible things. Before the label existed
+    // the computed name was "TODO call the plumber My Page"; naming the row
+    // after the body alone drops the state and the page from what a screen
+    // reader announces.
+    render(
+      <QueryResultList
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: 'P1',
+            page_id: 'P1',
+            todo_state: 'TODO',
+            content: 'call the plumber',
+          }),
+        ]}
+        pageTitles={new Map([['P1', 'My Page']])}
+      />,
+    )
+
+    expect(screen.getByTestId('query-result-item')).toHaveAttribute(
+      'aria-label',
+      'TODO call the plumber My Page',
+    )
+  })
+
+  it('omits the page from the name when the row does not show one', () => {
+    // The counterweight: the page arm of the label mirrors the render
+    // condition, so a row with no parent page is not named after one.
+    render(
+      <QueryResultList
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: null,
+            page_id: 'P1',
+            todo_state: null,
+            content: 'call the plumber',
+          }),
+        ]}
+        pageTitles={new Map([['P1', 'My Page']])}
+      />,
+    )
+
+    expect(screen.getByTestId('query-result-item')).toHaveAttribute(
+      'aria-label',
+      'call the plumber',
+    )
+  })
+
+  it('resolves the name with no resolveBlockTitle prop — the AdvancedQuery path', () => {
+    // `AdvancedQueryView` and `GroupedResults` render this list WITHOUT the
+    // prop, and their rows still resolve chips through
+    // `useRichContentCallbacks`. Substituting the name through the prop alone
+    // therefore left those rows named "follow up on 01KP36KDG2…" beside a chip
+    // reading "Quarterly Plan" — the reported bug surviving in the accessible
+    // name on half the call sites.
+    render(
+      <QueryResultList
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: 'P1',
+            page_id: 'P1',
+            content: `follow up on [[${LINKED_PAGE_ID}]]`,
+          }),
+        ]}
+        pageTitles={new Map()}
+      />,
+    )
+
+    const option = screen.getByTestId('query-result-item')
+    expect(option).toHaveAttribute('aria-label', 'follow up on Quarterly Plan')
+    expect(option.getAttribute('aria-label')).not.toContain(LINKED_PAGE_ID)
+  })
+
+  it('has no a11y violations with a rich row body', async () => {
+    // Guards the NEW markup rather than the old bug, so it is green on the
+    // pre-fix code by construction. It is falsifiable against the plausible
+    // WRONG fix: the content carries a markdown link, and `renderTextInline`
+    // gives an external link `role="link"` unconditionally plus `tabIndex={0}`
+    // when the surface is interactive. Dropping `interactive: false` therefore
+    // puts a focusable link inside the `role="option"` and axe reports
+    // `nested-interactive` (verified — a `[[…]]` chip alone does NOT trip the
+    // rule, since it carries no widget role).
+    const { container } = render(
+      <QueryResultList
+        results={[
+          makeBlock({
+            id: 'B1',
+            parent_id: 'P1',
+            page_id: 'P1',
+            content: `follow up on [[${LINKED_PAGE_ID}]] see [docs](https://example.com)`,
+          }),
+        ]}
+        pageTitles={new Map()}
+        resolveBlockTitle={resolveTitleProp}
+      />,
+    )
+
+    const axeResults = await axe(container)
+    expect(axeResults).toHaveNoViolations()
   })
 })

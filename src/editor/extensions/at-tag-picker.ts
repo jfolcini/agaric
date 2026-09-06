@@ -112,7 +112,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
               errorMessage: 'Failed to create tag',
             })
           } else {
-            editor.chain().focus().deleteRange(range).insertTagRef(item.id).insertContent(' ').run()
+            editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
           }
         },
       }),

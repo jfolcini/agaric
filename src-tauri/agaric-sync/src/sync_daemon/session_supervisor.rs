@@ -299,6 +299,22 @@ pub(crate) async fn daemon_loop(
     //     only exists once the endpoint is up — the bind requests port 0.
     handle_internet_facing_bind(&bind_decision, port, &event_sink);
 
+    // 2c. Publish where a peer can dial us, so the pairing QR can carry it and a
+    //     first-ever pair stops depending on multicast (#4037).
+    //
+    //     Same sourcing rule as the mDNS announce below, for the same reason:
+    //     both fields are read back from the service that is actually accepting.
+    //     Every bound socket goes in, not just `lan_ip` — iroh races candidate
+    //     paths, and unlike the mDNS record (which #3853 narrowed to the one
+    //     address the endpoint bound, because a record naming an unbound address
+    //     is indistinguishable from a sleeping device) a QR candidate that leads
+    //     nowhere is refused in under a millisecond, not a dial budget.
+    scheduler.publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
+        device_id: device_id.clone(),
+        endpoint_id: endpoint_id.to_string(),
+        addrs: service.addr().ip_addrs().copied().collect(),
+    });
+
     // #1605: clone the daemon's shared cancel flag into the accept loop so every
     // spawned responder session observes the SAME shutdown/user-cancel signal the
     // initiator path uses. A flipped flag aborts an in-progress responder within one
@@ -534,7 +550,12 @@ pub(crate) async fn daemon_loop(
                 let pairing_pending = peer_refs::is_pending_pairing(&pool)
                     .await
                     .unwrap_or(false);
-                let round = peers_for_change_round(&refs, &discovered, pairing_pending);
+                // #4037: the QR the user scanned is a discovery source of its
+                // own, and on a LAN where multicast never arrives it is the
+                // only one — `discovered` is empty there by construction.
+                let scanned = scheduler.scanned_peer();
+                let round =
+                    peers_for_change_round(&refs, &discovered, pairing_pending, scanned.as_ref());
                 let mut join_set = tokio::task::JoinSet::new();
                 for peer in round {
                     // Each spawned task owns clones of the shared state.
@@ -1972,10 +1993,9 @@ pub async fn try_sync_with_peer(
     //    not "wrong certificate for the right device" but "a different device using
     //    this device's name" — an mDNS TXT record is a claim like any other.
     //
-    //    An unbound peer falls through to bind on success below. That TOFU is the same
-    //    one the old initiator performed with `upsert_peer_ref_with_cert`, and after an
-    //    upgrade it is the path by which every migrated pair re-acquires a binding,
-    //    since `0107` could not backfill a key from a certificate hash.
+    //    An unbound peer falls through to bind on success below. After an upgrade that
+    //    is the path by which every migrated pair re-acquires a binding, since `0107`
+    //    could not backfill a key from a certificate hash.
     let announced_key = endpoint_id.to_string();
     let pinned = peer_refs
         .iter()

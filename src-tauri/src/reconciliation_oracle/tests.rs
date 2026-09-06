@@ -71,7 +71,24 @@ async fn test_env() -> (sqlx::SqlitePool, TempDir, Materializer, Vec<BlockId>) {
         .expect("seed holder block");
         blocks.push(id);
     }
+
+    seed_fts_index(&pool).await;
+
     (pool, dir, mat, blocks)
+}
+
+/// Seed `fts_blocks` for a fixture that wrote its blocks straight into
+/// `blocks` (#3345 Artefact 8).
+///
+/// No dispatch task ever fired for those rows, so the index would start empty
+/// and `reconcile` would correctly report one missing row per block. This runs
+/// production's own vault-wide maintainer — the `RebuildFtsIndex` task, and
+/// what boot runs — so the FTS artefact starts reconciled and each fixture's
+/// assertions stay about their own subject.
+async fn seed_fts_index(pool: &sqlx::SqlitePool) {
+    agaric_store::fts::rebuild_fts_index(pool)
+        .await
+        .expect("seed the fts_blocks index");
 }
 
 /// Run production's DEFERRED byte/blob reclamation pass — the background
@@ -496,6 +513,9 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
         attachment_blob_rows: 0,
         page_link_cache_rows: 0,
         page_link_edges: 0,
+        fts_blocks_rows: 0,
+        fts_indexable_blocks: 0,
+        fts_tombstoned_rows_tolerated: 0,
     };
 
     for (step, action) in actions.iter().enumerate() {
@@ -702,6 +722,8 @@ async fn page_fixture() -> (sqlx::SqlitePool, TempDir) {
     insert_content_block(&pool, N_CHILD, Some(NESTED_PAGE), Some(NESTED_PAGE)).await;
     insert_content_block(&pool, ORPHAN, None, None).await;
 
+    seed_fts_index(&pool).await;
+
     (pool, dir)
 }
 
@@ -810,6 +832,7 @@ async fn pages_cache_row_membership_reconciles_in_both_directions() {
         "expected an extra-row divergence naming the title-cleared page, got:\n{cleared}"
     );
     settle_pages_cache(&pool).await;
+    settle_fts_for_block(&pool, NESTED_PAGE).await;
     assert_reconciled(&pool, "after the sweep dropped the title-cleared page").await;
     let end = oracle_coverage(&pool).await.expect("coverage");
     assert_eq!(
@@ -817,6 +840,24 @@ async fn pages_cache_row_membership_reconciles_in_both_directions() {
         (1, 1),
         "only PAGE_A should remain a live titled page, got {end:?}"
     );
+}
+
+/// Re-index one block the way production's fan-out would, after a fixture
+/// mutated it by direct SQL.
+///
+/// The fixtures below tombstone a block or clear its content without an op, so
+/// no dispatch task fires and `fts_blocks` keeps the stale row — which
+/// [`reconcile`] reports, as Artefact 8 should. A test auditing some OTHER
+/// artefact settles this one the way it settles its own: through production's
+/// maintainer, so a broken one still turns those tests red.
+///
+/// `update_fts_for_block` (the `UpdateFtsBlock` task) covers every state on its
+/// own — it DELETEs for a block that is absent, tombstoned or content-less, and
+/// upserts otherwise — so one call serves both shapes.
+async fn settle_fts_for_block(pool: &sqlx::SqlitePool, block_id: &str) {
+    agaric_store::fts::update_fts_for_block(pool, block_id)
+        .await
+        .expect("update_fts_for_block");
 }
 
 /// Soft-delete a block the way a cohort delete does — `deleted_at` in epoch ms
@@ -1111,6 +1152,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     settle_page_link_cache_rebuild(&pool)
         .await
         .expect("page_link_cache rebuild");
+    settle_fts_for_block(&pool, A_CHILD).await;
     assert_reconciled(&pool, "after the rebuild dropped the emptied page's row").await;
 
     // Direction 4 — a stale FLAG. `tgt_deleted` is not decoration: the hot
@@ -1299,6 +1341,8 @@ async fn bl_fixture() -> (sqlx::SqlitePool, TempDir) {
         &format!("see [[{BL_TGT_PENDING}]] and (({BL_TGT_STAMPED})) and [[{BL_OTHER_BLOCK}]]"),
     )
     .await;
+
+    seed_fts_index(&pool).await;
 
     (pool, dir)
 }
@@ -2415,4 +2459,363 @@ async fn block_links_unresolved_oracle_scale_sweep_4241() {
         "a vault settled by production's own writer must reconcile; first: {:?}",
         divergences.first()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 8 — `fts_blocks` (#3345)
+// ---------------------------------------------------------------------------
+
+const FTS_PAGE: &str = "01FTSPAGE3345000000000000A";
+const FTS_TAG: &str = "01FTSTAG334500000000000000";
+const FTS_PLAIN: &str = "01FTSPLAIN33450000000000AA";
+const FTS_TAGGER: &str = "01FTSTAGGER3345000000000AA";
+const FTS_EMPTY: &str = "01FTSEMPTY33450000000000AA";
+
+/// Seed a block of any type with explicit content, WITHOUT touching
+/// `fts_blocks` — the state a vault is in between an apply landing and
+/// whichever maintainer the dispatch table enqueued.
+async fn fts_insert(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    block_type: &str,
+    content: Option<&str>,
+    parent: Option<&str>,
+) {
+    let page_id = if block_type == "page" {
+        Some(id)
+    } else {
+        parent
+    };
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, 1, ?)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(content)
+    .bind(parent)
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .expect("seed block");
+}
+
+/// The index as it stands, `block_id` → every row it holds.
+async fn fts_stored(pool: &sqlx::SqlitePool, block_id: &str) -> Vec<String> {
+    // dynamic-sql: static SQL, test-only read-back.
+    sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+        .bind(block_id)
+        .fetch_all(pool)
+        .await
+        .expect("read fts_blocks")
+}
+
+/// The divergences this artefact reported, in `reconcile`'s stable order.
+async fn fts_divergences(pool: &sqlx::SqlitePool) -> Vec<Divergence> {
+    reconcile(pool)
+        .await
+        .expect("reconcile")
+        .into_iter()
+        .filter(|d| d.artefact.starts_with("fts_blocks"))
+        .collect()
+}
+
+/// A page, a tag, a plain block, a block that references the tag, and a block
+/// with NULL content. Nothing is indexed: the fixture starts in the state a
+/// vault is in before any FTS maintainer has run.
+async fn fts_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("fts.db"))
+        .await
+        .expect("init_pool");
+
+    fts_insert(&pool, FTS_PAGE, "page", Some("Notes"), None).await;
+    fts_insert(&pool, FTS_TAG, "tag", Some("urgent"), None).await;
+    fts_insert(
+        &pool,
+        FTS_PLAIN,
+        "content",
+        Some("plain body"),
+        Some(FTS_PAGE),
+    )
+    .await;
+    fts_insert(
+        &pool,
+        FTS_TAGGER,
+        "content",
+        Some(&format!("ship it #[{FTS_TAG}]")),
+        Some(FTS_PAGE),
+    )
+    .await;
+    fts_insert(&pool, FTS_EMPTY, "content", None, Some(FTS_PAGE)).await;
+
+    // The inline-reference edge a real vault carries. `reindex_fts_references`
+    // — production's propagation arm — finds referencing blocks through
+    // `block_tags`, `block_links` and `block_tag_refs`, NEVER by scanning
+    // content for `#[ULID]` tokens. Without this row the rename below
+    // propagates to nothing, which is a property of the maintainer, not of the
+    // fixture.
+    //
+    // It also names this artefact's one external dependency plainly:
+    // `fts_blocks` freshness after a rename is only as correct as
+    // `block_tag_refs`, and THAT artefact is not yet oracle-covered (blocked on
+    // #4679). A missing edge there is a stale FTS row here that no diff in this
+    // module attributes to its real cause.
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind(FTS_TAGGER)
+        .bind(FTS_TAG)
+        .execute(&pool)
+        .await
+        .expect("seed the inline tag-ref edge");
+
+    (pool, dir)
+}
+
+/// **Membership, both directions.** The key set of `fts_blocks` must equal the
+/// set of live blocks with non-NULL content.
+///
+/// Every state below is one production reaches, not an injected corruption: a
+/// vault whose FTS index has never been built, a block soft-deleted before its
+/// `RemoveFtsBlock` lands, and a block whose content was cleared. Each is
+/// asserted to make the oracle FIRE before production's own rebuild repairs
+/// it, so the artefact is observed working rather than merely observed green.
+#[tokio::test]
+async fn fts_index_reconciles_membership_in_both_directions_3345() {
+    let (pool, _dir) = fts_fixture().await;
+
+    // 1. Nothing indexed yet: four blocks carry content, so four rows are owed.
+    let missing = fts_divergences(&pool).await;
+    assert_eq!(
+        missing.len(),
+        4,
+        "an unbuilt index owes one row per block with content, got {missing:#?}"
+    );
+    assert!(
+        missing
+            .iter()
+            .all(|d| d.artefact == "fts_blocks.row" && d.actual.starts_with("no row")),
+        "every divergence must be a MISSING row, got {missing:#?}"
+    );
+    assert!(
+        !missing.iter().any(|d| d.key == FTS_EMPTY),
+        "a NULL-content block owes no row, got {missing:#?}"
+    );
+
+    // 2. Production's own vault-wide rebuild settles it.
+    agaric_store::fts::rebuild_fts_index(&pool)
+        .await
+        .expect("rebuild_fts_index");
+    assert_eq!(
+        fts_divergences(&pool).await,
+        vec![],
+        "a freshly rebuilt index must reconcile"
+    );
+    // The tag reference resolved to the tag's NAME, not its ULID — the
+    // rebuild's ref maps and the oracle's fold agree on what the token means.
+    assert_eq!(
+        fts_stored(&pool, FTS_TAGGER).await,
+        vec!["ship it urgent".to_owned()],
+        "the tag ref must strip to the tag name"
+    );
+
+    // 3. A tombstoned block's row is TOLERATED by the oracle — production's
+    // delete arm removes only the cohort root and nothing sweeps the rest
+    // (#4733) — so the two maintainers that DO clear it are pinned on the
+    // table directly. That is deliberate: an assertion on the divergence list
+    // would be vacuous here, and these are the assertions that fail if either
+    // maintainer stops working.
+    soft_delete_block(&pool, FTS_PLAIN).await;
+    assert_eq!(
+        fts_divergences(&pool).await,
+        vec![],
+        "a tombstoned block's surviving row is production's rule, not a divergence"
+    );
+    assert_eq!(
+        oracle_coverage(&pool)
+            .await
+            .expect("coverage")
+            .fts_tombstoned_rows_tolerated,
+        1,
+        "the tolerance must be COUNTED, not silent"
+    );
+
+    // Production's per-block remover — the `RemoveFtsBlock` arm.
+    agaric_store::fts::remove_fts_for_block(&pool, FTS_PLAIN)
+        .await
+        .expect("remove_fts_for_block");
+    assert_eq!(
+        fts_stored(&pool, FTS_PLAIN).await,
+        Vec::<String>::new(),
+        "remove_fts_for_block must drop the row"
+    );
+
+    // And the vault-wide rebuild must NOT put it back. Running it with a
+    // tombstone already in `blocks` is what makes its `deleted_at IS NULL` term
+    // part of this test rather than incidental.
+    agaric_store::fts::rebuild_fts_index(&pool)
+        .await
+        .expect("rebuild over a vault holding a tombstone");
+    assert_eq!(
+        fts_stored(&pool, FTS_PLAIN).await,
+        Vec::<String>::new(),
+        "the rebuild must not resurrect a tombstoned block's row"
+    );
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+
+    // 4. Content cleared to NULL is the same shape through a different column.
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("UPDATE blocks SET content = NULL WHERE id = ?")
+        .bind(FTS_TAGGER)
+        .execute(&pool)
+        .await
+        .expect("clear content");
+    let cleared = fts_divergences(&pool).await;
+    assert_eq!(cleared.len(), 1, "one stale row expected, got {cleared:#?}");
+    assert_eq!(cleared[0].key, FTS_TAGGER);
+    assert!(cleared[0].expected.starts_with("no indexed row"));
+
+    agaric_store::fts::update_fts_for_block(&pool, FTS_TAGGER)
+        .await
+        .expect("update_fts_for_block");
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+}
+
+/// **Freshness.** Renaming a tag changes what every referencing block's
+/// `stripped` must say. Production propagates that with
+/// `ReindexFtsReferences`; an arm that forgets leaves the OLD name indexed,
+/// and the block stops being findable by its new one.
+///
+/// This is the artefact's reason for re-reading the reference maps on every
+/// call rather than caching them, and it is the arm B6 cannot reach — every
+/// generated block is `block_type: "content"`, so no chain renames a tag.
+#[tokio::test]
+async fn fts_index_reports_a_stale_reference_after_a_rename_3345() {
+    let (pool, _dir) = fts_fixture().await;
+    agaric_store::fts::rebuild_fts_index(&pool)
+        .await
+        .expect("rebuild_fts_index");
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+
+    // Rename the tag. The referencing block's own content is untouched — only
+    // what its `#[ULID]` token RESOLVES TO has changed.
+    bl_set_content(&pool, FTS_TAG, "blocked").await;
+    agaric_store::fts::update_fts_for_block(&pool, FTS_TAG)
+        .await
+        .expect("reindex the tag block itself");
+
+    let stale = fts_divergences(&pool).await;
+    assert_eq!(
+        stale.len(),
+        1,
+        "the referencing block's stripped text is stale, got {stale:#?}"
+    );
+    assert_eq!(stale[0].artefact, "fts_blocks.stripped");
+    assert_eq!(stale[0].key, FTS_TAGGER);
+    assert_eq!(stale[0].expected, "\"ship it blocked\"");
+    assert_eq!(stale[0].actual, "\"ship it urgent\"");
+    // The index still answers to the OLD name: this is the user-visible half.
+    assert_eq!(
+        fts_stored(&pool, FTS_TAGGER).await,
+        vec!["ship it urgent".to_owned()]
+    );
+
+    // Production's propagation arm — the task `invalidations_for_op` enqueues
+    // for an edit to a tag block — closes it.
+    agaric_store::fts::reindex_fts_references(&pool, FTS_TAG)
+        .await
+        .expect("reindex_fts_references");
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+    assert_eq!(
+        fts_stored(&pool, FTS_TAGGER).await,
+        vec!["ship it blocked".to_owned()]
+    );
+}
+
+/// **Row multiplicity (#345 / C6).** `fts_blocks` is an FTS5 virtual table, so
+/// SQLite accepts no `UNIQUE` constraint on `block_id`. "Exactly one row per
+/// block" holds only because every writer DELETEs before it INSERTs, and a
+/// writer that forgets fails silently — the user sees the block twice in
+/// search results and its `bm25` weight doubled.
+///
+/// The two guards that exist are narrow: `debug_assert_single_fts_row` is
+/// compiled out of release, and `assert_no_duplicate_fts_rows` is invoked from
+/// one targeted test on one write path. This pins the oracle as the general
+/// one, on whatever path a caller drives.
+#[tokio::test]
+async fn fts_index_reports_a_duplicate_row_3345() {
+    let (pool, _dir) = fts_fixture().await;
+    agaric_store::fts::rebuild_fts_index(&pool)
+        .await
+        .expect("rebuild_fts_index");
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+
+    // Exactly what a DELETE-less writer leaves behind. The value is CORRECT —
+    // only the multiplicity is wrong, so nothing but a row count can see it.
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+        .bind(FTS_PLAIN)
+        .bind("plain body")
+        .execute(&pool)
+        .await
+        .expect("insert a duplicate row");
+
+    let dupes = fts_divergences(&pool).await;
+    assert_eq!(dupes.len(), 1, "one duplicate expected, got {dupes:#?}");
+    assert_eq!(dupes[0].artefact, "fts_blocks.duplicate_row");
+    assert_eq!(dupes[0].key, FTS_PLAIN);
+    assert!(
+        dupes[0].actual.starts_with("2 rows"),
+        "the report must name the multiplicity, got {:#?}",
+        dupes[0]
+    );
+
+    // Production's per-block upsert is DELETE-then-INSERT, so it repairs it.
+    agaric_store::fts::update_fts_for_block(&pool, FTS_PLAIN)
+        .await
+        .expect("update_fts_for_block");
+    assert_eq!(fts_stored(&pool, FTS_PLAIN).await.len(), 1);
+    assert_eq!(fts_divergences(&pool).await, vec![]);
+}
+
+/// The non-vacuity counters must count the artefact, not a constant.
+#[tokio::test]
+async fn fts_coverage_counts_the_index_and_its_obligations_3345() {
+    let (pool, _dir) = fts_fixture().await;
+
+    let before = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        before.fts_indexable_blocks, 4,
+        "four of the five seeded blocks carry content"
+    );
+    assert_eq!(before.fts_blocks_rows, 0, "nothing is indexed yet");
+
+    agaric_store::fts::rebuild_fts_index(&pool)
+        .await
+        .expect("rebuild_fts_index");
+    let after = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(after.fts_indexable_blocks, 4);
+    assert_eq!(after.fts_blocks_rows, 4);
+
+    // ROWS, not distinct blocks — which is what lets a duplicate show up here
+    // as well as in the divergence list.
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+        .bind(FTS_PLAIN)
+        .bind("plain body")
+        .execute(&pool)
+        .await
+        .expect("insert a duplicate row");
+    let dupe = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(dupe.fts_blocks_rows, 5);
+    assert_eq!(dupe.fts_indexable_blocks, 4);
+    assert_eq!(dupe.fts_tombstoned_rows_tolerated, 0);
+
+    // A tombstone moves a block from the obligation set into the tolerated set
+    // (#4733) — the two counters must not both claim it.
+    soft_delete_block(&pool, FTS_PLAIN).await;
+    let tombstoned = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(tombstoned.fts_indexable_blocks, 3);
+    assert_eq!(tombstoned.fts_tombstoned_rows_tolerated, 1);
 }

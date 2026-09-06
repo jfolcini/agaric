@@ -43,7 +43,19 @@ import { getRecentPagesForSpace } from '@/stores/recent-pages'
  */
 export type PageBrowserRow =
   | { kind: 'header'; section: 'starred' | 'pages'; count: number }
-  | { kind: 'page'; page: BlockRow; pageIndex: number }
+  | {
+      kind: 'page'
+      page: BlockRow
+      pageIndex: number
+      /**
+       * #4709 — this page's title is shared with another page at the
+       * same tree level, so the row gets a creation-date cue (page ids
+       * are unique; titles are not). Only ever set on `Pages`-section
+       * rows: `Starred` renders the full path and is a short, manually
+       * curated list, so the cue would be noise there.
+       */
+      duplicateTitle?: boolean
+    }
   | { kind: 'tree-page'; node: PageTreeNode; pageIndex: number; depth: number }
 
 /**
@@ -52,7 +64,9 @@ export type PageBrowserRow =
  * namespace root (`PageTreeNode` with `name` = the first segment).
  * Sorted together by the active comparator at the top level.
  */
-type PagesTopLevelUnit = { type: 'page'; page: BlockRow } | { type: 'tree'; node: PageTreeNode }
+type PagesTopLevelUnit =
+  | { type: 'page'; page: BlockRow; duplicateTitle: boolean }
+  | { type: 'tree'; node: PageTreeNode }
 
 /** Walk a tree node, collecting every page id reachable below it. */
 function collectDescendantPageIds(node: PageTreeNode, out: string[]): void {
@@ -166,7 +180,11 @@ export function buildMultiPageBranch(
   const topLevelUnits: PagesTopLevelUnit[] = allRoots.map((node) => {
     if (node.pageId && node.children.length === 0) {
       const page = byId.get(node.pageId)
-      if (page) return { type: 'page', page }
+      // #4709 — a duplicate-title root still renders as a flat row (it
+      // keeps the star / multi-select / metadata affordances a
+      // `tree-page` row does not have); the flag drives the
+      // creation-date cue that tells the two identical titles apart.
+      if (page) return { type: 'page', page, duplicateTitle: node.duplicateTitle === true }
     }
     return { type: 'tree', node }
   })
@@ -199,7 +217,12 @@ export function buildMultiPageBranch(
     for (const unit of sortedTopLevel) {
       idMap.push(rows.length)
       if (unit.type === 'page') {
-        rows.push({ kind: 'page', page: unit.page, pageIndex })
+        rows.push({
+          kind: 'page',
+          page: unit.page,
+          pageIndex,
+          ...(unit.duplicateTitle ? { duplicateTitle: true } : {}),
+        })
         pageRows.push(unit.page)
       } else {
         rows.push({ kind: 'tree-page', node: unit.node, pageIndex, depth: 0 })
@@ -220,7 +243,10 @@ export function buildMultiPageBranch(
     // E7 — `filteredPagesUnsorted` is the distinct matched-page set the
     // grouping consumed: one entry per page, before namespace collapse
     // and before the starred+namespaced duplication. That is the
-    // honest "matching pages" count.
+    // honest "matching pages" count. #4709 — it stays the right basis
+    // now that duplicate-title pages each get their own node: the count
+    // is one per input page either way, whereas deriving it from the
+    // tree would have silently dropped them along with their rows.
     matchedPageCount: filteredPagesUnsorted.length,
   }
 }

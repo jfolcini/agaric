@@ -55,9 +55,8 @@ use iroh::SecretKey;
 
 // Re-export submodule items
 pub use discovery::{
-    DiscoveredPeers, build_fallback_peer, format_peer_addresses, get_peer_cert_hash,
-    peers_for_change_round, process_discovery_event, resolve_peer_address,
-    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+    DiscoveredPeers, build_fallback_peer, format_peer_addresses, peers_for_change_round,
+    process_discovery_event, resolve_peer_address, should_attempt_sync_with_discovered_peer,
 };
 // These helpers are only called from test siblings — guard against unused_imports
 // on non-test builds (same rationale as the orchestrator/server re-exports below).
@@ -406,9 +405,9 @@ impl SyncDaemon {
     /// The dormant waiter observes peer arrival through two channels:
     /// 1. A periodic poll (`DORMANT_POLL_INTERVAL`, default 30 s) so the
     ///    daemon eventually transitions even if no signal is delivered.
-    /// 2. `scheduler.wait_for_debounced_change()` — `confirm_pairing`
-    ///    calls `scheduler.notify_change()` after a successful pair, so
-    ///    the transition typically happens within milliseconds.
+    /// 2. `scheduler.wait_for_change_after()` — `confirm_pairing` and
+    ///    `start_pairing_armed` both call `scheduler.notify_change()`, so
+    ///    the transition happens within milliseconds of a pairing act.
     ///
     /// On DB error the daemon falls back to active startup so a transient
     /// failure does not disable sync.
@@ -505,6 +504,25 @@ impl SyncDaemon {
         let scheduler = ctx.scheduler.clone();
         let activation = DaemonActivation::default();
         let activation_task = activation.clone();
+        // #4037: this waiter watches the RAW change counter, not
+        // `wait_for_debounced_change`.
+        //
+        // Debouncing here bought nothing and cost the pairing dialog the whole
+        // 3 s window before the QUIC endpoint was even bound — which is the wait
+        // `start_pairing_armed` sits in to put an address in the QR. This branch
+        // does not sync; it runs one `should_start_active` query and either
+        // starts the daemon or goes back to sleep. Not debouncing also leaves
+        // the change *owed*, so the wake that started the daemon still reaches
+        // Branch B, the branch that turns a pairing act into a dial.
+        //
+        // The mark is read HERE, not inside the task: the task is not scheduled
+        // synchronously and can first run long after this function returned, by
+        // which time a pairing command may already have called
+        // `notify_change()`. Read from inside, `seen` would already include that
+        // change and the waiter would sleep to its 30 s poll — the #4025
+        // missed-wake, moved. Read here, every notify a caller can issue after
+        // it holds this handle is by construction above the mark.
+        let mut seen = ctx.scheduler.change_count();
 
         let handle = tokio::spawn(async move {
             let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
@@ -519,7 +537,8 @@ impl SyncDaemon {
                             break;
                         }
                     }
-                    () = ctx.scheduler.wait_for_debounced_change() => {
+                    at = ctx.scheduler.wait_for_change_after(seen) => {
+                        seen = at;
                         // Likely a pair event; recheck immediately.
                         if peers_appeared(&ctx.pool).await {
                             break;

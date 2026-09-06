@@ -1,3 +1,4 @@
+import { ULID_RE } from '@/editor/markdown-common'
 import type { BlockRow } from '@/lib/bindings'
 import { untitledOr } from '@/lib/block-title'
 import { truncateContent } from '@/lib/text-utils'
@@ -61,6 +62,66 @@ function isSyntheticTitle(resolved: string): boolean {
 }
 
 /**
+ * Scan pattern for the three inline reference shapes the markdown vocabulary
+ * recognises — `[[id]]` (block link), `((id))` (block ref) and `#[id]` (tag
+ * ref), each carrying a bare 26-character ULID
+ * (`@/editor/markdown-parse/vocab.ts`, `tryConsumeToken`).
+ *
+ * The id is captured loosely here and validated with the canonical
+ * {@link ULID_RE} at substitution time, so this pattern cannot drift from the
+ * parser's idea of a ULID — the length is the only thing stated twice, and a
+ * wrong length simply fails to match, leaving the text alone.
+ *
+ * It is a SCAN, not the parser, and the one place the two disagree is a
+ * reference inside a code span: `` `[[<ulid>]]` `` renders as literal text in
+ * the row and is substituted in the name. Left as-is deliberately — matching
+ * the parser here means running it, and the divergence needs a ULID typed
+ * inside backticks to reach. Anything cheaper (counting backticks) would be a
+ * second, differently-wrong parser.
+ */
+const INLINE_REF_PATTERN = /\[\[([^\]]{26})\]\]|\(\(([^)]{26})\)\)|#\[([^\]]{26})\]/g
+
+/**
+ * Replace each inline reference in `content` with the title its target
+ * resolves to, for the PLAIN-TEXT name (see {@link resolveBlockDisplay}).
+ *
+ * #4719 — without this the row's accessible name carries the raw ULID that
+ * the rendered chips no longer show: `truncateContent` strips a `[[…]]`'s
+ * brackets and leaves the id, so `follow up on [[01KP36…]]` names the row
+ * "follow up on 01KP36KDG2ABCDEFGHJKMNPQRS" while the visible row reads
+ * "follow up on Quarterly Plan". That is the reported bug moved into the
+ * accessible name rather than fixed, and it breaks WCAG 2.5.3 (the visible
+ * label is not contained in the name).
+ *
+ * `resolveRefTitle` is the resolver the CHIPS render from — both components
+ * pass `useRichContentCallbacks().resolveBlockTitle` (see
+ * {@link resolveBlockDisplay}'s note on why it is a separate parameter), so
+ * the two agree by construction: on a hit the name carries the resolved
+ * title, and on a miss it carries `renderBlockLink`'s own `[[id…]]` label,
+ * which `truncateContent` then shortens to the same 8-character prefix the
+ * chip displays.
+ *
+ * A namespaced page is the one deliberate difference: the chip shows the LEAF
+ * (`renderBlockLink` → `getPageDisplayName(…, 'leaf')`) while the name keeps
+ * the full path. A superset satisfies 2.5.3 and tells a screen-reader user
+ * more, not less.
+ */
+function resolveInlineRefs(
+  content: string,
+  resolveRefTitle: ((id: string) => string) | undefined,
+): string {
+  if (!resolveRefTitle) return content
+  return content.replace(
+    INLINE_REF_PATTERN,
+    (match: string, link?: string, ref?: string, tag?: string): string => {
+      const id = link ?? ref ?? tag
+      if (id === undefined || !ULID_RE.test(id)) return match
+      return resolveRefTitle(id) || match
+    },
+  )
+}
+
+/**
  * Resolve the display title and page title for a block row.
  *
  * Centralises the title-resolution logic shared by QueryResultList and
@@ -97,19 +158,72 @@ function isSyntheticTitle(resolved: string): boolean {
  * yields the empty marker — while every other surface shows the placeholder.
  * Pinned by test, so it is a decision rather than a surprise; it agrees with
  * the UNCACHED blank row, which already rendered the marker.
+ *
+ * # `title` is a PLAIN string; `displayMarkdown` is what the row renders
+ *
+ * #4719 — on the fallback arm the row must render the block's content as
+ * rich content (a `[[ULID]]` is a titled chip, a leading `- ` or `# ` is
+ * downgraded by `inline`), not as the bracket-stripped plain text `title`
+ * carries. But `title` is still needed as a string: it is the row's
+ * accessible name in `QueryResultList` and the content cell's in
+ * `QueryResultTable`, and an element tree cannot serve there.
+ *
+ * So this returns both, and they are not two spellings of one value:
+ *  - `title` — plain, capped at 80, inline references resolved to their
+ *    titles ({@link resolveInlineRefs}). This is the row's / cell's
+ *    accessible name, and the only thing a string is still needed for.
+ *  - `displayMarkdown` — the block's RAW content markdown when the fallback
+ *    arm was taken and there is content to show, else `null`. `null` means
+ *    "render `title` as text": either the resolver hit (the stored title is
+ *    already a normalised one-line title, not markdown) or the block has no
+ *    content (`title` is then the empty marker).
+ *
+ * The 80-char budget documented above is therefore the NAME's, not the
+ * rendered row's: the rich body renders the whole content string and the
+ * row's own `truncate` clamps it, exactly as the agenda alert rows do
+ * (`AlertSection`, #4705).
+ *
+ * # `resolveRefTitle` is a SEPARATE resolver from `resolveBlockTitle`
+ *
+ * The two answer different questions and one of them is optional. This row's
+ * OWN title comes from `resolveBlockTitle`, which only the editor call path
+ * passes (`StaticQueryBlock` / `EditableBlock` → `QueryResult`);
+ * `AdvancedQueryView` and `GroupedResults` render the same list with no such
+ * prop, and always take the content-fallback arm. But the row BODY resolves
+ * its chips through `useRichContentCallbacks` in every one of those callers,
+ * so with a single resolver the name of an AdvancedQuery row went back to
+ * carrying the raw ULID while the chip beside it read "Quarterly Plan" —
+ * the exact 2.5.3 break this function's `resolveInlineRefs` exists to
+ * prevent, on half the call sites.
+ *
+ * So the reference substitution takes its own resolver, and both components
+ * pass the CHIP's one (`useRichContentCallbacks().resolveBlockTitle`, with
+ * `renderBlockLink`'s own `unresolvedBlockLabel` fallback for a miss).
+ * It defaults to `resolveBlockTitle` so a caller that has only the one — the
+ * unit tests, and any future caller with a single resolver — keeps the old
+ * behaviour.
  */
 export function resolveBlockDisplay(
   block: BlockRow,
   pageTitles: Map<string, string>,
   resolveBlockTitle?: ((id: string) => string) | undefined,
-): { title: string; pageTitle: string | undefined } {
+  resolveRefTitle: ((id: string) => string) | undefined = resolveBlockTitle,
+): { title: string; displayMarkdown: string | null; pageTitle: string | undefined } {
   const resolved = resolveBlockTitle ? resolveBlockTitle(block.id) : ''
-  const contentFallback = truncateContent(block.content, 80)
-  const title = resolved && !isSyntheticTitle(resolved) ? resolved : contentFallback
+  const useResolved = Boolean(resolved) && !isSyntheticTitle(resolved)
+  const contentFallback = truncateContent(
+    block.content ? resolveInlineRefs(block.content, resolveRefTitle) : block.content,
+    80,
+  )
+  const title = useResolved ? resolved : contentFallback
+  // Empty content collapses to `null` (not `''`) so the caller has ONE test
+  // for "render `title` as text": `renderRichContent('')` returns null and
+  // would leave the row with no body at all.
+  const displayMarkdown = useResolved || !block.content ? null : block.content
 
   const pageTitle = block.page_id ? pageTitles.get(block.page_id) : undefined
 
-  return { title, pageTitle }
+  return { title, displayMarkdown, pageTitle }
 }
 
 /**

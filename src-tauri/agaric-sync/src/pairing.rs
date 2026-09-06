@@ -35,7 +35,8 @@ use sqlx::SqlitePool;
 use std::sync::{Mutex, MutexGuard};
 use tracing::instrument;
 
-use crate::sync_scheduler::SyncScheduler;
+use crate::mdns::DiscoveredPeer;
+use crate::sync_scheduler::{LocalEndpointAdvert, SyncScheduler};
 
 use rand::seq::IndexedRandom;
 use std::sync::LazyLock;
@@ -82,21 +83,79 @@ pub fn generate_passphrase() -> String {
 // QR Code Payload & SVG Generation
 // ---------------------------------------------------------------------------
 
-/// Current pairing QR payload schema version. Increment whenever
-/// the JSON shape changes in a way that would confuse older joiners.
-pub const PAIRING_QR_VERSION: u32 = 1;
+/// Current pairing QR payload schema version — the shape a device that knows
+/// where it is reachable emits. Increment whenever the JSON shape changes in a
+/// way that would confuse older joiners.
+pub const PAIRING_QR_VERSION: u32 = 2;
+
+/// The version a payload carries when this device has no bound endpoint to
+/// advertise.
+///
+/// It is not a lesser v2: it is byte-for-byte the v1 payload, because that is
+/// exactly what it is — passphrase only, mDNS owning discovery. Tagging it `2`
+/// would promise a joiner fields it does not carry.
+pub const PAIRING_QR_VERSION_PASSPHRASE_ONLY: u32 = 1;
+
+/// How many address candidates the QR will carry (#4037).
+///
+/// `ip_addrs()` is a `Vec` with no bound the user controls, and the QR is read
+/// by a phone camera out of a 200 px box, so payload bytes are a scannability
+/// budget. This is the `.take()` that keeps an unbounded list out of it.
+///
+/// Two is not a measured cliff. Measured, a third candidate costs no QR version
+/// (two 241 B/v12, three 260 B/v12) — the earlier "last rung before density
+/// degrades" reason died when `device_id` joined the payload.
+///
+/// It does guard a real case, though the bind is a single socket: #3853 records
+/// that the old mDNS announce enumerated every RFC 1918 interface and "on the
+/// maintainer's desktop it advertised three bridge addresses". #3853 narrowed
+/// the mDNS RECORD to the one bound address; the QR advert deliberately does not
+/// narrow (a dead candidate is refused in microseconds, a dead mDNS record is
+/// indistinguishable from a sleeping device), so this is the bound instead.
+///
+/// Dropping a candidate only ever costs a race, never a pair: mDNS remains the
+/// discovery path and the fallback.
+pub const MAX_QR_ADDR_CANDIDATES: usize = 2;
 
 /// Build the JSON payload for a pairing QR code.
 ///
-/// Returns: `{"v":1,"passphrase":"w1 w2 w3 w4"}`.
+/// With `advert`, returns the v2 shape:
+/// `{"v":2,"passphrase":"w1 w2 w3 w4","device_id":"…","endpoint_id":"…","addrs":["ip:port",…]}`.
+/// Without it, the v1 shape: `{"v":1,"passphrase":"w1 w2 w3 w4"}`.
 ///
 /// The leading `"v"` field tags the schema version so the joining
 /// device fails fast on a payload it cannot parse — a stale QR or an
 /// unrecognised future shape — rather than silently dropping fields.
 ///
-/// The QR carries only the passphrase. Discovery and address
-/// resolution are owned end-to-end by mDNS — there is no scan-bootstrap
-/// path, so the QR never embeds host/port.
+/// # Why the addresses are here (#4037)
+///
+/// They are additive, and mDNS is untouched: it remains the re-discovery path
+/// and the staleness fallback, because a DHCP lease that turns over between the
+/// QR being rendered and being scanned invalidates every candidate in it. What
+/// they buy is the *first* pair on a network where multicast does not work —
+/// an AP with client isolation, a guest VLAN, an Android build whose background
+/// firewall chain drops the packets. Without them that pair cannot happen at
+/// all; with them the joiner has a path to race.
+///
+/// `device_id` is here because a dial is only half of what the joiner needs.
+/// The session is keyed on the peer's device id — it is the `peer_refs.peer_id`
+/// the joiner's TOFU bind writes and the `expected_remote_id` the orchestrator
+/// is constructed with — and an mDNS-discovered peer supplies it in its TXT
+/// record. A QR-dialled peer has no announcement to read one from, so without
+/// this field the joiner would have to invent one, and `bind_endpoint_id`
+/// refuses to be re-pointed afterwards: the invented id would be permanent, and
+/// the real one could never bind.
+///
+/// The `endpoint_id` alone would not do it. A dial that names only a key, on a
+/// LAN-only endpoint with no relay and no discovery service, has no path to try
+/// and fails in well under a millisecond — measured, and pinned by
+/// `transport::endpoint::tests::a_dial_naming_only_an_endpoint_id_fails_fast_instead_of_hanging`.
+/// That measurement is also why a stale candidate is cheap: it costs the joiner
+/// microseconds before the mDNS fallback gets its turn, not a dial budget.
+///
+/// This function stays a pure function of its arguments — it never touches an
+/// `iroh::Endpoint`. The caller resolves the coordinates; see
+/// [`start_pairing_armed`] for why they cannot simply be read at the call site.
 ///
 /// This payload is parsed on the TS side
 /// (`src/components/dialogs/PairingDialog.tsx`, `JSON.parse(data)`), not
@@ -104,12 +163,84 @@ pub const PAIRING_QR_VERSION: u32 = 1;
 /// were never equivalent: the TS parser also accepts a bare non-JSON
 /// string as a plain passphrase and does not check `v`, so do not assume
 /// a Rust round-trip of this exact shape exists.
-pub fn pairing_qr_payload(passphrase: &str) -> String {
+pub fn pairing_qr_payload(passphrase: &str, advert: Option<&LocalEndpointAdvert>) -> String {
+    let Some(advert) = advert else {
+        return serde_json::json!({
+            "v": PAIRING_QR_VERSION_PASSPHRASE_ONLY,
+            "passphrase": passphrase,
+        })
+        .to_string();
+    };
     serde_json::json!({
         "v": PAIRING_QR_VERSION,
         "passphrase": passphrase,
+        "device_id": advert.device_id,
+        "endpoint_id": advert.endpoint_id,
+        "addrs": advert
+            .addrs
+            .iter()
+            .take(MAX_QR_ADDR_CANDIDATES)
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>(),
     })
     .to_string()
+}
+
+/// The peer a joiner's camera read out of a v2 pairing QR (#4037).
+///
+/// The wire shape of [`pairing_qr_payload`]'s v2 fields, carried back across
+/// the IPC by `PairingDialog` so the daemon can dial the host it scanned. Every
+/// field is a string because that is what came off a camera: nothing here has
+/// been parsed or trusted yet, and [`Self::into_discovered`] is where it is.
+#[derive(Debug, serde::Deserialize, specta::Type)]
+pub struct ScannedPeerCandidate {
+    pub device_id: String,
+    pub endpoint_id: String,
+    pub addrs: Vec<String>,
+}
+
+impl ScannedPeerCandidate {
+    /// Turn a scanned candidate into the same [`DiscoveredPeer`] an mDNS
+    /// announcement produces, or `None` if it is not dialable.
+    ///
+    /// # Why every field is refused rather than repaired
+    ///
+    /// This is the trust boundary: the values came off a camera, and the
+    /// device id among them becomes a `peer_refs.peer_id` that
+    /// `bind_endpoint_id` will not later re-point. So the device id goes
+    /// through [`crate::sync_protocol::accept_stated_device_id`] — the same
+    /// normaliser the wire's `sender_device_id` takes, for the same reasons
+    /// (#4380/#4451) — which rejects rather than truncates, and a candidate
+    /// with no parseable key or no parseable address is dropped whole. A
+    /// dropped candidate costs nothing: mDNS is untouched and still owns
+    /// discovery.
+    ///
+    /// An address list that parses to nothing is refused along with the rest,
+    /// because a dial naming only a key has no path to race on a LAN-only
+    /// endpoint — measured by
+    /// `transport::endpoint::tests::a_dial_naming_only_an_endpoint_id_fails_fast_instead_of_hanging`.
+    ///
+    /// [`DiscoveredPeer`] carries one port for every address, so the first
+    /// candidate's port is the one used — the same collapse `daemon_loop`
+    /// already performs when it takes the mDNS SRV port from
+    /// `addr().ip_addrs().next()`, over the same list of bound sockets.
+    #[must_use]
+    pub fn into_discovered(self) -> Option<DiscoveredPeer> {
+        let device_id = crate::sync_protocol::accept_stated_device_id(&self.device_id)?;
+        let endpoint_id = self.endpoint_id.trim().parse::<iroh::EndpointId>().ok()?;
+        let socket_addrs: Vec<std::net::SocketAddr> = self
+            .addrs
+            .iter()
+            .filter_map(|a| a.trim().parse::<std::net::SocketAddr>().ok())
+            .collect();
+        let port = socket_addrs.first()?.port();
+        Some(DiscoveredPeer {
+            device_id,
+            endpoint_id: Some(endpoint_id),
+            addresses: socket_addrs.iter().map(std::net::SocketAddr::ip).collect(),
+            port,
+        })
+    }
 }
 
 /// Render `data` as a QR code and return the SVG markup.
@@ -216,9 +347,10 @@ impl PairingSession {
 
 /// Response payload returned by [`start_pairing`].
 ///
-/// The QR payload + [`PairingInfo`] both carry only the passphrase.
-/// mDNS owns discovery + address resolution end-to-end; there is no
-/// scan-bootstrap path that would need a `host`/`port` here.
+/// [`PairingInfo`] itself carries only the passphrase and the rendered QR.
+/// Where this device is reachable rides inside the QR payload (#4037), not as
+/// a field here: the joiner learns it by scanning, and a user typing the four
+/// words has no address to type alongside them.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct PairingInfo {
     pub passphrase: String,
@@ -273,22 +405,45 @@ async fn clear_unpaired_flags_on_pairing_act(pool: &SqlitePool) {
 /// stores the session in `pairing_state`, and returns the pairing info
 /// to the frontend.
 ///
-/// The QR payload + [`PairingInfo`] both carry only the passphrase.
-/// mDNS owns discovery + address resolution end-to-end; the QR is not a
-/// scan-bootstrap channel for a direct `host:port` connection.
+/// The QR is always the passphrase-only v1 shape: this path does not arm the
+/// pairing window, so it never wakes a dormant daemon and there is no bound
+/// endpoint to advertise. [`start_pairing_armed`] is the path that resolves one.
 #[instrument(skip(pairing_state), err)]
 pub fn start_pairing(
     pairing_state: &Mutex<Option<PairingSession>>,
     device_id: &str,
 ) -> Result<PairingInfo, AppError> {
-    let session = PairingSession::new(device_id, "");
+    install_pairing_session(pairing_state, PairingSession::new(device_id, ""), None)
+}
+
+/// Render `session`'s QR, store the session, and hand back the pairing info.
+///
+/// Split out of [`start_pairing`] because [`start_pairing_armed`] must mint the
+/// passphrase *before* it can render the QR — it arms the pairing marker with a
+/// proof of that passphrase, and arming is what produces the address the QR
+/// carries.
+fn install_pairing_session(
+    pairing_state: &Mutex<Option<PairingSession>>,
+    session: PairingSession,
+    advert: Option<&LocalEndpointAdvert>,
+) -> Result<PairingInfo, AppError> {
     let passphrase = session.passphrase.clone();
-    let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase))?;
+    let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase, advert))?;
 
     *lock_pairing_state(pairing_state)? = Some(session);
 
     Ok(PairingInfo { passphrase, qr_svg })
 }
+
+/// How long [`start_pairing_armed`] waits for this device's bound endpoint
+/// before rendering the pairing QR (#4037).
+///
+/// Covers the interface sweep and the bind that follow the wake. It used to be
+/// slack added to `SyncScheduler::debounce_window`, back when the dormant
+/// waiter spent that window before rechecking; this change moved the waiter onto
+/// the raw counter, so the window is not spent and summing it only obscured
+/// what the budget rests on.
+const QR_ENDPOINT_BIND_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Start pairing AND arm the pairing window so the host's dormant daemon
 /// activates for the duration.
@@ -309,11 +464,11 @@ pub async fn start_pairing_armed(
     scheduler: &SyncScheduler,
     device_id: &str,
 ) -> Result<PairingInfo, AppError> {
-    let info = start_pairing(pairing_state, device_id)?;
+    let session = PairingSession::new(device_id, "");
     // #855: store the passphrase proof in the pending-pairing marker so the
     // responder can require the joiner to prove knowledge of the passphrase
     // before we TOFU-pin it (closes the CN-spoof window).
-    peer_refs::set_pending_pairing(pool, &pairing_proof(&info.passphrase)).await?;
+    peer_refs::set_pending_pairing(pool, &pairing_proof(&session.passphrase)).await?;
     // #3547: the wake below is a SINGLE wake, and it is what Branch B turns into
     // the dial a first-ever pair depends on. Backoff standing against a peer
     // would let `may_retry` skip it, and nothing would retry until the next
@@ -323,7 +478,43 @@ pub async fn start_pairing_armed(
     // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
     clear_unpaired_flags_on_pairing_act(pool).await;
     scheduler.notify_change();
-    Ok(info)
+
+    // #4037: the QR is rendered *after* the arm, not before, and that ordering is
+    // the whole plumbing design.
+    //
+    // On the flow this feature exists for — a first-ever pair — this device has
+    // no peers, so the daemon is dormant: no mDNS, and crucially no bound QUIC
+    // endpoint. There is no address to put in a QR because nothing is listening
+    // yet. The arm above is what changes that: it flips `should_start_active`
+    // and the wake takes the dormant waiter into `daemon_loop`, which binds and
+    // then publishes where it bound (`SyncScheduler::publish_local_endpoint`).
+    //
+    // So the wait below is not a poll for something that already exists; it is
+    // waiting on a transition this function just caused. Since the waiter no
+    // longer debounces (it watches the raw counter), that transition costs the
+    // bind and little else; the budget adds `debounce_window` to the slack only
+    // as headroom, not because the window is spent. Every other case — any
+    // device that has ever paired — is already active and this returns on the
+    // first `borrow`.
+    //
+    // A timeout is not a failure: it means this device has no endpoint to
+    // advertise, and the QR degrades to the passphrase-only v1 shape that mDNS
+    // has always carried on its own.
+    let advert = scheduler
+        .await_local_endpoint(QR_ENDPOINT_BIND_BUDGET)
+        .await;
+    if advert.is_none() {
+        tracing::warn!(
+            "no bound sync endpoint to advertise; the pairing QR carries only the \
+             passphrase and this pair depends on mDNS (#4037)"
+        );
+    }
+
+    // Rendering after the arm means a QR-generation failure now leaves the marker
+    // armed where it previously would not have. That is inert: the passphrase is
+    // never shown either, so there is nothing for a peer to prove knowledge of,
+    // and the marker expires with `PAIRING_TIMEOUT` regardless.
+    install_pairing_session(pairing_state, session, advert.as_ref())
 }
 
 /// Confirm pairing with a remote device — the **joiner** half of the flow.
@@ -380,12 +571,23 @@ pub async fn start_pairing_armed(
 /// On success the pending-pairing marker is armed and the scheduler is
 /// signalled so a dormant sync daemon transitions to active mode without
 /// waiting for its next poll interval.
-#[instrument(skip(pool, pairing_state, scheduler, passphrase), err)]
+///
+/// # `scanned` — the host the QR named (#4037)
+///
+/// `Some` when the passphrase arrived by camera rather than by keyboard. It is
+/// published to the scheduler so the daemon's next change round dials it
+/// alongside anything mDNS found, which is what buys a first pair on a network
+/// where multicast does not work. It is a *candidate*, not a requirement: an
+/// unusable one is logged and dropped rather than failing the confirm, because
+/// the arm below is the part pairing cannot do without and mDNS still covers
+/// the ordinary case. See [`ScannedPeerCandidate::into_discovered`].
+#[instrument(skip(pool, pairing_state, scheduler, passphrase, scanned), err)]
 pub async fn confirm_pairing(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
     passphrase: String,
+    scanned: Option<ScannedPeerCandidate>,
 ) -> Result<(), AppError> {
     // #3463: there is deliberately NO "a local pairing session must exist" guard
     // here, and removing it is part of the fix rather than a relaxation of it.
@@ -412,9 +614,9 @@ pub async fn confirm_pairing(
     // `Option<PairingSession>`) is the right end state and is scoped into the
     // pairing rewrite on plan #3464, where the passphrase becomes an iroh ticket.
 
-    // The FE has no remote device_id at confirm time — the QR carries only the
-    // passphrase, and mDNS + TOFU establish the real peer on the first
-    // authenticated connection. So we set a persistent pending-pairing marker
+    // The FE has no remote device_id at confirm time — the QR carries a
+    // passphrase and an endpoint, never a device id, and mDNS + TOFU establish
+    // the real peer on the first authenticated connection. So we set a persistent pending-pairing marker
     // that wakes the dormant daemon to *accept* that first connection, instead
     // of writing a junk empty-string `peer_refs` row (which used to be the only
     // thing tripping `should_start_active`, but showed as a blank ghost peer and
@@ -440,6 +642,27 @@ pub async fn confirm_pairing(
     scheduler.clear_backoff();
     // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
     clear_unpaired_flags_on_pairing_act(pool).await;
+
+    // #4037: published BEFORE the wake, so the round that wake triggers already
+    // sees the candidate. The order is the whole point — a candidate published
+    // after `notify_change` would sit out the one round the user is waiting on.
+    if let Some(scanned) = scanned {
+        match scanned.into_discovered() {
+            Some(peer) => {
+                tracing::info!(
+                    peer_id = %peer.device_id,
+                    candidates = peer.addresses.len(),
+                    "pairing QR named a host to dial; racing it against mDNS (#4037)"
+                );
+                scheduler.publish_scanned_peer(peer);
+            }
+            None => tracing::warn!(
+                "the scanned pairing QR named a host this device cannot dial \
+                 (unusable device id, endpoint id, or address list); this pair \
+                 depends on mDNS (#4037)"
+            ),
+        }
+    }
 
     // Wake a dormant daemon (if any). Harmless if the daemon is
     // already active — `notify_change` is debounced by
@@ -521,43 +744,129 @@ mod tests {
         }
     }
 
+    /// A fixture advert: two candidates, so "all bound addresses" is
+    /// distinguishable from "the first one".
+    ///
+    /// The key comes from the shared `test_endpoint_id` helper rather than a
+    /// hand-typed string, so it is a *real* `EndpointId` in its real `Display`
+    /// spelling (64 lowercase hex). The QR-size test below measures bytes, and
+    /// a hand-typed placeholder of the wrong length would make those numbers
+    /// quietly wrong.
+    fn advert() -> LocalEndpointAdvert {
+        LocalEndpointAdvert {
+            // A canonical v4 UUID, which is what `get_or_create_device_id`
+            // writes and therefore what the QR-size measurement below has to
+            // weigh — a short placeholder would understate the payload.
+            device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".to_owned(),
+            endpoint_id: crate::mdns::test_endpoint_id("QR_HOST_4037").to_string(),
+            addrs: vec![
+                "192.168.1.42:59553"
+                    .parse()
+                    .expect("a valid socket address"),
+                "10.0.0.7:59553".parse().expect("a valid socket address"),
+            ],
+        }
+    }
+
+    /// With no bound endpoint, the payload is the v1 payload — not a v2 payload
+    /// with the address fields missing or empty.
+    ///
+    /// The distinction is the whole compatibility story: a v1-only joiner reads
+    /// `v` (or, in the shipped TS parser, does not) and must find exactly what
+    /// it has always found. Announcing `"v":2` while carrying no endpoint would
+    /// make the version tag a lie.
     #[test]
-    fn pairing_qr_payload_valid_json() {
-        let payload = pairing_qr_payload("alpha bravo charlie delta");
+    fn pairing_qr_payload_without_an_advert_is_the_v1_shape() {
+        let payload = pairing_qr_payload("alpha bravo charlie delta", None);
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload must be valid JSON");
-        // Payload must declare its schema version explicitly.
         assert_eq!(parsed["v"], 1, "payload must include \"v\":1");
         assert_eq!(parsed["passphrase"], "alpha bravo charlie delta");
-        // Host and port are no longer part of the QR payload —
-        // mDNS owns discovery + address resolution end-to-end.
         let object = parsed
             .as_object()
             .expect("QR payload must be a JSON object");
         assert_eq!(
             object.len(),
             2,
-            "QR payload must contain exactly {{v, passphrase}}, got: {:?}",
+            "the degraded payload must contain exactly {{v, passphrase}}, got: {:?}",
             object.keys().collect::<Vec<_>>()
         );
-        assert!(
-            !object.contains_key("host"),
-            "QR payload must not contain 'host'"
-        );
-        assert!(
-            !object.contains_key("port"),
-            "QR payload must not contain 'port'"
-        );
+        for absent in ["device_id", "endpoint_id", "addrs", "host", "port"] {
+            assert!(
+                !object.contains_key(absent),
+                "a device with no bound endpoint must not advertise '{absent}'"
+            );
+        }
     }
 
-    /// Encoded payload must always include `"v":1`.
+    /// The v2 shape, pinned exactly: four keys, no more and no fewer.
+    ///
+    /// This replaces the "exactly {{v, passphrase}}" assertion that encoded the
+    /// pre-#4037 decision. It is deliberately just as tight — a payload that
+    /// grows a fifth field is a schema change a joiner has to be told about,
+    /// which is what `v` is for.
     #[test]
-    fn pairing_qr_payload_includes_version_field() {
-        let payload = pairing_qr_payload("a b c d");
+    fn pairing_qr_payload_with_an_advert_is_the_v2_shape() {
+        let advert = advert();
+        let payload = pairing_qr_payload("alpha bravo charlie delta", Some(&advert));
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload must be valid JSON");
-        assert_eq!(parsed["v"], 1, "every QR payload must carry the version");
-        assert_eq!(parsed["v"].as_u64(), Some(u64::from(PAIRING_QR_VERSION)));
+        let object = parsed
+            .as_object()
+            .expect("QR payload must be a JSON object");
+
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["addrs", "device_id", "endpoint_id", "passphrase", "v"],
+            "the v2 payload is exactly {{v, passphrase, device_id, endpoint_id, addrs}}"
+        );
+        assert_eq!(parsed["v"], 2, "the addressed payload declares v2");
+        assert_eq!(parsed["passphrase"], "alpha bravo charlie delta");
+        assert_eq!(parsed["device_id"], advert.device_id);
+        assert_eq!(parsed["endpoint_id"], advert.endpoint_id);
+        assert_eq!(
+            parsed["addrs"],
+            serde_json::json!(["192.168.1.42:59553", "10.0.0.7:59553"]),
+            "every bound candidate goes in, in order — iroh races them"
+        );
+        // `host`/`port` were the pre-#4037 shape and are still not it: the
+        // address is one `ip:port` string per candidate, not a split pair, and
+        // there is more than one of them.
+        for absent in ["host", "port"] {
+            assert!(
+                !object.contains_key(absent),
+                "the v2 payload carries 'addrs', never '{absent}'"
+            );
+        }
+    }
+
+    /// The `v` a payload declares is the constant, not a literal that drifted.
+    #[test]
+    fn pairing_qr_payload_version_fields_match_their_constants() {
+        let advert = advert();
+        let addressed: serde_json::Value =
+            serde_json::from_str(&pairing_qr_payload("a b c d", Some(&advert)))
+                .expect("payload must be valid JSON");
+        assert_eq!(
+            addressed["v"].as_u64(),
+            Some(u64::from(PAIRING_QR_VERSION)),
+            "the addressed payload's version is PAIRING_QR_VERSION"
+        );
+
+        let degraded: serde_json::Value =
+            serde_json::from_str(&pairing_qr_payload("a b c d", None))
+                .expect("payload must be valid JSON");
+        assert_eq!(
+            degraded["v"].as_u64(),
+            Some(u64::from(PAIRING_QR_VERSION_PASSPHRASE_ONLY)),
+            "the degraded payload's version is PAIRING_QR_VERSION_PASSPHRASE_ONLY"
+        );
+        assert_ne!(
+            PAIRING_QR_VERSION, PAIRING_QR_VERSION_PASSPHRASE_ONLY,
+            "the two shapes must be distinguishable by their version tag alone"
+        );
     }
 
     #[test]
@@ -600,51 +909,411 @@ mod tests {
     #[test]
     fn qr_payload_special_chars_in_passphrase() {
         let passphrase = r#"hello "world" & <friends>"#;
-        let payload = pairing_qr_payload(passphrase);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&payload).expect("payload must be valid JSON");
+        for advert in [None, Some(advert())] {
+            let payload = pairing_qr_payload(passphrase, advert.as_ref());
+            let parsed: serde_json::Value =
+                serde_json::from_str(&payload).expect("payload must be valid JSON");
+            assert_eq!(
+                parsed["passphrase"].as_str().unwrap(),
+                passphrase,
+                "special characters must survive JSON round-trip in both shapes"
+            );
+        }
+    }
+
+    /// A payload's size, in the terms that decide whether a phone camera can
+    /// read it off a dialog: bytes in, QR version and module count out.
+    ///
+    /// # What the numbers are, and what they cost
+    ///
+    /// `PairingQrDisplay` renders the SVG into a fixed 200 px box with 12 px of
+    /// padding, so the code gets 176 px however many modules it has. Adding the
+    /// `qrcode` crate's 4-module quiet zone on each side:
+    ///
+    /// | payload | bytes | QR version | modules | across 176 px |
+    /// |---|---|---|---|---|
+    /// | v1, passphrase only | 61 | 4 | 33 (+8) | 4.3 px/module |
+    /// | v2, one candidate | 224 | 11 | 61 (+8) | 2.6 px/module |
+    /// | v2, two candidates (the cap) | 241 | 12 | 65 (+8) | 2.4 px/module |
+    /// | v2, three candidates | 260 | 12 | 65 (+8) | 2.4 px/module |
+    ///
+    /// Every figure above is transcribed from a failing run, not computed. Two
+    /// earlier versions of this table were hand-derived and both were wrong, in
+    /// the bytes and in the version; that is the whole reason this test exists,
+    /// so its own numbers have no business being estimates.
+    ///
+    /// Three fields dominate and none is negotiable: `endpoint_id` (52
+    /// z-base-32 characters, ~70 bytes with its key and quoting) is what a dial
+    /// names, `device_id` (a 36-character UUID, ~51 bytes) is what the session
+    /// is keyed on, and at least one address is what makes the key reachable on
+    /// a LAN-only endpoint. Together they carry the payload from version 4 to
+    /// version 11 before a second address is even considered. Each further
+    /// address is ~24 bytes, which is why `MAX_QR_ADDR_CANDIDATES` exists — but
+    /// note the last row: at this size a third address no longer costs a
+    /// version. The cap's remaining job is bounding a list that `ip_addrs()`
+    /// does not bound, not buying a version back.
+    ///
+    /// 2.4 px/module at the cap is a real narrowing of the margin — a v1 code
+    /// got 4.3 — though at 96 dpi it still puts ~0.64 mm on each module, above
+    /// the ~0.5 mm a phone camera wants. If this is ever measured as marginal in
+    /// the hand, the fix is on the display side (the 200 px box, or its 12 px
+    /// padding), not in the payload: every field here is load-bearing for the
+    /// dial.
+    ///
+    /// This is a **record**, not a limit. It asserts the version the shipped
+    /// payload actually lands on, so a later field that pushes it up another
+    /// version has to be a decision someone makes rather than a number that
+    /// drifts under a QR nobody re-measured.
+    #[test]
+    fn the_v2_payload_costs_eight_qr_versions_over_v1() {
+        fn qr_shape(data: &str) -> (usize, i16, usize) {
+            let code = qrcode::QrCode::new(data.as_bytes()).expect("payload encodes as a QR");
+            let qrcode::Version::Normal(version) = code.version() else {
+                panic!("a byte payload must encode as a normal (not Micro) QR code");
+            };
+            (data.len(), version, code.width())
+        }
+
+        // A realistic worst case for the passphrase: long words from the EFF
+        // list, which is the other thing setting the byte count.
+        let passphrase = "zoologist zucchini yearbook wristwatch";
         assert_eq!(
-            parsed["passphrase"].as_str().unwrap(),
-            passphrase,
-            "special characters must survive JSON round-trip"
+            qr_shape(&pairing_qr_payload(passphrase, None)),
+            (61, 4, 33),
+            "passphrase-only payload: bytes, QR version, modules per side"
+        );
+
+        // The common case: a host binds one LAN address.
+        let single = LocalEndpointAdvert {
+            addrs: vec![advert().addrs[0]],
+            ..advert()
+        };
+        assert_eq!(
+            qr_shape(&pairing_qr_payload(passphrase, Some(&single))),
+            (224, 11, 61),
+            "one candidate: bytes, QR version, modules per side"
+        );
+
+        // Multi-homed — Wi-Fi and Ethernet both up.
+        assert_eq!(
+            qr_shape(&pairing_qr_payload(passphrase, Some(&advert()))),
+            (241, 12, 65),
+            "two candidates: bytes, QR version, modules per side — one version \
+             MORE than a single candidate, so a multi-homed host does pay. If this \
+             moved, \
+             re-measure against the 200 px display box before shipping it — the QR \
+             is read by a phone camera at dialog size, and that is the bound these \
+             numbers are about"
+        );
+
+        // The cap is what stops that growth from being unbounded: `ip_addrs()`
+        // returns every bound address, and nothing about the user's network
+        // limits how many that is.
+        let many = LocalEndpointAdvert {
+            addrs: vec![
+                "192.168.1.42:59553"
+                    .parse()
+                    .expect("a valid socket address"),
+                "10.0.0.7:59553".parse().expect("a valid socket address"),
+                "172.17.0.1:59553".parse().expect("a valid socket address"),
+                "192.168.64.1:59553"
+                    .parse()
+                    .expect("a valid socket address"),
+                "10.211.55.2:59553".parse().expect("a valid socket address"),
+            ],
+            ..advert()
+        };
+        let payload = pairing_qr_payload(passphrase, Some(&many));
+        assert_eq!(
+            payload.matches(":59553").count(),
+            MAX_QR_ADDR_CANDIDATES,
+            "five bound addresses must be truncated to the cap, not all carried"
+        );
+        assert_eq!(
+            qr_shape(&payload),
+            (241, 12, 65),
+            "at the cap the QR is exactly the two-candidate one — that is the \
+             point of the cap. Measured, five uncapped addresses keep adding \
+             ~24 bytes each and do eventually climb; a third alone happens to \
+             land on the same version 12, so the cap is bounding the list, not \
+             buying a version"
         );
     }
 
-    /// The QR payload carries only `{v, passphrase}` — no `host`
-    /// and no `port`. Discovery + address resolution are owned end-to-end
-    /// by mDNS; embedding bind-address fields in the QR was the
-    /// Drift fixed by.
-    #[test]
-    fn start_pairing_qr_payload_carries_only_passphrase_m34() {
-        let payload = pairing_qr_payload("alpha bravo charlie delta");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&payload).expect("payload must be valid JSON");
-        let object = parsed
-            .as_object()
-            .expect("QR payload must be a JSON object");
+    // -- The scanned candidate (#4037) ---------------------------------------
 
-        // Exactly two keys: `v` (schema version) and `passphrase`.
+    /// The joiner's side of the payload above, round-tripped: what the host
+    /// wrote into the QR must parse back into the same `DiscoveredPeer` an mDNS
+    /// announcement of that host would have produced.
+    ///
+    /// Built by *reading the rendered payload* rather than by hand, so the two
+    /// halves cannot drift apart under a field rename: a producer that stopped
+    /// emitting `device_id` reds this test at the `expect`, not three releases
+    /// later on a user's LAN.
+    #[test]
+    fn a_scanned_v2_payload_parses_back_into_the_host_the_advert_described() {
+        let advert = advert();
+        let payload: serde_json::Value = serde_json::from_str(&pairing_qr_payload(
+            "alpha bravo charlie delta",
+            Some(&advert),
+        ))
+        .expect("the payload is JSON");
+        let scanned: ScannedPeerCandidate = serde_json::from_value(payload)
+            .expect("the v2 payload deserialises as the candidate the joiner sends back");
+
+        let peer = scanned
+            .into_discovered()
+            .expect("a candidate built from a real advert must be dialable");
+
         assert_eq!(
-            object.len(),
-            2,
-            "QR payload must contain exactly two keys, got: {:?}",
-            object.keys().collect::<Vec<_>>()
+            peer.device_id, advert.device_id,
+            "the session is keyed on this, and `bind_endpoint_id` makes it permanent"
+        );
+        assert_eq!(
+            peer.endpoint_id.map(|k| k.to_string()),
+            Some(advert.endpoint_id.clone()),
+            "the dial names the key the host published"
+        );
+        assert_eq!(
+            peer.addresses,
+            advert
+                .addrs
+                .iter()
+                .map(std::net::SocketAddr::ip)
+                .collect::<Vec<_>>(),
+            "every candidate path survives — iroh races them"
+        );
+        assert_eq!(peer.port, advert.addrs[0].port());
+    }
+
+    /// Every field is refused *whole*, and the address list is not optional.
+    ///
+    /// One arm per reason a candidate can be undialable, plus the accepted
+    /// baseline they are each a single mutation away from — without that
+    /// baseline a `into_discovered` that returned `None` for everything would
+    /// satisfy all four refusals.
+    #[test]
+    fn an_unusable_scanned_candidate_is_refused_whole() {
+        let good = || ScannedPeerCandidate {
+            device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".to_owned(),
+            endpoint_id: crate::mdns::test_endpoint_id("QR_HOST_4037").to_string(),
+            addrs: vec!["192.168.1.42:59553".to_owned()],
+        };
+        assert!(
+            good().into_discovered().is_some(),
+            "baseline: each refusal below is one field away from this"
+        );
+
+        assert!(
+            ScannedPeerCandidate {
+                device_id: String::new(),
+                ..good()
+            }
+            .into_discovered()
+            .is_none(),
+            "an empty device id would become a `peer_refs` row every peer-facing \
+             query hides"
         );
         assert!(
-            object.contains_key("v"),
-            "QR payload must contain 'v' (schema version)"
+            ScannedPeerCandidate {
+                device_id: "d".repeat(1024),
+                ..good()
+            }
+            .into_discovered()
+            .is_none(),
+            "an over-long id must be REFUSED, never truncated: a shortened id is a \
+             different id, and `bind_endpoint_id` would make it permanent (#4380)"
         );
         assert!(
-            object.contains_key("passphrase"),
-            "QR payload must contain 'passphrase'"
+            ScannedPeerCandidate {
+                endpoint_id: "not-a-key".to_owned(),
+                ..good()
+            }
+            .into_discovered()
+            .is_none(),
+            "a dial names a key; there is nothing to attempt without one"
         );
         assert!(
-            !object.contains_key("host"),
-            "QR payload must not contain 'host' — mDNS owns discovery"
+            ScannedPeerCandidate {
+                addrs: vec!["not-an-address".to_owned()],
+                ..good()
+            }
+            .into_discovered()
+            .is_none(),
+            "a LAN-only endpoint has no relay and no discovery, so a key with no \
+             candidate path has nowhere to go"
         );
         assert!(
-            !object.contains_key("port"),
-            "QR payload must not contain 'port' — mDNS owns address resolution"
+            ScannedPeerCandidate {
+                addrs: vec![],
+                ..good()
+            }
+            .into_discovered()
+            .is_none(),
+            "…and an empty list is the same statement"
+        );
+    }
+
+    /// `confirm_pairing` hands the scanned host to the scheduler, where the
+    /// daemon's next change round reads it.
+    ///
+    /// The negative half is in the same test on purpose: a typed passphrase
+    /// must leave the slot empty, or "publishes what it was given" would hold
+    /// for an implementation that published something unconditionally.
+    #[tokio::test]
+    async fn confirm_pairing_publishes_the_scanned_host_for_the_next_round() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+
+        let typed = SyncScheduler::new();
+        confirm_pairing(&pool, &Mutex::new(None), &typed, "a b c d".into(), None)
+            .await
+            .expect("a typed passphrase confirms");
+        assert!(
+            typed.scanned_peer().is_none(),
+            "a typed passphrase names no host to dial"
+        );
+
+        let advert = advert();
+        let scanned_sched = SyncScheduler::new();
+        confirm_pairing(
+            &pool,
+            &Mutex::new(None),
+            &scanned_sched,
+            "a b c d".into(),
+            Some(ScannedPeerCandidate {
+                device_id: advert.device_id.clone(),
+                endpoint_id: advert.endpoint_id.clone(),
+                addrs: advert.addrs.iter().map(ToString::to_string).collect(),
+            }),
+        )
+        .await
+        .expect("a scanned passphrase confirms");
+
+        let published = scanned_sched
+            .scanned_peer()
+            .expect("the scanned host must reach the scheduler the daemon reads");
+        assert_eq!(published.device_id, advert.device_id);
+        assert_eq!(
+            published.endpoint_id.map(|k| k.to_string()),
+            Some(advert.endpoint_id)
+        );
+    }
+
+    /// A QR the camera read badly must not cost the user the pairing.
+    ///
+    /// The candidate only ever *races* mDNS, so dropping it costs a first pair
+    /// nothing unless multicast is also broken; failing the confirm would cost
+    /// every pair, including the ones mDNS would have completed. So the marker
+    /// is armed exactly as it is for a typed passphrase, and only the candidate
+    /// is dropped.
+    #[tokio::test]
+    async fn confirm_pairing_arms_the_marker_even_when_the_scanned_host_is_unusable() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let scheduler = SyncScheduler::new();
+
+        confirm_pairing(
+            &pool,
+            &Mutex::new(None),
+            &scheduler,
+            "alpha bravo charlie delta".into(),
+            Some(ScannedPeerCandidate {
+                device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".to_owned(),
+                endpoint_id: "not-a-key".to_owned(),
+                addrs: vec!["192.168.1.42:59553".to_owned()],
+            }),
+        )
+        .await
+        .expect("an unusable candidate must not fail the confirm");
+
+        assert!(
+            scheduler.scanned_peer().is_none(),
+            "an undialable candidate must not be published — the daemon would \
+             spend a round on it"
+        );
+        assert_eq!(
+            peer_refs::get_pending_pairing_proof(&pool)
+                .await
+                .expect("the marker is readable")
+                .as_deref(),
+            Some(pairing_proof("alpha bravo charlie delta").as_str()),
+            "the arm is the part pairing cannot do without, and it is unconditional"
+        );
+    }
+
+    // -- The plumbing (#4037) ------------------------------------------------
+
+    /// `start_pairing_armed` puts the *published* endpoint into the QR.
+    ///
+    /// Asserted by rebuilding the payload from the returned passphrase and
+    /// comparing the rendered SVG byte for byte, because `PairingInfo` exposes
+    /// the QR and not the payload behind it. Comparing against BOTH shapes is
+    /// what makes it a real assertion: equal to the addressed payload's code
+    /// and unequal to the degraded one, so a plumbing regression that silently
+    /// drops the advert cannot pass.
+    #[tokio::test]
+    async fn start_pairing_armed_carries_the_published_endpoint_into_the_qr() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let scheduler = SyncScheduler::new();
+        let advert = advert();
+        scheduler.publish_local_endpoint(advert.clone());
+        let slot = Mutex::new(None);
+
+        let info = start_pairing_armed(&pool, &slot, &scheduler, "device-host")
+            .await
+            .expect("arming a pairing on a migrated pool succeeds");
+
+        // `assert!` rather than `assert_eq!` throughout: these compare rendered
+        // QR SVGs, which run to tens of kilobytes of path data, and printing two
+        // of them tells a reader nothing the message does not already say.
+        assert!(
+            info.qr_svg
+                == generate_qr_svg(&pairing_qr_payload(&info.passphrase, Some(&advert)))
+                    .expect("the addressed payload renders"),
+            "the QR must encode the endpoint the daemon published"
+        );
+        assert!(
+            info.qr_svg
+                != generate_qr_svg(&pairing_qr_payload(&info.passphrase, None))
+                    .expect("the degraded payload renders"),
+            "…and must not be the passphrase-only code, or the assertion above \
+             would hold for a build that never read the advert at all"
+        );
+    }
+
+    /// With no endpoint published inside the budget, the QR degrades to the
+    /// passphrase-only shape rather than failing or blocking indefinitely.
+    ///
+    /// The debounce window is squeezed to keep the budget (window + slack) short;
+    /// production sizes it from the real 3 s window, which is what a dormant
+    /// daemon spends before it rechecks the peer table.
+    #[tokio::test]
+    async fn start_pairing_armed_degrades_when_no_endpoint_is_published() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let scheduler = SyncScheduler::with_intervals(
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(60),
+        );
+        let slot = Mutex::new(None);
+
+        let info = start_pairing_armed(&pool, &slot, &scheduler, "device-host")
+            .await
+            .expect("a device with no bound endpoint can still offer a passphrase");
+
+        assert!(
+            info.qr_svg
+                == generate_qr_svg(&pairing_qr_payload(&info.passphrase, None))
+                    .expect("the degraded payload renders"),
+            "a device with nothing to advertise falls back to the v1 code that \
+             mDNS has always carried on its own"
+        );
+        // The arm itself is unaffected — that is the part pairing cannot do
+        // without, and it must not be contingent on having an address.
+        assert!(
+            peer_refs::is_pending_pairing(&pool)
+                .await
+                .expect("the marker is readable"),
+            "the pending-pairing marker must be armed whether or not an endpoint \
+             was there to advertise"
         );
     }
 }

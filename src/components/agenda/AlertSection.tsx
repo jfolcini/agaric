@@ -8,14 +8,16 @@
  */
 
 import type React from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { AlertListRow } from '@/components/ui/alert-list-row'
 import { Badge } from '@/components/ui/badge'
 import { SectionTitle, type SectionTitleColor } from '@/components/ui/section-title'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { truncateContent } from '@/lib/text-utils'
 import { cn } from '@/lib/utils'
 
 type AlertVariant = 'destructive' | 'pending'
@@ -45,6 +47,46 @@ const variantConfig: Record<
     dateColor: 'text-status-pending-foreground/60',
   },
 }
+
+/**
+ * Rich-content body of one alert row, memoized on the content string (#4705).
+ *
+ * DuePanel owns the roving-focus `focusedIndex` and re-renders on every arrow
+ * keypress, and it renders `OverdueSection` / `UpcomingSection` inline —
+ * unmemoized and unvirtualized, over a list `useDuePanelData` fills to a
+ * 200-row page. Without this memo every visible row would rebuild its
+ * `renderRichContent` element tree per keystroke, the churn #2193 already
+ * memoized away for the projected rows of this same panel.
+ *
+ * The callbacks are sourced INSIDE the memoized component, as `BlockListItem`
+ * and `ProjectedEntryRow` do: `useRichContentCallbacks()` returns a fresh
+ * object literal each render, so threading it through a prop would fail this
+ * component's shallow compare on every parent re-render.
+ */
+function AlertRowContentInner({ content }: { content: string }): React.ReactElement {
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } =
+    useRichContentCallbacks()
+  return (
+    <>
+      {renderRichContent(content, {
+        // The whole row is the click target (`AlertListRow`'s onClick navigates
+        // to the parent page), so rendered links must stay inert rather than
+        // becoming competing click targets nested inside it.
+        interactive: false,
+        // The row is a single clamped line; `inline` keeps a heading/list/table
+        // block from landing inside the truncating <span>.
+        inline: true,
+        resolveBlockTitle,
+        resolveBlockStatus,
+        resolveTagName,
+        resolveTagStatus,
+      })}
+    </>
+  )
+}
+
+const AlertRowContent = memo(AlertRowContentInner)
+AlertRowContent.displayName = 'AlertRowContent'
 
 export interface AlertSectionProps {
   variant: AlertVariant
@@ -117,7 +159,11 @@ export function AlertSection({
                   </Badge>
                 )}
                 <span className="min-w-0 flex-1 truncate">
-                  {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
+                  {block.content ? (
+                    <AlertRowContent content={block.content} />
+                  ) : (
+                    t('duePanel.emptyContent')
+                  )}
                 </span>
                 <span className={cn('shrink-0 truncate text-xs', config.dateColor)}>
                   <span>{block.due_date}</span>

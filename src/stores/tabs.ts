@@ -43,11 +43,16 @@ export interface Tab {
   pageStack: PageEntry[]
   label: string
   /**
-   * The view that was on screen when this tab's page stack was OPENED — i.e.
-   * the route the user will be returned to once the stack is popped empty
-   * (in-page Back button, Android back gesture, delete-page, stale-page heal).
-   * Recorded by `navigateToPage` / `openInNewTab` on the push onto an empty
-   * stack and consumed (and cleared) by `goBack`.
+   * The view that was on screen when the user last entered this tab's page
+   * stack from outside the editor — i.e. the route the user will be returned
+   * to once the stack is popped empty (in-page Back button, Android back
+   * gesture, delete-page, stale-page heal). Recorded by `navigateToPage` /
+   * `openInNewTab` whenever a page is opened from a non-`page-editor` view
+   * (#4707 — including onto a stack left standing by an earlier view, and
+   * including a re-open of the page already on top, which is what makes
+   * Journal → page → Back land back on the journal), by `switchTab` when a
+   * TabBar click enters a stack from a non-editor view (#4732), and consumed
+   * (and cleared) by `goBack`.
    *
    * Undefined means "unknown origin" — a tab persisted before this field
    * existed, or one opened while `page-editor` was already the current view
@@ -69,12 +74,14 @@ export interface Tab {
 let nextTabId = 1
 
 /**
- * #754 — per-tab page-stack depth cap. `navigateToPage` only dedups when
- * the SAME page is already at the top, so a long browsing session grows
- * the stack (and the persisted `agaric:tabs` blob) without bound. When a
- * push would exceed the cap the OLDEST entry is dropped — the back
- * gesture keeps its most recent 50 steps, which is far beyond any
- * realistic back-tracking while keeping the localStorage payload small.
+ * #754 — per-tab page-stack depth cap. `navigateToPage` appends one entry per
+ * HOP, not per distinct page: A → B → A leaves three entries, so Back retraces
+ * every step the way a browser's history does, and `e2e/inner-links.spec.ts`
+ * pins that ("back to first Getting Started"). A long session therefore grows
+ * the stack (and the persisted `agaric:tabs` blob) without bound, so when a
+ * push would exceed the cap the OLDEST entry is dropped — the back gesture
+ * keeps its most recent 50 steps, far beyond any realistic back-tracking while
+ * keeping the localStorage payload small.
  */
 export const MAX_PAGE_STACK_DEPTH = 50
 
@@ -278,15 +285,40 @@ function setNavigationView(view: View): void {
 /**
  * The `enteredFrom` a tab should carry after a page is pushed onto it (#4287).
  *
- * Only the push onto an EMPTY stack opens a stack, so only that push records
- * an origin; deeper pushes keep the origin of the stack's bottom entry. A push
- * made while `page-editor` is already the current view has no meaningful
- * origin to record (the editor is not a route to return to), so the existing
- * value is kept.
+ * A push made while `page-editor` is already the current view is a deeper step
+ * INSIDE the open stack: it has no meaningful origin of its own (the editor is
+ * not a route to return to), so the stack keeps the origin it was opened with.
+ * Every other push comes from a real route — journal, pages, search, tags, … —
+ * and that route becomes the new origin.
+ *
+ * #4707 — there is deliberately no "only onto an EMPTY stack" guard here.
+ * Leaving the editor for a top-level view does not clear the tab's page stack,
+ * so gating on emptiness meant the origin was almost never recorded and Back
+ * fell through to `DEFAULT_PAGE_EXIT_VIEW`.
  */
 function nextEnteredFrom(tab: Tab): View | undefined {
-  if (tab.pageStack.length > 0) return tab.enteredFrom
   return currentEntryView() ?? tab.enteredFrom
+}
+
+/**
+ * `tabs` with `tabs[index]`'s recorded origin set to `entered`, or the SAME
+ * array reference when that is already its origin (#4732).
+ *
+ * Returning the input array unchanged is what lets a caller skip its `set()`
+ * entirely on the no-change path: `selectPageStack` subscribers would
+ * otherwise be handed a fresh array reference and re-render for nothing. Same
+ * gate `navigateToPage`'s already-on-top branch uses.
+ */
+function withRecordedOrigin(
+  tabs: Tab[],
+  index: number,
+  tab: Tab,
+  entered: View | undefined,
+): Tab[] {
+  if (entered === tab.enteredFrom) return tabs
+  const next = [...tabs]
+  next[index] = { ...tab, enteredFrom: entered }
+  return next
 }
 
 /**
@@ -509,12 +541,24 @@ export const useTabsStore = create<TabsStore>()(
         const pageStack = activeTab.pageStack
         const top = pageStack.at(-1)
         if (top?.pageId === pageId) {
-          // The page is already at the top of the stack, but the user may
-          // have switched away to another view (Pages, Tags, Journal, …)
-          // in the meantime. Ensure `currentView` flips back to
-          // `page-editor` so clicking the same page in the browser
-          // actually re-renders it instead of leaving the user stranded
-          // on the previous view.
+          // The page is already on top, but the user may have switched away
+          // to another view (Pages, Tags, Journal, …) since, so `currentView`
+          // has to flip back rather than leaving them on the previous view.
+          //
+          // The general path below would produce an identical stack — filter
+          // + push is a no-op when the page is already the top entry. What
+          // this branch buys is skipping the `set()`: re-clicking the page
+          // you are already on would otherwise hand `selectPageStack`
+          // subscribers a fresh array reference and re-render them for
+          // nothing. The origin write below is gated for the same reason.
+          //
+          // Origin recording: see `nextEnteredFrom`.
+          const entered = nextEnteredFrom(activeTab)
+          if (entered !== activeTab.enteredFrom) {
+            const tabsWithOrigin = [...tabs]
+            tabsWithOrigin[activeTabIndex] = { ...activeTab, enteredFrom: entered }
+            set(spliceTabs(state, tabsWithOrigin, activeTabIndex))
+          }
           setNavigationView('page-editor')
           setNavigationSelectedBlockId(blockId ?? null)
           return
@@ -673,11 +717,28 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         if (tabIndex < 0 || tabIndex >= tabs.length) return
+        const target = tabs[tabIndex]
+        if (!target) return
         const inEditor = useNavigationStore.getState().currentView === 'page-editor'
         const sameTab = tabIndex === activeTabIndex
         if (sameTab && inEditor) return
+        // #4732 — a switch made from a non-editor view ENTERS this tab's page
+        // stack from a real route, exactly like `navigateToPage` does, so that
+        // route is the stack's new origin. Read BEFORE `setNavigationView`
+        // below overwrites `currentView`; without it `goBack` finds no
+        // `enteredFrom` and Journal → tab click → Back lands on `pages`.
+        // `nextEnteredFrom` yields the tab's existing origin unchanged when
+        // the switch is made from inside the editor, which is why the two
+        // `inEditor` paths need no write of their own.
+        const entered = nextEnteredFrom(target)
         if (sameTab) {
-          // Cross-view click on the already-active tab: just flip the view.
+          // Cross-view click on the already-active tab: flip the view, and
+          // record the origin. This branch had no `set()` at all; the
+          // `withRecordedOrigin` identity gate keeps it that way whenever the
+          // origin is unchanged, so the only added store write is one that
+          // genuinely changes state.
+          const withOrigin = withRecordedOrigin(tabs, tabIndex, target, entered)
+          if (withOrigin !== tabs) set(spliceTabs(state, withOrigin, tabIndex))
           setNavigationView('page-editor')
           return
         }
@@ -686,7 +747,7 @@ export const useTabsStore = create<TabsStore>()(
           setNavigationSelectedBlockId(null)
           return
         }
-        set(spliceTabs(state, tabs, tabIndex))
+        set(spliceTabs(state, withRecordedOrigin(tabs, tabIndex, target, entered), tabIndex))
         setNavigationView('page-editor')
         setNavigationSelectedBlockId(null)
       },

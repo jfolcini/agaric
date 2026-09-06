@@ -1348,6 +1348,16 @@ mod tests {
     // and DNS silence.
     const TEST_ALPN: &[u8] = b"agaric/sync/0";
 
+    /// The production dial budget (`session_supervisor` wraps every `connect` in it).
+    /// Imported rather than copied so the guard below moves with the real bound.
+    use crate::sync_constants::CONNECT_TIMEOUT;
+
+    /// What "fails fast" has to mean for the #4037 fallback ordering to hold: the
+    /// keyed-only dial must be over long before the joiner's dial budget is, leaving
+    /// room to fall back to mDNS. Generous against a loaded runner, and still an
+    /// order of magnitude under [`CONNECT_TIMEOUT`].
+    const FAST_FAILURE_BUDGET: Duration = Duration::from_secs(2);
+
     #[tokio::test]
     async fn two_lan_only_endpoints_complete_a_session_without_resolving_anything() {
         let listener_recorder = RecordingResolver::new();
@@ -1409,6 +1419,105 @@ mod tests {
             listener_queries.is_empty() && connector_queries.is_empty(),
             "a session completed but a name was resolved to do it — listener: \
              {listener_queries:?}, connector: {connector_queries:?}"
+        );
+    }
+
+    // -- Guard 5: a keyed-only dial has nowhere to go ------------------------
+
+    /// A dial that names only an [`EndpointId`](iroh::EndpointId), with no
+    /// candidate path, **fails immediately** — it does not hang.
+    ///
+    /// This is the measurement the pairing-QR-v2 work rests on (#4037). The QR
+    /// carries `endpoint_id` *and* the host's bound `ip:port` candidates
+    /// precisely because the id alone is not dialable on a LAN-only endpoint:
+    /// there is no relay and no discovery service to turn a key into a path, so
+    /// iroh has nothing to race. Had this hung to
+    /// [`CONNECT_TIMEOUT`](crate::sync_constants::CONNECT_TIMEOUT) instead, a
+    /// stale QR address would cost the joiner the full dial budget before the
+    /// mDNS fallback got its turn, and the fallback ordering would have to
+    /// change.
+    ///
+    /// The target is a **live, bound, ALPN-serving endpoint** on this very host,
+    /// with an accept loop running, not a fabricated key. That is what makes the
+    /// result about *reachability* rather than about the peer being absent: the
+    /// peer is right there, one loopback packet away and ready to answer, and
+    /// the dial still cannot find it. Forced red by handing the same
+    /// `EndpointAddr` the listener's own bound socket: the dial then connects
+    /// and `expect_err` fails.
+    ///
+    /// The offline guard rides along: [`RecordingResolver`] answers nothing and
+    /// records what was asked, so a future iroh that tries to resolve the key
+    /// through DNS shows up here as a recorded query rather than as silence.
+    #[tokio::test]
+    async fn a_dial_naming_only_an_endpoint_id_fails_fast_instead_of_hanging() {
+        let listener_recorder = RecordingResolver::new();
+        let listener = lan_builder(&listener_recorder)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await
+            .expect("listener binds");
+        let listener_id = listener.id();
+        // A live accept loop, not just a bound socket. Without it the endpoint
+        // would be unreachable for a reason that has nothing to do with paths,
+        // and the test would be green whether or not the dial could find one.
+        let accepting = tokio::spawn({
+            let listener = listener.clone();
+            async move {
+                let Some(incoming) = listener.accept().await else {
+                    return;
+                };
+                // The handshake must actually be completed. An `Incoming` that is
+                // merely taken and dropped is *refused*, and refused immediately —
+                // which would make this test green for a reason that has nothing to
+                // do with paths.
+                if let Ok(conn) = incoming.await {
+                    conn.closed().await;
+                }
+            }
+        });
+
+        let connector_recorder = RecordingResolver::new();
+        let connector = lan_builder(&connector_recorder)
+            .bind()
+            .await
+            .expect("connector binds");
+
+        let started = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            connector.connect(iroh::EndpointAddr::new(listener_id), TEST_ALPN),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        let connector_queries = connector_recorder.queries();
+        connector.close().await;
+        listener.close().await;
+        accepting.abort();
+
+        let Ok(result) = outcome else {
+            panic!(
+                "a keyed-only dial burned the whole {}s connect budget. The QR-v2 \
+                 fallback ordering assumes this fails fast; it does not.",
+                CONNECT_TIMEOUT.as_secs()
+            );
+        };
+        result.expect_err(
+            "a dial naming only an endpoint id must fail: a LAN-only endpoint has no \
+             relay and no discovery, so there is no path to race",
+        );
+        assert!(
+            elapsed < FAST_FAILURE_BUDGET,
+            "the keyed-only dial took {elapsed:?}, which is not 'fails fast' — it is \
+             within a rounding error of the {}s connect budget the QR carries \
+             addresses to avoid",
+            CONNECT_TIMEOUT.as_secs()
+        );
+        assert_eq!(
+            connector_queries,
+            Vec::<String>::new(),
+            "the failing dial resolved a name, so it is no longer the hermetic \
+             immediate failure documented above"
         );
     }
 }

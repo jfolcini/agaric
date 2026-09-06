@@ -166,13 +166,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
               errorMessage: 'Failed to create page for block link',
             })
           } else {
-            editor
-              .chain()
-              .focus()
-              .deleteRange(range)
-              .insertBlockLink(item.id)
-              .insertContent(' ')
-              .run()
+            editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
           }
         },
       }),

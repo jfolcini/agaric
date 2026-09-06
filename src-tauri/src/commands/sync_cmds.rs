@@ -12,7 +12,7 @@ use crate::db::{ReadPool, WritePool};
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::device::DeviceId;
-use agaric_sync::pairing::{PairingSession, lock_pairing_state};
+use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate, lock_pairing_state};
 use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState, OsNetworkBlockStatus,
 };
@@ -138,6 +138,10 @@ pub fn start_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
     device_id: &str,
 ) -> Result<PairingInfo, AppError> {
+    // `None`: this variant does not arm the pairing window, so it never wakes a
+    // dormant daemon and has nothing to resolve an address from. Its QR is the
+    // passphrase-only shape (#4037). The command the frontend actually calls is
+    // `start_pairing_armed_inner`.
     agaric_sync::pairing::start_pairing(pairing_state, device_id)
 }
 
@@ -159,8 +163,9 @@ pub async fn confirm_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
     passphrase: String,
+    scanned: Option<ScannedPeerCandidate>,
 ) -> Result<(), AppError> {
-    agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase).await
+    agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase, scanned).await
 }
 
 /// Cancel an in-progress pairing session.
@@ -224,13 +229,19 @@ pub async fn confirm_pairing_inner(
 /// rather than being a bug in its own right, but it regresses a flow that
 /// used to work (by accident) and is worth knowing before assuming "host
 /// closed its dialog" is harmless to an in-flight joiner.
-#[instrument(skip(pool, pairing_state), err)]
+#[instrument(skip(pool, pairing_state, scheduler), err)]
 pub async fn cancel_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
 ) -> Result<(), AppError> {
     *lock_pairing_state(pairing_state)? = None;
     peer_refs::clear_pending_pairing(pool).await?;
+    // #4037: the scanned candidate belongs to the attempt being cancelled. The
+    // `pairing_pending` gate keeps it inert only BETWEEN windows, so without
+    // this it would be re-dialled in every later window for the process
+    // lifetime — including one this device opens as host for a different peer.
+    scheduler.clear_scanned_peer();
     Ok(())
 }
 
@@ -475,13 +486,22 @@ pub async fn confirm_pairing(
     // Part of the IPC shape (`bindings.ts`), not of the pairing: since #3463
     // the joiner learns the host's id from the pairing proof, not from here.
     _remote_device_id: String,
+    // #4037: the host a scanned QR named, or `None` when the passphrase was
+    // typed. A candidate to race mDNS with, never a substitute for it.
+    scanned_peer: Option<ScannedPeerCandidate>,
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
     scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
-    confirm_pairing_inner(&pool.0, &pairing_state.0, &scheduler, passphrase)
-        .await
-        .map_err(sanitize_internal_error)
+    confirm_pairing_inner(
+        &pool.0,
+        &pairing_state.0,
+        &scheduler,
+        passphrase,
+        scanned_peer,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: cancel an in-progress pairing session.
@@ -490,8 +510,9 @@ pub async fn confirm_pairing(
 pub async fn cancel_pairing(
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
-    cancel_pairing_inner(&pool.0, &pairing_state.0)
+    cancel_pairing_inner(&pool.0, &pairing_state.0, &scheduler)
         .await
         .map_err(sanitize_internal_error)
 }

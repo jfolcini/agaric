@@ -311,10 +311,10 @@ describe('AtTagPicker stale-insertPos guard ()', () => {
   })
 })
 
-// ── Suggestion plugin `command` — trailing-space behaviour ────────
+// ── Suggestion plugin `command` — insertion behaviour ─────────────
 //
-// After picking a tag from the @ suggestion popup, the chain must end with
-// .insertContent(' ').run() so the cursor sits one space past the chip.
+// #4708: after picking a tag from the @ suggestion popup, the chain inserts
+// the chip and NOTHING else — no trailing space for the user to backspace.
 
 describe('AtTagPicker suggestion plugin configuration', () => {
   // Regression guard for query-blocks failures. Typing
@@ -354,7 +354,7 @@ describe('AtTagPicker suggestion plugin configuration', () => {
 })
 
 describe('AtTagPicker suggestion command chain', () => {
-  it('non-create path chains deleteRange → insertTagRef → insertContent(" ") → run', async () => {
+  it('non-create path chains deleteRange → insertTagRef → run, with no trailing space', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
       | undefined
@@ -404,19 +404,13 @@ describe('AtTagPicker suggestion command chain', () => {
       props: { id: 'TAG_ULID', label: 'myTag', isCreate: false },
     })
 
-    expect(calls).toEqual([
-      'focus',
-      'deleteRange:2-7',
-      'insertTagRef:TAG_ULID',
-      'insertContent:" "',
-      'run',
-    ])
+    expect(calls).toEqual(['focus', 'deleteRange:2-7', 'insertTagRef:TAG_ULID', 'run'])
 
     vi.doUnmock('@tiptap/suggestion')
     vi.resetModules()
   })
 
-  it('isCreate path deletes the trigger synchronously, then inserts token + space after onCreate resolves', async () => {
+  it('isCreate path deletes the trigger synchronously, then inserts the token after onCreate resolves', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
       | undefined
@@ -476,13 +470,10 @@ describe('AtTagPicker suggestion command chain', () => {
     await vi.waitFor(() => expect(onCreate).toHaveBeenCalledWith('newTag'))
     await vi.waitFor(() => expect(calls.length).toBeGreaterThan(3))
 
-    // Token + trailing space land at the captured (tracked) position.
+    // The token — and only the token — lands at the captured (tracked) position.
     expect(calls.slice(3)).toEqual([
       'focus',
-      `insertContentAt:9:${JSON.stringify([
-        { type: 'tag_ref', attrs: { id: 'NEW_TAG_ULID' } },
-        { type: 'text', text: ' ' },
-      ])}`,
+      `insertContentAt:9:${JSON.stringify({ type: 'tag_ref', attrs: { id: 'NEW_TAG_ULID' } })}`,
       'run',
     ])
 
@@ -522,15 +513,9 @@ describe('AtTagPicker real-editor chain result', () => {
     })
   }
 
-  it('chain produces [tag_ref, " "]; cursor at end; single paragraph; no hard_break', () => {
+  it('chain produces [tag_ref]; cursor at end; single paragraph; no hard_break', () => {
     editor = buildEditor('@foo')
-    editor
-      .chain()
-      .focus()
-      .deleteRange({ from: 1, to: 5 })
-      .insertTagRef('ULID_TAG')
-      .insertContent(' ')
-      .run()
+    editor.chain().focus().deleteRange({ from: 1, to: 5 }).insertTagRef('ULID_TAG').run()
 
     const doc = editor.state.doc
     // Exactly one paragraph.
@@ -538,12 +523,10 @@ describe('AtTagPicker real-editor chain result', () => {
     const paragraph = doc.child(0)
     expect(paragraph.type.name).toBe('paragraph')
 
-    // [tag_ref, text(' ')] — exact count.
-    expect(paragraph.childCount).toBe(2)
+    // [tag_ref] — exact count.
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('tag_ref')
     expect(paragraph.child(0).attrs['id']).toBe('ULID_TAG')
-    expect(paragraph.child(1).type.name).toBe('text')
-    expect(paragraph.child(1).text).toBe(' ')
 
     let hardBreakCount = 0
     doc.descendants((n) => {
@@ -552,7 +535,7 @@ describe('AtTagPicker real-editor chain result', () => {
     expect(hardBreakCount).toBe(0)
 
     // Cursor sits at the end of the paragraph content (right after the
-    // inserted space), not on a new line. $from.parentOffset must equal
+    // chip), not on a new line. $from.parentOffset must equal
     // paragraph.content.size; selection.from is doc.content.size - 1
     // (doc.content.size includes the paragraph's closing token).
     const $from = editor.state.selection.$from

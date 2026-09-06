@@ -208,6 +208,66 @@ describe('PageTreeItem', () => {
     })
   })
 
+  // ── #4709 — duplicate titles ─────────────────────────────────────────
+  describe('duplicate-title siblings', () => {
+    /**
+     * `buildPageTree` emits a real sibling node per colliding page, and
+     * they share a `fullPath`. Both recursive `children.map(...)` call
+     * sites — the namespace branch AND the hybrid branch — must key off
+     * `nodeKey`, or React collapses the two rows onto one key. Pinning
+     * only one arm let the hybrid one ship keyed by `fullPath`.
+     */
+    function duplicatePair(parent: string): PageTreeNode[] {
+      return [
+        {
+          name: 'dup',
+          fullPath: `${parent}/dup`,
+          pageId: 'D1',
+          duplicateTitle: true,
+          children: [],
+        },
+        {
+          name: 'dup',
+          fullPath: `${parent}/dup`,
+          pageId: 'D2',
+          nodeKey: `${parent}/dup#D2`,
+          duplicateTitle: true,
+          children: [],
+        },
+      ]
+    }
+
+    /** Collect React's "same key" console warnings raised by `render`. */
+    function renderCapturingKeyWarnings(node: PageTreeNode): string[] {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        render(<PageTreeItem node={node} {...defaultProps} forceExpand />)
+        return spy.mock.calls
+          .map((args) => String(args[0]))
+          .filter((msg) => msg.includes('same key'))
+      } finally {
+        spy.mockRestore()
+      }
+    }
+
+    it('renders both children of a NAMESPACE parent without a key collision', () => {
+      const node = makeNamespace('ns', 'ns', duplicatePair('ns'))
+      const warnings = renderCapturingKeyWarnings(node)
+      expect(screen.getAllByText('dup')).toHaveLength(2)
+      expect(warnings).toEqual([])
+    })
+
+    it('renders both children of a HYBRID parent without a key collision', () => {
+      // Symmetric to the namespace case above. `DevEx/workstations` on
+      // the reporting vault is exactly this: a real page that also
+      // parents others, one of whose children has a duplicate title.
+      const node = makeHybrid('work', 'work', 'P1', duplicatePair('work'))
+      const warnings = renderCapturingKeyWarnings(node)
+      expect(screen.getAllByText('dup')).toHaveLength(2)
+      expect(warnings).toEqual([])
+    })
+  })
+
   it('has no a11y violations for leaf node', async () => {
     const node = makeLeaf('Accessible Page', 'Accessible Page', 'P1')
     const { container } = render(<PageTreeItem node={node} {...defaultProps} />)

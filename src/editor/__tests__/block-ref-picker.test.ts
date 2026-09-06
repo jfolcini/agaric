@@ -151,7 +151,7 @@ describe('BlockRefPicker suggestion config', () => {
   })
 
   // ── ─────────────────────────────────────────────────────────────
-  it('command appends a single trailing space via insertContent(" ") — exact order', () => {
+  it('command inserts the ref and nothing else (#4708) — exact order', () => {
     const { opts } = buildPlugins()
 
     const calls: string[] = []
@@ -184,13 +184,7 @@ describe('BlockRefPicker suggestion config', () => {
 
     ;(opts['command'] as (...args: unknown[]) => unknown)({ editor: mockEditor, range, props })
 
-    expect(calls).toEqual([
-      'focus',
-      'deleteRange:4-8',
-      'insertBlockRef:BLK_UX232',
-      'insertContent:" "',
-      'run',
-    ])
+    expect(calls).toEqual(['focus', 'deleteRange:4-8', 'insertBlockRef:BLK_UX232', 'run'])
   })
 })
 
@@ -225,25 +219,17 @@ describe('BlockRefPicker real-editor chain result', () => {
     })
   }
 
-  it('chain produces [block_ref, " "]; cursor at end; no hard_break', () => {
+  it('chain produces [block_ref]; cursor at end; no hard_break', () => {
     editor = buildEditor('((foo')
-    editor
-      .chain()
-      .focus()
-      .deleteRange({ from: 1, to: 6 })
-      .insertBlockRef('ULID_REF')
-      .insertContent(' ')
-      .run()
+    editor.chain().focus().deleteRange({ from: 1, to: 6 }).insertBlockRef('ULID_REF').run()
 
     const doc = editor.state.doc
     expect(doc.childCount).toBe(1)
     const paragraph = doc.child(0)
     expect(paragraph.type.name).toBe('paragraph')
-    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('block_ref')
     expect(paragraph.child(0).attrs['id']).toBe('ULID_REF')
-    expect(paragraph.child(1).type.name).toBe('text')
-    expect(paragraph.child(1).text).toBe(' ')
 
     let hardBreakCount = 0
     doc.descendants((n) => {
@@ -251,7 +237,7 @@ describe('BlockRefPicker real-editor chain result', () => {
     })
     expect(hardBreakCount).toBe(0)
 
-    // Cursor sits at the end of the paragraph content (after the space),
+    // Cursor sits at the end of the paragraph content (after the chip),
     // not on a new line. In ProseMirror terms: $from.parent is the
     // paragraph and $from.parentOffset === paragraph.content.size.
     const $from = editor.state.selection.$from

@@ -754,7 +754,9 @@ async fn handle_incoming_sync_inner(
         // Arming the guard with the authenticated key makes
         // `peer_is_bound_to_another_key` cover them too, so a passphrase-holder
         // cannot poison an already-bound peer's export floor on the way past.
-        orch = orch.with_unverified_claim_guard(endpoint_id_str.clone());
+        orch = orch
+            .with_unverified_claim_guard(endpoint_id_str.clone())
+            .await;
     }
 
     // ── The session ───────────────────────────────────────────────────────────
@@ -950,12 +952,13 @@ async fn handle_incoming_sync_inner(
         //
         // Residual, and it is not nothing. The bookkeeping this session already wrote
         // is keyed on the same wrongly-sorted id. It ran under
-        // `with_unverified_claim_guard`, but that guard refuses only an id whose row
-        // is bound to ANOTHER key — a foreign id this host holds no bound row for is
-        // not refused, so `record_stream_in_tx` and `persist_peer_loro_vvs` upsert a
-        // row for it and stamp a `loro_vv_bytes` export floor that is the JOINER's
-        // frontier, on a row named for a device that never received those ops. What
-        // that costs when the real device does pair is bounded: the floor is read
+        // `with_unverified_claim_guard`, and since #4251 that guard refuses an id
+        // whose row PRE-EXISTED the session, bound or not — so the residual is now
+        // only the id this host has never seen at all: `record_stream_in_tx` and
+        // `persist_peer_loro_vvs` upsert a row for it and stamp a `loro_vv_bytes`
+        // export floor that is the JOINER's frontier, on a row named for a device
+        // that never received those ops. What that costs when the real device does
+        // pair is bounded: the floor is read
         // back only as the fallback for a space the peer advertised no vv for, and
         // `apply_remote`'s reachability gate turns an unbridgeable `from_vv` into a
         // full snapshot — so the price is a `ResetRequired` round trip and a phantom

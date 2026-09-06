@@ -1379,6 +1379,15 @@
   text-decoration: line-through;
 }
 
+/* #4708 — the pickers no longer append a trailing space, so two chips can sit
+   directly against each other and read as one pill. `+` is the next-ELEMENT
+   sibling, so `[[Alpha]] [[Bravo]]` matches too and gets the space plus this
+   gap; a chip followed by text never matches, so `[[Alpha]],` stays tight. */
+:is(.block-link-chip, .tag-ref-chip, .block-ref-chip)
+  + :is(.block-link-chip, .tag-ref-chip, .block-ref-chip) {
+  margin-left: 0.25em;
+}
+
 /* Block link chips — [[ULID]] rendered as clickable page title chips */
 .block-link-chip {
   @apply inline-flex items-center rounded-md bg-primary/20 text-primary font-semibold;

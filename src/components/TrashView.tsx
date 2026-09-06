@@ -38,7 +38,8 @@ import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
 import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import { announce } from '@/lib/announcer'
-import { isInvalidOperation } from '@/lib/app-error'
+import { isInvalidOperation, unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import {
@@ -51,13 +52,7 @@ import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
-import {
-  listTrash,
-  purgeBlock,
-  purgeBlocksByIds,
-  restoreBlock,
-  restoreBlocksByIds,
-} from '@/lib/tauri'
+import { listTrash, purgeBlock, restoreBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -295,7 +290,9 @@ export function TrashView(): React.ReactElement {
     setConfirmBatchRestore(false)
     let restored = 0
     try {
-      restored = await restoreBlocksByIds(selectedBlocks.map((b) => b.id))
+      restored = unwrap(
+        await commands.restoreBlocksByIds(selectedBlocks.map((b) => b.id)),
+      ).affected_count
       let restoredNamedEntity = false
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
@@ -374,7 +371,7 @@ export function TrashView(): React.ReactElement {
     setConfirmBatchPurge(false)
     let purged = 0
     try {
-      purged = await purgeBlocksByIds(selectedIds)
+      purged = unwrap(await commands.purgeBlocksByIds(selectedIds)).affected_count
     } catch (err) {
       logger.error('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
       // #3835 — `purge_blocks_by_ids` (#3832) rejects the WHOLE batch with

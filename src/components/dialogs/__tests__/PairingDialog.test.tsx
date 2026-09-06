@@ -67,6 +67,20 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }))
 
+// #4037 — a stand-in scanner whose payload each test sets, so the QR-payload
+// compatibility tests can hand `handleQrScan` an exact byte string. The real
+// component needs a camera; nothing else in this file enters scan mode, so the
+// mock is inert everywhere except the compatibility suite at the end.
+const { scannedPayload } = vi.hoisted(() => ({ scannedPayload: { current: '' } }))
+
+vi.mock('@/components/peers/QrScanner', () => ({
+  QrScanner: ({ onScan }: { onScan: (data: string) => void }) => (
+    <button type="button" data-testid="mock-qr-scan" onClick={() => onScan(scannedPayload.current)}>
+      Mock Scan
+    </button>
+  ),
+}))
+
 // Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
 vi.mock('react-qr-code', () => ({
   default: ({ value, ...props }: { value: string; [key: string]: unknown }) => (
@@ -458,6 +472,7 @@ describe('PairingDialog', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
         remoteDeviceId: '',
+        scannedPeer: null,
       })
     })
     // #3463 (review): unlike the old chooser, opening the dialog now DOES
@@ -979,6 +994,7 @@ describe('PairingDialog', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
         remoteDeviceId: '',
+        scannedPeer: null,
       })
     })
   })
@@ -3261,6 +3277,260 @@ describe('PairingDialog', () => {
       const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
       await screen.findByText('Pair Device')
       await screen.findByTestId('pairing-network-blocked')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #4037 — the pairing QR payload gained `endpoint_id` and an `addrs` array
+  // alongside `v` and `passphrase`, and the version tag went to 2.
+  //
+  // The scanner is the compatibility boundary and it is crossed in both
+  // directions by real device pairs: a phone on an older build scans a v2 code
+  // off a freshly-updated desktop, and a freshly-updated phone scans a v1 code
+  // off a desktop that has not updated (or off any device with no bound
+  // endpoint to advertise, which still emits the v1 shape by design).
+  //
+  // The parser survives both because it reads `passphrase` and ignores
+  // everything else — it does not check `v`, which is exactly what makes the
+  // new fields additive. That was true before this change and is untested;
+  // these pin it, because the next person to "tighten" the parser by
+  // validating `v` would break every joiner that is one release behind.
+  describe('QR payload compatibility (#4037)', () => {
+    async function scan(user: ReturnType<typeof userEvent.setup>, payload: string) {
+      scannedPayload.current = payload
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await selectJoinerRole(user)
+      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await user.click(await screen.findByTestId('mock-qr-scan'))
+      await user.click(await screen.findByRole('button', { name: /Type Passphrase/i }))
+    }
+
+    function expectWordsFilled() {
+      expect(screen.getByLabelText('Passphrase word 1')).toHaveValue('alpha')
+      expect(screen.getByLabelText('Passphrase word 2')).toHaveValue('bravo')
+      expect(screen.getByLabelText('Passphrase word 3')).toHaveValue('charlie')
+      expect(screen.getByLabelText('Passphrase word 4')).toHaveValue('delta')
+    }
+
+    beforeEach(() => {
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        cancel_pairing: undefined,
+      })
+    })
+
+    // v2 → older joiner. The extra keys must not derail the passphrase.
+    it('reads the passphrase out of a v2 payload carrying an endpoint and addresses', async () => {
+      const user = userEvent.setup()
+      await scan(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+        }),
+      )
+      expectWordsFilled()
+    })
+
+    // v1 → newer joiner. Nothing may become required.
+    it('reads the passphrase out of a v1 payload with no endpoint or addresses', async () => {
+      const user = userEvent.setup()
+      await scan(user, JSON.stringify({ v: 1, passphrase: 'alpha bravo charlie delta' }))
+      expectWordsFilled()
+    })
+
+    // The third shape the parser has always accepted, and the one with no `v`
+    // at all — so "the parser does not depend on the version tag" is asserted
+    // rather than assumed.
+    it('still accepts a bare passphrase string that is not JSON', async () => {
+      const user = userEvent.setup()
+      await scan(user, 'alpha bravo charlie delta')
+      expectWordsFilled()
+    })
+
+    // #4037 — the joiner side of the payload. The v2 fields are not decoration:
+    // they are what `confirm_pairing` seeds the daemon's dial with, and until
+    // this pass-through existed every host paid a denser QR for a capability
+    // nothing consumed.
+    //
+    // These assert the IPC argument rather than a re-queried effect (the
+    // convention in `src/__tests__/AGENTS.md`) because there is no durable
+    // effect to re-query: the candidate's whole life on the backend is an
+    // in-memory scheduler slot the daemon's next round reads, and the mock
+    // backend models no daemon. The durable half is asserted in Rust
+    // (`confirm_pairing_publishes_the_scanned_host_for_the_next_round`,
+    // `daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_4037`);
+    // what is left for this side is that the fields reach the command at all.
+    async function scanThenPair(user: ReturnType<typeof userEvent.setup>, payload: string) {
+      await scan(user, payload)
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+    }
+
+    it('hands the v2 host on to confirm_pairing so the daemon can dial it', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: {
+            device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+            endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+            addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+          },
+        })
+      })
+    })
+
+    // A v1 code carries no host, and a v1 code is what any device with no bound
+    // endpoint still emits. `null` must reach the backend, not a half-filled
+    // object it would have to refuse.
+    it('sends a null host for a v1 payload that names none', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(user, JSON.stringify({ v: 1, passphrase: 'alpha bravo charlie delta' }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
+    // A camera can read a code partially, and a future payload may carry these
+    // keys with other types. Either way the passphrase — the only field pairing
+    // truly needs — must survive, and the host must be dropped whole rather
+    // than sent half-built.
+    it('drops a half-formed host but keeps the passphrase', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: [42],
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
+    // The rejection path for the scan flow. It surfaces the same error banner a
+    // typed pair does — but the assertion that earns this test its place is the
+    // second one: the scanned host SURVIVES the failure, so a retry does not
+    // send the user back to the camera. `scannedPeerRef` is deliberately not
+    // cleared in `onError`; the QR on screen is still the one being paired
+    // with, and a rejected proof says nothing about where the host is.
+    it('keeps the scanned host for a retry after the backend rejects a pair', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'confirm_pairing') throw new Error('invalid passphrase')
+        return undefined
+      })
+      const host = {
+        device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+        endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+        addrs: ['192.168.1.42:59553'],
+      }
+
+      await scanThenPair(
+        user,
+        JSON.stringify({ v: 2, passphrase: 'alpha bravo charlie delta', ...host }),
+      )
+
+      const errorEl = await screen.findByRole('alert')
+      expect(errorEl).toHaveTextContent(/Pairing failed:.*invalid passphrase/i)
+
+      mockedInvoke.mockClear()
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: host,
+        })
+      })
+    })
+
+    it('drops a scanned host when the user leaves and re-enters the joiner path', async () => {
+      // #4037 review: `scannedPeerRef` is a ref, so nothing about switching
+      // roles clears it on its own. Scan A, go to host, come back, pair with B
+      // — without the clears this sends A, and the daemon dials a device the
+      // user is not pairing with for the whole pairing window.
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'start_pairing') return mockPairingInfo
+        return undefined
+      })
+      const deviceA = {
+        device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+        endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+        addrs: ['192.168.1.42:59553'],
+      }
+
+      // Scan only — pairing would move the dialog into its waiting phase, where
+      // the switch-to-host link is not rendered.
+      await scan(
+        user,
+        JSON.stringify({ v: 2, passphrase: 'alpha bravo charlie delta', ...deviceA }),
+      )
+
+      // Real labels, read from `src/lib/i18n/sync.ts` rather than guessed.
+      await user.click(await screen.findByRole('button', { name: /Show my code instead/i }))
+      await selectJoinerRole(user)
+
+      const inputs = await screen.findAllByRole('textbox')
+      await user.type(inputs[0] as HTMLElement, 'echo')
+      await user.type(inputs[1] as HTMLElement, 'foxtrot')
+      await user.type(inputs[2] as HTMLElement, 'golf')
+      await user.type(inputs[3] as HTMLElement, 'hotel')
+      mockedInvoke.mockClear()
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'echo foxtrot golf hotel',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
+    it('the scan view is accessible', async () => {
+      const user = userEvent.setup()
+      scannedPayload.current = ''
+      const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await selectJoinerRole(user)
+      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await screen.findByTestId('mock-qr-scan')
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()

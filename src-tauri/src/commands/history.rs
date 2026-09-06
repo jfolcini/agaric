@@ -2099,6 +2099,24 @@ pub async fn undo_page_op_inner(
     // `a_batch_undo_containing_a_byte_less_delete_attachment_aborts_the_whole_batch_3706`;
     // the UX follow-up is #4249.
     //
+    // #4741: `origin` allow-list — only `'user'` and `'agent:%'` rows are
+    // positional-undo targets. The boot-time empty-block sweep
+    // (`agaric_engine::empty_blocks`) appends real, local, non-undo
+    // `delete_block` ops under `Actor::Housekeeping` (`origin =
+    // 'housekeeping'`), in one batch with consecutive timestamps, and at
+    // boot they are the newest ops on every page it touched. The frontend
+    // undo stack is empty at boot, so the first Ctrl+Z of a session falls
+    // through to `undo_page_group(depth = 0)` — which, filtered on
+    // `is_undo`/`is_replicated` alone, seeds on a sweep op and resurrects
+    // the whole grouped batch in one keypress. An allow-list rather than
+    // `origin <> 'housekeeping'` so a future non-user origin (`import`,
+    // `migration` — the namespace `Actor::origin_tag` reserves) is
+    // excluded until someone decides it belongs on Ctrl+Z, instead of
+    // silently undoable. Agent ops stay in: an MCP edit is something the
+    // user asked for. Explicit `revert_ops` (History view) and Trash
+    // restore are untouched — a swept block is still recoverable, just
+    // not by the keystroke meant for the user's own last edit.
+    //
     // `find_undo_group_inner` and `undo_page_group_inner` carry the
     // IDENTICAL predicate; all three MUST share one row-numbering universe
     // (see the #2549 note in `find_undo_group_inner`).
@@ -2138,6 +2156,7 @@ pub async fn undo_page_op_inner(
          ) \
            AND ol.is_undo = 0 \
            AND ol.is_replicated = 0 \
+           AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%') \
          ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
          LIMIT 1 OFFSET ?2",
         page_id,    // ?1
@@ -2445,7 +2464,39 @@ pub async fn find_undo_group_inner(
     // neither seed/extend a group nor BREAK one: filtered out here, two
     // local ops with a replicated row between them stay adjacent in the
     // walk, exactly as they present in the implicit undo stack.
-    let count: Option<i64> = sqlx::query_scalar!(
+    //
+    // #4741: the `origin` allow-list (`'user'` / `'agent:%'`) is part of
+    // the same shared universe — see the note on `undo_page_op_inner`'s
+    // target query. A boot-sweep `delete_block` (`origin = 'housekeeping'`)
+    // must neither seed a group nor be counted into one.
+    let count: Option<i64> = undo_group_size(pool, page_id, seed_rn, window_ms).await?;
+
+    // `MAX(count_so_far)` is NULL when the seed row doesn't exist (depth
+    // exceeds the page's undoable-op count). In that case there's no
+    // group — the FE caller will skip extending and just record 1.
+    //
+    // The cast to i32 is bounded by the recursive walk's `count_so_far <
+    // 1000` predicate so it can never truncate. The explicit `.min(i32::MAX
+    // as i64)` defends against a future relaxation of that bound; the
+    // `try_from(...).unwrap_or(i32::MAX)` form keeps clippy's
+    // `cast_possible_truncation` lint quiet without an `#[allow]`.
+    let raw = count.unwrap_or(0).max(0).min(i64::from(i32::MAX));
+    Ok(i32::try_from(raw).unwrap_or(i32::MAX))
+}
+
+/// The size of the undo group seeded at `seed_rn`, as a raw count.
+///
+/// Split out of [`find_undo_group_inner`] so that function stays under the
+/// line budget without an `#[expect(clippy::too_many_lines)]` (#4746): the
+/// query is ~65 of its lines and has no other caller, so lifting it costs
+/// nothing and the guards above it read on one screen.
+async fn undo_group_size(
+    pool: &SqlitePool,
+    page_id: &str,
+    seed_rn: i64,
+    window_ms: i64,
+) -> Result<Option<i64>, AppError> {
+    Ok(sqlx::query_scalar!(
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ?1 \
              UNION ALL \
@@ -2482,6 +2533,7 @@ pub async fn find_undo_group_inner(
              ) \
                AND ol.is_undo = 0 \
                AND ol.is_replicated = 0 \
+               AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%') \
          ), \
          walk(rn, device_id, created_at, count_so_far) AS ( \
              SELECT rn, device_id, created_at, 1 \
@@ -2501,19 +2553,7 @@ pub async fn find_undo_group_inner(
         window_ms,
     )
     .fetch_one(pool)
-    .await?;
-
-    // `MAX(count_so_far)` is NULL when the seed row doesn't exist (depth
-    // exceeds the page's undoable-op count). In that case there's no
-    // group — the FE caller will skip extending and just record 1.
-    //
-    // The cast to i32 is bounded by the recursive walk's `count_so_far <
-    // 1000` predicate so it can never truncate. The explicit `.min(i32::MAX
-    // as i64)` defends against a future relaxation of that bound; the
-    // `try_from(...).unwrap_or(i32::MAX)` form keeps clippy's
-    // `cast_possible_truncation` lint quiet without an `#[allow]`.
-    let raw = count.unwrap_or(0).max(0).min(i64::from(i32::MAX));
-    Ok(i32::try_from(raw).unwrap_or(i32::MAX))
+    .await?)
 }
 
 /// #2190: Undo an entire consecutive same-device, within-window undo group in a
@@ -2601,6 +2641,11 @@ pub async fn undo_page_group_inner(
     // `delete_attachment` alone per #4278) is part of that same shared rn
     // universe — see the note on `undo_page_op_inner`'s target query. Without it a `delete_attachment` was enumerated by none of the
     // three, so a group undo silently skipped the delete.
+    // also #4741: the `origin` allow-list (`'user'` / `'agent:%'`) — this
+    // is the query the first Ctrl+Z of a session reaches with an empty
+    // frontend stack, so it is where a boot-sweep batch (`origin =
+    // 'housekeeping'`, newest ops on the page) would otherwise be seeded
+    // on and reverted wholesale. See the note on `undo_page_op_inner`.
     let seed_rn: i64 = depth + 1;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE page_blocks(id, depth) AS (
@@ -2639,6 +2684,7 @@ pub async fn undo_page_group_inner(
              )
                AND ol.is_undo = 0
                AND ol.is_replicated = 0
+               AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%')
          ),
          walk(rn, device_id, seq, created_at, count_so_far) AS (
              SELECT rn, device_id, seq, created_at, 1
@@ -4941,5 +4987,414 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #4741 — the boot-time empty-block sweep must be INVISIBLE to the
+    // positional undo paths.
+    //
+    // The frontend undo stack is in-memory and empty at boot, so the first
+    // Ctrl+Z of a session falls through to `undo_page_group(depth = 0)`,
+    // which seeds at the newest local forward op on the page and walks the
+    // same-device, within-window chain below it. The sweep appends real,
+    // local, non-undo `delete_block` ops in one batch with consecutive
+    // timestamps, and at boot they are the newest ops on every page it
+    // touched — so without the `origin` allow-list the first keypress
+    // resurrected the whole batch. These tests run the REAL sweep
+    // (`agaric_engine::empty_blocks::sweep_leaked_empty_blocks`) so the
+    // seeded rows are exactly what production writes.
+    // -----------------------------------------------------------------
+
+    /// A ULID stamped 30 days ago, distinct per `n` — old enough for the
+    /// sweep's seven-day age floor.
+    fn old_ulid_4741(n: u128) -> String {
+        let day_ms: u64 = 24 * 60 * 60 * 1000;
+        let ts = u64::try_from(crate::db::now_ms()).unwrap() - 30 * day_ms;
+        ulid::Ulid::from_parts(ts, n).to_string()
+    }
+
+    async fn insert_block_4741(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        content: &str,
+        parent: Option<&str>,
+        position: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(content)
+        .bind(parent)
+        .bind(position)
+        .bind(parent.unwrap_or(id))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// What the sweep left behind on a page: its id, the one real block,
+    /// the user's `edit_block` ref (if seeded), and the swept block ids.
+    struct SweptPage4741 {
+        page_id: String,
+        real_id: BlockId,
+        edit_ref: Option<OpRef>,
+        swept: Vec<String>,
+    }
+
+    /// Page → one real block plus three leaked empties, all old enough to
+    /// sweep. With `with_user_edit`, the real block also carries the user's
+    /// history: `create_block` ("v1") at `FIXED_TS - 100_000` and
+    /// `edit_block` ("v1" → "v2") at `FIXED_TS` — 100 s apart, so a 10 ms
+    /// window groups the edit alone. Then the real sweep runs and appends
+    /// three `delete_block` ops stamped NOW (2026 wall clock, far above the
+    /// 2025 `FIXED_TS`), so they are the newest ops on the page.
+    async fn seed_swept_page_4741(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        with_user_edit: bool,
+    ) -> SweptPage4741 {
+        let page_id = old_ulid_4741(1);
+        let real_id = old_ulid_4741(2);
+        insert_block_4741(pool, &page_id, "page", "P", None, 0).await;
+        insert_block_4741(pool, &real_id, "content", "v2", Some(&page_id), 0).await;
+        let mut empties = Vec::new();
+        for n in 0..3u128 {
+            let id = old_ulid_4741(10 + n);
+            insert_block_4741(
+                pool,
+                &id,
+                "content",
+                "",
+                Some(&page_id),
+                1 + i64::try_from(n).unwrap(),
+            )
+            .await;
+            empties.push(id);
+        }
+
+        let real_id = BlockId::from_trusted(&real_id);
+        let edit_ref = if with_user_edit {
+            let create = OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: real_id.clone(),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(&page_id)),
+                position: Some(0),
+                index: None,
+                content: "v1".into(),
+            });
+            append_local_op_at(pool, DEV, create, FIXED_TS - 100_000)
+                .await
+                .unwrap();
+            let edit = OpPayload::EditBlock(agaric_store::op::EditBlockPayload {
+                block_id: real_id.clone(),
+                to_text: "v2".into(),
+                prev_edit: None,
+            });
+            let rec = append_local_op_at(pool, DEV, edit, FIXED_TS).await.unwrap();
+            Some(OpRef {
+                device_id: rec.device_id,
+                seq: rec.seq,
+            })
+        } else {
+            None
+        };
+
+        // The real sweep, driven the way `soft_delete::empty_block_sweep`
+        // drives it: one IMMEDIATE transaction, the materializer's engine
+        // state, the local device id.
+        // allow-raw-tx: test-only driver mirroring the boot sweep's tx (#4741)
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let sweep =
+            agaric_engine::empty_blocks::sweep_leaked_empty_blocks(&mut tx, mat.loro_state(), DEV)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(sweep.swept.len(), 3, "all three empties must be swept");
+
+        // Guard against a false pass: the sweep's rows satisfy EVERY
+        // pre-#4741 positional filter — local device, forward, not
+        // replicated — and are the newest ops on the page. Only `origin`
+        // tells them apart.
+        let rows: Vec<(String, i64, i64, i64, String)> = sqlx::query_as(
+            "SELECT device_id, is_undo, is_replicated, created_at, origin FROM op_log \
+             WHERE op_type = 'delete_block' ORDER BY created_at, seq",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        for (device_id, is_undo, is_replicated, created_at, origin) in &rows {
+            assert_eq!(device_id, DEV);
+            assert_eq!(*is_undo, 0);
+            assert_eq!(*is_replicated, 0);
+            assert!(
+                *created_at > FIXED_TS,
+                "sweep ops are the newest on the page"
+            );
+            assert_eq!(origin, "housekeeping");
+        }
+        let gaps_ok = rows.windows(2).all(|w| w[1].3 - w[0].3 <= 10);
+        assert!(
+            gaps_ok,
+            "sweep ops are consecutive — inside any grouping window"
+        );
+
+        SweptPage4741 {
+            page_id,
+            real_id,
+            edit_ref,
+            swept: empties,
+        }
+    }
+
+    async fn deleted_at_4741(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn content_4741(pool: &SqlitePool, id: &BlockId) -> String {
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn assert_still_swept_4741(pool: &SqlitePool, swept: &[String]) {
+        for id in swept {
+            assert!(
+                deleted_at_4741(pool, id).await.is_some(),
+                "#4741: swept block {id} must stay deleted — a positional undo resurrected it"
+            );
+        }
+    }
+
+    /// The live path: an empty frontend stack → `undo_page_group(depth 0)`.
+    /// It must skip the sweep's batch and revert the user's own last edit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_group_skips_the_boot_sweep_and_reverts_the_users_edit_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, true).await;
+
+        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
+            .await
+            .expect("group undo must succeed");
+
+        let reversed: Vec<(&str, &OpRef)> = results
+            .iter()
+            .map(|r| (r.reversed_op_type.as_str(), &r.reversed_op))
+            .collect();
+        assert_eq!(
+            reversed,
+            vec![("edit_block", page.edit_ref.as_ref().unwrap())],
+            "#4741: the first Ctrl+Z must revert the user's edit, not the sweep's deletes"
+        );
+        assert_eq!(content_4741(&pool, &page.real_id).await, "v1");
+        assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    /// The sizer shares the rn universe: the sweep must neither seed nor
+    /// extend a group. Pre-fix the seed landed on the newest sweep op and
+    /// the count was 3 (the batch); post-fix it is 1 (the edit alone).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_undo_group_does_not_count_the_boot_sweep_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, true).await;
+
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 1,
+            "#4741: depth 0 must seed at the user's edit and count only it; got {group}"
+        );
+    }
+
+    /// The single-op positional command (still an IPC surface) selects by
+    /// `LIMIT 1 OFFSET depth` over the same universe.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_reverses_the_users_edit_not_a_swept_block_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, true).await;
+
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.page_id.clone(), 0)
+            .await
+            .expect("positional undo must succeed");
+
+        assert_eq!(result.reversed_op_type, "edit_block");
+        assert_eq!(&result.reversed_op, page.edit_ref.as_ref().unwrap());
+        assert_eq!(content_4741(&pool, &page.real_id).await, "v1");
+        assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    /// The other acceptable outcome: when the sweep's ops are the ONLY ops
+    /// on the page, every positional path reports nothing to undo rather
+    /// than reaching for the batch.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn positional_undo_reports_nothing_when_only_sweep_ops_exist_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, false).await;
+
+        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
+            .await
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "#4741: group undo must find no seed; got {results:?}"
+        );
+
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(group, 0, "#4741: nothing to size");
+
+        let err = undo_page_op_inner(&pool, DEV, &mat, page.page_id.clone(), 0)
+            .await
+            .expect_err("#4741: no positional target");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+
+        assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    /// Control, both arms: a USER-initiated delete appended after the sweep
+    /// — through the real `delete_block_inner`, so its row is what
+    /// production writes (`origin = 'user'`) and lands within 10 ms of the
+    /// sweep's last op — is still the positional target of both the group
+    /// and the single-op paths, and the group is exactly that one op (the
+    /// sweep's rows below it do not extend it).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_user_delete_stays_positionally_undoable_after_the_sweep_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, false).await;
+
+        crate::commands::delete_block_inner(&pool, DEV, &mat, page.real_id.clone())
+            .await
+            .expect("user delete must succeed");
+        assert!(
+            deleted_at_4741(&pool, page.real_id.as_str())
+                .await
+                .is_some()
+        );
+
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 1,
+            "the user's delete alone forms the group; got {group}"
+        );
+
+        // Arm 1: the fused group undo.
+        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
+            .await
+            .expect("group undo of a user delete must succeed");
+        let reversed: Vec<&str> = results
+            .iter()
+            .map(|r| r.reversed_op_type.as_str())
+            .collect();
+        assert_eq!(reversed, vec!["delete_block"]);
+        assert_eq!(
+            deleted_at_4741(&pool, page.real_id.as_str()).await,
+            None,
+            "the user's block is restored"
+        );
+        assert_still_swept_4741(&pool, &page.swept).await;
+
+        // Arm 2: delete again, undo through the single-op positional path.
+        crate::commands::delete_block_inner(&pool, DEV, &mat, page.real_id.clone())
+            .await
+            .expect("second user delete must succeed");
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.page_id.clone(), 0)
+            .await
+            .expect("positional undo of a user delete must succeed");
+        assert_eq!(result.reversed_op_type, "delete_block");
+        assert_eq!(deleted_at_4741(&pool, page.real_id.as_str()).await, None);
+        assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    /// The allow-list's second arm: an MCP agent's op (`origin =
+    /// 'agent:<name>'`) is something the user asked for and stays
+    /// positionally undoable, exactly as before #4741.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_agent_op_stays_positionally_undoable_4741() {
+        use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, true).await;
+
+        let ctx = ActorContext {
+            actor: Actor::Agent {
+                name: "test-agent".into(),
+            },
+            request_id: "req-4741".into(),
+        };
+        let edit = OpPayload::EditBlock(agaric_store::op::EditBlockPayload {
+            block_id: page.real_id.clone(),
+            to_text: "v3".into(),
+            prev_edit: None,
+        });
+        // Stamped after the sweep so it is the newest op on the page.
+        let ts = agaric_store::db::next_delete_ms() + 1_000;
+        let rec = ACTOR
+            .scope(ctx, append_local_op_at(&pool, DEV, edit, ts))
+            .await
+            .unwrap();
+        let origin: String =
+            sqlx::query_scalar("SELECT origin FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(&rec.device_id)
+                .bind(rec.seq)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(origin, "agent:test-agent");
+
+        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
+            .await
+            .expect("group undo must succeed");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].reversed_op_type, "edit_block");
+        assert_eq!(results[0].reversed_op.seq, rec.seq);
+        assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    /// Redo has no positional fallback (the frontend returns early on an
+    /// empty redo stack) and its backend takes an explicit ref, so the only
+    /// way a sweep op could reach it is a hand-built ref — which the #659
+    /// provenance guard refuses because the sweep's ops are forward ops.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn redo_refuses_a_sweep_op_ref_4741() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = seed_swept_page_4741(&pool, &mat, false).await;
+
+        let (device_id, seq): (String, i64) = sqlx::query_as(
+            "SELECT device_id, seq FROM op_log WHERE origin = 'housekeeping' \
+             ORDER BY created_at DESC, seq DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let err = redo_page_op_inner(&pool, DEV, &mat, device_id, seq)
+            .await
+            .expect_err("a forward sweep op is not a redo target");
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "expected the #659 provenance refusal; got {err:?}"
+        );
+        assert_still_swept_4741(&pool, &page.swept).await;
     }
 }

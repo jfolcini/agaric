@@ -511,7 +511,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Wire `aria-activedescendant` so screen readers can track
   // arrow-key focus moves. The id pattern mirrors the row renderer:
   // flat rows expose `page-row-${page.id}`; namespace-tree wrappers
-  // expose `page-row-${node.fullPath}` (see `PageBrowserRowRenderer`).
+  // expose `page-row-${node.nodeKey ?? node.fullPath}` — #4709, the path
+  // alone is shared by duplicate-title siblings (see
+  // `PageBrowserRowRenderer`, which must build the identical string; the
+  // `nodeKey` arm is a guard — no `tree-page` row carries one today).
   //
   // (a11y) — `aria-activedescendant` MUST reference an
   // element that is actually in the DOM. The list is virtualized, so a
@@ -538,7 +541,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     const row = groupedRows[rowIdx]
     if (!row) return undefined
     if (row.kind === 'page') return `page-row-${row.page.id}`
-    if (row.kind === 'tree-page') return `page-row-${row.node.fullPath}`
+    if (row.kind === 'tree-page') return `page-row-${row.node.nodeKey ?? row.node.fullPath}`
     return undefined
   }, [focusedIndex, pageIndexToRowIndex, groupedRows, renderedRowIndices])
 

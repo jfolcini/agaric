@@ -40,12 +40,10 @@ import {
   logFrontend,
   paginationLimit,
   purgeBlock,
-  purgeBlocksByIds,
   queryByProperty,
   redoPageOp,
   resolvePageByAlias,
   restoreBlock,
-  restoreBlocksByIds,
   searchBlocks,
   setProperty,
   setPropertyBatch,
@@ -1465,47 +1463,12 @@ describe('exportPageMarkdown', () => {
 // drain, not a passthrough); their coverage now lives in
 // `ipc-helpers.test.ts` verbatim.
 
-// ---------------------------------------------------------------------------
-// RestoreBlocksByIds / purgeBlocksByIds
-// ---------------------------------------------------------------------------
-
-describe('restoreBlocksByIds', () => {
-  it('invokes restore_blocks_by_ids with the id list and returns affected_count', async () => {
-    mockedInvoke.mockResolvedValueOnce({ affected_count: 3 })
-
-    const result = await restoreBlocksByIds(['B1', 'B2', 'B3'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
-      blockIds: ['B1', 'B2', 'B3'],
-    })
-    expect(result).toBe(3)
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(restoreBlocksByIds(['X'])).rejects.toThrow('db error')
-  })
-})
-
-describe('purgeBlocksByIds', () => {
-  it('invokes purge_blocks_by_ids with the id list and returns affected_count', async () => {
-    mockedInvoke.mockResolvedValueOnce({ affected_count: 5 })
-
-    const result = await purgeBlocksByIds(['B1', 'B2', 'B3', 'B4', 'B5'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', {
-      blockIds: ['B1', 'B2', 'B3', 'B4', 'B5'],
-    })
-    expect(result).toBe(5)
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(purgeBlocksByIds(['X'])).rejects.toThrow('db error')
-  })
-})
+// `restoreBlocksByIds` / `purgeBlocksByIds` retired their `@/lib/tauri`
+// wrappers (#4412, RESHAPE — they only read `.affected_count` off the DTO).
+// Coverage now lives at the call sites: `TrashView.test.tsx` asserts both
+// batch paths fire exactly ONE IPC and render the returned count, and
+// `ipc-helpers.test.ts` covers the chunked drains, which already called
+// `commands.*` directly.
 
 // ---------------------------------------------------------------------------
 // FirstChildForBlocks

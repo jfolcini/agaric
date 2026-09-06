@@ -342,12 +342,11 @@ describe('BlockLinkPicker isCreate command — stale range / double-create windo
     resolveCreate('NEW_PAGE_ID')
     await flush()
 
-    // Token + trailing space land where the trigger text was.
+    // The token lands where the trigger text was — and nothing else (#4708).
     const paragraph = editor.state.doc.child(0)
-    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('block_link')
     expect(paragraph.child(0).attrs['id']).toBe('NEW_PAGE_ID')
-    expect(paragraph.child(1).text).toBe(' ')
   })
 
   it('does not corrupt a swapped-in document: pre-await range never applied to block B', async () => {
@@ -404,7 +403,7 @@ describe('BlockLinkPicker isCreate command — stale range / double-create windo
 })
 
 describe('AtTagPicker isCreate command — stale range / double-create window', () => {
-  it('deletes the trigger range synchronously and inserts tag_ref + space at the tracked position', async () => {
+  it('deletes the trigger range synchronously and inserts tag_ref at the tracked position', async () => {
     editor = buildEditor('@newTag')
     let resolveCreate!: (id: string) => void
     const onCreate = vi.fn(
@@ -428,10 +427,9 @@ describe('AtTagPicker isCreate command — stale range / double-create window', 
     await flush()
 
     const paragraph = editor.state.doc.child(0)
-    expect(paragraph.childCount).toBe(2)
+    expect(paragraph.childCount).toBe(1)
     expect(paragraph.child(0).type.name).toBe('tag_ref')
     expect(paragraph.child(0).attrs['id']).toBe('NEW_TAG_ULID')
-    expect(paragraph.child(1).text).toBe(' ')
   })
 
   it('does not corrupt a swapped-in document: token dropped after a roving handoff', async () => {

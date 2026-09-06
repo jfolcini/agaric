@@ -300,10 +300,27 @@ pub fn resolve_peer_address(
 /// returns on self-discovery before the insert — so there is no self-dial to
 /// filter here. The pairing tail is sorted by device id so a round's
 /// composition does not depend on `HashMap` iteration order.
+///
+/// # `scanned` — the peer a pairing QR named (#4037)
+///
+/// The joiner's camera is the other way a peer can become known, and on the
+/// network this feature exists for (client isolation, a guest VLAN, an Android
+/// firewall chain that drops multicast) it is the *only* way: no announcement
+/// ever arrives, so `discovered` stays empty and the two clauses above compose
+/// an empty round. It joins the round on the same terms as an mDNS-discovered
+/// unpaired peer — `pairing_pending` only, deduplicated against the peers
+/// already in it — because it is the same kind of thing: a candidate to race,
+/// not a decision. Everything downstream (the dial, the TOFU pin, the #855
+/// proof) cannot tell the two apart and is unchanged.
+///
+/// Gating it on `pairing_pending` is what keeps a scan from an abandoned
+/// attempt inert: outside the window it is never read, and the window is
+/// TTL-bounded.
 pub fn peers_for_change_round(
     peer_refs: &[PeerRef],
     discovered: &DiscoveredPeers,
     pairing_pending: bool,
+    scanned: Option<&DiscoveredPeer>,
 ) -> Vec<DiscoveredPeer> {
     let mut round: Vec<DiscoveredPeer> = peer_refs
         .iter()
@@ -325,6 +342,16 @@ pub fn peers_for_change_round(
             .collect();
         unpaired.sort_by(|a, b| a.device_id.cmp(&b.device_id));
         round.extend(unpaired);
+
+        // Deduplicated on the device id rather than left to `try_lock_peer`:
+        // the lock would make the second attempt a no-op, but only after the
+        // round had spawned a task and emitted a second "connecting" event for
+        // one device.
+        if let Some(scanned) = scanned
+            && !round.iter().any(|p| p.device_id == scanned.device_id)
+        {
+            round.push(scanned.clone());
+        }
     }
 
     round
@@ -402,20 +429,6 @@ fn address_family_priority(ip: &std::net::IpAddr) -> u8 {
             }
         }
     }
-}
-
-/// Look up the stored TLS certificate hash for a peer.
-pub fn get_peer_cert_hash(peer_id: &str, peer_refs: &[PeerRef]) -> Option<String> {
-    peer_refs
-        .iter()
-        .find(|p| p.peer_id == peer_id)
-        .and_then(|p| p.cert_hash.clone())
-}
-
-/// Determine whether TOFU (Trust On First Use) should store a newly
-/// observed certificate hash.
-pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&str>) -> bool {
-    stored_hash.is_none() && observed_hash.is_some()
 }
 
 /// Process an mDNS discovery event. Updates the `discovered` map and

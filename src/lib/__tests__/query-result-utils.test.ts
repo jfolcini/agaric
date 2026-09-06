@@ -133,7 +133,14 @@ describe('resolveBlockDisplay', () => {
 
     const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
 
-    expect(result).toEqual({ title: 'Resolved Title', pageTitle: 'My Page' })
+    // `displayMarkdown` is null on the RESOLVED arm (#4719): a stored title
+    // is an already-normalised one-line string, not markdown, so the row
+    // renders `title` as text rather than parsing it.
+    expect(result).toEqual({
+      title: 'Resolved Title',
+      displayMarkdown: null,
+      pageTitle: 'My Page',
+    })
     expect(resolveBlockTitle).toHaveBeenCalledWith('b1')
   })
 
@@ -183,6 +190,149 @@ describe('resolveBlockDisplay', () => {
 
     // truncateContent(content, 80) appends "..." when content exceeds max
     expect(result.title).toBe(`${'a'.repeat(80)}...`)
+  })
+})
+
+/**
+ * #4719 — the fallback arm is the NORMAL path for a cross-page query row, and
+ * it used to hand the row a `truncateContent` string: brackets stripped, ULID
+ * left behind, markdown flattened. `title` is still that string (a row needs
+ * a plain accessible name), but the row now RENDERS `displayMarkdown`.
+ */
+describe('resolveBlockDisplay — displayMarkdown, the rich body of the row (#4719)', () => {
+  const LINK_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+
+  it('carries the RAW content, brackets and all, on the fallback arm', () => {
+    // The point of the field: `title` is lossy by design (it is a name), so
+    // the row cannot re-derive the markdown from it. `[[…]]` is the shape the
+    // issue names, and `truncateContent` is exactly what destroys it.
+    const content = `follow up on [[${LINK_ID}]]`
+    const block = makeBlock({ id: 'b1', parent_id: 'p1', page_id: 'p1', content })
+
+    const result = resolveBlockDisplay(block, new Map())
+
+    expect(result.displayMarkdown).toBe(content)
+  })
+
+  it('is null on the RESOLVED arm — a stored title is a title, not markdown', () => {
+    // The counterweight to the test above: a cache hit hands back an
+    // already-normalised one-line title (#4228). Parsing it would be a second
+    // normalisation of a string that has had one, so the row renders it as
+    // text and this field says so.
+    const block = makeBlock({ id: 'b2', parent_id: 'p1', page_id: 'p1', content: '# raw markdown' })
+    const resolveBlockTitle = vi.fn().mockReturnValue('A Real Title')
+
+    const result = resolveBlockDisplay(block, new Map(), resolveBlockTitle)
+
+    expect(result.displayMarkdown).toBeNull()
+    expect(result.title).toBe('A Real Title')
+  })
+
+  it('is null for a block with no content, so the row renders the empty marker', () => {
+    // `renderRichContent('')` returns null, which would leave the row with an
+    // empty body instead of the marker — hence null rather than `''` here.
+    const blank = makeBlock({ id: 'b3', parent_id: 'p1', page_id: 'p1', content: '' })
+    const missing = makeBlock({ id: 'b4', parent_id: 'p1', page_id: 'p1', content: null })
+
+    expect(resolveBlockDisplay(blank, new Map()).displayMarkdown).toBeNull()
+    expect(resolveBlockDisplay(blank, new Map()).title).toBe('(empty)')
+    expect(resolveBlockDisplay(missing, new Map()).displayMarkdown).toBeNull()
+  })
+})
+
+/**
+ * #4719 — the accessible name must NAME what the row shows.
+ *
+ * The row body renders `[[id]]` / `((id))` / `#[id]` as titled chips, so a
+ * name still built by `truncateContent` alone ("follow up on
+ * 01KP36KDG2ABCDEFGHJKMNPQRS") would be the reported bug relocated into the
+ * accessible name, and would break WCAG 2.5.3 — the visible label would not
+ * be contained in the name. The substitution runs BEFORE truncation so the
+ * 80-char budget applies to the readable string.
+ */
+describe('resolveBlockDisplay — the name resolves inline references (#4719)', () => {
+  const LINK_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+  const TAG_ID = '01KP36KDG2ZZZZZZZZZZZZZZZZ'
+
+  const resolver = (id: string): string =>
+    ({ [LINK_ID]: 'Quarterly Plan', [TAG_ID]: 'urgent' })[id] ?? unresolvedBlockLabel(id)
+
+  it('names a block link by its target title, not by the bare ULID', () => {
+    const block = makeBlock({
+      id: 'B1',
+      parent_id: 'p1',
+      page_id: 'p1',
+      content: `follow up on [[${LINK_ID}]]`,
+    })
+
+    const result = resolveBlockDisplay(block, new Map(), resolver)
+
+    expect(result.title).toBe('follow up on Quarterly Plan')
+    expect(result.title).not.toContain(LINK_ID)
+  })
+
+  it('covers block refs and tag refs too, and leaves a non-ULID alone', () => {
+    // All three shapes carry a bare 26-char ULID that `truncateContent` would
+    // otherwise expose (it strips `#` and `[[…]]`, and does not touch `((…))`
+    // at all). The last assertion is the counterweight: the substitution is
+    // gated on the canonical ULID shape, so ordinary bracketed prose survives.
+    const refBlock = makeBlock({ id: 'B2', content: `see ((${LINK_ID}))` })
+    const tagBlock = makeBlock({ id: 'B3', content: `ship it #[${TAG_ID}]` })
+    const proseBlock = makeBlock({ id: 'B4', content: 'see [[the handbook]] first' })
+
+    expect(resolveBlockDisplay(refBlock, new Map(), resolver).title).toBe('see Quarterly Plan')
+    expect(resolveBlockDisplay(tagBlock, new Map(), resolver).title).toBe('ship it urgent')
+    expect(resolveBlockDisplay(proseBlock, new Map(), resolver).title).toBe(
+      'see the handbook first',
+    )
+  })
+
+  it('leaves a 26-character NON-ULID alone — the gate, not the length', () => {
+    // The counterweight to every substitution above, and the one that
+    // exercises `ULID_RE` itself: `[[the handbook]]` above fails the loose
+    // scan on LENGTH, so it says nothing about the gate. A 26-character
+    // lowercase run matches the scan and must still be refused, or ordinary
+    // bracketed prose of the wrong shape would be handed to the resolver.
+    const notAUlid = 'abcdefghijklmnopqrstuvwxyz'
+    expect(notAUlid).toHaveLength(26)
+    const block = makeBlock({ id: 'B6', content: `see [[${notAUlid}]] first` })
+    const resolveRef = vi.fn(() => 'SHOULD NOT BE USED')
+
+    const result = resolveBlockDisplay(block, new Map(), undefined, resolveRef)
+
+    // `truncateContent` still strips the brackets; the point is that the
+    // resolver was never consulted for a non-ULID id.
+    expect(result.title).toBe('see abcdefghijklmnopqrstuvwxyz first')
+    expect(resolveRef).not.toHaveBeenCalledWith(notAUlid)
+  })
+
+  it('substitutes through the DEDICATED ref resolver when one is passed', () => {
+    // #4719 follow-up: the row's own title and the reference substitution use
+    // two different resolvers, because `AdvancedQueryView` renders the list
+    // with no `resolveBlockTitle` at all while its chips still resolve. A
+    // caller that passes only the fourth argument must still get a resolved
+    // name.
+    const block = makeBlock({ id: 'B7', content: `follow up on [[${LINK_ID}]]` })
+
+    const result = resolveBlockDisplay(block, new Map(), undefined, resolver)
+
+    expect(result.title).toBe('follow up on Quarterly Plan')
+    // The block's OWN title was not resolved (no third argument), so the row
+    // still renders the content markdown.
+    expect(result.displayMarkdown).toBe(`follow up on [[${LINK_ID}]]`)
+  })
+
+  it('falls back to the resolver\'s own "[[id…]]" label for an unresolved target', () => {
+    // Not every target resolves — the resolve store only preloads the current
+    // page. The name then carries the same 8-character prefix the CHIP shows
+    // (`renderBlockLink`'s fallback), rather than the full 26-char id.
+    const unknown = '01KZZZZZZZZZZZZZZZZZZZZZZZ'
+    const block = makeBlock({ id: 'B5', content: `blocked by [[${unknown}]]` })
+
+    const result = resolveBlockDisplay(block, new Map(), resolver)
+
+    expect(result.title).toBe('blocked by 01KZZZZZ...')
+    expect(result.title).not.toContain(unknown)
   })
 })
 
