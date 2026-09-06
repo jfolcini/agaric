@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { shouldReduceMotion } from '@/lib/preferences'
 import { useResolveStore } from '@/stores/resolve'
 
 interface BlockDndOverlayProps {
@@ -31,15 +32,12 @@ interface BlockDndOverlayProps {
 
 /**
  * #923 — short drop-settle animation so the ghost eases into its landing slot
- * instead of vanishing. Suppressed under `prefers-reduced-motion: reduce`
- * (duration 0 = no animated settle), matching the rest of the DnD motion.
+ * instead of vanishing. Suppressed under reduced motion (duration 0 = no
+ * animated settle), matching the rest of the DnD motion.
  */
 function dropSettleAnimation(): DropAnimation {
-  const reduced =
-    typeof window !== 'undefined' &&
-    (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
   return {
-    duration: reduced ? 0 : 180,
+    duration: shouldReduceMotion() ? 0 : 180,
     easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
   }
 }

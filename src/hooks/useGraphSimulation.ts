@@ -56,6 +56,7 @@ import {
   type SimulationHandle,
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 export interface UseGraphSimulationArgs {
   svgRef: React.RefObject<SVGSVGElement | null>
@@ -351,7 +352,7 @@ export function useGraphSimulation({
     const applyPositions = createApplyPositions(rendered.link, rendered.node)
     const detachZoom = attachZoom(svg, rendered.g)
 
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const prefersReducedMotion = shouldReduceMotion()
 
     const ctx: SimulationCtx = {
       simNodes: rendered.simNodes,

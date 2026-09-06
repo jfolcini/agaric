@@ -8,6 +8,10 @@
  * SSR-safe: returns `false` when `window`/`matchMedia` is undefined and only
  * attaches the `matchMedia` listener inside `useEffect`.
  *
+ * Deliberately the OS flag, not `shouldReduceMotion()` (#3285): its one
+ * consumer, `DaySection`, treats it as flicker sensitivity and mounts eagerly,
+ * and Animations = Off must not bypass the journal's day mount window.
+ *
  * Mirrors `useIsTouch` (#755) so that `matchMedia` is read once on mount via a
  * useState initializer + a subscription, rather than re-evaluated in a render
  * body on every render.

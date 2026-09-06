@@ -841,6 +841,29 @@ const MOTION_PREFERENCE: PreferenceDefinition<MotionPreference> = {
 }
 
 /**
+ * Resolve whether motion should be suppressed right now, for the JS-driven
+ * animations the `prefers-reduced-motion` CSS rules cannot reach (d3
+ * transitions, rAF loops, `scrollIntoView({ behavior: 'smooth' })`, dnd-kit
+ * drop animations). Those sites read this instead of `matchMedia` directly so
+ * the app's own knob is not invisible to them (#3285): `'off'` means no
+ * motion even when the OS never asked, `'full'` means motion even when it
+ * did, and `'system'` / `'fast'` defer to the OS query.
+ *
+ * Read at call time, never cached, so an OS or preference change mid-session
+ * takes effect immediately. Degrades to `false` without `matchMedia`.
+ */
+export function shouldReduceMotion(): boolean {
+  const motion = readPreference(MOTION_PREFERENCE)
+  if (motion === 'off') return true
+  if (motion === 'full') return false
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+/**
  * Tooltip hover-open delay choices for the global tooltip-latency knob
  * (`src/hooks/useTooltipDelay.ts`, surfaced in AppearanceTab, #2851).
  *

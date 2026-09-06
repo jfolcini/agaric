@@ -6,6 +6,7 @@ import {
   getMotionPreference,
   useMotionPreference,
 } from '@/hooks/useMotionPreference'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 const KEY = 'agaric-motion'
 
@@ -89,5 +90,51 @@ describe('getMotionPreference', () => {
   it('returns a valid stored value', () => {
     localStorage.setItem(KEY, 'full')
     expect(getMotionPreference()).toBe('full')
+  })
+})
+
+describe('shouldReduceMotion', () => {
+  const originalMatchMedia = window.matchMedia
+
+  /** Stub the OS `(prefers-reduced-motion: reduce)` query. */
+  function osReducedMotion(matches: boolean) {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)' && matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia
+  }
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+  })
+
+  it('reduces for "off" even when the OS asks for full motion', () => {
+    localStorage.setItem(KEY, 'off')
+    osReducedMotion(false)
+    expect(shouldReduceMotion()).toBe(true)
+  })
+
+  it('does not reduce for "full" even when the OS asks for reduced motion', () => {
+    localStorage.setItem(KEY, 'full')
+    osReducedMotion(true)
+    expect(shouldReduceMotion()).toBe(false)
+  })
+
+  it('reduces for "system" when the OS asks for reduced motion', () => {
+    localStorage.setItem(KEY, 'system')
+    osReducedMotion(true)
+    expect(shouldReduceMotion()).toBe(true)
+  })
+
+  it('does not reduce for "system" when the OS does not ask', () => {
+    localStorage.setItem(KEY, 'system')
+    osReducedMotion(false)
+    expect(shouldReduceMotion()).toBe(false)
   })
 })

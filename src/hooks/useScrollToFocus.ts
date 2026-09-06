@@ -27,6 +27,8 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
+import { shouldReduceMotion } from '@/lib/preferences'
+
 export interface UseScrollToFocusOptions {
   /**
    * Forwarded to `scrollIntoView`. Omit to inherit the browser default
@@ -76,8 +78,7 @@ export function useScrollToFocus(
           // Global CSS forces `scroll-behavior: auto` under reduced motion,
           // but `scrollIntoView({ behavior: 'smooth' })` overrides that —
           // the JS option needs to be downgraded explicitly.
-          const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          scrollOptions.behavior = prefersReducedMotion ? 'auto' : opts.behavior
+          scrollOptions.behavior = shouldReduceMotion() ? 'auto' : opts.behavior
         }
         el.scrollIntoView(scrollOptions)
       }
