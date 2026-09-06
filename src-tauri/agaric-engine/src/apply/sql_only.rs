@@ -52,7 +52,7 @@ pub async fn apply_create_block_sql_only(
     // #400: a new-scheme op carries a 0-based `index` and no legacy `position`;
     // fall back to a 1-based provisional position for this engine-less path.
     // Same formula the old inline INSERT bound; see the doc comment on the
-    // #1245 / #1257 reproject-gap and on the unreachable both-`None` corner.
+    // #1245 / #1257 reproject-gap and on the both-`None` corner (reachable: a bare-append create).
     let position = p
         .position
         .or_else(|| {

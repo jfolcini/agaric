@@ -408,12 +408,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 
   // ── Legacy tag / property query surface ──
   // `query_by_property`, `query_by_tags` and `query_by_tag_expr` are NOT
-  // waived: their boundary steps are in `query_tag_and_property_boundaries.json`
-  // (#3827).
-  list_all_tags_in_space: 'fixture candidate: tags_cache-backed listing with no query step yet',
-  list_tags_by_prefix: 'fixture candidate: tags_cache prefix scan with no query step yet',
-  list_property_keys: 'fixture candidate: distinct-key scan with no query step yet',
-  list_property_values: 'fixture candidate: distinct-value scan with no query step yet',
+  // waived: their boundary steps are in `query_tag_and_property_boundaries.json`;
+  // `list_all_tags_in_space`, `list_tags_by_prefix`, `list_property_keys` and
+  // `list_property_values` are in `query_tag_and_property_listings.json` (#3827).
 
   // ── Links / backlinks ──
   // The EDGES are pinned twice (the snapshot's `page_links`, and the

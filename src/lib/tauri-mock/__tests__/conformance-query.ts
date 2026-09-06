@@ -286,6 +286,8 @@ const RESOLVED_ATTRS = ['title', 'block_type', 'deleted'] as const
 const PAGED = { kind: 'key', key: 'items' } as const
 const ID_TOKEN = { kind: 'id', idKey: 'id' } as const
 const BLOCK_TOKEN = { kind: 'id', idKey: 'id', attrKeys: BLOCK_ATTRS } as const
+/** A `TagCacheRow`: `updated_at` is a clock and stays off the token. */
+const TAG_TOKEN = { kind: 'id', idKey: 'tag_id', attrKeys: ['name', 'usage_count'] } as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -382,6 +384,30 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: null,
   },
   list_template_page_ids_in_space: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_all_tags_in_space: {
+    rows: { kind: 'bare-array' },
+    token: TAG_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_tags_by_prefix: {
+    rows: { kind: 'bare-array' },
+    token: TAG_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_property_keys: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_property_values: {
     rows: { kind: 'bare-array' },
     token: { kind: 'scalar' },
     hasMoreKey: null,

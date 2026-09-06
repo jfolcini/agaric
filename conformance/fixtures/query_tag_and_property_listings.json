@@ -1,0 +1,785 @@
+{
+  "description": "#3827 — READ-command differential over the four tag / property listings: `list_all_tags_in_space`, `list_tags_by_prefix`, `list_property_keys`, `list_property_values`. The tag half pins what `tags_cache` projects: BINARY name order (`WIP-1`, `Zed` ahead of `a_b`, `apple`), `usage_count` as the number of LIVE holders (S10 is deleted after tagging), an unheld tag still listed, the ASCII case-fold of `LIKE`, `escape_like` on `_`, the validated `[1, 200]` limit, and #768's exact-match splice under `LIMIT 1`. The property half pins the two usage rankings and their ASC tiebreaks, that a deleted holder's rows still count (neither query joins `blocks`), and that `list_property_values` reads the text column only. The tag blocks sit under the page rather than at the root: a parentless non-page block is the shape the two harnesses seed `page_id` differently for (backend `insert_block`: self; mock `loadSeed`: null), and both stamps propagate the page's space to its children, which is all `list_all_tags_in_space` reads. NOT pinned: the space filter itself (one space in the harness) and the normalized-name de-duplication of `tags_cache` (no two tags here share a fold).",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B9",
+        "tag_id": "B2"
+      },
+      {
+        "block_id": "B9",
+        "tag_id": "B3"
+      },
+      {
+        "block_id": "B10",
+        "tag_id": "B2"
+      },
+      {
+        "block_id": "B10",
+        "tag_id": "B3"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B2"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B4"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B5"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B11",
+        "tag_id": "B7"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Listing",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "Zed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "apple",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "WIP-1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "wip",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "a_b",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "axb",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "orphan",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "third",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 10,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 17,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "kind",
+          "op_type": "set_property"
+        },
+        {
+          "key": "kind",
+          "op_type": "set_property"
+        },
+        {
+          "key": "kind",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "due",
+        "value": "2026-01-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B9",
+        "key": "kind",
+        "value": "note",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B9",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B10",
+        "key": "kind",
+        "value": "idea",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B10",
+        "key": "status",
+        "value": "closed",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "kind",
+        "value": "note",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "status",
+        "value": "archived",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_in_space_binary_name_order",
+      "rows": [
+        "B4#name=WIP-1#usage_count=1",
+        "B2#name=Zed#usage_count=2",
+        "B6#name=a_b#usage_count=1",
+        "B3#name=apple#usage_count=1",
+        "B7#name=axb#usage_count=1",
+        "B8#name=orphan#usage_count=0",
+        "B5#name=wip#usage_count=1"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tags_in_space_rejects_global_scope",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_is_case_insensitive",
+      "rows": ["B2#name=Zed#usage_count=2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_orders_binary",
+      "rows": ["B4#name=WIP-1#usage_count=1", "B5#name=wip#usage_count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_limit_keeps_the_exact_match_768",
+      "rows": ["B5#name=wip#usage_count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_escapes_like_wildcards",
+      "rows": ["B6#name=a_b#usage_count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_empty_lists_every_tag",
+      "rows": [
+        "B4#name=WIP-1#usage_count=1",
+        "B2#name=Zed#usage_count=2",
+        "B6#name=a_b#usage_count=1",
+        "B3#name=apple#usage_count=1",
+        "B7#name=axb#usage_count=1",
+        "B8#name=orphan#usage_count=0",
+        "B5#name=wip#usage_count=1"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tags_prefix_limit_zero_rejected",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tags_prefix_limit_over_cap_rejected",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_keys_usage_ranked_then_key_asc",
+      "rows": ["kind", "status", "due"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_values_usage_ranked",
+      "rows": ["note", "idea"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_values_tiebreak_value_asc",
+      "rows": ["archived", "closed", "open"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_values_skip_the_date_column",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_values_unknown_key_is_empty",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_tag_and_property_listings",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S9",
+        "tagId": "S2"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "tagId": "S2"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "tagId": "S2"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "tagId": "S3"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "tagId": "S3"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "tagId": "S4"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "tagId": "S7"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "key": "status",
+        "value": {
+          "value_text": "closed"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "key": "status",
+        "value": {
+          "value_text": "archived"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "key": "kind",
+        "value": {
+          "value_text": "note"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "key": "kind",
+        "value": {
+          "value_text": "idea"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "key": "kind",
+        "value": {
+          "value_text": "note"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "key": "due",
+        "value": {
+          "value_date": "2026-01-01"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S10"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_all_tags_in_space",
+      "comment": "Every live tag in the space, `ORDER BY tc.name` under SQLite's BINARY collation: `WIP-1` and `Zed` sort before every lowercase name, `a_b` before `apple`. `usage_count` counts LIVE holders through `block_tags`: S10 is deleted, so `Zed` is 2 (S9, S11) and `apple` 1 (S9); `orphan` has none and is still listed (LEFT JOIN). A locale-aware or case-folding sort, or a constant usage, diverges here.",
+      "name": "tags_in_space_binary_name_order",
+      "ordered": true
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_all_tags_in_space",
+      "comment": "`require_active`: a `Global` scope is refused with `validation`, not widened into every tag.",
+      "expect_error": "validation",
+      "name": "tags_in_space_rejects_global_scope"
+    },
+    {
+      "args": {
+        "prefix": "ze"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`name LIKE 'ze%'` — SQLite's LIKE folds ASCII case, so `Zed` matches a lowercase prefix.",
+      "name": "tags_prefix_is_case_insensitive",
+      "ordered": true
+    },
+    {
+      "args": {
+        "prefix": "wip"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "Both case-variants match the fold, and the page is `ORDER BY name` BINARY: `WIP-1` before `wip`.",
+      "name": "tags_prefix_orders_binary",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 1,
+        "prefix": "wip"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "#768: `LIMIT 1` over the BINARY-ordered page keeps `WIP-1` and would drop the exact match `wip`, so the exact (case-insensitive) match is fetched separately, the page's last row evicted to hold the cap, and `wip` spliced into name order. A mock that stops at the LIMIT page answers `WIP-1`.",
+      "name": "tags_prefix_limit_keeps_the_exact_match_768",
+      "ordered": true
+    },
+    {
+      "args": {
+        "prefix": "a_"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`escape_like`: the `_` in the prefix is a literal, not the LIKE single-character wildcard, so `axb` does not match.",
+      "name": "tags_prefix_escapes_like_wildcards",
+      "ordered": true
+    },
+    {
+      "args": {
+        "prefix": ""
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "An empty prefix is `LIKE '%'`: every tag, BINARY order, under the default `MAX_TAGS_PREFIX` page.",
+      "name": "tags_prefix_empty_lists_every_tag",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 0,
+        "prefix": ""
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`limit` is validated, not clamped (invariant 10): 0 is refused.",
+      "expect_error": "validation",
+      "name": "tags_prefix_limit_zero_rejected"
+    },
+    {
+      "args": {
+        "limit": 201,
+        "prefix": ""
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "…and so is anything above `MAX_TAGS_PREFIX` (200).",
+      "expect_error": "validation",
+      "name": "tags_prefix_limit_over_cap_rejected"
+    },
+    {
+      "args": {},
+      "command": "list_property_keys",
+      "comment": "`GROUP BY key ORDER BY COUNT(*) DESC, key ASC` over every `block_properties` row, deleted holders included (no join to `blocks`): `kind` and `status` hold three rows each (S10's rows survive its delete), so `key ASC` puts `kind` first, and the single `due` row comes last. An alphabetical listing, or one that adds keys nobody set, diverges here.",
+      "name": "property_keys_usage_ranked_then_key_asc",
+      "ordered": true
+    },
+    {
+      "args": {
+        "key": "kind"
+      },
+      "command": "list_property_values",
+      "comment": "Distinct `value_text` for the key, most-used first: `note` (S9, S11) before `idea` (S10, deleted but still counted).",
+      "name": "property_values_usage_ranked",
+      "ordered": true
+    },
+    {
+      "args": {
+        "key": "status"
+      },
+      "command": "list_property_values",
+      "comment": "Three values with one row each: `value_text ASC` orders them, so `archived`, `closed`, `open`.",
+      "name": "property_values_tiebreak_value_asc",
+      "ordered": true
+    },
+    {
+      "args": {
+        "key": "due"
+      },
+      "command": "list_property_values",
+      "comment": "`value_text IS NOT NULL`: a key whose only row lives in `value_date` lists nothing.",
+      "expect_empty": true,
+      "name": "property_values_skip_the_date_column"
+    },
+    {
+      "args": {
+        "key": "nope"
+      },
+      "command": "list_property_values",
+      "comment": "No rows, no error.",
+      "expect_empty": true,
+      "name": "property_values_unknown_key_is_empty"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Listing",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "Zed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "apple",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "WIP-1",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "tag",
+        "content": "wip",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "tag",
+        "content": "a_b",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "tag",
+        "content": "axb",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "tag",
+        "content": "orphan",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 8
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 9
+      },
+      {
+        "block_type": "content",
+        "content": "third",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 10
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

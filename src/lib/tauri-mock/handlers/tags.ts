@@ -39,6 +39,45 @@ const BLOCK_TAG_CAP = 1000
  */
 const MAX_INHERITED_ANCESTOR_DISTANCE = 101
 
+/** Backend `MAX_TAGS_PREFIX` (`tag_query::query`): the validated prefix-scan page. */
+const MAX_TAGS_PREFIX = 200
+
+interface TagCacheRow {
+  tag_id: string
+  name: string
+  usage_count: number
+  updated_at: string
+}
+
+/**
+ * What `tags_cache` holds, in `ORDER BY name` — SQLite's BINARY collation, so
+ * a plain code-unit compare (`Zed` before `apple`). One row per live tag block
+ * with content (`DESIRED_TAGS_SQL`); `usage_count` is the number of LIVE
+ * holders. The backend also de-duplicates the cache by normalized name and
+ * folds `block_tag_refs` into the count; the mock never populates refs, and
+ * no fixture seeds two tags that share a fold, so neither is modelled here.
+ */
+function tagCacheRows(): TagCacheRow[] {
+  const usage = new Map<string, number>()
+  for (const [holder, tagIds] of blockTags) {
+    if (blocks.get(holder)?.['deleted_at']) continue
+    for (const tagId of tagIds) usage.set(tagId, (usage.get(tagId) ?? 0) + 1)
+  }
+  const rows: TagCacheRow[] = []
+  for (const b of blocks.values()) {
+    if (b['block_type'] !== 'tag' || b['deleted_at'] || b['content'] == null) continue
+    const tagId = b['id'] as string
+    rows.push({
+      tag_id: tagId,
+      name: b['content'] as string,
+      usage_count: usage.get(tagId) ?? 0,
+      updated_at: new Date().toISOString(),
+    })
+  }
+  rows.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
+  return rows
+}
+
 /**
  * The inherited tag ids of `blockId`, DERIVED from the current block tree and
  * `blockTags` rather than cached.
@@ -302,53 +341,54 @@ export const tagsHandlers = {
     return evalTagQuery(a['expr'] as TagExprNode, a)
   },
 
+  // `tags_cache` prefix scan: `name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2`
+  // (`tag_query::list_tags_by_prefix`). LIKE folds ASCII case, the prefix is
+  // a literal (`escape_like`), the limit is validated to `[1, MAX_TAGS_PREFIX]`
+  // and defaults to the cap, and #768 splices the exact (case-insensitive)
+  // match into name order when the LIMIT page left it out.
   list_tags_by_prefix: (args) => {
     const a = args as Record<string, unknown>
-    const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
-    const tagBlocks = [...blocks.values()].filter(
-      (b) =>
-        b['block_type'] === 'tag' &&
-        !(b['deleted_at'] as string | null) &&
-        ((b['content'] as string) ?? '').toLowerCase().startsWith(prefix),
-    )
-    return tagBlocks.map((b) => ({
-      tag_id: b['id'] as string,
-      name: (b['content'] as string) ?? '',
-      usage_count: 0,
-      updated_at: new Date().toISOString(),
-    }))
+    const prefix = (a['prefix'] as string | undefined) ?? ''
+    const limit = (a['limit'] as number | null | undefined) ?? null
+    if (limit !== null && (limit < 1 || limit > MAX_TAGS_PREFIX)) {
+      throw validationRejection(
+        `list_tags_by_prefix limit must be in [1, ${MAX_TAGS_PREFIX}]; got ${limit}`,
+      )
+    }
+    const effectiveLimit = limit ?? MAX_TAGS_PREFIX
+    const folded = prefix.toLowerCase()
+    const cache = tagCacheRows()
+    const rows = cache
+      .filter((r) => r.name.toLowerCase().startsWith(folded))
+      .slice(0, effectiveLimit)
+    if (prefix !== '') {
+      // `cache` is in BINARY name order, so the first fold-equal row is the
+      // one `exact_match_nocase`'s `ORDER BY name LIMIT 1` picks.
+      const exact = cache.find((r) => r.name.toLowerCase() === folded)
+      if (exact && !rows.some((r) => r.tag_id === exact.tag_id)) {
+        if (rows.length >= effectiveLimit) rows.pop()
+        const at = rows.findIndex((r) => r.name >= exact.name)
+        rows.splice(at === -1 ? rows.length : at, 0, exact)
+      }
+    }
+    return rows
   },
 
-  // Every tag in the given space.  No pagination, no clamp; bounded by
-  // the space's intrinsic tag count.  #3081 — mirrors the backend's
-  // space-scope filter on the tag block's own `blocks.space_id` column (the
-  // SOLE source of truth since #533), NOT a retired `block_properties(key=
-  // 'space')` row. The atomic create-tag path stamps `space_id` directly, so
-  // a freshly created tag is returned here immediately and durably.
+  // Every tag in the given space, `ORDER BY tc.name`. No pagination, no
+  // clamp; bounded by the space's intrinsic tag count. #3081 — the space
+  // filter is the tag block's own `blocks.space_id` column (the SOLE source
+  // of truth since #533), NOT a retired `block_properties(key='space')` row;
+  // the atomic create-tag path stamps it directly, so a freshly created tag
+  // is returned here immediately and durably. A `Global` scope is refused as
+  // `require_active` refuses it.
   list_all_tags_in_space: (args) => {
     const a = args as Record<string, unknown>
-    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const tagRows: Array<{
-      tag_id: string
-      name: string
-      usage_count: number
-      updated_at: string
-    }> = []
-    for (const b of blocks.values()) {
-      if (b['block_type'] !== 'tag') continue
-      if (b['deleted_at']) continue
-      if ((b['space_id'] as string | null) !== spaceId) continue
-      tagRows.push({
-        tag_id: b['id'] as string,
-        name: (b['content'] as string) ?? '',
-        usage_count: 0,
-        updated_at: new Date().toISOString(),
-      })
+    if (scope?.kind !== 'active' || !scope.space_id) {
+      throw validationRejection('list_all_tags_in_space requires an active space scope')
     }
-    tagRows.sort((x, y) => x.name.localeCompare(y.name))
-    return tagRows
+    const spaceId = scope.space_id
+    return tagCacheRows().filter((r) => blocks.get(r.tag_id)?.['space_id'] === spaceId)
   },
 
   // #3873 — `ORDER BY tag_id`, not insertion order. `blockTags` is a `Set`, so
