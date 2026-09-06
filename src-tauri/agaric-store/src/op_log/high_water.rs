@@ -82,9 +82,10 @@
 //!
 //! ## Marks are recorded for EVERY device, but only ever READ for the local one
 //!
-//! A mark may exist for a remote `device_id` too (the #4699-deleted RESET's
-//! wipe recorded every device present in `op_log`, having no notion of
-//! "which device is local"). Those extra rows are inert: the only reader is the local-append
+//! A mark exists for remote `device_id`s too: compaction prunes `op_log`
+//! per device present in it (`snapshot::create::collect_frontier`), and
+//! `prune` captures that device's frontier before its DELETE. Those extra
+//! rows are inert: the only reader is the local-append
 //! allocator, and this device never appends under a peer's `device_id`
 //! (remote rows arrive through `ingest_remote_op_in_tx`, which carries an
 //! explicit `seq`). In particular the mark is deliberately NOT consulted by
