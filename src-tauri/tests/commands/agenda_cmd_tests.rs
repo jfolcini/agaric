@@ -3926,6 +3926,54 @@ async fn projected_agenda_empty_window_inside_horizon_does_not_expand() {
     assert!(page.next_cursor.is_none());
 }
 
+/// #3260 — a range that STRADDLES the rebuild's reference date. The upper
+/// bound is inside the horizon, so the old routing served it from the cache,
+/// which holds nothing before `today`: the past half went missing from a
+/// non-empty page with `has_more: false`, and the empty-window probe never
+/// fired. Reachable through the MCP `get_agenda` tool, which forwards its
+/// dates verbatim. Both ends of the guarantee now route the read.
+#[tokio::test]
+async fn projected_agenda_range_straddling_rebuild_today_keeps_the_past_half_3260() {
+    let (pool, _dir) = test_pool().await;
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3260A0000000000000000000", base, pinned_today).await;
+
+    // Three days before today, three after: seven daily occurrences.
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        "2050-04-03".to_owned(),
+        "2050-04-09".to_owned(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    let mut dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    dates.sort_unstable();
+    assert_eq!(
+        dates,
+        vec![
+            "2050-04-03",
+            "2050-04-04",
+            "2050-04-05",
+            "2050-04-06",
+            "2050-04-07",
+            "2050-04-08",
+            "2050-04-09",
+        ],
+        "the three occurrences before the rebuild's reference date must not be dropped"
+    );
+    assert!(!page.has_more);
+}
+
 /// The lower bound of the guarantee. The rebuild projects from its own
 /// `today` forward, so occurrences BEFORE that date were never materialized —
 /// an empty cache result there means "not covered", not "nothing to show",

@@ -321,7 +321,13 @@ pub async fn list_projected_agenda_inner_with_today(
     let cache_complete_for_range =
         cache_covers_range && rebuild_today == Some(today) && range_start >= today;
 
-    if !cache_covers_range {
+    // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
+    // before the rebuild's reference date, so a range that starts before
+    // today and ends inside the horizon used to be served from the cache
+    // with its past half silently missing: non-empty, `has_more: false`, and
+    // the empty-window probe below never fires. Reachable through the MCP
+    // `get_agenda` tool, which forwards its dates verbatim.
+    if !(cache_covers_range && range_start >= today) {
         return list_projected_agenda_on_the_fly(
             pool,
             range_start,
