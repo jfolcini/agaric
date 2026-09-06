@@ -627,6 +627,21 @@ const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
 }
 
 /**
+ * `link-preview-hover-fetch` — hovering or Tab-focusing an external link may
+ * fetch that link's metadata from the host the note names (#3684,
+ * `src/hooks/useLinkPreview.ts`). Default true. Off leaves the cache read in
+ * place, so previews already stored still show.
+ */
+const LINK_PREVIEW_HOVER_FETCH_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'link-preview-hover-fetch',
+  scope: 'device',
+  version: 1,
+  defaultValue: true,
+  parse: (raw) => raw !== 'false',
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
  * `sync-internet-facing-bind-ack` — the sync bind address the user has
  * acknowledged as expected (#3864). Empty string on disk = nothing
  * acknowledged.
@@ -1206,6 +1221,7 @@ export const PREFERENCES = {
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
+  linkPreviewHoverFetch: LINK_PREVIEW_HOVER_FETCH_PREFERENCE,
   internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,
   savedPagesViews: SAVED_PAGES_VIEWS_PREFERENCE,

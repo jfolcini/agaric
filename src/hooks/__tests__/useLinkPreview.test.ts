@@ -7,6 +7,7 @@
  *  - Clears state on pointerleave
  *  - Calls getLinkMetadata on hover (cache hit path)
  *  - Falls back to fetchLinkMetadata when cache miss
+ *  - Skips that fetch (and the preview) when the hover-fetch preference is off
  *  - Handles fetch errors gracefully (no crash)
  *  - Debounces rapid hover changes
  *  - Works with both <a> (editor) and <span data-href> (static) links
@@ -16,6 +17,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LinkMetadata } from '@/lib/bindings'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ describe('useLinkPreview', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    localStorage.clear()
   })
 
   it('returns null state when no link is hovered', () => {
@@ -204,6 +207,57 @@ describe('useLinkPreview', () => {
 
     expect(mockGetLinkMetadata).toHaveBeenCalledWith('https://example.com')
     expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
+    expect(result.current.metadata).toEqual(SAMPLE_METADATA)
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('does not fetch on a cache miss when the hover-fetch preference is off', async () => {
+    writePreference(PREFERENCES.linkPreviewHoverFetch, false)
+    mockGetLinkMetadata.mockResolvedValue(null)
+
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.append(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+
+    expect(mockGetLinkMetadata).toHaveBeenCalledWith('https://example.com')
+    expect(mockFetchLinkMetadata).not.toHaveBeenCalled()
+    // No preview opens on a cache miss — same state as no link hovered.
+    expect(result.current.url).toBeNull()
+    expect(result.current.metadata).toBeNull()
+    expect(result.current.anchorRect).toBeNull()
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('still opens a cached preview when the hover-fetch preference is off', async () => {
+    writePreference(PREFERENCES.linkPreviewHoverFetch, false)
+    mockGetLinkMetadata.mockResolvedValue(SAMPLE_METADATA)
+
+    const dom = makeContainer()
+    const link = createExternalLink()
+    dom.append(link)
+
+    const { result } = renderHook(() => useLinkPreview(dom))
+
+    act(() => {
+      link.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+
+    expect(mockFetchLinkMetadata).not.toHaveBeenCalled()
+    expect(result.current.url).toBe('https://example.com')
     expect(result.current.metadata).toEqual(SAMPLE_METADATA)
     expect(result.current.isLoading).toBe(false)
   })
