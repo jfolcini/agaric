@@ -456,11 +456,11 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
-    // Production FE passes an empty remote_device_id (it doesn't
-    // know the peer's id at confirm time — mDNS + TOFU establish it later). That
-    // must set the pending-pairing marker (so the dormant daemon wakes to accept
-    // the first connection) and NOT write a junk empty-string peer_refs row.
+async fn confirm_pairing_sets_pending_marker_not_peer() {
+    // The joiner does not know the peer's id at confirm time — mDNS + TOFU
+    // establish it later. Confirming must set the pending-pairing marker (so
+    // the dormant daemon wakes to accept the first connection) and NOT write a
+    // junk empty-string peer_refs row.
     let (pool_host, _dir_host) = test_pool().await;
     let state_host = Mutex::new(None);
     let sched_host = SyncScheduler::new();

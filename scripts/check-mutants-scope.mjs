@@ -588,6 +588,23 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */
+/**
+ * The `run:` block of the filer's own step — the only lines where a
+ * `--dry-run` selected from an authority env counts. The job's `env:` block
+ * DECLARES `LANE_AUTHORITATIVE` above the run block, and the rust lane's
+ * short-merge fallback selects its own `--dry-run` further down; neither is
+ * the `if [ "$LANE_AUTHORITATIVE" != 'true' ]` test that ties the two
+ * together, and a job-wide search would be satisfied by them with that test
+ * deleted (#4648 review).
+ */
+function filerRunLines(lines) {
+  const start = lines.findIndex((l) => /^\s*run:\s*\|/.test(l))
+  if (start < 0) return []
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^\s*-\s+(name|uses):/.test(l))
+  return end < 0 ? rest : rest.slice(0, end)
+}
+
 export function checkFilerPlumbing({ lines, push }) {
   if (!lines) {
     push(
@@ -608,13 +625,14 @@ export function checkFilerPlumbing({ lines, push }) {
       'filer-schedule-gated',
       `the \`${FILER_JOB_ID}\` job is gated on \`github.event_name == 'schedule'\` (${jobIf.trim()}), so a \`workflow_dispatch\` skips it entirely. This lane has no failure mode of its own — it goes red only when \`${JOB_ID}\` fails to hand it a missed.txt — so gating it this way means a fix to \`${JOB_ID}\` cannot be verified end-to-end until the next weekly cron (#3394). Keep the job reachable and put the schedule-only behaviour on the step as \`--dry-run\` instead.`,
     )
-  } else if (
-    !(lines.some((l) => l.includes('--dry-run')) && lines.some((l) => AUTHORITY_ENV.test(l)))
-  ) {
-    push(
-      'filer-dispatch-writes',
-      `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from the per-lane \`$LANE_AUTHORITATIVE\` env, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
-    )
+  } else {
+    const run = filerRunLines(lines)
+    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => AUTHORITY_ENV.test(l)))) {
+      push(
+        'filer-dispatch-writes',
+        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from the per-lane \`$LANE_AUTHORITATIVE\` env, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
+      )
+    }
   }
 
   const downloads = []
@@ -986,6 +1004,12 @@ function selfTestFilerPlumbing(ok, fail) {
   const job = ({ gate = '    if: always()', path = 'mutants-artifact', read, dryRun = true }) => [
     `  ${FILER_JOB_ID}:`,
     gate,
+    // The real job declares the authority env and selects a rust-only
+    // `--dry-run` OUTSIDE the run block. With the run-block test deleted, a
+    // job-wide search still sees both tokens; the scoped one does not.
+    '        env:',
+    '          LANE_AUTHORITATIVE: >-',
+    "            ${{ github.event_name == 'schedule' }}",
     '    steps:',
     '      - name: Download cargo-mutants survivor list',
     '        uses: actions/download-artifact@0000',
@@ -999,6 +1023,7 @@ function selfTestFilerPlumbing(ok, fail) {
       ? ['          if [ "$LANE_AUTHORITATIVE" != \'true\' ]; then extra=(--dry-run); fi']
       : []),
     ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
+    '          if [ "$SHORT_MERGE" = \'true\' ]; then rust_extra=(--dry-run); fi',
   ]
 
   const clean = kinds(job({ read: 'mutants-artifact/missed.txt' }))
