@@ -79,9 +79,12 @@ pub use handlers::apply_op_projected;
 // divergence instead of an untested assumption. Test-only: `dispatch` is a
 // private module and nothing outside the materializer reads the table in a
 // production build.
-pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::invalidations_for_op;
+// #4293: test-only for the same reason — the app-crate test that drives a
+// snapshot-sized import sizes its fixture from it.
+#[cfg(any(test, feature = "test-util"))]
+pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
 // local move command (`commands/blocks/move_ops.rs`) is its production caller.
 // It lives next to `invalidations_for_op`'s `MoveBlock` arm because the

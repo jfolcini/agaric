@@ -463,11 +463,12 @@ fn inbound_sync_fts_tasks(changed_blocks: &[agaric_core::ulid::BlockId]) -> Vec<
 /// (`try_enqueue_background`, shed-safe: `ReindexBlockTagRefs` IS persisted to
 /// `materializer_retry_queue`, so a saturation drop self-heals via the
 /// sweeper). Deliberately aliased to the FTS bound because the SAME
-/// `changed_blocks` set drives BOTH per-block fan-outs in one call: gating
-/// them on one threshold makes a large import cross into single-full-rebuild
-/// territory for BOTH at once, keeping the combined per-block fan-out at
-/// ≤ `2 * BACKGROUND_CAPACITY/4 = BACKGROUND_CAPACITY/2` and leaving half the
-/// channel as headroom for the 7-task global fan-out + concurrent work.
+/// `changed_blocks` set drives all three per-block fan-outs in one call
+/// (FTS, this, and `block_links` since #4293): gating them on one threshold
+/// makes a large import cross into single-task territory for all three at
+/// once, keeping the combined per-block fan-out at
+/// ≤ `3 * BACKGROUND_CAPACITY/4` and leaving a quarter of the channel as
+/// headroom for the 7-task global fan-out + concurrent work.
 const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 
 /// #2667: choose the `block_tag_refs`-reindex task(s) for an inbound-sync
@@ -506,9 +507,9 @@ fn inbound_sync_block_tag_refs_tasks(
     }
 }
 
-/// #4293: the third per-block fan-out shares the budget the two above
-/// document — the combined inline fan-out stays at `≤ 3 * BACKGROUND_CAPACITY/4`
-/// only because above this size all three collapse to one task each.
+/// #4293: the third per-block fan-out shares the budget
+/// [`SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX`] documents; above this size all three
+/// collapse to one task each.
 pub const SYNC_BLOCK_LINKS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 
 /// #4293: choose the `block_links`-reindex task(s) for an inbound-sync import
@@ -724,16 +725,16 @@ impl Materializer {
     ///
     /// ## Queue-saturation safety (#483 M1)
     ///
-    /// `RebuildFtsIndex` is the single task that can be produced by
-    /// `inbound_sync_fts_tasks` for a large import (above
-    /// `SYNC_FTS_PER_BLOCK_MAX`). It is NOT persistable via
-    /// `RetryKind::from_task` (returns `None`), so the normal
-    /// `try_enqueue_background` shed path would silently lose it on a full
-    /// queue, leaving FTS permanently stale. For this task only we use the
-    /// blocking `enqueue_background(..).await` which back-pressures the
-    /// caller rather than dropping the task. Per-block `UpdateFtsBlock` tasks
-    /// remain non-blocking (`try_enqueue_background`) — they can be shed
-    /// because the consumer retry path handles them.
+    /// Two tasks here are NOT persistable via `RetryKind::from_task`
+    /// (returns `None`), so the normal `try_enqueue_background` shed path
+    /// would silently lose them on a full queue: `RebuildFtsIndex`, the
+    /// large-import fallback of `inbound_sync_fts_tasks`, and
+    /// `ReindexBlockLinksBatch`, the large-import fallback of
+    /// `inbound_sync_block_links_tasks` (#4293). For those two only we use the
+    /// blocking `enqueue_background(..).await`, which back-pressures the
+    /// caller rather than dropping the task — one slot's wait each. The
+    /// per-block tasks remain non-blocking (`try_enqueue_background`) — they
+    /// can be shed because the consumer retry path handles them.
     pub async fn enqueue_inbound_sync_rebuilds(
         &self,
         changed_blocks: &[agaric_core::ulid::BlockId],
