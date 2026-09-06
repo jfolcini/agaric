@@ -16,7 +16,6 @@ import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
-import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
@@ -139,36 +138,6 @@ function PageEditorInner({
     [clearSelection, t],
   )
 
-  // #4725 — a tag holds the blocks tagged with it, never children of its own,
-  // so its page is read-only. `isTagPage` is null until `get_block` answers for
-  // THIS page, and every editing affordance below stays off while it is: the
-  // auto-create effect must not race ahead and seed a block the backend rejects.
-  const [pageBlockType, setPageBlockType] = useState<{ pageId: string; isTag: boolean } | null>(
-    null,
-  )
-  const isTagPage = pageBlockType?.pageId === pageId ? pageBlockType.isTag : null
-  useEffect(() => {
-    let active = true
-    const settle = (isTag: boolean): void => {
-      if (active) setPageBlockType({ pageId, isTag })
-    }
-    commands
-      .getBlock(pageId)
-      .then(unwrap)
-      .then(
-        (block) => {
-          settle(block.block_type === 'tag')
-        },
-        (err: unknown) => {
-          logger.warn('PageEditor', 'Failed to read page block type', { pageId }, err)
-          settle(false)
-        },
-      )
-    return () => {
-      active = false
-    }
-  }, [pageId])
-
   // useLayoutEffect fires synchronously after DOM commit but before paint,
   // eliminating the visible scroll jump that occurred with useEffect + rAF (B-76).
   //
@@ -200,25 +169,9 @@ function PageEditorInner({
     // Fast path (unchanged from before #3276): the row is already mounted,
     // so scroll/clear synchronously before paint — no round-trip, no B-76
     // flash, and nothing for `onRevealSettled` to do.
-    //
-    // #4789 — a tag page renders its legacy children through
-    // `EmbeddedBlockTree`, whose rows carry `data-embed-block-id`.
-    const immediateEl = document.querySelector(
-      isTagPage === true
-        ? `[data-embed-block-id="${selectedBlockId}"]`
-        : `[data-block-id="${selectedBlockId}"]`,
-    )
+    const immediateEl = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
     if (immediateEl) {
       scrollElementIntoView(immediateEl, { behavior: 'smooth', block: 'center' })
-      clearSelection()
-      return
-    }
-
-    // #4789 — there is no BlockTree on a tag page, so nothing will ever call
-    // `onRevealSettled` and the slow path below would wait forever. Every
-    // legacy child is mounted, so a missing row is a decided not-found.
-    if (isTagPage === true) {
-      notify.error(t('error.blockNotFound'))
       clearSelection()
       return
     }
@@ -240,7 +193,37 @@ function PageEditorInner({
         pendingRevealBlockIdRef.current = null
       }
     }
-  }, [selectedBlockId, blocks, blocksById, isTagPage, setFocused, clearSelection, t])
+  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
+
+  // #4725 — a tag holds the blocks tagged with it, never children of its own,
+  // so its page is read-only. `isTagPage` is null until `get_block` answers for
+  // THIS page, and every editing affordance below stays off while it is: the
+  // auto-create effect must not race ahead and seed a block the backend rejects.
+  const [pageBlockType, setPageBlockType] = useState<{ pageId: string; isTag: boolean } | null>(
+    null,
+  )
+  const isTagPage = pageBlockType?.pageId === pageId ? pageBlockType.isTag : null
+  useEffect(() => {
+    let active = true
+    const settle = (isTag: boolean): void => {
+      if (active) setPageBlockType({ pageId, isTag })
+    }
+    commands
+      .getBlock(pageId)
+      .then(unwrap)
+      .then(
+        (block) => {
+          settle(block.block_type === 'tag')
+        },
+        (err: unknown) => {
+          logger.warn('PageEditor', 'Failed to read page block type', { pageId }, err)
+          settle(false)
+        },
+      )
+    return () => {
+      active = false
+    }
+  }, [pageId])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
@@ -332,13 +315,8 @@ function PageEditorInner({
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
-      {/* Block tree — loads children of pageId. A tag mounts it only until the
-          verdict lands; that load is what fills the legacy rows below. */}
-      {isTagPage === true ? (
-        blocks.length > 0 && (
-          <EmbeddedBlockTree rows={blocks} baseAriaLevel={0} onNavigate={onNavigateToPage} />
-        )
-      ) : (
+      {/* Block tree — loads children of pageId. */}
+      {isTagPage !== true && (
         <BlockTree
           parentId={pageId}
           autoCreateFirstBlock={isTagPage === false}

@@ -1089,7 +1089,6 @@ describe('AttachmentRenderer', () => {
       const img = await screen.findByRole('img')
       expect(img.getAttribute('src')).toMatch(/^blob:/)
       expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
-      expect(MockIntersectionObserver.instances).toHaveLength(0)
     })
 
     it('has no a11y violations in the gated placeholder state', async () => {

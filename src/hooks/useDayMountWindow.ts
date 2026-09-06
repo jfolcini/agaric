@@ -5,7 +5,7 @@
  * ## Problem
  * `StreamView` renders every loaded day through `DaySection` with
  * `lazyMount`, which defers mounting a day's `BlockTree` until it first
- * enters the viewport (`useEnteredViewport` inside `DaySection`) — but that
+ * enters the viewport (`useEnteredViewport`, `src/hooks/useEnteredViewport.ts`) — but that
  * gate is one-shot and never flips back. A day scrolled past therefore keeps
  * its `BlockTree` (a live TipTap editor + ~10 document-level keydown
  * listeners, see `useBlockTreeKeyboardShortcuts`) mounted for the rest of the
