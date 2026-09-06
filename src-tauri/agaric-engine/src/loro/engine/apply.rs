@@ -8,6 +8,48 @@
 use super::*;
 
 impl LoroEngine {
+    /// The one routing from a `CreateBlock` payload to the tree, shared by
+    /// the via-loro apply and `merge::engine_apply` so they cannot drift
+    /// (#4783).
+    ///
+    /// #400: new ops carry a 0-based `index`; pre-#400 ops carry the legacy
+    /// sparse `position` (mapped to a slot); neither ⇒ append.
+    ///
+    /// #4688: the append goes through the index path, past every current
+    /// sibling. Routing it through the legacy sort as `i64::MAX` tied it
+    /// against every earlier bare append (they all carry `i64::MAX`) and fell
+    /// through to the block-id tiebreak — random inside one millisecond, so a
+    /// fast import landed siblings in ULID order.
+    pub fn apply_create_payload(
+        &mut self,
+        p: &agaric_store::op::CreateBlockPayload,
+        parent_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        match (p.index, p.position) {
+            (Some(index), _) => self.apply_create_block_at(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent_id,
+                usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+            ),
+            (None, None) => self.apply_create_block_at(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent_id,
+                usize::MAX,
+            ),
+            (None, Some(position)) => self.apply_create_block(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent_id,
+                position,
+            ),
+        }
+    }
+
     /// Insert a block into the block-hierarchy [`LoroTree`].
     ///
     /// Idempotent under op-log replay: if the `block_id` already has a node

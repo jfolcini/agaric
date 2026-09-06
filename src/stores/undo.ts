@@ -36,8 +36,7 @@
 import { create } from 'zustand'
 
 import { announce } from '@/lib/announcer'
-import { isNonReversible, isNotFound, isValidation } from '@/lib/app-error'
-import { unwrap } from '@/lib/app-error'
+import { isNonReversible, isNotFound, isValidation, unwrap } from '@/lib/app-error'
 import type { OpRef, UndoResult } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
