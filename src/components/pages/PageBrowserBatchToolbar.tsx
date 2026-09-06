@@ -53,13 +53,9 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import type { TagCacheRow } from '@/lib/tauri'
-import {
-  deleteBlocksByIds,
-  listAllTagsInSpace,
-  moveBlocksToSpace,
-  setPropertyBatch,
-} from '@/lib/tauri'
+import { deleteBlocksByIds, moveBlocksToSpace, setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 export interface PageBrowserBatchToolbarProps {
@@ -188,7 +184,9 @@ export function PageBrowserBatchToolbar({
   useEffect(() => {
     if (activePicker !== 'tag' || currentSpaceId == null) return
     let cancelled = false
-    listAllTagsInSpace(currentSpaceId)
+    commands
+      .listAllTagsInSpace(requireActiveScope(currentSpaceId))
+      .then(unwrap)
       .then((rows) => {
         if (!cancelled) setTags(rows)
       })

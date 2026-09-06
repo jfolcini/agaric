@@ -11,9 +11,8 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import { t } from '@/lib/i18n'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 import type { PageHeading } from '@/lib/tauri'
-import { listAllPagesInSpace, listTemplatePageIdsInSpace } from '@/lib/tauri'
 
 // Re-export the graph data types from their leaf home (`@/lib/graph-types`,
 // #761) so existing `from '@/components/graph/GraphView.helpers'` import sites keep working.
@@ -31,7 +30,7 @@ export type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
  */
 function fetchPages(tagFilterIds: readonly string[], spaceId: string): Promise<PageHeading[]> {
   const tagIds = tagFilterIds.length > 0 ? [...tagFilterIds] : null
-  return listAllPagesInSpace(spaceId, tagIds)
+  return commands.listAllPagesInSpace(requireActiveScope(spaceId), tagIds).then(unwrap)
 }
 
 /**
@@ -105,7 +104,7 @@ export async function fetchGraphData(
   const [pages, linksResponse, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
     commands.listPageLinks(toSpaceScope(spaceId), linksTagIds).then(unwrap),
-    listTemplatePageIdsInSpace(spaceId),
+    commands.listTemplatePageIdsInSpace(requireActiveScope(spaceId)).then(unwrap),
   ])
 
   // #2298 count-then-cap: `list_page_links` now ships a

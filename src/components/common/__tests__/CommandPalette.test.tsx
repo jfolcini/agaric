@@ -75,8 +75,6 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     // `searchBlocksPartitioned`. Both must be mocked.
     searchBlocks: vi.fn(),
     searchBlocksPartitioned: vi.fn(),
-    // #2942 — `export-page-markdown` palette command.
-    exportPageMarkdown: vi.fn(),
   }
 })
 
@@ -85,6 +83,8 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
 // unwraps the `Result` envelope, so the mock backs the `commands.*` surface
 // and resolves the `{ status: 'ok', data }` shape.
 const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
+// #2942 — `export-page-markdown` palette command.
+const mockExportPageMarkdown = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -93,6 +93,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      exportPageMarkdown: (...args: unknown[]) =>
+        mockExportPageMarkdown(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -105,12 +107,12 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { exportPageMarkdown, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
-const mockedExportPageMarkdown = vi.mocked(exportPageMarkdown)
+const mockedExportPageMarkdown = mockExportPageMarkdown
 const mockedNotify = vi.mocked(notify)
 const mockedWriteText = vi.mocked(clipboardWriteText)
 

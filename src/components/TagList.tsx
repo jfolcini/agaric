@@ -21,7 +21,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { isConflict } from '@/lib/app-error'
+import { isConflict, unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import {
   invalidateNameCaches,
@@ -30,6 +31,7 @@ import {
   notifyTagRenamed,
 } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import {
   clearTagColor,
   getTagColors,
@@ -44,7 +46,6 @@ import {
   deleteBlock,
   deleteProperty,
   editBlock,
-  listAllTagsInSpace,
   purgeBlock,
   setProperty,
 } from '@/lib/tauri'
@@ -91,7 +92,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         setLoading(false)
         return
       }
-      const resp = await listAllTagsInSpace(spaceId)
+      const resp = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
       setTags(resp)
     } catch (error) {
       logger.error('TagList', 'failed to load tags', undefined, error)

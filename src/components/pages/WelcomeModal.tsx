@@ -17,7 +17,8 @@ import { notify } from '@/lib/notify'
 // fetching this chunk on every boot.
 import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
-import { createBlock, listAllPagesInSpace, listBlocks } from '@/lib/tauri'
+import { requireActiveScope } from '@/lib/space-scope'
+import { createBlock, listBlocks } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -142,7 +143,9 @@ async function createSamplePages(t: TFunction): Promise<string> {
   // `listAllPagesInSpace`) answers "does this sample page already exist?"
   // for BOTH pages — the paginated `listBlocks({ blockType: 'page' })`
   // form could miss a match past the first page of results.
-  const existingPages = await listAllPagesInSpace(currentSpaceId)
+  const existingPages = unwrap(
+    await commands.listAllPagesInSpace(requireActiveScope(currentSpaceId), null),
+  )
 
   const gettingStartedId = await ensureSamplePage(
     t,
