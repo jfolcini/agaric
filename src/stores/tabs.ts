@@ -519,18 +519,18 @@ export const useTabsStore = create<TabsStore>()(
         const pageStack = activeTab.pageStack
         const top = pageStack.at(-1)
         if (top?.pageId === pageId) {
-          // The page is already at the top of the stack, but the user may
-          // have switched away to another view (Pages, Tags, Journal, …)
-          // in the meantime. Ensure `currentView` flips back to
-          // `page-editor` so clicking the same page in the browser
-          // actually re-renders it instead of leaving the user stranded
-          // on the previous view.
+          // The page is already on top, but the user may have switched away
+          // to another view (Pages, Tags, Journal, …) since, so `currentView`
+          // has to flip back rather than leaving them on the previous view.
           //
-          // #4707 — that switched-away case is a fresh entry into the stack,
-          // so it records its origin like any other; without this, Back from
-          // the page you just re-opened from the journal lands on the pages
-          // list. Re-clicking from inside the editor leaves the origin alone,
-          // so the branch stays a pure no-op there.
+          // The general path below would produce an identical stack — filter
+          // + push is a no-op when the page is already the top entry. What
+          // this branch buys is skipping the `set()`: re-clicking the page
+          // you are already on would otherwise hand `selectPageStack`
+          // subscribers a fresh array reference and re-render them for
+          // nothing. The origin write below is gated for the same reason.
+          //
+          // Origin recording: see `nextEnteredFrom`.
           const entered = nextEnteredFrom(activeTab)
           if (entered !== activeTab.enteredFrom) {
             const tabsWithOrigin = [...tabs]
@@ -542,12 +542,6 @@ export const useTabsStore = create<TabsStore>()(
           return
         }
 
-        // #4707 — dedup used to test the TOP entry only, so browsing back and
-        // forth between the same handful of pages queued each of them several
-        // times over (a reported stack held 28 entries for 18 distinct pages)
-        // and Back replayed every copy on the way out. Dropping the earlier
-        // copy rather than truncating the stack back to it keeps the pages
-        // visited in between reachable by Back.
         // #754 — drop-oldest cap so the back stack (and its persisted
         // blob) can't grow without bound. See `MAX_PAGE_STACK_DEPTH`.
         const pushed = [...pageStack, { pageId, title }]

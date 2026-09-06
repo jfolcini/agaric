@@ -256,9 +256,9 @@ describe('tabs persist merge (#823 — same-version blobs bypass migrate)', () =
 })
 
 // ---------------------------------------------------------------------------
-// #754 — pageStack depth cap. `navigateToPage` holds one entry per DISTINCT
-// page (#4707), so a long browsing session still grows the stack (and the
-// persisted blob) without bound. The cap drops the OLDEST entry.
+// #754 — pageStack depth cap. `navigateToPage` appends one entry per HOP, so
+// a long browsing session grows the stack (and the persisted blob) without
+// bound. The cap drops the OLDEST entry.
 // ---------------------------------------------------------------------------
 
 describe('pageStack depth cap (#754)', () => {

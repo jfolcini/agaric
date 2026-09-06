@@ -321,12 +321,6 @@ describe('useNavigationStore', () => {
       expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
     })
 
-    // ── #4707: a revisit moves its entry, it does not add one ──
-    //
-    // Dedup used to test the TOP entry only, so browsing back and forth
-    // between the same handful of pages queued each of them several times
-    // over — a reported stack held 28 entries for 18 distinct pages — and
-    // Back then replayed every copy on the way out of the editor.
     it('updates the active tab label to the top page title', () => {
       useTabsStore.getState().navigateToPage('P1', 'My Page')
 
