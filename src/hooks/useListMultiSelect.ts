@@ -36,15 +36,18 @@ export function useListMultiSelect<T>({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [lastClickedId, setLastClickedId] = useState<string | null>(null)
 
-  // Reset selection when items length changes (pagination, filter, item removal)
-  const prevLengthRef = useRef(items.length)
+  // Reset on a change of the item ID set, not of its length: a filter swap can
+  // land the same row count, and the carried-over ids then feed a batch purge
+  // that hard-deletes rows the user never saw selected (#3283).
+  const idSignature = items.map(getItemId).join('\u0000')
+  const prevIdSignatureRef = useRef(idSignature)
   useEffect(() => {
-    if (items.length !== prevLengthRef.current) {
+    if (idSignature !== prevIdSignatureRef.current) {
       setSelected(new Set())
       setLastClickedId(null)
     }
-    prevLengthRef.current = items.length
-  }, [items.length])
+    prevIdSignatureRef.current = idSignature
+  }, [idSignature])
 
   // Keep a ref to `selected` so handleRowClick can read current state without
   // adding `selected` to its dependency array (avoids re-creating on every change).

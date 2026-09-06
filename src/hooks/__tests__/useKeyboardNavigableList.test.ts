@@ -115,6 +115,39 @@ describe('useKeyboardNavigableList', () => {
     expect(result.current.focusedIndex).toBe(0)
   })
 
+  it('preserves focusedIndex when itemCount grows under a stable resetKey', () => {
+    const { result, rerender } = renderHook(
+      ({ itemCount }: { itemCount: number }) =>
+        useKeyboardNavigableList(itemCount, () => {}, { resetKey: 'a' }),
+      { initialProps: { itemCount: 10 } },
+    )
+
+    act(() => {
+      for (let i = 0; i < 5; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+    })
+    expect(result.current.focusedIndex).toBe(5)
+
+    // Load-More grows the list; the focus ring stays where the user left it.
+    rerender({ itemCount: 20 })
+    expect(result.current.focusedIndex).toBe(5)
+  })
+
+  it('clamps focusedIndex to the last row when the list shrinks below it', () => {
+    const { result, rerender } = renderHook(
+      ({ itemCount }: { itemCount: number }) =>
+        useKeyboardNavigableList(itemCount, () => {}, { resetKey: 'a' }),
+      { initialProps: { itemCount: 10 } },
+    )
+
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+    })
+    expect(result.current.focusedIndex).toBe(7)
+
+    rerender({ itemCount: 3 })
+    expect(result.current.focusedIndex).toBe(2)
+  })
+
   it('calls scrollIntoView on the focused item when focus is inside the list', () => {
     const { list, items } = buildList(3)
 

@@ -207,6 +207,73 @@ describe('useListMultiSelect', () => {
     expect(result.current.lastClickedId).toBe(null)
   })
 
+  it('resets selection when the ids change but the length does not', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+      result.current.toggleSelection('b')
+    })
+    expect(result.current.selected.size).toBe(2)
+    expect(result.current.lastClickedId).toBe('b')
+
+    // A filter swap that happens to yield the same row count (#3283).
+    rerender({
+      hookItems: [
+        { id: 'w', name: 'Whiskey' },
+        { id: 'x', name: 'X-ray' },
+        { id: 'y', name: 'Yankee' },
+        { id: 'z', name: 'Zulu' },
+      ],
+    })
+
+    expect(result.current.selected.size).toBe(0)
+    expect(result.current.lastClickedId).toBe(null)
+  })
+
+  it('keeps the selection when a rerender carries the same ids', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+      result.current.toggleSelection('b')
+    })
+    expect(result.current.selected.size).toBe(2)
+
+    // Same array identity.
+    rerender({ hookItems: items })
+    expect(result.current.selected.size).toBe(2)
+
+    // Fresh array, identical ids (paginated reload).
+    rerender({
+      hookItems: [
+        { id: 'a', name: 'Alpha' },
+        { id: 'b', name: 'Beta' },
+        { id: 'c', name: 'Charlie' },
+        { id: 'd', name: 'Delta' },
+      ],
+    })
+
+    expect(result.current.selected.size).toBe(2)
+    expect(result.current.selected.has('a')).toBe(true)
+    expect(result.current.selected.has('b')).toBe(true)
+    expect(result.current.lastClickedId).toBe('b')
+  })
+
   it('shift-click propagates removal state', () => {
     const { result } = renderHook(() =>
       useListMultiSelect<TestItem>({
