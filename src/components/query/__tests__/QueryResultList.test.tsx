@@ -128,16 +128,18 @@ describe('QueryResultList', () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it('renders page title link when pageTitles map has the page_id', () => {
+  it('renders page title as plain text when pageTitles map has the page_id', () => {
     const results = [makeBlock({ id: 'B1', content: 'With page', parent_id: 'P1', page_id: 'P1' })]
     const pageTitles = new Map([['P1', 'My Page']])
 
     render(<QueryResultList results={results} pageTitles={pageTitles} />)
 
-    expect(screen.getByRole('link', { name: 'My Page' })).toBeInTheDocument()
+    // #4737 — plain text, not a nested `role="link"`: see QueryResultList.tsx.
+    expect(screen.getByText('My Page')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
-  it('does not render page link when pageTitles map lacks page_id', () => {
+  it('does not render page title when pageTitles map lacks page_id', () => {
     const results = [
       makeBlock({ id: 'B1', content: 'No page link', parent_id: 'P1', page_id: 'P1' }),
     ]
@@ -180,17 +182,23 @@ describe('QueryResultList', () => {
   })
 
   it('has no a11y violations', async () => {
+    // #4737 — `parent_id`/`page_id` set and a matching `pageTitles` entry, so
+    // the row renders its page-title span. The old fixture set both to
+    // `null`, which suppressed that span and hid the `nested-interactive`
+    // violation `PageLink`'s `role="link"` produced inside `role="option"`.
     const results = [
       makeBlock({
         id: 'B1',
         content: 'Accessible item',
         todo_state: 'TODO',
-        parent_id: null,
-        page_id: null,
+        parent_id: 'P1',
+        page_id: 'P1',
       }),
     ]
 
-    const { container } = render(<QueryResultList results={results} pageTitles={new Map()} />)
+    const { container } = render(
+      <QueryResultList results={results} pageTitles={new Map([['P1', 'My Page']])} />,
+    )
 
     const axeResults = await axe(container)
     expect(axeResults).toHaveNoViolations()
@@ -354,10 +362,9 @@ describe('QueryResultList — rich row content (#4719)', () => {
       content: `follow up on [[${LINKED_PAGE_ID}]]`,
     })
 
-  // No `pageTitles` entry, so no `PageLink` in the row: a focusable <a> inside
-  // the `role="option"` is a PRE-EXISTING nested-interactive violation (the
-  // file's other axe test omits the page link for the same reason) and would
-  // mask the thing this axe check is here to watch.
+  // No `pageTitles` entry, so no page-title span in the row: these fixtures
+  // are about the rich-content chip (#4719), and the page-title span is
+  // covered separately (#4737).
   const renderLinkedRow = () =>
     render(
       <QueryResultList
