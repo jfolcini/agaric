@@ -2265,7 +2265,7 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 /// --run-ignored=only` with NO `--profile`, so it uses `profile.default` from
 /// `src-tauri/.config/nextest.toml`: `slow-timeout = { period = "30s",
 /// terminate-after = 2 }` — flagged SLOW at 30s, **TERMINATED at 60s**. (Not
-/// the 120s of `profile.ci`; that profile is only passed by `full-suite`.)
+/// the 120s of `profile.ci`; `bench-slo` never passes that profile.)
 /// This test carries no per-test override, so 60s is the number to beat.
 ///
 /// **The defect measured against.** The realistic O(n²) shape for this fold

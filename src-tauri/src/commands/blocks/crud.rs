@@ -1,4 +1,5 @@
 use crate::db::{CommandTx, WriteCtx};
+use agaric_core::error::ValidationCode;
 use agaric_store::op::{
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PurgeBlockPayload,
     RestoreBlockPayload, SPACE_PROPERTY_KEY,
@@ -456,6 +457,9 @@ pub async fn edit_block_inner(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    if existing.block_type == "page" {
+        reject_duplicate_page_title(&mut tx, &block_id, &to_text).await?;
+    }
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
     let position = existing.position;
@@ -550,6 +554,39 @@ pub async fn edit_block_inner(
         scheduled_date: existing.scheduled_date,
         page_id: existing.page_id,
     })
+}
+
+/// #4723 — page titles are unique per space: renaming a page to a title
+/// another live page of its space carries is refused with
+/// [`ValidationCode::DuplicatePageTitle`]. The page itself is excluded, so a
+/// rename to its own title (or of one of two pre-existing duplicates to a
+/// fresh title) goes through.
+async fn reject_duplicate_page_title(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    to_text: &str,
+) -> Result<(), AppError> {
+    let space_id = sqlx::query_scalar!(
+        r#"SELECT space_id as "space_id?: String" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    // A page with no space (pre-#3081 backfill leftovers) has no namespace to
+    // clash in; the per-space rule does not apply to it.
+    let Some(space_id) = space_id else {
+        return Ok(());
+    };
+    let clash =
+        crate::commands::spaces::find_live_page_by_title(conn, &space_id, to_text, Some(block_id))
+            .await?;
+    if clash.is_some() {
+        return Err(AppError::validation_coded(
+            ValidationCode::DuplicatePageTitle,
+            format!("a page titled '{to_text}' already exists in space '{space_id}'"),
+        ));
+    }
+    Ok(())
 }
 
 /// Soft-delete a block and all its descendants (cascade).

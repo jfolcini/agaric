@@ -93,6 +93,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      // #4723 — `createUntitledPage` reads the space's pages before creating.
+      listAllPagesInSpace: () => Promise.resolve({ status: 'ok', data: [] }),
       exportPageMarkdown: (...args: unknown[]) =>
         mockExportPageMarkdown(...args).then((data: unknown) => ({ status: 'ok', data })),
     },

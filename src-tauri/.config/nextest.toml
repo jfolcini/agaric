@@ -149,7 +149,7 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 #
 # `profile.default` only, on purpose: `--run-ignored=only` is passed by
 # `bench-slo` alone, and that lane passes no `--profile`. The three
-# `--profile ci` invocations (deep-checks `full-suite`, `_validate.yml`'s
+# `--profile ci` invocations (deep-checks `full-suite-nextest`, `_validate.yml`'s
 # `cargo llvm-cov nextest` shards, and its `--features ci-smoke` UDS
 # roundtrip) do not run ignored tests at all, so a
 # `profile.ci` twin of this entry would match nothing. That is the opposite of

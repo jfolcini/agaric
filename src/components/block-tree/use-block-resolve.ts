@@ -948,13 +948,9 @@ function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
  * `recordCreatedRow` makes for an in-hook create, restated for a create
  * announced on the bus.
  *
- * NOT identical, and the difference is deliberate: `recordCreatedRow` has no
- * `alreadyPresent` check, because an in-hook create knows the row is new. A bus
- * event can race a fill that already delivered the same row, so this arm dedupes
- * and is therefore a strict SUPERSET of the in-hook decision. That is the safe
- * direction. Do NOT "restore parity" by deleting the dedupe — the two are not
- * meant to be the same function, and the extra check is the whole reason a
- * duplicated row cannot reach the picker.
+ * Both dedupe. A bus event can race a fill that already delivered the same row;
+ * an in-hook create can BE that row, because `create_page_in_space` resolves an
+ * existing title to that page rather than creating a second one (#4723).
  *
  *  - `'skip'` when the list is EMPTY. An empty cache is not "a space with no
  *    rows", it is "not fetched for this space yet", and appending the one row
@@ -1078,15 +1074,20 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
  * docblock carries the per-site enumeration and the reason the three in-hook
  * paths stay on `recordCreatedRow`.
  */
-function recordCreatedRow<Row>(
+function recordCreatedRow<Row, IdKey extends keyof Row>(
   listRef: React.RefObject<Row[]>,
   generationRef: GenerationRef,
   row: Row,
+  idKey: IdKey,
 ): void {
   generationRef.current += 1
-  if (listRef.current.length > 0) {
-    listRef.current = [...listRef.current, row]
-  }
+  const list = listRef.current
+  if (list.length === 0) return
+  // #4723 — `create_page_in_space` RESOLVES an existing title to that page
+  // instead of creating one, so a "created" row can be a row the filled list
+  // already holds, and the `[[` picker would offer that page twice.
+  if (list.some((existing) => existing[idKey] === row[idKey])) return
+  listRef.current = [...list, row]
 }
 
 export function useBlockResolve(): UseBlockResolveReturn {
@@ -1689,7 +1690,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // append (#4008 review note 1) as ONE call, so this site cannot drift
       // from `onCreateTag`'s or the date picker's. See `recordCreatedRow`
       // for both invariants and why they compose.
-      recordCreatedRow(pagesListRef, nameChangeGenerationRef, { id: newId, title: label })
+      recordCreatedRow(pagesListRef, nameChangeGenerationRef, { id: newId, title: label }, 'id')
       return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)
@@ -1703,7 +1704,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // it, and cannot reach `pagesListRef` to append by hand instead. See
   // `UseBlockResolveReturn['registerCreatedPage']`.
   const registerCreatedPage = useCallback((row: { id: string; title: string }): void => {
-    recordCreatedRow(pagesListRef, nameChangeGenerationRef, row)
+    recordCreatedRow(pagesListRef, nameChangeGenerationRef, row, 'id')
   }, [])
 
   const onCreateTag = useCallback(async (name: string): Promise<string> => {
@@ -1739,12 +1740,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // #4319 — the bump (#4275 item 1) and the fill-guarded append (#4008
       // review note 6) as ONE call, the same one `onCreatePage` makes. See
       // `recordCreatedRow`.
-      recordCreatedRow(tagsListRef, nameChangeGenerationRef, {
-        tag_id: block.id,
-        name,
-        usage_count: 0,
-        updated_at: new Date().toISOString(),
-      })
+      recordCreatedRow(
+        tagsListRef,
+        nameChangeGenerationRef,
+        {
+          tag_id: block.id,
+          name,
+          usage_count: 0,
+          updated_at: new Date().toISOString(),
+        },
+        'tag_id',
+      )
       return block.id
     } catch (err) {
       logger.error('useBlockResolve', 'onCreateTag failed', { name }, err)

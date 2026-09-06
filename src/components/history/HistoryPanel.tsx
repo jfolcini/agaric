@@ -32,12 +32,14 @@ import { HistoryFilterBar } from '@/components/history/HistoryFilterBar'
 import { BlockHistoryItem } from '@/components/HistoryListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
+import { unwrap } from '@/lib/app-error'
+import type { HistoryEntry, OpRef, PageResponse } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import type { HistoryEntry, OpRef, PageResponse } from '@/lib/tauri'
-import { editBlock, getBlock, getBlockHistory } from '@/lib/tauri'
+import { editBlock, getBlock } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
@@ -160,12 +162,14 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         // disabled. Returning an empty page keeps the signature total.
         if (!blockId) return { items: [], next_cursor: null, has_more: false, total_count: null }
         try {
-          return await getBlockHistory({
-            blockId,
-            ...(opTypeFilter != null && { opTypeFilter }),
-            ...(pageParam != null && { cursor: pageParam }),
-            limit: PAGINATION_LIMIT,
-          })
+          return unwrap(
+            await commands.getBlockHistory(
+              blockId,
+              opTypeFilter ?? null,
+              pageParam ?? null,
+              PAGINATION_LIMIT,
+            ),
+          )
         } catch (err) {
           logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
           throw err

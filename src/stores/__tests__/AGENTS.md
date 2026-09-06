@@ -57,4 +57,4 @@ Per-page state is a `Map<string, PageUndoState>` (`undoDepth`, `redoStack`, `red
 - **Optimistic update + rollback.** `undo()` bumps `undoDepth` immediately; on a rejected `undoPageGroup` assert it rolled back.
 - **Page-blocks integration.** Every mutation (`createBelow`, `edit`, `remove`) calls `onNewAction(pageId, opRefs?)` on success (clearing the redo stack), never on backend error.
 
-`undo.test.ts` mocks `@/lib/tauri` (`undoPageGroup`, `undoOp`, `undoOps`, `redoPageOp`, `undoPageOp`, `listPageHistory`), `@/lib/logger`, and `@/lib/announcer` (a singleton DOM node — keep store tests DOM-free). `makeUndoResult()` is local there; `makeHistoryEntry()` is a shared fixture.
+`undo.test.ts` mocks `commands.*` from `@/lib/bindings` (`undoPageGroup`, `undoOp`, `undoOps`, `redoPageOp`, `undoPageOp`, `listPageHistory`, each resolving the `{ status: 'ok', data }` envelope), `@/lib/logger`, and `@/lib/announcer` (a singleton DOM node — keep store tests DOM-free). `makeUndoResult()` is local there; `makeHistoryEntry()` is a shared fixture.

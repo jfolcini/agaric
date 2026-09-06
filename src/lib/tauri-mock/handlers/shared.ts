@@ -54,6 +54,26 @@ export function validationRejection(message: string): Error & AppError {
   return appErrorRejection({ kind: 'validation', message })
 }
 
+/**
+ * #4723 — the live `page` in `spaceId` titled exactly `content`, skipping
+ * `excludeId` (the page being renamed). Mock twin of the backend's
+ * `find_live_page_by_title`; a page's space is its `space` ref property, the
+ * mock's scoping mechanism.
+ */
+export function findLivePageByTitle(
+  content: string | null,
+  spaceId: string | null,
+  excludeId?: string,
+): string | null {
+  for (const b of blocks.values()) {
+    const id = b['id'] as string
+    if (b['block_type'] !== 'page' || b['deleted_at'] || id === excludeId) continue
+    if (b['content'] !== content || ownerSpaceOf(b) !== spaceId) continue
+    return id
+  }
+  return null
+}
+
 /** Shorthand for a mock `invalid_operation` rejection — mirrors `AppError::InvalidOperation(...)` (#2463 kind-parity rule). */
 export function invalidOperationRejection(message: string): Error & AppError {
   return appErrorRejection({ kind: 'invalid_operation', message })

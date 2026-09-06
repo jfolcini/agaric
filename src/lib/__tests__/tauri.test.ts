@@ -24,13 +24,11 @@ import {
   firstChildForBlocks,
   getBatchProperties,
   getBlock,
-  getBlockHistory,
   getProperties,
   getProperty,
   getPropertyDef,
   listBlocks,
   listBlocksLimit,
-  listPageHistory,
   listProjectedAgenda,
   listProjectedAgendaLimit,
   listPropertyDefs,
@@ -39,12 +37,10 @@ import {
   paginationLimit,
   purgeBlock,
   queryByProperty,
-  redoPageOp,
   restoreBlock,
   searchBlocks,
   setProperty,
   setPropertyBatch,
-  undoPageOp,
 } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -804,52 +800,6 @@ describe('batchResolve', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getBlockHistory
-// ---------------------------------------------------------------------------
-
-describe('getBlockHistory', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('invokes get_block_history with all parameters', async () => {
-    const pageResp = {
-      items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
-      next_cursor: 'next1',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    const result = await getBlockHistory({
-      blockId: 'BLK001',
-      cursor: 'cur1',
-      limit: paginationLimit(5),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
-      blockId: 'BLK001',
-      opTypeFilter: null,
-      cursor: 'cur1',
-      limit: 5,
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults optional cursor and limit to null', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await getBlockHistory({ blockId: 'BLK001' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
-      blockId: 'BLK001',
-      opTypeFilter: null,
-      cursor: null,
-      limit: null,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // getStatus
 // ---------------------------------------------------------------------------
 
@@ -1027,61 +977,6 @@ describe('getBatchProperties', () => {
 })
 
 // ---------------------------------------------------------------------------
-// listPageHistory
-// ---------------------------------------------------------------------------
-
-describe('listPageHistory', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('invokes list_page_history with all parameters', async () => {
-    const pageResp = {
-      items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
-      next_cursor: 'next1',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    const result = await listPageHistory({
-      pageId: 'PAGE1',
-      opTypeFilter: 'edit_block',
-      cursor: 'cur1',
-      limit: paginationLimit(20),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
-      pageId: 'PAGE1',
-      opTypeFilter: 'edit_block',
-      // + Phase 3: `scope` is threaded through every
-      // history call; `{ kind: 'global' }` here means "all spaces"
-      // since this test doesn't pass a spaceId.
-      scope: { kind: 'global' },
-      cursor: 'cur1',
-      limit: 20,
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults optional opTypeFilter, cursor and limit to null', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await listPageHistory({ pageId: 'PAGE1' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
-      pageId: 'PAGE1',
-      opTypeFilter: null,
-      // + Phase 3: `scope` defaults to
-      // `{ kind: 'global' }` (= all spaces) when the caller omits
-      // spaceId, matching the other optional knobs.
-      scope: { kind: 'global' },
-      cursor: null,
-      limit: null,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // queryByProperty
 // ---------------------------------------------------------------------------
 
@@ -1208,56 +1103,6 @@ describe('queryByProperty', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// undoPageOp
-// ---------------------------------------------------------------------------
-
-describe('undoPageOp', () => {
-  it('invokes undo_page_op with pageId and undoDepth', async () => {
-    const expected = {
-      reversed_op: { device_id: 'dev1', seq: 5 },
-      new_op_ref: { device_id: 'dev1', seq: 6 },
-      new_op_type: 'edit',
-      is_redo: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await undoPageOp({ pageId: 'PAGE1', undoDepth: 1 })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
-      pageId: 'PAGE1',
-      undoDepth: 1,
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// redoPageOp
-// ---------------------------------------------------------------------------
-
-describe('redoPageOp', () => {
-  it('invokes redo_page_op with undoDeviceId and undoSeq', async () => {
-    const expected = {
-      reversed_op: { device_id: 'dev1', seq: 6 },
-      new_op_ref: { device_id: 'dev1', seq: 7 },
-      new_op_type: 'edit',
-      is_redo: true,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await redoPageOp({ undoDeviceId: 'dev1', undoSeq: 6 })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('redo_page_op', {
-      undoDeviceId: 'dev1',
-      undoSeq: 6,
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
 // `listPeerRefs` retired its `@/lib/tauri` wrapper (#4411); `startSync`
 // moved to `@/lib/ipc-helpers` (#4413, real Channel logic) — both now
 // covered in `ipc-helpers.test.ts` / at their call sites.
@@ -1377,18 +1222,6 @@ describe('getPropertyDef', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'nope' })
   })
 })
-
-// ---------------------------------------------------------------------------
-// getPageAliases
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// resolvePageByAlias
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// exportPageMarkdown
-// ---------------------------------------------------------------------------
 
 // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` moved to
 // `@/lib/ipc-helpers` (#4413, the migration floor — a ~120-LOC chunked
@@ -1628,17 +1461,13 @@ describe('cross-cutting', () => {
     await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')
     await batchResolve(['id'], 'global')
-    await getBlockHistory({ blockId: 'id' })
     await searchBlocks({ query: 'test', spaceId: 'TEST_SPACE_01' })
     await setProperty({ blockId: 'id', key: 'k' })
     await deleteProperty('id', 'k')
     await getProperties('id')
     await getProperty('id', 'k')
     await getBatchProperties(['id'])
-    await listPageHistory({ pageId: 'id' })
     await queryByProperty({ key: 'k' })
-    await undoPageOp({ pageId: 'id', undoDepth: 1 })
-    await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await getPropertyDef('k')
     await listPropertyDefs()
 
@@ -1652,17 +1481,13 @@ describe('cross-cutting', () => {
       'list_blocks',
       'get_block',
       'batch_resolve',
-      'get_block_history',
       'search_blocks',
       'set_property',
       'delete_property',
       'get_properties',
       'get_property',
       'get_batch_properties',
-      'list_page_history',
       'query_by_property',
-      'undo_page_op',
-      'redo_page_op',
       'get_property_def',
       'list_property_defs',
     ])

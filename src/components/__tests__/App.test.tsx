@@ -486,9 +486,12 @@ describe('App', () => {
 
   it('Ctrl+N creates a new page and navigates to it', async () => {
     // Mock create_page_in_space to return the new page's ULID (Phase 2).
+    // #4723 — the create first reads the space's page list to pick a free
+    // `Untitled N`; an empty space keeps the plain 'Untitled'.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'create_page_in_space') {
         return 'NEW_PAGE_ID_00000000000000'
       }
@@ -523,6 +526,39 @@ describe('App', () => {
     })
   })
 
+  // #4723 — `create_page_in_space` resolves an existing title to that page, so
+  // the button used to reopen a lingering "Untitled" page instead of creating.
+  it('the sidebar New Page button creates the first free Untitled title', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'list_all_pages_in_space')
+        return [{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }]
+      if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
+      return emptyPage
+    })
+
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    await user.click(getSidebar().getByText(t('sidebar.newPage')))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_page_in_space',
+        expect.objectContaining({ content: 'Untitled 2' }),
+      )
+    })
+    await waitFor(() => {
+      expect(selectPageStack(useTabsStore.getState())).toContainEqual(
+        expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled 2' }),
+      )
+    })
+  })
+
   // #4338 — `handleNewPage` is App-level: no `useBlockResolve()` in reach, so
   // the bus is its only route to a warm `pagesListRef`. Driven through the
   // real sidebar button rather than the hook so the wiring is pinned at the
@@ -532,6 +568,7 @@ describe('App', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
@@ -585,6 +622,7 @@ describe('App', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'create_page_in_space') {
         return 'NEW_PAGE_ID_00000000000000'
       }
@@ -845,6 +883,7 @@ describe('App', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') {
           return 'NEW_PAGE_1'
         }
@@ -1687,6 +1726,7 @@ describe('App', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
@@ -1715,6 +1755,7 @@ describe('App', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces')
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }

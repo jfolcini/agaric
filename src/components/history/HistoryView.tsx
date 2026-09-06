@@ -31,14 +31,16 @@ import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
+import type { HistoryEntry, PageResponse } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import type { HistoryEntry, PageResponse } from '@/lib/tauri'
-import { listPageHistory } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export function HistoryView(): React.ReactElement {
@@ -105,13 +107,15 @@ export function HistoryView(): React.ReactElement {
       queryKey,
       queryFn: async ({ pageParam }): Promise<PageResponse<HistoryEntry>> => {
         try {
-          const result = await listPageHistory({
-            pageId: '__all__',
-            ...(opTypeFilter != null && { opTypeFilter }),
-            ...(effectiveSpaceId != null && { spaceId: effectiveSpaceId }),
-            ...(pageParam != null && { cursor: pageParam }),
-            limit: PAGINATION_LIMIT,
-          })
+          const result = unwrap(
+            await commands.listPageHistory(
+              '__all__',
+              opTypeFilter ?? null,
+              toSpaceScope(effectiveSpaceId),
+              pageParam ?? null,
+              PAGINATION_LIMIT,
+            ),
+          )
           return result
         } catch (err) {
           const category = categorizeHistoryError(err)

@@ -135,20 +135,33 @@ pub async fn apply_create_block_via_loro(
         } else {
             // #400 routing: new ops carry a 0-based `index`; pre-#400 ops carry
             // the legacy sparse `position` (mapped to a slot); neither ⇒ append.
-            match p.index {
-                Some(index) => engine.apply_create_block_at(
+            //
+            // #4688: the append goes through the index path, past every current
+            // sibling. Routing it through the legacy sort as `i64::MAX` tied it
+            // against every earlier bare append (they all carry `i64::MAX`) and
+            // fell through to the block-id tiebreak — random inside one
+            // millisecond, so a fast import landed siblings in ULID order.
+            match (p.index, p.position) {
+                (Some(index), _) => engine.apply_create_block_at(
                     p.block_id.as_str(),
                     &p.block_type,
                     &p.content,
                     parent,
                     usize::try_from(index.max(0)).unwrap_or(usize::MAX),
                 )?,
-                None => engine.apply_create_block(
+                (None, None) => engine.apply_create_block_at(
                     p.block_id.as_str(),
                     &p.block_type,
                     &p.content,
                     parent,
-                    p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
+                    usize::MAX,
+                )?,
+                (None, Some(position)) => engine.apply_create_block(
+                    p.block_id.as_str(),
+                    &p.block_type,
+                    &p.content,
+                    parent,
+                    position,
                 )?,
             }
             let snap_opt = engine.read_block(p.block_id.as_str())?;

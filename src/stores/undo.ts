@@ -37,12 +37,13 @@ import { create } from 'zustand'
 
 import { announce } from '@/lib/announcer'
 import { isNonReversible, isNotFound, isValidation } from '@/lib/app-error'
+import { unwrap } from '@/lib/app-error'
+import type { OpRef, UndoResult } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { paginationLimit } from '@/lib/safe-limit'
-import type { OpRef, UndoResult } from '@/lib/tauri'
-import { listPageHistory, redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
 
 export type { OpRef, UndoResult }
 
@@ -548,10 +549,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     if (opRef === null) return { status: 'empty' }
 
     try {
-      const result = await redoPageOp({
-        undoDeviceId: opRef.device_id,
-        undoSeq: opRef.seq,
-      })
+      const result = unwrap(await commands.redoPageOp(opRef.device_id, opRef.seq))
 
       // On success: state already updated optimistically
       return { status: 'ok', result }
@@ -617,9 +615,9 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     let results: UndoResult[]
     try {
       if (newestFirst.length === 1) {
-        results = [await undoOp({ opRef: newestFirst[0] as OpRef })]
+        results = [unwrap(await commands.undoOp(newestFirst[0] as OpRef))]
       } else {
-        results = await undoOps({ ops: newestFirst })
+        results = unwrap(await commands.undoOps(newestFirst))
       }
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
@@ -686,11 +684,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     // `UndoResult` per reverted op, newest-first.
     let results: UndoResult[]
     try {
-      results = await undoPageGroup({
-        pageId,
-        depth: initialDepth,
-        windowMs: UNDO_GROUP_WINDOW_MS,
-      })
+      results = unwrap(await commands.undoPageGroup(pageId, initialDepth, UNDO_GROUP_WINDOW_MS))
     } catch (err) {
       logger.error('UndoStore', 'undo_page_group failed', { pageId }, err)
       notify.warning(t('undo.batchUnavailable'))
@@ -727,10 +721,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     reloadPage: () => void | Promise<void>,
   ): Promise<void> {
     try {
-      const history = await listPageHistory({
-        pageId,
-        limit: paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
-      })
+      const history = unwrap(
+        await commands.listPageHistory(
+          pageId,
+          null,
+          { kind: 'global' },
+          null,
+          paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
+        ),
+      )
       // #4328 — newest-first scan for the block's own `delete_block` row,
       // skipping REPLICATED rows. A peer's delete of the same block is
       // ingested as an append-only audit row (`is_replicated = 1`, migration
@@ -758,7 +757,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       // Ref-addressed: the op-log is keyed on `(device_id, seq)` and
       // `HistoryEntry` already carries both, so the toast reverses the exact
       // row it found rather than the Nth row of a differently-filtered walk.
-      await undoOp({ opRef: { device_id: target.device_id, seq: target.seq } })
+      unwrap(await commands.undoOp({ device_id: target.device_id, seq: target.seq }))
 
       // #2901 — this targeted undo bypasses the undo store's normal
       // ref-addressed/positional bookkeeping (it reverts a specific historical

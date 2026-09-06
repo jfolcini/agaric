@@ -4183,24 +4183,6 @@ files_total: number;
  */
 bytes_done: number; 
 /**  Aggregate byte total advertised for the current `phase`. */
-bytes_total: number } | 
-/**
- *  Per-frame snapshot catch-up transfer progress. Emitted by
- *  `sync_daemon::snapshot_transfer` between 5 MB binary frames while
- *  the compressed snapshot blob streams over the wire, so the UI can
- *  render a real bytes-done bar for the catch-up blob the same way the
- *  `Files` variant does for attachments.
- */
-{ kind: "snapshot"; 
-/**
- *  `"sending"` (responder is shipping the snapshot blob),
- *  `"receiving"` (initiator is pulling it), or `"complete"`
- *  (the blob finished transferring for this session).
- */
-phase: string; remote_device_id: string; 
-/**  Bytes shipped/received so far in the current `phase`. */
-bytes_done: number; 
-/**  Total compressed snapshot size advertised for the transfer. */
 bytes_total: number };
 
 /**  Response payload returned by [`start_sync`]. */
@@ -4368,7 +4350,13 @@ export type ValidationCode =
  *  of the generic "failed to save property" toast — which is the whole
  *  point of validating at the point of entry.
  */
-"InvalidRepeatRule";
+"InvalidRepeatRule" | 
+/**
+ *  Renaming a page to a title another live page in the same space
+ *  already carries (`edit_block_inner`, #4723). Coded so the title
+ *  editor can name the clash instead of the generic rename failure.
+ */
+"DuplicatePageTitle";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

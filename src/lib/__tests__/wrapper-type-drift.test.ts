@@ -11,20 +11,18 @@
  * (`npm run typecheck`), not by vitest, which strips types without checking
  * them — which is why both are run.
  *
- * It pins the four wrapper types that still exist. `AttachmentRow` and
- * `SyncSessionInfo` are no longer among them: #4411/#4413 retired
- * `attachments.ts` and `sync.ts` outright, so their callers use the generated
- * types directly and there is no second declaration left to diverge.
+ * It pins the two wrapper types that still exist. `AttachmentRow`,
+ * `SyncSessionInfo`, `OpRef` and `UndoResult` are no longer among them:
+ * #4411/#4413 retired `attachments.ts`, `sync.ts` and `history.ts` outright,
+ * so their callers use the generated types directly and there is no second
+ * declaration left to diverge.
  */
 import { describe, expect, it } from 'vitest'
 
 import type {
   ImportResult as WireImportResult,
-  OpRef as WireOpRef,
   PropertyRow as WirePropertyRow,
-  UndoResult as WireUndoResult,
 } from '@/lib/bindings'
-import type { OpRef, UndoResult } from '@/lib/tauri/history'
 import type { ImportResult } from '@/lib/tauri/import'
 import type { PropertyRow } from '@/lib/tauri/properties'
 
@@ -36,15 +34,13 @@ type IsEqual<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Expect<T extends true> = T
 
-// If any of these three wrapper modules ever goes back to a hand-declared
+// If either of these two wrapper modules ever goes back to a hand-declared
 // duplicate that diverges from `bindings.ts` — adding, dropping, or
 // retyping a field — one of these lines stops compiling and `tsc` fails,
 // naming this file. `export`ed (never imported elsewhere) so
 // `noUnusedLocals` doesn't flag them — an exported type is not "unused".
 export type _PropertyRowMatchesWire = Expect<IsEqual<PropertyRow, WirePropertyRow>>
 export type _ImportResultMatchesWire = Expect<IsEqual<ImportResult, WireImportResult>>
-export type _OpRefMatchesWire = Expect<IsEqual<OpRef, WireOpRef>>
-export type _UndoResultMatchesWire = Expect<IsEqual<UndoResult, WireUndoResult>>
 
 describe('@/lib/tauri/* wrapper types match the generated bindings (#4414)', () => {
   it('PropertyRow re-export carries value_bool — native boolean storage', () => {
