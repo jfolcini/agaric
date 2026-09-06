@@ -240,6 +240,34 @@ test.describe('Inner links — [[ picker', () => {
     await expect(chip).toBeVisible()
   })
 
+  test('typing after a picked link needs no backspace (#4708)', async ({ page }) => {
+    // The report is a caret-and-glyph bug: the pickers used to append a
+    // literal space, so a comma typed straight after landed as `]] ,`. The
+    // unit tests assert the ProseMirror node shape, which is the right thing
+    // to pin but is jsdom — no caret, no rendered glyphs. This drives a real
+    // contenteditable and asserts what the user actually saw.
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+
+    await page.keyboard.press('End')
+    await page.keyboard.type(' [[', { delay: 30 })
+    const list = activeSuggestionList(page)
+    await expect(list).toBeVisible()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'Quick Notes' }).click()
+
+    const chip = page.locator('[data-testid="block-editor"] [data-testid="block-link-chip"]', {
+      hasText: 'Quick Notes',
+    })
+    await expect(chip).toBeVisible()
+
+    // The caret must already be where the next character goes.
+    await page.keyboard.type(', and more', { delay: 20 })
+
+    const text = await page.locator('[data-testid="block-editor"]').first().textContent()
+    expect(text).toContain(', and more')
+    expect(text).not.toContain(' , and more')
+  })
+
   test('picker shows "Create" option for non-matching queries', async ({ page }) => {
     await openPage(page, 'Getting Started')
 

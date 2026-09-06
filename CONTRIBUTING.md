@@ -65,11 +65,12 @@ It is wired in the tracked [`.mcp.json`](.mcp.json), which launches the server v
 
 ```bash
 # Prerequisite: install uv (which provides uvx). See https://docs.astral.sh/uv/.
-# .mcp.json then starts the server on demand with:
+# Optional smoke test that uvx can reach the package at all:
 uvx code-review-graph serve
 ```
 
-`uvx` fetches and runs `code-review-graph` without a separate global install, so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the graph tools to be usable at all; if it is not available, agents simply fall back to Grep/Glob/Read.
+`.mcp.json` starts the server on demand and **pins the version** it runs. `uvx` fetches and runs `code-review-graph` without a separate global install,
+so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the graph tools to be usable at all; if it is not available, agents simply fall back to Grep/Glob/Read.
 
 ## Development workflow
 
