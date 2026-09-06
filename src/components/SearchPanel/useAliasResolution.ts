@@ -14,10 +14,12 @@
 
 import { useEffect, useState } from 'react'
 
-import { isNotFound } from '@/lib/app-error'
+import { isNotFound, unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { toSpaceScope } from '@/lib/space-scope'
 import type { BlockRow } from '@/lib/tauri'
-import { getBlock, resolvePageByAlias } from '@/lib/tauri'
+import { getBlock } from '@/lib/tauri'
 
 export interface AliasResolution {
   /**
@@ -66,7 +68,9 @@ export function useAliasResolution(
     // Pass `spaceId: currentSpaceId` so an alias
     // pointing at a foreign-space page does not surface here. Mirrors
     // The active-space scoping the prefix picker already uses.
-    resolvePageByAlias({ alias: trimmed, spaceId: currentSpaceId })
+    commands
+      .resolvePageByAlias(trimmed, toSpaceScope(currentSpaceId))
+      .then(unwrap)
       .then(async (result) => {
         if (cancelled) return
         if (!result) {

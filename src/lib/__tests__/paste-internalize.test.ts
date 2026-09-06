@@ -33,8 +33,6 @@ const mockCreatePageInSpace = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/tauri', () => ({
   listBlocks: vi.fn(),
   listBlocksLimit: vi.fn(),
-  listAllPagesInSpace: (...args: unknown[]) => mockListAllPagesInSpace(...args),
-  listAllTagsInSpace: (...args: unknown[]) => mockListAllTagsInSpace(...args),
   createBlock: (...args: unknown[]) => mockCreateBlock(...args),
 }))
 
@@ -46,6 +44,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllTagsInSpace: (...args: unknown[]) =>
+        mockListAllTagsInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })

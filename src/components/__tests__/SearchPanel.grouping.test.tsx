@@ -28,11 +28,16 @@ import { useTabsStore } from '@/stores/tabs'
 // the full list. `measureElement` is a no-op (jsdom can't measure layout).
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+const mockResolvePageByAlias = vi.hoisted(() => vi.fn().mockResolvedValue(null))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    resolvePageByAlias: vi.fn().mockResolvedValue(null),
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: (...args: unknown[]) =>
+        mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 

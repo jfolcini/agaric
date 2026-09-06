@@ -46,18 +46,21 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => vi
 // `useUnlinkedReferences` dispatches `commands.listUnlinkedReferences`, so the
 // spy resolves/rejects with the bare `GroupedBacklinkResponse` and the shim
 // below adds the `{ status: 'ok', data }` envelope `unwrap` expects.
-const { mockListPropertyKeys, mockListTagsByPrefix, mockListUnlinkedReferences } = vi.hoisted(
-  () => ({
-    mockListPropertyKeys: vi.fn(),
-    mockListTagsByPrefix: vi.fn(),
-    mockListUnlinkedReferences: vi.fn(),
-  }),
-)
+const {
+  mockGetPageAliases,
+  mockListPropertyKeys,
+  mockListTagsByPrefix,
+  mockListUnlinkedReferences,
+} = vi.hoisted(() => ({
+  mockListPropertyKeys: vi.fn(),
+  mockListTagsByPrefix: vi.fn(),
+  mockListUnlinkedReferences: vi.fn(),
+  mockGetPageAliases: vi.fn(),
+}))
 
 vi.mock('@/lib/tauri', () => ({
   editBlock: vi.fn(),
   listPropertyKeys: mockListPropertyKeys,
-  getPageAliases: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -70,6 +73,8 @@ vi.mock('@/lib/bindings', async () => {
       listTagsByPrefix: mockListTagsByPrefix,
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getPageAliases: (...args: unknown[]) =>
+        mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -90,11 +95,11 @@ import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import type { GroupedBacklinkResponse } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
-import { editBlock, getPageAliases } from '@/lib/tauri'
+import { editBlock } from '@/lib/tauri'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = vi.mocked(editBlock)
-const mockedGetPageAliases = vi.mocked(getPageAliases)
+const mockedGetPageAliases = mockGetPageAliases
 
 const PAGE_TITLE = 'Alpha'
 

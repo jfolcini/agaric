@@ -13,7 +13,8 @@ import { commands } from '@/lib/bindings'
 import type { RefInternalizers } from '@/lib/block-clipboard'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
-import { createBlock, listAllPagesInSpace, listAllTagsInSpace } from '@/lib/tauri'
+import { requireActiveScope } from '@/lib/space-scope'
+import { createBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -63,7 +64,9 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
     if (pagesFetchFailed) return null
     const map = new Map<string, string[]>()
     try {
-      for (const p of await listAllPagesInSpace(spaceId)) {
+      for (const p of unwrap(
+        await commands.listAllPagesInSpace(requireActiveScope(spaceId), null),
+      )) {
         const title = p.content ?? ''
         if (title.length === 0) continue
         const ids = map.get(title)
@@ -84,7 +87,9 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
     if (tagsFetchFailed) return null
     const map = new Map<string, string>()
     try {
-      for (const t of await listAllTagsInSpace(spaceId)) map.set(t.name, t.tag_id)
+      for (const t of unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))) {
+        map.set(t.name, t.tag_id)
+      }
     } catch (err) {
       logger.warn('page-blocks', 'import: tag list fetch failed', {}, err)
       tagsFetchFailed = true

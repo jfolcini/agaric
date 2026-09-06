@@ -20,13 +20,11 @@ import {
   deleteBlocksByIds,
   deleteProperty,
   editBlock,
-  exportPageMarkdown,
   filteredBlocksQuery,
   firstChildForBlocks,
   getBatchProperties,
   getBlock,
   getBlockHistory,
-  getPageAliases,
   getProperties,
   getProperty,
   getPropertyDef,
@@ -42,7 +40,6 @@ import {
   purgeBlock,
   queryByProperty,
   redoPageOp,
-  resolvePageByAlias,
   restoreBlock,
   searchBlocks,
   setProperty,
@@ -1385,78 +1382,13 @@ describe('getPropertyDef', () => {
 // getPageAliases
 // ---------------------------------------------------------------------------
 
-describe('getPageAliases', () => {
-  it('invokes get_page_aliases with pageId', async () => {
-    const expected = ['alias1', 'alias2']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getPageAliases('PAGE1')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_page_aliases', { pageId: 'PAGE1' })
-    expect(result).toEqual(expected)
-  })
-})
-
 // ---------------------------------------------------------------------------
 // resolvePageByAlias
 // ---------------------------------------------------------------------------
 
-describe('resolvePageByAlias', () => {
-  it('invokes resolve_page_by_alias with alias', async () => {
-    const expected: [string, string | null] = ['PAGE1', 'My Page']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await resolvePageByAlias({ alias: 'my-alias' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
-      alias: 'my-alias',
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns null when alias not found', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    const result = await resolvePageByAlias({ alias: 'nonexistent' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
-      alias: 'nonexistent',
-      scope: { kind: 'global' },
-    })
-    expect(result).toBeNull()
-  })
-
-  it('forwards spaceId as an active scope when supplied', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    await resolvePageByAlias({ alias: 'shared', spaceId: 'SPACE_A' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', {
-      alias: 'shared',
-      scope: { kind: 'active', space_id: 'SPACE_A' },
-    })
-  })
-})
-
 // ---------------------------------------------------------------------------
 // exportPageMarkdown
 // ---------------------------------------------------------------------------
-
-describe('exportPageMarkdown', () => {
-  it('invokes export_page_markdown with pageId', async () => {
-    const expected = '# My Page\n\nHello world'
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await exportPageMarkdown('PAGE1')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('export_page_markdown', { pageId: 'PAGE1' })
-    expect(result).toEqual(expected)
-  })
-})
 
 // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` moved to
 // `@/lib/ipc-helpers` (#4413, the migration floor — a ~120-LOC chunked
@@ -1709,9 +1641,6 @@ describe('cross-cutting', () => {
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await getPropertyDef('k')
     await listPropertyDefs()
-    await getPageAliases('id')
-    await resolvePageByAlias({ alias: 'alias' })
-    await exportPageMarkdown('id')
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -1736,9 +1665,6 @@ describe('cross-cutting', () => {
       'redo_page_op',
       'get_property_def',
       'list_property_defs',
-      'get_page_aliases',
-      'resolve_page_by_alias',
-      'export_page_markdown',
     ])
   })
 })

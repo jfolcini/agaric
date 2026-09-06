@@ -51,7 +51,6 @@ import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
-import { exportPageMarkdown } from '@/lib/tauri'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -296,7 +295,9 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         notify.error(t('palette.noActivePage'))
         return
       }
-      exportPageMarkdown(activePage.pageId)
+      commands
+        .exportPageMarkdown(activePage.pageId)
+        .then(unwrap)
         .then(async (markdown) => {
           await writeText(markdown)
           notify.success(t('pageHeader.exportCopied'))

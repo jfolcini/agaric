@@ -43,15 +43,18 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+const mockResolvePageByAlias = vi.hoisted(() => vi.fn().mockResolvedValue(null))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    resolvePageByAlias: vi.fn().mockResolvedValue(null),
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: (...args: unknown[]) =>
+        mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
-
-import { resolvePageByAlias } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -77,7 +80,7 @@ beforeEach(() => {
   // DonePanel migration's test isolation).
   queryClient.clear()
   // Re-establish default after clearAllMocks resets it
-  vi.mocked(resolvePageByAlias).mockResolvedValue(null)
+  mockResolvePageByAlias.mockResolvedValue(null)
   useNavigationStore.setState({
     currentView: 'search',
     selectedBlockId: null,
@@ -2075,7 +2078,7 @@ describe('SearchPanel', () => {
       // The alias-resolution effect re-runs when `results` reference changes
       // after the search completes — use a persistent mock so both calls
       // resolve to the alias hit.
-      vi.mocked(resolvePageByAlias).mockResolvedValue(['ALIASPAGE', null])
+      mockResolvePageByAlias.mockResolvedValue(['ALIASPAGE', null])
       const aliasBlock = {
         id: 'ALIASPAGE',
         block_type: 'page',

@@ -24,9 +24,21 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/tauri', () => ({
-  resolvePageByAlias: vi.fn(),
   getBlock: vi.fn(),
 }))
+
+const mockResolvePageByAlias = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: (...args: unknown[]) =>
+        mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -39,9 +51,9 @@ vi.mock('@/lib/logger', () => ({
 
 import { useAliasResolution } from '@/components/SearchPanel/useAliasResolution'
 import { logger } from '@/lib/logger'
-import { type BlockRow, getBlock, resolvePageByAlias } from '@/lib/tauri'
+import { type BlockRow, getBlock } from '@/lib/tauri'
 
-const mockedResolveAlias = vi.mocked(resolvePageByAlias)
+const mockedResolveAlias = mockResolvePageByAlias
 const mockedGetBlock = vi.mocked(getBlock)
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
@@ -96,9 +108,9 @@ describe('useAliasResolution', () => {
       expect(result.current.aliasMatch).toEqual(block)
     })
     expect(result.current.aliasQuery).toBe('apollo')
-    expect(mockedResolveAlias).toHaveBeenCalledWith({
-      alias: 'apollo',
-      spaceId: 'SPACE_A',
+    expect(mockedResolveAlias).toHaveBeenCalledWith('apollo', {
+      kind: 'active',
+      space_id: 'SPACE_A',
     })
     expect(mockedGetBlock).toHaveBeenCalledWith('BLOCK_A')
   })
@@ -109,10 +121,7 @@ describe('useAliasResolution', () => {
     renderHook(() => useAliasResolution('apollo', EMPTY_RESULTS, null))
 
     await waitFor(() => {
-      expect(mockedResolveAlias).toHaveBeenCalledWith({
-        alias: 'apollo',
-        spaceId: null,
-      })
+      expect(mockedResolveAlias).toHaveBeenCalledWith('apollo', { kind: 'global' })
     })
   })
 

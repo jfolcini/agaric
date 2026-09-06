@@ -35,9 +35,12 @@
 
 import { create } from 'zustand'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
-import { batchResolve, listAllTagsInSpace, listBlocks, listBlocksLimit } from '@/lib/tauri'
+import { requireActiveScope } from '@/lib/space-scope'
+import { batchResolve, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const MAX_CACHE_SIZE = 10_000
@@ -483,7 +486,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // only the escalation decision is now aware of which half failed.
       pageHalfSucceeded = true
 
-      const tags = await listAllTagsInSpace(spaceId)
+      const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
       const fetchedTags = new Map<string, ResolveEntry>()
       for (const t of tags) {
         fetchedTags.set(keyFor(spaceId, t.tag_id), {

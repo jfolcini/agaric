@@ -39,7 +39,7 @@ import type {
   BacklinkSort,
   GroupedBacklinkResponse,
 } from '@/lib/tauri'
-import { editBlock, getPageAliases } from '@/lib/tauri'
+import { editBlock } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -227,7 +227,9 @@ export function UnlinkedReferences({
   // `getPageAliases(pageId)` pattern already used by `PageHeader`.
   useEffect(() => {
     let cancelled = false
-    getPageAliases(pageId)
+    commands
+      .getPageAliases(pageId)
+      .then(unwrap)
       .then((rows) => {
         if (cancelled) return
         setAliases(rows ?? [])
