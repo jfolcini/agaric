@@ -425,30 +425,6 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
     Ok(true)
 }
 
-/// The `blocks.block_type` a replayed LIFECYCLE op should narrow its fan-out
-/// with, or `None` when the conservative full set is right.
-///
-/// `None` for every non-lifecycle op (their arms ignore the hint) and for a
-/// lifecycle op whose row is gone — a purge, or a delete whose block was purged
-/// later in the same replayed range. Both keep `FULL_CACHE_REBUILD_TASKS`,
-/// which is what the live path also does when its own lookup comes back empty.
-async fn lifecycle_block_type(pool: &SqlitePool, record: &OpRecord) -> Option<String> {
-    if !matches!(
-        record.op_type.as_str(),
-        "delete_block" | "restore_block" | "purge_block"
-    ) {
-        return None;
-    }
-    let block_id = record.block_id.as_deref()?;
-    // dynamic-sql: static SQL, a single-column lookup off the replay path.
-    sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
-        .bind(block_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-}
-
 /// Re-enqueue the background fan-out for every op boot replay just applied,
 /// covering `from_seq < seq <= through_seq`. Returns how many ops it dispatched.
 ///
@@ -510,30 +486,7 @@ async fn fan_out_replayed_ops(
 
         for record in &rows {
             next = next.max(record.seq);
-            // A lifecycle op needs the block's real type or its fan-out falls
-            // to `FULL_CACHE_REBUILD_TASKS` — nine O(vault) rebuilds where the
-            // live path (`command_tx` passes the type it already read) narrows
-            // a content block to `CONTENT_LIFECYCLE_REBUILD_TASKS`. Without
-            // this, deleting one content block makes the next launch strictly
-            // more expensive than the session that deleted it, which is the
-            // cost this whole design exists to avoid.
-            //
-            // A purge legitimately has no row left to read, so it keeps the
-            // conservative full set — the same answer the live purge path
-            // gives when its own lookup comes back empty.
-            match lifecycle_block_type(pool, record).await {
-                Some(block_type) => {
-                    if let Err(e) = materializer.dispatch_lifecycle_background(record, &block_type)
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            seq = record.seq,
-                            "replay: lifecycle fan-out failed — will retry on next boot"
-                        );
-                    }
-                }
-                None => materializer.dispatch_background_or_warn(record),
-            }
+            materializer.dispatch_background_or_warn(record);
             dispatched += 1;
         }
     }
@@ -826,11 +779,28 @@ pub async fn replay_unmaterialized_ops(
     // AFTER the barrier and the reproject: a background task must see committed
     // `blocks` rows and final `position` ranks, the same ordering `dispatch_op`
     // documents.
-    let fanned_out = fan_out_replayed_ops(pool, materializer, cursor, last_seen).await?;
-    tracing::debug!(
-        fanned_out,
-        "replay: re-derived per-block index tasks for the replayed ops (#3298)"
-    );
+    // Recorded, not `?`-propagated: this runs after every op applied and the
+    // cursor advanced, so a read failure here is stale indexes, not an aborted
+    // replay. `?` would reach `recover_at_boot` and surface `ops_replayed: 0`
+    // plus the user-visible replay-failed banner for a replay that succeeded.
+    // The [`REPROJECT_DEGRADED_PREFIX`] marker is what keeps it a diagnostic
+    // (#3311), the same treatment the dense reproject above gives its errors.
+    match fan_out_replayed_ops(pool, materializer, cursor, last_seen).await {
+        Ok(fanned_out) => tracing::debug!(
+            fanned_out,
+            "replay: re-derived per-block index tasks for the replayed ops (#3298)"
+        ),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "replay: could not walk the replayed range to re-derive its per-block \
+                 indexes — they stay stale until each block is next edited (#3298)"
+            );
+            report
+                .replay_errors
+                .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}"));
+        }
+    }
 
     tracing::info!(
         ops_replayed = report.ops_replayed,
