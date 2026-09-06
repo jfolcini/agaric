@@ -542,6 +542,7 @@ function usePagePicker(search: string): {
 
   useEffect(() => {
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- arms the spinner for the `listAllPagesInSpace` IPC this effect dispatches; the page list comes from the backend, not from props; see #4407
     setLoading(true)
     // b1 — `listAllPagesInSpace` is required-active (no cross-space form).
     // With no active space the picker has nothing to offer, so short-circuit
@@ -759,6 +760,7 @@ export function TagPickerEditor({
 
   useEffect(() => {
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- arms the spinner for the `listAllTagsInSpace` IPC this effect dispatches; the tag list comes from the backend, not from props; see #4407
     setLoading(true)
     if (currentSpaceId == null) {
       setTags([])

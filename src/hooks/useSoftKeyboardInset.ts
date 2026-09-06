@@ -38,6 +38,7 @@ export function useSoftKeyboardInset(enabled = true): number {
 
   useEffect(() => {
     if (!enabled) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the visualViewport-measured keyboard inset when the consumer disables the hook, leaving no resize listener to update it; see #4407
       setInset(0)
       return
     }

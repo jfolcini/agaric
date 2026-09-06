@@ -131,6 +131,7 @@ export function useBlockMountLimit(
   const mountLimit = mountScope.pageKey === pageKey ? mountScope.limit : initialLimit
   useEffect(() => {
     if (mountScope.pageKey === pageKey) return
+    // oxlint-disable-next-line react/set-state-in-effect -- resets the mount ceiling when `pageKey` changes; the render-phase `mountLimit` above already overrides, so this only stores the reset back; see #4407
     setMountScope({ pageKey, limit: initialLimit })
   }, [mountScope.pageKey, pageKey, initialLimit])
 

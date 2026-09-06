@@ -121,6 +121,7 @@ export function BugReportDialog({
   // Reset form when re-opening, and load metadata lazily on open.
   useEffect(() => {
     if (!open) return
+    // oxlint-disable-next-line react/set-state-in-effect -- re-opening resets every field to the incoming props; a plain derive would discard the user's edits; the guarded adjust is out of scope; see #4407
     setTitle(initialTitle ?? '')
     setDescription(initialDescription ?? '')
     setIncludeLogs(false)
@@ -144,6 +145,7 @@ export function BugReportDialog({
   useEffect(() => {
     if (!open) return
     if (!includeLogs) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the fetched log list when the user turns the include-logs switch off; `logs` is IPC-loaded state, not derivable; see #4407
       setLogs([])
       return
     }

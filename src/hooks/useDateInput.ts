@@ -67,6 +67,7 @@ export function useDateInput({
 
   // Re-sync when the external value changes (e.g. prop updated by parent)
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- re-syncs the input to a new `initialValue` prop; a plain derive would discard the user's edits; the guarded adjust is out of scope; see #4407
     setDateInput(initialValue)
     setDatePreview(null)
     setDateError(false)

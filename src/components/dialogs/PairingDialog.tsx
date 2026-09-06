@@ -422,6 +422,7 @@ export function PairingDialog({
   // alongside a joiner attempt.
   useEffect(() => {
     if (!open) return
+    // oxlint-disable-next-line react/set-state-in-effect -- opening starts a fresh host session; this clears the previous session's backend-issued pairing code before `start_pairing` re-arms the daemon; see #4407
     setPairingInfo(null)
     // A scan belongs to one joiner attempt. Every place that clears the typed
     // words has to clear this too, or the previous attempt's host rides along
@@ -635,6 +636,7 @@ export function PairingDialog({
   useEffect(() => {
     if (joinerPhase !== 'waiting' || !syncError) return
     if (!syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)) return
+    // oxlint-disable-next-line react/set-state-in-effect -- returns the joiner to entry when the sync store reports the responder rejected the proof; the phase tracks an external error, not render; see #4407
     setJoinerPhase('entry')
     setWaitCountdown(null)
     setWords(['', '', '', ''])
@@ -670,6 +672,7 @@ export function PairingDialog({
   // Timeout: the TTL elapsed with neither success nor a rejection observed.
   useEffect(() => {
     if (joinerPhase !== 'waiting' || waitCountdown !== 0) return
+    // oxlint-disable-next-line react/set-state-in-effect -- returns the joiner to entry once the interval-driven wait countdown reaches zero; the phase tracks a timer, not a render-time value; see #4407
     setJoinerPhase('entry')
     setWords(['', '', '', ''])
     setError(t('pairing.waitTimedOut'))

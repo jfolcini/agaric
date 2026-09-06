@@ -86,6 +86,7 @@ export function usePropertyDefForEdit(
 
   useEffect(() => {
     if (!editingProp) {
+      // oxlint-disable-next-line react/set-state-in-effect -- resets the editor state fetched for the previous property when editing stops; those values came from `getPropertyDef`, not from render input; see #4407
       setSelectOptions(null)
       setIsRefProp(false)
       setRefPages([])

@@ -425,6 +425,7 @@ export function usePageBrowserData({
   // optimistic decrement.
   useEffect(() => {
     if (!isFetching && !isError && typeof totalCount === 'number') {
+      // oxlint-disable-next-line react/set-state-in-effect -- adopts the query's total only on a successful settle; the retained count is also decremented optimistically on delete; see #4407
       setDisplayTotalCount(totalCount)
     }
   }, [isError, isFetching, totalCount])
@@ -432,6 +433,7 @@ export function usePageBrowserData({
   // chip set) so a stale count never lingers against a fresh result set
   // before the new first page resolves.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the retained count when the query basis (space, sort, filter chips) changes, so a stale total never outlives its result set; see #4407
     setDisplayTotalCount(undefined)
   }, [currentSpaceId, sortOption, wireFiltersKey])
 

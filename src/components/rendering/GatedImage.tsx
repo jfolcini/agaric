@@ -53,6 +53,7 @@ function useResolvedAttachmentSrc(src: string): { url: string | null; error: boo
     const id = parseAttachmentRef(src)
     if (id === null) {
       // Not an attachment ref — nothing to resolve; clear any stale state.
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the previous attachment object URL when `src` stops being an attachment ref; `url` otherwise comes from an async `read_attachment` IPC; see #4407
       setUrl(null)
       setError(false)
       return

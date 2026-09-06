@@ -99,6 +99,7 @@ export function SavedViews({
   }, [spaceId, t])
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- `refresh` is an async `queryByProperty` load; its `setLoading(true)` runs synchronously here, and no saved-view list is derivable from props; see #4407
     void refresh()
   }, [refresh, refreshToken])
 

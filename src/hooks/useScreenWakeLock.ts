@@ -98,7 +98,9 @@ export interface ScreenWakeLockState {
  */
 export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
   const [held, setHeld] = useState(false)
-  const [unsupported, setUnsupported] = useState(false)
+  // `navigator.wakeLock` cannot appear or disappear mid-session, so this one
+  // probe at mount answers for the hook's whole life.
+  const [unsupported] = useState(() => getWakeLock() == null)
   // The live sentinel, so the release path does not depend on React state
   // having flushed — a dialog can close in the same tick it opened.
   const sentinelRef = useRef<WakeLockSentinelLike | null>(null)
@@ -135,11 +137,7 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
 
   useEffect(() => {
     const wakeLock = getWakeLock()
-    if (wakeLock == null) {
-      setUnsupported(true)
-      return
-    }
-    setUnsupported(false)
+    if (wakeLock == null) return
 
     let cancelled = false
     let onRelease: (() => void) | null = null

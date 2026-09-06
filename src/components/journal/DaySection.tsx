@@ -7,7 +7,7 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DonePanel } from '@/components/agenda/DonePanel'
@@ -18,6 +18,7 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
+import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
@@ -82,51 +83,8 @@ interface DaySectionProps {
 const LAZY_PLACEHOLDER_MIN_HEIGHT = 200
 
 /**
- * One-shot intersection observer: returns `true` once the element has
- * been intersected, then stays `true` (no flip-back) so a brief scroll
- * away from a mounted day doesn't tear down the tree. Disabled when
- * `enabled === false` (eager-mount path).
- */
-function useEnteredViewport(
-  enabled: boolean,
-  rootMargin = '200px 0px',
-): [boolean, React.RefObject<HTMLDivElement | null>] {
-  const [entered, setEntered] = useState(!enabled)
-  const ref = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!enabled || entered) return
-    const el = ref.current
-    if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      // Defensive: jsdom/older runtimes — eagerly mark as entered.
-      setEntered(true)
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setEntered(true)
-            observer.disconnect()
-            return
-          }
-        }
-      },
-      { rootMargin },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [enabled, entered, rootMargin])
-
-  return [entered, ref]
-}
-
-/**
- * Same one-shot-while-not-entered observer shape as `useEnteredViewport`
- * above, but reports every transition into view via `onEnter` instead of
+ * Same one-shot-while-not-entered observer shape as `useEnteredViewport`,
+ * but reports every transition into view via `onEnter` instead of
  * owning local state (#2670). Used by the `mountWindow`-controlled path,
  * where "entered" comes from the caller's LRU (`mountWindow.isMounted`), not
  * local state — so a day that scrolls back into view AFTER being evicted can
@@ -256,7 +214,9 @@ function DaySectionInner({
 
   // Self-managed one-shot path (WeeklyView, no `onVisible`) —
   // unchanged from before #2670.
-  const [selfEntered, selfLazyRef] = useEnteredViewport(shouldLazyMount && !isWindowControlled)
+  const [selfEntered, selfLazyRef] = useEnteredViewport<HTMLDivElement>(
+    shouldLazyMount && !isWindowControlled,
+  )
 
   // Externally-controlled LRU path (StreamView, #2670): mount state comes
   // from the caller's window, and every entry (not just the first) reports

@@ -86,6 +86,7 @@ export function SaveViewDialog({
   // Reset on every open so a previous attempt's text doesn't linger.
   useEffect(() => {
     if (open) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the draft name on each reopen; a plain derive would discard the user's edits; the guarded adjust is out of scope; see #4407
       setName('')
       setTouched(false)
     }

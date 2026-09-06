@@ -58,6 +58,7 @@ export function GestureCoachMark(): React.ReactElement | null {
   // responsive chrome across resize / breakpoint / keyboard changes.
   useEffect(() => {
     if (shouldShowMobileChrome && !isGestureCoachMarkSeen()) {
+      // oxlint-disable-next-line react/set-state-in-effect -- opens once when the responsive mobile chrome turns on and the persisted localStorage seen-flag is unset; dismissal writes that flag, so this is not derivable; see #4407
       setOpen(true)
     }
   }, [shouldShowMobileChrome])

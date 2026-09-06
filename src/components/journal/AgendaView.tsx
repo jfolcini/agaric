@@ -98,6 +98,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   // ── Agenda filter execution ────────────────────────────────────────
   useEffect(() => {
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- arms the spinner for the agenda filter query this effect runs; loading tracks that async request, not props or other state; see #4407
     setAgendaLoading(true)
     // Clear any prior failure at the start of a fresh run so a successful
     // retry drops the error card.

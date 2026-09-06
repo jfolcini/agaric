@@ -106,6 +106,7 @@ export function BlockPropertyEditor({
   // (new) property. Start on the currently-selected value, else the first row.
   useEffect(() => {
     if (!editingProp || !selectOptions) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the keyboard-active option on popup close; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
       setActiveIndex(-1)
       return
     }

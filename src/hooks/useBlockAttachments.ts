@@ -56,6 +56,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
 
   // Load attachments when blockId changes
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous block's rows when `blockId` or the batch provider's state changes, before the replacement load lands; see #4407
     setAttachments([])
     if (!blockId) {
       setLoading(false)

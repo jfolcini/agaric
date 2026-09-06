@@ -396,6 +396,7 @@ export function UnfinishedTasks({
     if (loading) return
     const parentIds = [...new Set(blocks.map((b) => b.page_id).filter(Boolean))] as string[]
     if (parentIds.length === 0) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears resolved breadcrumb titles in the no-parents branch of this async resolve effect; titles come from a batch IPC; see #4407
       setPageTitles(new Map())
       return
     }

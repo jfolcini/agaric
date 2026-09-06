@@ -119,6 +119,7 @@ export function SearchAutocomplete({
   // and `pendingCaretRef` are stable RefObject props so listing them is a
   // no-op for re-runs — same pattern as the caret-tracker effect above.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- re-arms the popover when the query changes; a plain derive would discard the user's dismissal; the guarded adjust is out of scope; see #4407
     setDismissed(false)
     const input = inputRef.current
     if (input == null) return
@@ -135,6 +136,7 @@ export function SearchAutocomplete({
   // Default the highlight to the first item; keep a surviving selection.
   useEffect(() => {
     if (!open) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the highlight when the popover closes; a plain derive would discard the user's keyboard nav; the guarded adjust is out of scope; see #4407
       setSelected(null)
       return
     }
@@ -146,6 +148,7 @@ export function SearchAutocomplete({
   // Anchor the popover to the start of the value portion.
   useEffect(() => {
     if (!open || anchor == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the measured caret rectangle when the popover closes; the rect comes from `getCaretRect` DOM measurement, not from render inputs; see #4407
       setRect(null)
       return
     }

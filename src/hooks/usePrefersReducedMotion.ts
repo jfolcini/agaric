@@ -37,8 +37,6 @@ export function usePrefersReducedMotion(): boolean {
     const handler = (event: MediaQueryListEvent) => {
       setPrefersReducedMotion(event.matches)
     }
-    // Sync once in case the initial state is stale (e.g. hydration mismatch).
-    setPrefersReducedMotion(mql.matches)
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)
   }, [])
