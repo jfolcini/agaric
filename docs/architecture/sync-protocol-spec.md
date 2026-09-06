@@ -94,7 +94,6 @@ transport owns, in `src-tauri/agaric-sync/src/transport/`:
 | `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes (= `LORO_INLINE_MAX_BYTES`) | Same story for `OpLogBatchChunked` (#2593). The threshold still gates whether an oversized batch is *skipped* when the peer lacks the capability, but the chunked frame it would have gated is no longer emitted. |
 | `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` | 256 MB | Batches serialising larger than this are dropped from the reply entirely (state still converges via `LoroSync`). |
 | `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | The crate's answer to "the largest protocol payload we will allocate for before we have seen the bytes"; `MAX_FRAME_SIZE` is deliberately this value rather than a new number. |
-| `MAX_SNAPSHOT_SIZE` | 256 MB | Snapshot-blob ceiling defined in `sync_daemon/snapshot_transfer.rs`. Its wire consumer went with the CBOR offer (#3487); the constant remains as the documented blob ceiling and in the `CatchupOutcome::Rejected` message. |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget, applied by `SessionLimits::dispatch` in `transport/driver.rs`. |
 | `transport::session::RECV_TIMEOUT` | 180 s | Per-awaited-message receive guard, applied by `recv_sync_message_within`. Carried across from `SyncConnection::RECV_TIMEOUT` by value, restated rather than imported because `sync_net` is retired. |
 | `transport::driver::RECV_TIMEOUT` (private) | 180 s | **A second, same-named constant** — this is the one that feeds `SessionLimits::recv`, i.e. the session driver's default. Same value and same provenance as `session::RECV_TIMEOUT`, but a different item: retuning one does not move the other. Disambiguated here because the name alone does not. |
@@ -608,18 +607,11 @@ messages after this point.
 
 ### Snapshot sub-flow variants
 
-Driven by `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs`, **not** the
-per-session orchestrator (which explicitly errors if they reach
-`handle_message`):
-
-```text
-SnapshotAccept                                          // initiator → responder
-SnapshotReject                                          // initiator → responder
-```
-
-Both are vestigial: the CBOR `SnapshotOffer` they answered was deleted
-in #3487 (see § Wire compatibility below), so nothing sends or receives them. The
-catch-up itself is a one-way stream of `LoroSync { Snapshot }` messages.
+There are none. The catch-up is a one-way stream of `LoroSync { Snapshot }`
+messages driven by `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs`,
+with no control messages of its own. `SnapshotAccept` / `SnapshotReject`
+answered the CBOR `SnapshotOffer` deleted in #3487 and were themselves removed
+in #4699 (see § Wire compatibility below).
 
 ### Attachment sub-flow variants
 
@@ -708,9 +700,8 @@ of `SyncOrchestrator::handle_message`. Notable rules:
   same states as `LoroSync`, since it rides the tail of the same stream — and
   is ingested by the dispatch body (`dag::insert_replicated_op`), unlike the
   snapshot / file-transfer variants below.
-- The `SnapshotAccept` / `SnapshotReject` and the four
-  file-transfer variants pass state validation but are rejected by the
-  dispatch body — they are handled by the daemon-layer sub-flows, never the
+- The four file-transfer variants pass state validation but are rejected by
+  the dispatch body — they are handled by the daemon-layer sub-flows, never the
   orchestrator. Implementation detail in
   `src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs`.
 
@@ -876,9 +867,9 @@ Notes:
   `peer_vv = None`): `ResetRequired` means the initiator's VV is unreachable,
   so an incremental `Update` could not be applied — a full snapshot merges
   cleanly against any receiver state.
-- No covering check / `256 MB` cap / `SnapshotReject` is needed: a Loro merge
+- No covering check, `256 MB` cap or reject message is needed: a Loro merge
   is monotonic (it never rolls the receiver back), so the CBOR-era guards are
-  gone from the production path.
+  gone from the production path — and, since #4699, gone from the tree.
 - If the responder has no exportable space state, it sends a terminal
   `SyncComplete` and the session closes with no catch-up (a non-progress
   event; the next scheduled sync retries).
@@ -899,67 +890,23 @@ The pre-#2503 CBOR `SnapshotOffer` sub-flow that this replaced was deleted
 in #3487, receive side included. The accept-old branch it provided expired at the
 iroh cutover: `SYNC_ALPN` is negotiated before any application byte moves, so a
 build predating the port cannot open a session at all, never mind offer a CBOR
-snapshot. `SnapshotAccept` / `SnapshotReject` remain as wire variants with no
-producer or consumer.
+snapshot. #4699 removed the `SnapshotAccept` / `SnapshotReject` wire variants
+that outlived it, along with the `apply_snapshot` restore they used to gate and
+the `MAX_SNAPSHOT_SIZE` cap that bounded the offer.
 
 #### Fate of the initiator's local state (#2474)
 
-On the Loro-merge path — the only catch-up path since #3487 — the initiator's
-unsynced local content is preserved by Loro's merge semantics and its history
-is re-pulled per #2481 phase 3. Nothing below happens on it.
+The Loro-merge path is the only catch-up path, and it is **not** a reset: the
+initiator's unsynced local content is preserved by Loro's merge semantics and
+its history is re-pulled per #2481 phase 3.
 
-The paragraphs that follow describe the deleted CBOR RESET. They are kept as
-the contract of `apply_snapshot`, which still compiles but now has **no
-production caller at all**: disaster recovery reprojects from `loro_doc_state`
-(`db/recovery.rs`), and compaction only ever *creates* snapshots. See #4699.
-Under that RESET it wipes a
-device's `op_log` (and Loro sidecar state) wholesale, so on the caught-up device
-**content converges to the snapshot but the local paper trail — page history,
-activity feed, undo/redo, per-op origin/`is_undo` attribution — is destroyed**
-(see [crdt-and-recovery.md](crdt-and-recovery.md) § "What a catch-up RESET
-costs the caught-up device" for the full contract and the pinning tests).
-The at-risk *content* is any op the initiator authored locally that it
-had not yet pushed to some peer before this reset. A session is a
-**pull** (data flows responder -> initiator only, #610 above — see the
-explicit "only the puller receives LoroSync, the streamer never reaches
-this arm" comment on the `SyncMessage::LoroSync` handler in
-`session_state_machine.rs`), so **the initiator never pushes anything to
-the responder within the failing session itself, on either trigger**:
-
-- **Heads-triggered** (`check_reset_required == true` in the state
-  machine): the responder's own-device check fails, so it replies
-  `ResetRequired` **instead of** reaching its outgoing head-exchange —
-  no `LoroSync` is ever queued or sent. (Post-#490-M1 device-local
-  op_logs make this trigger near-vestigial — a peer rarely advertises
-  heads about *your* device; see #2475.)
-- **VV-triggered** (`ApplyOutcome::SnapshotFallbackRequested`): fires
-  only on the **initiator**, while it is importing a responder `Update`
-  (the responder itself never reaches the `LoroSync`-handling arm — it
-  only ever sends). The responder may well have streamed several other
-  spaces successfully before the failing one aborts the loop, but that
-  traffic moves responder -> initiator, same as the normal flow — it
-  does not push anything from the initiator toward the responder. Those
-  interim imports are moot for the initiator's own unsynced ops, and
-  are themselves wiped moments later by the RESET's unconditional
-  `loro_doc_state` DELETE (pinned by
-  `apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474`)
-  — the snapshot the initiator goes on to apply re-supplies the same
-  responder content anyway.
-
-Neither trigger is more "lossy" than the other for the initiator's own
-unsynced local ops: they have no peer copy in either case, and are gone
-the moment `apply_snapshot` wipes `op_log`. Surviving a reset requires
-an unrelated, separately-timed **reverse-direction session** (the
-initiator acting as responder for this peer, on its own schedule, per
-"Bidirectional convergence comes from the *reverse* session" above) to
-have already pushed those ops out beforehand — an orthogonal,
-unguaranteed timing dependency, not a property of which trigger fired.
-
-The device-local reset (history/undo/attribution loss + engine re-key)
-is **unconditional** — identical regardless of trigger — because it is a
-property of `apply_snapshot` itself, pinned by
-`apply_snapshot_resets_undo_and_history_surface_2474` and siblings in
-`src-tauri/agaric-sync/src/snapshot/tests.rs`.
+The destructive CBOR RESET this section used to document — `apply_snapshot`
+wiping `op_log` and the Loro sidecar so that content converged to the peer's
+snapshot while the local paper trail (page history, activity feed, undo/redo,
+per-op origin attribution) was destroyed — is gone with the code, in #4699. The
+one surviving way to lose that paper trail is op-log compaction past the
+90-day retention window, which is bounded, scheduled, and documented in
+[`crdt-and-recovery.md § Op-log compaction`](crdt-and-recovery.md).
 
 ## Version-vector format and exchange
 

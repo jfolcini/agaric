@@ -45,9 +45,9 @@
 //! prefix.
 //! [`recv_bulk`] therefore rejects `total_size > max_size` **before** it reads or
 //! allocates anything, and the cap is the caller's, because only the caller knows
-//! what a plausible payload is: `MAX_SNAPSHOT_SIZE` for a snapshot offer, and for
-//! an attachment the DB-authoritative `attachments.size_bytes` that `sync_files`
-//! already cross-checks the offer against.
+//! what a plausible payload is: for an attachment, the DB-authoritative
+//! `attachments.size_bytes` that `sync_files` already cross-checks the offer
+//! against.
 //!
 //! The cap bounds what the caller *stores*, not what this module allocates.
 //! Nothing here is sized from `total_size`: the copy buffer is

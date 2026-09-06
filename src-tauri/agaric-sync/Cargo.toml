@@ -93,10 +93,7 @@ serde_json = "1"
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 tracing = { version = "0.1.44", features = ["attributes"] }
-# Snapshot codec (blake3 content hash, zstd compression, CBOR framing).
 blake3 = "1.8.5"
-zstd = "0.13"
-ciborium = "0.2"
 # Crypto-quality random for pairing tokens + key material.
 rand = "0.10"
 # Unicode General_Category lookup, for `is_display_hostile` (#4298 review) to

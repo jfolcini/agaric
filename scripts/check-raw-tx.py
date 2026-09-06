@@ -145,7 +145,6 @@ ALLOWLIST_GLOBS = [
     # --- agaric-sync — system-level snapshot / transport / remote-apply -----
     # System-level snapshot / compaction — must not dispatch edit tasks.
     "src-tauri/agaric-sync/src/snapshot/create.rs",
-    "src-tauri/agaric-sync/src/snapshot/restore.rs",
     # Startup recovery, before any user edit (moved here in #3120).
     "src-tauri/agaric-sync/src/recovery/draft_recovery.rs",
     # Transport layer.
@@ -709,7 +708,6 @@ def run_self_test() -> int:
         ("src-tauri/agaric-store/src/tag_inheritance/rebuild.rs", True),
         ("src-tauri/agaric-engine/src/apply/pages_cache.rs", True),
         ("src-tauri/agaric-sync/src/snapshot/create.rs", True),
-        ("src-tauri/agaric-sync/src/snapshot/restore.rs", True),
         ("src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs", True),
         ("src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs", True),
         ("src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs",

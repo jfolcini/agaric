@@ -490,7 +490,7 @@ export const historyHandlers = {
     retention_days: 90,
   }),
 
-  compact_op_log_cmd: () => ({ snapshot_id: null, ops_deleted: 0 }),
+  compact_op_log_cmd: () => ({ ops_deleted: 0 }),
 
   // ---------------------------------------------------------------------------
   // Point-in-time restore

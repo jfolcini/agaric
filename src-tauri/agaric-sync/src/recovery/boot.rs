@@ -103,15 +103,7 @@ pub async fn recover_at_boot(
     let start = Instant::now();
 
     // -----------------------------------------------------------------
-    // Step 1: Delete pending snapshots
-    // -----------------------------------------------------------------
-    let delete_result = sqlx::query("DELETE FROM log_snapshots WHERE status = 'pending'")
-        .execute(pool)
-        .await?;
-    let pending_snapshots_deleted = delete_result.rows_affected();
-
-    // -----------------------------------------------------------------
-    // Step 1.4: self-heal an orphaned apply cursor BEFORE the replay
+    // Step 1: self-heal an orphaned apply cursor BEFORE the replay
     // walk. If the persisted Loro snapshot (`loro_doc_state`) is empty
     // while the cursor is non-zero, the engine just rehydrated to empty
     // and the `seq > cursor` walk would replay nothing — leaving every
@@ -412,7 +404,6 @@ pub async fn recover_at_boot(
 
     tracing::info!(
         duration_ms,
-        pending_snapshots_deleted,
         drafts_recovered = drafts_recovered.len(),
         already_flushed = drafts_already_flushed,
         errors = draft_errors.len(),
@@ -422,7 +413,6 @@ pub async fn recover_at_boot(
     );
 
     Ok(RecoveryReport {
-        pending_snapshots_deleted,
         drafts_recovered,
         drafts_already_flushed,
         duration_ms,

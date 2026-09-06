@@ -1867,9 +1867,13 @@ export type BulkTrashResponse = {
 	affected_count: number,
 };
 
-/**  Result of an op log compaction, returned by [`compact_op_log_cmd`]. */
+/**
+ *  Result of an op log compaction, returned by [`compact_op_log_cmd`].
+ * 
+ *  #4699 dropped the `snapshot_id` field: compaction no longer writes a
+ *  snapshot blob, so there was no id to report and the field was always null.
+ */
 export type CompactionResult = {
-	snapshot_id: string | null,
 	ops_deleted: number,
 };
 

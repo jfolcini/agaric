@@ -667,8 +667,6 @@ fn sync_message_serde_roundtrip() {
         SyncMessage::ResetRequired {
             reason: "compacted".into(),
         },
-        SyncMessage::SnapshotAccept,
-        SyncMessage::SnapshotReject,
         SyncMessage::SyncComplete {
             last_hash: "xyz789".into(),
         },
@@ -1004,54 +1002,6 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
     materializer.shutdown();
 }
 
-/// I-Sync-1: `SnapshotAccept` and `SnapshotReject` belong to the
-/// `snapshot_transfer` sub-flow at the sync-daemon layer, not the
-/// orchestrator state machine. If either ever reaches `handle_message`,
-/// that is a routing regression — surface it as `AppError::InvalidOperation`
-/// instead of silently returning `Ok(None)`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(
-        pool,
-        "local-dev".into(),
-        std::sync::Arc::new(materializer.clone()),
-    );
-
-    // Drive to ExchangingHeads so state-validation passes the snapshot
-    // control messages through to the dispatch arm.
-    let _start = orch.start().await.unwrap();
-    assert_eq!(
-        orch.session().state,
-        SyncState::ExchangingHeads,
-        "start() must transition to ExchangingHeads"
-    );
-
-    for variant in [SyncMessage::SnapshotAccept, SyncMessage::SnapshotReject] {
-        let label = match variant {
-            SyncMessage::SnapshotAccept => "SnapshotAccept",
-            SyncMessage::SnapshotReject => "SnapshotReject",
-            _ => unreachable!(),
-        };
-        let result = orch.handle_message(variant).await;
-        let err = match result {
-            Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
-            other => panic!(
-                "{label} routed through handle_message must return \
-                 AppError::InvalidOperation — the snapshot_transfer sub-flow \
-                 is the only reachable path. got: {other:?}"
-            ),
-        };
-        assert!(
-            err.contains("snapshot_transfer"),
-            "{label} error must point callers at the daemon sub-flow, got: {err}"
-        );
-    }
-
-    materializer.shutdown();
-}
-
 /// After a full sync completes, sending another HeadExchange should
 /// fail because Complete is a terminal state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1236,13 +1186,16 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         "state must remain unchanged (no transition) after a terminal-state reject"
     );
 
-    // SnapshotAccept is otherwise accepted in any non-terminal state; in a
-    // terminal state it too must be rejected by the same arm. This pins
-    // the arm's "reject everything" contract for a second message kind.
-    let result2 = orch.handle_message(SyncMessage::SnapshotAccept).await;
+    // A second message kind, to pin the arm's "reject everything" contract
+    // rather than a single-variant coincidence.
+    let result2 = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "h".into(),
+        })
+        .await;
     assert!(
         matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
-        "SnapshotAccept in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
+        "SyncComplete in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
     );
     assert_eq!(
         orch.state, failed_state,
@@ -1925,22 +1878,6 @@ fn serde_roundtrip_sync_message_reset_required() {
 }
 
 #[test]
-fn serde_roundtrip_sync_message_snapshot_accept() {
-    let msg = SyncMessage::SnapshotAccept;
-    let json = serde_json::to_string(&msg).expect("serialize SnapshotAccept");
-    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotAccept");
-    assert_eq!(deser, msg, "SnapshotAccept must survive serde roundtrip");
-}
-
-#[test]
-fn serde_roundtrip_sync_message_snapshot_reject() {
-    let msg = SyncMessage::SnapshotReject;
-    let json = serde_json::to_string(&msg).expect("serialize SnapshotReject");
-    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotReject");
-    assert_eq!(deser, msg, "SnapshotReject must survive serde roundtrip");
-}
-
-#[test]
 fn serde_roundtrip_sync_message_sync_complete() {
     let msg = SyncMessage::SyncComplete {
         last_hash: "deadbeef".into(),
@@ -2124,8 +2061,6 @@ fn json_shape_all_variants_have_type_tag() {
             "ResetRequired",
             SyncMessage::ResetRequired { reason: "r".into() },
         ),
-        ("SnapshotAccept", SyncMessage::SnapshotAccept),
-        ("SnapshotReject", SyncMessage::SnapshotReject),
         (
             "SyncComplete",
             SyncMessage::SyncComplete {

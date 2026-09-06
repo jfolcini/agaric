@@ -1,46 +1,28 @@
-//! Snapshot encoding, crash-safe write, RESET apply, and 90-day compaction.
+//! Op-log compaction: purge ops past the retention window and record the
+//! frontier the purge ran to.
 //!
-//! Snapshots capture the full state of all core tables (blocks, block_tags,
-//! block_properties, block_links, attachments) as zstd-compressed CBOR blobs
-//! stored in the `log_snapshots` table.
+//! # No snapshot blob (#4699)
 //!
-//! # Crash-safe write protocol
+//! This module used to build a zstd-CBOR dump of every derived SQL table
+//! (`blocks`, `block_tags`, `block_properties`, …) into `log_snapshots` on
+//! each compaction, and could restore one over a wiped database. #3487 removed
+//! the last production reader; #4699 removed the blob. It duplicated the
+//! DERIVED view rather than `loro_doc_state` — the merge truth `db::recovery`
+//! reprojects that view from — and building it buffered the whole vault in
+//! memory, against Android's ~24 MB release heap.
 //!
-//! 1. INSERT with `status = 'pending'` (includes the compressed data).
-//! 2. UPDATE to `status = 'complete'`.
+//! What is left is the purge, plus the single `compaction_watermark` row
+//! recording the frontier it reached. Only that row's EXISTENCE is read, by
+//! [`agaric_engine::dag::find_lca`], to report a chain broken by compaction as
+//! such instead of as a plain `NotFound`.
 //!
-//! If a crash occurs between steps 1 and 2, boot recovery
-//! (`recovery::recover_at_boot`) deletes all pending rows.
-//!
-//! # Compaction
-//!
-//! [`compact_op_log`](crate::snapshot::compact_op_log) creates a snapshot and then
-//! purges `op_log` rows older
-//! than the configured retention window (default 90 days).
+//! The purge is worth its keep: `op_log` costs ~303 B/op against a materially
+//! smaller Loro copy of the same edits, so it is the dominant term in vault
+//! growth (#4700).
 
-pub mod codec;
 mod create;
-mod restore;
-pub mod types;
 
-pub use codec::{decode_snapshot, encode_snapshot};
-pub use create::{
-    DEFAULT_RETENTION_DAYS, cleanup_old_snapshots, compact_op_log, create_snapshot,
-    get_latest_snapshot, get_latest_snapshot_with_frontier,
-};
-#[allow(unused_imports)]
-pub use create::{
-    SNAPSHOT_WARN_PAYLOAD_BYTES, SNAPSHOT_WARN_ROW_COUNT, collect_frontier, collect_tables,
-    measure_op_log_size,
-};
-pub use restore::apply_snapshot;
-pub use types::{
-    AttachmentSnapshot, BlockLinkSnapshot, BlockPropertySnapshot, BlockSnapshot, BlockTagSnapshot,
-    PageAliasSnapshot, PropertyDefinitionSnapshot, SnapshotData, SnapshotTables,
-};
-// Re-export for tests and internal use
-#[allow(unused_imports)]
-pub use types::{MIN_SCHEMA_VERSION, SCHEMA_VERSION};
+pub use create::{DEFAULT_RETENTION_DAYS, collect_frontier, compact_op_log};
 
 // #3120: repatriated from the app crate.
 #[cfg(test)]

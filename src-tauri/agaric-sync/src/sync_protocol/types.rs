@@ -825,13 +825,6 @@ pub enum SyncMessage {
     /// initiator's heads, so a delta replay is impossible. Triggers
     /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].
     ResetRequired { reason: String },
-    /// Vestigial. Answered the CBOR `SnapshotOffer` deleted in #3487; nothing
-    /// sends or receives either of these any more. Kept on the wire so a
-    /// build that still emits one is decoded and rejected explicitly rather
-    /// than as an unknown `type` tag.
-    SnapshotAccept,
-    /// Vestigial — see [`SnapshotAccept`](SyncMessage::SnapshotAccept).
-    SnapshotReject,
     /// Per-side terminal: this side has finished sending and bookmarks
     /// `last_hash` as its new frontier-of-record in `peer_refs`.
     SyncComplete { last_hash: String },

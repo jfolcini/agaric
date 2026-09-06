@@ -135,10 +135,10 @@ async fn fetch_edit_chain_rows(
 }
 
 /// Shared error constructor mirroring the previous `fetch_prev_edit`
-/// shape: compaction-aware `InvalidOperation` when snapshots exist,
+/// shape: compaction-aware `InvalidOperation` when a compaction has run,
 /// otherwise the same `NotFound` `get_op_by_seq` would have produced.
-fn missing_op_error(device_id: &str, seq: i64, has_snapshots: bool) -> AppError {
-    if has_snapshots {
+fn missing_op_error(device_id: &str, seq: i64, has_compacted: bool) -> AppError {
+    if has_compacted {
         AppError::InvalidOperation(format!(
             "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
              LCA requires intact chains"
@@ -168,7 +168,7 @@ fn missing_op_error(device_id: &str, seq: i64, has_snapshots: bool) -> AppError 
 pub async fn walk_edit_chain<F>(
     pool: &SqlitePool,
     start: &(String, i64),
-    has_snapshots: bool,
+    has_compacted: bool,
     mut stop_at: F,
 ) -> Result<WalkOutcome, AppError>
 where
@@ -180,7 +180,7 @@ where
     // `get_op_by_seq → NotFound / compaction-wrapped InvalidOperation`
     // error.
     if rows.is_empty() {
-        return Err(missing_op_error(&start.0, start.1, has_snapshots));
+        return Err(missing_op_error(&start.0, start.1, has_compacted));
     }
 
     // op_type validation (previously done row-by-row by `extract_prev_edit`).
@@ -242,7 +242,7 @@ where
     // `fetch_prev_edit`.
     let last = rows.last().unwrap();
     if let (Some(next_dev), Some(next_seq)) = (last.prev_device_id.as_deref(), last.prev_seq) {
-        return Err(missing_op_error(next_dev, next_seq, has_snapshots));
+        return Err(missing_op_error(next_dev, next_seq, has_compacted));
     }
 
     Ok(WalkOutcome::Completed(chain))
@@ -756,18 +756,22 @@ pub async fn find_lca(
     op_a: &(String, i64),
     op_b: &(String, i64),
 ) -> Result<Option<(String, i64)>, AppError> {
-    // Check if compaction has occurred (snapshots exist).  Drives the
-    // compaction-aware error reporting inside `fetch_prev_edit`.
-    // EXISTS stops at the first matching row, which is cheaper than COUNT(*).
-    let has_snapshots: i64 =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM log_snapshots WHERE status = 'complete')")
+    // Check if compaction has occurred. Drives the compaction-aware error
+    // reporting inside `missing_op_error`. #4699 replaced the `log_snapshots`
+    // blob this used to probe with the single `compaction_watermark` row that
+    // records the frontier the last purge ran to; the row's existence carries
+    // the same meaning the old `status = 'complete'` row did, and its columns
+    // are not read here. EXISTS stops at the first matching row, which is
+    // cheaper than COUNT(*).
+    let has_compacted: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM compaction_watermark)")
             .fetch_one(pool)
             .await?;
-    let has_snapshots = has_snapshots != 0;
+    let has_compacted = has_compacted != 0;
 
     // Walk chain A to its root (or local cycle) and collect every key.
     // Chain A has no early-exit predicate.
-    let chain_a = match walk_edit_chain(pool, op_a, has_snapshots, |_, _| false).await? {
+    let chain_a = match walk_edit_chain(pool, op_a, has_compacted, |_, _| false).await? {
         WalkOutcome::Completed(c) => c,
         // Unreachable: predicate is constant `false`.
         WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
@@ -788,7 +792,7 @@ pub async fn find_lca(
 
     // Walk chain B with an early-exit predicate that fires on the first
     // ancestor present in chain A's visited set — that ancestor is the LCA.
-    match walk_edit_chain(pool, op_b, has_snapshots, |dev, seq| {
+    match walk_edit_chain(pool, op_b, has_compacted, |dev, seq| {
         visited.contains(&(dev, seq))
     })
     .await?

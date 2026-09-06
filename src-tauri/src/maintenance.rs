@@ -174,13 +174,11 @@ pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppE
 
 /// Issue #157 sub-item C — periodic op-log compaction, 24 h cadence,
 /// idle predicate.
-pub async fn op_log_compact(write_pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
-    let result =
-        crate::commands::compaction::compact_op_log_cmd_inner(write_pool, device_id, 90).await?;
+pub async fn op_log_compact(write_pool: &SqlitePool) -> Result<(), AppError> {
+    let result = crate::commands::compaction::compact_op_log_cmd_inner(write_pool, 90).await?;
     if result.ops_deleted > 0 {
         tracing::info!(
             ops_deleted = result.ops_deleted,
-            snapshot_id = ?result.snapshot_id,
             "op_log_compact (daemon, 90d retention) deleted op-log rows"
         );
     } else {
@@ -920,7 +918,7 @@ mod tests {
         let pool = crate::db::init_pool(&dir.path().join("test.db"))
             .await
             .unwrap();
-        op_log_compact(&pool, "test-device")
+        op_log_compact(&pool)
             .await
             .expect("op_log_compact must succeed on a clean pool with no aged op-log rows");
     }

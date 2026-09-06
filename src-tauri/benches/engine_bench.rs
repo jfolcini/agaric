@@ -21,8 +21,6 @@ mod engine_checkpoint_bench;
 mod history_bench;
 #[path = "groups/op_log_bench.rs"]
 mod op_log_bench;
-#[path = "groups/snapshot_bench.rs"]
-mod snapshot_bench;
 #[path = "groups/soft_delete_bench.rs"]
 mod soft_delete_bench;
 #[path = "groups/undo_redo.rs"]
@@ -40,10 +38,6 @@ criterion_main!(
     undo_redo::redo_benches,
     undo_redo::diff_benches,
     history_bench::benches,
-    snapshot_bench::snapshot_create_benches,
-    snapshot_bench::snapshot_apply_benches,
-    snapshot_bench::snapshot_apply_vault_scale_benches,
-    snapshot_bench::snapshot_codec_benches,
     compaction_bench::status_benches,
     compaction_bench::compact_benches,
     op_log_bench::benches,

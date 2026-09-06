@@ -18,11 +18,10 @@ const FIXED_TS: i64 = 1_736_942_400_000;
 const DEV_A: &str = "device-A";
 const DEV_B: &str = "device-B";
 
-/// Test-fixture constants for `find_lca_after_compaction_returns_clear_error`.
-/// Extracted from inline SQL to make schema/format changes easier
-/// to track. Adjust here when the snapshot row schema or hash format changes.
-const TEST_SNAPSHOT_ID: &str = "SNAP01";
-const TEST_SNAPSHOT_HASH: &str = "fakehash";
+/// Test-fixture constant for `find_lca_after_compaction_returns_clear_error`.
+/// Extracted from inline SQL to make schema/format changes easier to track.
+/// Adjust here when the `compaction_watermark` row schema changes.
+const TEST_WATERMARK_HASH: &str = "fakehash";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -1464,14 +1463,17 @@ async fn get_block_edit_heads_nonexistent_block() {
 
 /// When historical ops have been purged by compaction, `find_lca` should
 /// return `AppError::InvalidOperation` with a clear message mentioning
-/// compaction (snapshots exist, so the guard detects the broken chain).
+/// compaction. This is the end-to-end path for #4699's `compaction_watermark`:
+/// the real `compact_op_log` writes the row, and `find_lca`'s existence probe
+/// is what turns the missing op into the compaction-aware wording rather than
+/// a bare `NotFound`.
 #[tokio::test]
 async fn find_lca_after_compaction_returns_invalid_operation() {
     use crate::snapshot::compact_op_log;
 
     let (pool, _dir) = test_pool().await;
 
-    // Insert block into blocks table (needed for snapshot collection)
+    // Insert block into blocks table so the op has something to reference.
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position) \
          VALUES ('B1', 'content', 'v1', 1)",
@@ -1527,7 +1529,7 @@ async fn find_lca_after_compaction_returns_invalid_operation() {
     .unwrap();
 
     // Compact with 90-day retention → purges seq 1 and 2 (old), keeps seq 3
-    compact_op_log(&pool, DEV_A, 90).await.unwrap();
+    compact_op_log(&pool, 90).await.unwrap();
 
     // Verify seq 3 survived
     assert_eq!(edit2.seq, 3);
@@ -1557,9 +1559,11 @@ async fn find_lca_after_compaction_returns_invalid_operation() {
     );
 }
 
-/// Dedicated test: set up two ops, create a snapshot, delete the
-/// intermediate op from op_log, call find_lca, verify it returns
-/// `AppError::InvalidOperation` containing "compaction".
+/// Dedicated test: set up two ops, write the compaction watermark by hand,
+/// delete the intermediate op from op_log, call find_lca, verify it returns
+/// `AppError::InvalidOperation` containing "compaction". Hand-written rather
+/// than driven through `compact_op_log`, so the probe is pinned independently
+/// of what the purge happens to do.
 #[tokio::test]
 async fn find_lca_after_compaction_returns_clear_error() {
     let (pool, _dir) = test_pool().await;
@@ -1579,13 +1583,12 @@ async fn find_lca_after_compaction_returns_clear_error() {
     .await
     .unwrap();
 
-    // Simulate compaction: insert a snapshot row then delete seq 1
+    // Simulate compaction: write the watermark, then delete seq 1.
     sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'complete', ?, '{\"device-A\":1}', X'00')",
+        "INSERT INTO compaction_watermark (id, up_to_seqs, up_to_hash, compacted_at_ms) \
+         VALUES (1, '{\"device-A\":1}', ?, 1)",
     )
-    .bind(TEST_SNAPSHOT_ID)
-    .bind(TEST_SNAPSHOT_HASH)
+    .bind(TEST_WATERMARK_HASH)
     .execute(&pool)
     .await
     .unwrap();

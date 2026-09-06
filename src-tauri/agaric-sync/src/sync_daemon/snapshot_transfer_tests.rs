@@ -1,9 +1,4 @@
 use super::snapshot_transfer::*;
-use crate::snapshot::{
-    BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot,
-    get_latest_snapshot,
-};
-use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::RecordingEventSink;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_protocol::SyncMessage;
@@ -11,12 +6,9 @@ use crate::transport::session::{recv_sync_message, send_sync_message};
 use crate::transport::test_support::quic_pair;
 use agaric_core::error::AppError;
 use agaric_engine::materializer::Materializer;
-use agaric_store::op::OpPayload;
-use agaric_store::op_log::append_local_op;
 use agaric_store::peer_refs;
 use agaric_store::test_support::init_pool;
 use sqlx::SqlitePool;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -29,26 +21,6 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     let db_path: PathBuf = dir.path().join("test.db");
     let pool = init_pool(&db_path).await.unwrap();
     (pool, dir)
-}
-
-/// Seed a pool with one create_block op AND materialize it so that
-/// `create_snapshot` produces a non-empty `blocks` table snapshot.
-/// `append_local_op` only writes to `op_log`; without running the
-/// materializer the derived `blocks` table stays empty and the
-/// serialized snapshot contains zero rows (BUG caught during TDD:
-/// snapshot apply succeeded but left an empty database).
-async fn seed_one_block(pool: &SqlitePool, materializer: &Materializer, device_id: &str) {
-    let payload = OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
-        block_id: agaric_core::ulid::BlockId::test_id("01HZ00000000000000000BLOCK1"),
-        block_type: "content".into(),
-        content: "hello".into(),
-        parent_id: None,
-        position: Some(1),
-        index: None,
-    });
-    let record = append_local_op(pool, device_id, payload).await.unwrap();
-    materializer.dispatch_op(&record).await.unwrap();
-    materializer.flush_foreground().await.unwrap();
 }
 
 // -----------------------------------------------------------------
@@ -147,27 +119,6 @@ async fn try_receive_snapshot_catchup_surfaces_peer_error() {
     }
 
     materializer.shutdown();
-}
-
-// -----------------------------------------------------------------
-// Constants sanity
-// -----------------------------------------------------------------
-
-/// `BINARY_FRAME_CHUNK_SIZE` is no longer a *frame* size — under the bi-stream
-/// it is `transport::bulk::BULK_COPY_BYTES`, the fixed copy buffer that bounds
-/// peak heap during a transfer. The relationship that still matters is that the
-/// receive cap admits at least one full buffer, or a max-size snapshot could not
-/// be streamed at all.
-#[test]
-fn max_snapshot_size_is_at_least_one_copy_buffer() {
-    // On any target where usize fits in u64, try_from succeeds. On
-    // 32-bit targets where usize::MAX < MAX_SNAPSHOT_SIZE the cap
-    // is effectively tighter — still valid.
-    let cap_as_usize = usize::try_from(MAX_SNAPSHOT_SIZE).unwrap_or(usize::MAX);
-    assert!(
-        cap_as_usize >= BINARY_FRAME_CHUNK_SIZE,
-        "MAX_SNAPSHOT_SIZE must admit at least one full bulk copy buffer"
-    );
 }
 
 // -----------------------------------------------------------------
@@ -516,149 +467,6 @@ async fn snapshot_catchup_events_carry_the_resolved_peer_id_4097() {
          the daemon authenticated. An event carrying \"\" is dropped or \
          mis-attributed by any peer-keyed UI. Got: {peer_ids:?}"
     );
-}
-
-// -----------------------------------------------------------------
-// On-disk snapshot codec (`apply_snapshot` / `decode_snapshot`)
-// -----------------------------------------------------------------
-//
-// The wire path that used to feed these is gone (#3487), and nothing
-// else calls `apply_snapshot` — recovery reprojects from `loro_doc_state`
-// and compaction only creates snapshots. These pin the codec's contract
-// while #4699 decides whether the module survives at all.
-
-/// `apply_snapshot` now takes `impl std::io::Read`. Passing
-/// a `std::io::Cursor` (the simplest in-memory `Read`) must work
-/// identically to the old `&[u8]` shape.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_snapshot_accepts_impl_read_m51_l67() {
-    // Build a snapshot blob from a non-empty source DB so apply
-    // has something to restore.
-    let (src_pool, _src_dir) = test_pool().await;
-    let src_mat = Materializer::new(src_pool.clone());
-    seed_one_block(&src_pool, &src_mat, REMOTE_DEV).await;
-    create_snapshot(&src_pool, REMOTE_DEV).await.unwrap();
-    let (_id, encoded) = get_latest_snapshot(&src_pool).await.unwrap().unwrap();
-
-    // Apply via Cursor (impl Read).
-    let (dst_pool, _dst_dir) = test_pool().await;
-    let dst_mat = Materializer::new(dst_pool.clone());
-    let cursor = std::io::Cursor::new(encoded.clone());
-    let restored = crate::snapshot::apply_snapshot(&dst_pool, &dst_mat, cursor)
-        .await
-        .expect("apply_snapshot must accept a Cursor reader");
-
-    // The restored frontier matches the original encoded blob's
-    // frontier (sanity check — the decoded data is the same).
-    let decoded = crate::snapshot::decode_snapshot(&encoded[..]).unwrap();
-    assert_eq!(restored.up_to_hash, decoded.up_to_hash);
-    assert_eq!(restored.up_to_seqs, decoded.up_to_seqs);
-
-    // The restored DB has the seeded block.
-    dst_mat.flush_background().await.unwrap();
-    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&dst_pool)
-        .await
-        .unwrap();
-    assert_eq!(blocks, 1);
-
-    src_mat.shutdown();
-    dst_mat.shutdown();
-}
-
-/// `decode_snapshot` must use `zstd::stream::Decoder` (not
-/// `zstd::decode_all`) so a snapshot that decompresses to a much
-/// larger CBOR blob than the compressed payload does NOT
-/// materialise the full decompressed stream on the heap. This is
-/// a structural / API-level check: we round-trip through the new
-/// `impl Read` signature with a payload whose decompressed size
-/// is meaningfully larger than the compressed size, and confirm
-/// the API works without relying on the buffered shape.
-#[test]
-fn decode_snapshot_with_zstd_streaming_decoder_does_not_buffer_full_decompressed_m51_l67() {
-    // Build a large-ish `SnapshotData` so the encoded payload has
-    // a non-trivial compressed-vs-decompressed ratio. Repeated
-    // similar block content compresses extremely well — the
-    // decompressed CBOR is several × the compressed bytes.
-    let mut blocks = Vec::with_capacity(1000);
-    for i in 0..1000 {
-        blocks.push(BlockSnapshot {
-            id: format!("01HZ{i:026X}")
-                .chars()
-                .take(26)
-                .collect::<String>()
-                .into(),
-            block_type: "content".into(),
-            content: Some(format!(
-                "Highly compressible block content #{i} \
-                     with a lot of repeated boilerplate to give zstd \
-                     something to gnaw on. Lorem ipsum dolor sit amet, \
-                     consectetur adipiscing elit, sed do eiusmod tempor."
-            )),
-            parent_id: None,
-            position: Some(i64::from(i) + 1),
-            deleted_at: None,
-            todo_state: None,
-            priority: None,
-            due_date: None,
-            scheduled_date: None,
-            space_id: None,
-        });
-    }
-    let mut up_to_seqs = BTreeMap::new();
-    up_to_seqs.insert("dev-A".to_string(), 1000);
-    let data = SnapshotData {
-        schema_version: SCHEMA_VERSION,
-        snapshot_device_id: "dev-A".to_string(),
-        up_to_seqs,
-        up_to_hash: "deadbeef".to_string(),
-        tables: SnapshotTables {
-            blocks,
-            block_tags: vec![],
-            block_properties: vec![],
-            block_links: vec![],
-            attachments: vec![],
-            property_definitions: vec![],
-            page_aliases: vec![],
-        },
-    };
-
-    let encoded = crate::snapshot::encode_snapshot(&data).unwrap();
-
-    // Sanity-check the test fixture: the decompressed CBOR is at
-    // least 3× the compressed size, so the streaming-vs-buffered
-    // distinction is observable.
-    // #1586: `encode_snapshot` now frames the zstd payload behind a
-    // magic + blake3 checksum header, so feed the raw zstd decoder the
-    // payload region (from the zstd frame magic onward), not the header.
-    let zstd_start = encoded
-        .windows(4)
-        .position(|w| w == [0x28, 0xB5, 0x2F, 0xFD])
-        .expect("zstd frame magic present");
-    let payload = &encoded[zstd_start..];
-    let mut decoder = zstd::stream::Decoder::new(payload).unwrap();
-    let mut decompressed = Vec::new();
-    std::io::Read::read_to_end(&mut decoder, &mut decompressed).unwrap();
-    assert!(
-        decompressed.len() >= payload.len() * 3,
-        "test fixture must decompress to ≥3× the compressed size \
-             (compressed={} bytes, decompressed={} bytes) so the streaming \
-             decoder's value is observable",
-        encoded.len(),
-        decompressed.len(),
-    );
-
-    // The streaming decoder accepts a `Cursor` (impl Read) and
-    // reproduces the same `SnapshotData`. The fact that the
-    // decoded value matches end-to-end is the API contract;
-    // the implementation is `zstd::stream::Decoder::new(reader)`
-    // followed by `ciborium::from_reader(decoder)` which never
-    // materialises the full decompressed Vec.
-    let cursor = std::io::Cursor::new(encoded);
-    let decoded = crate::snapshot::decode_snapshot(cursor).unwrap();
-    assert_eq!(decoded.tables.blocks.len(), 1000);
-    assert_eq!(decoded.up_to_hash, data.up_to_hash);
-    assert_eq!(decoded.up_to_seqs, data.up_to_seqs);
 }
 
 /// #2696 — the boot-time sweep must remove stale

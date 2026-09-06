@@ -148,11 +148,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
     assert_eq!(total_before, 6, "should have 6 ops before compaction");
 
     // Run compaction with 90-day retention
-    let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
-    assert!(
-        result.snapshot_id.is_some(),
-        "compaction should create a snapshot"
-    );
+    let result = compact_op_log_cmd_inner(&pool, 90).await.unwrap();
     assert_eq!(result.ops_deleted, 5, "should report 5 old ops as deleted");
 
     // Verify remaining ops
@@ -195,11 +191,7 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
     .await
     .unwrap();
 
-    let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
-    assert!(
-        result.snapshot_id.is_none(),
-        "no snapshot should be created when no old ops exist"
-    );
+    let result = compact_op_log_cmd_inner(&pool, 90).await.unwrap();
     assert_eq!(
         result.ops_deleted, 0,
         "no ops should be deleted when none are eligible"
@@ -219,10 +211,9 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
 /// `ops_deleted = eligible_in_tx`, the count of ops eligible at the
 /// start of the wrapper transaction. That figure is stale by the time
 /// the inner `snapshot::compact_op_log` runs (more ops can be appended
-/// between commit and the inner write phase, and the snapshot-frontier
-/// guard inside `compact_op_log` may also skip some). The fix routes
-/// the real `deleted_count` from `snapshot::compact_op_log` (now
-/// returning `(snapshot_id, deleted_count)`) up to the wrapper.
+/// between commit and the inner write phase, and the frontier guard inside
+/// `compact_op_log` may also skip some). The fix routes the real
+/// `deleted_count` from `snapshot::compact_op_log` up to the wrapper.
 ///
 /// This test pre-seeds the op_log with N eligible ops, runs
 /// `compact_op_log_cmd_inner`, and asserts that the reported
@@ -303,7 +294,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
         n_old + 1
     );
 
-    let result = compact_op_log_cmd_inner(&pool, DEV, 90).await.unwrap();
+    let result = compact_op_log_cmd_inner(&pool, 90).await.unwrap();
 
     let count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
         .fetch_one(&pool)
@@ -329,10 +320,6 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
         result.ops_deleted, n_old,
         "with {n_old} eligible ops and 1 recent op, ops_deleted must equal {n_old}"
     );
-    assert!(
-        result.snapshot_id.is_some(),
-        "compaction must produce a snapshot id when old ops were deleted"
-    );
 }
 
 #[tokio::test]
@@ -342,7 +329,7 @@ async fn compact_op_log_cmd_rejects_retention_days_zero() {
     // (otherwise cutoff = now() and the entire op log is purged).
     let (pool, _dir) = test_pool().await;
 
-    let result = compact_op_log_cmd_inner(&pool, DEV, 0).await;
+    let result = compact_op_log_cmd_inner(&pool, 0).await;
 
     let err = result.expect_err("retention_days = 0 should be rejected");
     assert!(
@@ -353,7 +340,6 @@ async fn compact_op_log_cmd_rejects_retention_days_zero() {
     // Belt-and-braces: also reject any value below the floor.
     let result = compact_op_log_cmd_inner(
         &pool,
-        DEV,
         agaric_lib::commands::compaction::MIN_RETENTION_DAYS - 1,
     )
     .await;

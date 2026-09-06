@@ -208,7 +208,7 @@ describe('CompactionCard', () => {
     const user = userEvent.setup()
     mockedInvoke
       .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 1 }) // getCompactionStatus
-      .mockResolvedValueOnce({ snapshot_id: 'snap_1', ops_deleted: 1 }) // compactOpLog
+      .mockResolvedValueOnce({ ops_deleted: 1 }) // compactOpLog
       .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
 
     render(<CompactionCard />)
@@ -229,7 +229,7 @@ describe('CompactionCard', () => {
     const user = userEvent.setup()
     mockedInvoke
       .mockResolvedValueOnce(defaultStatus) // getCompactionStatus
-      .mockResolvedValueOnce({ snapshot_id: 'snap_1', ops_deleted: 300 }) // compactOpLog
+      .mockResolvedValueOnce({ ops_deleted: 300 }) // compactOpLog
       .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
 
     render(<CompactionCard />)
@@ -477,7 +477,7 @@ describe('CompactionCard', () => {
       const user = userEvent.setup()
       mockedInvoke
         .mockResolvedValueOnce(defaultStatus) // initial fetch (eligible=300) — auto-expands
-        .mockResolvedValueOnce({ snapshot_id: 'snap_1', ops_deleted: 0 }) // compactOpLog
+        .mockResolvedValueOnce({ ops_deleted: 0 }) // compactOpLog
         .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 999 }) // refresh — must NOT re-trigger auto-expand
 
       render(<CompactionCard />)

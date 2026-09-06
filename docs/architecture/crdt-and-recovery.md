@@ -49,52 +49,62 @@ There are two co-equal materialization targets now: the SQL primary state (`bloc
 
 **Cross-format handshake gate (#2130).** Two peers on different engine formats are kept from merging raw bytes primarily by the sync handshake, not just receiver-side import rejection: `HeadExchange` carries `engine_format_version`, and the responder rejects a non-zero mismatched peer up front (`SyncState::Failed`) before any raw-byte Loro merge (`sync_protocol/session_state_machine.rs`). A legacy peer that omits the field (value `0`) falls through to the import-time guards above as the fallback.
 
-## Snapshots
+## Op-log compaction
 
-Snapshots are the durable compaction artifact. They serialise the full SQL primary state into a zstd-compressed CBOR blob keyed by a content hash and a frontier (`{device_id → seq}` per peer). Their live purpose is **op-log compaction**: when the log grows past `DEFAULT_RETENTION_DAYS` (90), a background job emits a snapshot, then deletes ops up to its frontier.
+When the op log grows past `DEFAULT_RETENTION_DAYS` (90), a background job
+(`op_log_compact`, 24 h cadence, idle predicate) deletes every op older than the
+cutoff, bounded by the per-device frontier (`{device_id → MAX(seq)}`) it read in
+its own `DEFERRED` read transaction. The purge and the single
+`compaction_watermark` row recording that frontier commit in one
+`BEGIN IMMEDIATE` transaction, together with the `materializer_apply_cursor`
+clamp (#3310) that keeps a purged-to-empty log from reading as the H-4
+impossible state at the next boot.
 
-They were also the sync catch-up vehicle. Since **#2503** production catch-up ships **Loro** snapshots that the receiver *merges* into its own engine, and **#3487** deleted the CBOR wipe-and-replace wire path entirely — the iroh cutover made a pre-#2503 peer unable to open a session at all (see [sync-protocol-spec.md](sync-protocol-spec.md) § Snapshot-fallback flow). No sync path reaches the destructive restore described below.
+The purge earns its keep: `op_log` costs ~303 B/op — JSON payload, blake3 hash,
+per-row timestamps — against a materially smaller Loro copy of the same edits,
+so it is the dominant term in vault growth (#4700). It does not *bound* growth:
+`loro_doc_state` is ungoverned and grows forever.
 
-### What's in a snapshot
+**What compaction costs the user.** Past the retention window an edit chain is
+broken, and `find_lca` says so — "edit chain broken … likely due to op log
+compaction" rather than a bare `NotFound`. That wording is the only thing that
+reads `compaction_watermark`, via an `EXISTS` probe on the row
+(`agaric_engine::dag::find_lca`); its `up_to_seqs` / `up_to_hash` columns are
+the durable record of how far the last purge reached and are read by nothing.
+Undo, page history and LCA all go dark on ops older than the window.
 
-- All `blocks`, `block_properties`, `block_tags`, `block_links`, `attachments`, `property_definitions`, `page_aliases` rows that survive the frontier (`SnapshotTables` in `src-tauri/agaric-sync/src/snapshot/types.rs`).
-- Schema version (a small integer; bumped on schema-breaking migrations to refuse cross-version snapshot apply).
+### There is no snapshot blob (#4699)
 
-Loro engine state is **not** bundled into the snapshot blob — it lives in the separate `loro_doc_state` table (see § Loro state persistence above) and is restored by the engine's own load path, not by `apply_snapshot`.
+Compaction used to build a zstd-CBOR dump of the derived SQL tables into
+`log_snapshots` on every tick, and `apply_snapshot` could restore one over a
+wiped database. Both are gone. Three reasons, each sufficient:
 
-**Not in a snapshot:** materialised caches (`tags_cache`, `pages_cache`, `agenda_cache`, `block_tag_inherited`, `projected_agenda_cache`, `fts_blocks`, `block_tag_refs`, `page_link_cache`). `apply_snapshot()` wipes them before restoring core data; the materializer rebuilds them after.
+- **Nothing read it.** #2503 moved sync catch-up to Loro snapshots the receiver
+  *merges*; #3487 deleted the CBOR wire path outright (the iroh cutover made a
+  pre-#2503 peer unable to open a session at all), which took `apply_snapshot`'s
+  last production caller with it.
+- **It duplicated the derived view, not the truth.** It dumped `blocks`,
+  `block_tags`, `block_properties`, … and never `loro_doc_state` — so it was a
+  second, staler, partial copy of exactly what `db/recovery.rs` reprojects from
+  the merge truth on demand.
+- **It cost memory where there is least of it.** Collecting every derived row
+  and encoding it buffered the whole vault against Android's ~24 MB release
+  heap, on every compaction tick, for an artifact nothing consumed.
 
-### What a catch-up RESET costs the caught-up device (#2474)
-
-`apply_snapshot()` is the destructive **CBOR** RESET restore. It used to back the pre-#2503 snapshot catch-up; #3487 deleted that wire path (the iroh cutover made a pre-#2503 peer unable to open a session at all), and the current Loro-merge catch-up is non-destructive. It now has **no production caller at all**: disaster recovery reprojects from `loro_doc_state` (`db/recovery.rs`), and compaction only *creates* snapshots. It survives as the read side of the compaction artifact's format, exercised by tests and benches; #4699 asks whether the module should go. The contract below is what that restore costs. In one `BEGIN IMMEDIATE` transaction it wipes the core tables **and** `op_log`, `loro_doc_state`, `loro_sync_inbox`, `log_snapshots`, and `block_drafts`, then re-seeds the core tables from the peer's snapshot:
-
-- **Content converges, the local paper trail does not.** Core-table rows are replaced wholesale by the snapshot's rows — the device's document content ends up equal to the snapshot (pinned by `apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474`).
-- **Unsynced local ops are LOST.** Any op the device authored *after* the snapshot's frontier is deleted with the rest of `op_log`. Because a sync session only ever pulls data responder → initiator (#610), the reset device never pushes those ops to the peer that offered the snapshot within that same session — true of **both** the heads- and VV-triggered paths (see [sync-protocol-spec.md](sync-protocol-spec.md) § "Fate of the initiator's local state"). Surviving them requires an unrelated, separately-timed reverse-direction session to have already carried them out beforehand. Pinned by `apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474`.
-- **History, activity feed, and undo/redo reset to empty.** They are all queries over `op_log`; with the log wiped, `get_local_heads` returns no heads and `undo_page_op_inner` returns `NotFound` even for a block that survived in the snapshot (pinned by `apply_snapshot_resets_undo_and_history_surface_2474`). Origin/`is_undo` attribution for pre-reset ops is gone with them.
-- **The Loro peer-id epoch is bumped (#792)** so post-reset engines re-key to a fresh `PeerID` and their op counters can restart at 0 without forking the `(peer, counter)` space against pre-reset ops peers still hold (pinned by `apply_snapshot_bumps_peer_epoch_2474`).
-- **Loro engines reload EMPTY (#607/#779).** `loro_doc_state` is wiped in the same tx, so the caller's mandatory `reload_registry_from_db` rehydrates nothing — post-reset engines are intentionally empty and import the peer's full CRDT state cleanly on the next session (pinned by `apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474`).
-- **Re-apply is not deduped.** Applying the same snapshot blob twice is safe for core-table state (deterministic wipe-then-insert) but is *not* a no-op for the epoch: each apply is an independent RESET and bumps the epoch again (pinned by `applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474`).
-
-All of the above are pinned by tests in `src-tauri/agaric-sync/src/snapshot/tests.rs`.
-
-### Crash-safe write
-
-`create_snapshot` (`src-tauri/agaric-sync/src/snapshot/create.rs`) is two-phase, and the phases hold different locks (#2470):
-
-1. **Collect** — a `DEFERRED` **read** transaction wraps `collect_tables` + `collect_frontier` so every SELECT sees one consistent point-in-time view. Under WAL this holds only a read lock: concurrent writers are *not* blocked while the (potentially large) table scan runs.
-2. **Encode** — CBOR + zstd, outside any transaction.
-3. **Write** — a brief `BEGIN IMMEDIATE` transaction folds `INSERT INTO log_snapshots (..., status = 'pending')` and `UPDATE ... SET status = 'complete'` together, then commits. The write lock is held only for these two statements, not for the collection phase.
-
-Folding both write statements into one transaction means no other connection ever observes an orphan `pending` row. The only remaining crash window is at the SQLite layer between commit and durable write — boot recovery still deletes any `pending` rows it finds before anything else (step 1 below), so no half-written snapshot is ever applied. (`apply_snapshot`, by contrast, is the one genuinely long write-lock holder — it wipes and restores core tables in a single transaction by design.)
+Disaster recovery is unchanged and is the path that was always tested:
+reproject from `loro_doc_state` (`db/recovery.rs`), with
+`recover_blocks_from_op_log` behind it.
 
 ## Crash recovery
 
-Runs once per process (guarded by an `AtomicBool`). Four steps, in order:
+Runs once per process (guarded by an `AtomicBool`). Three steps, in order.
+(#4699 removed a fourth that came first — `DELETE FROM log_snapshots WHERE
+status = 'pending'`, the crash-leftover sweep for the two-phase blob write.
+There is no blob and no two-phase write, so there is no pending state.)
 
-1. **Delete pending snapshots.** `DELETE FROM log_snapshots WHERE status = 'pending'`.
-2. **Replay unmaterialized ops** (C-2b). Walk `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`; enqueue each row through the materializer foreground queue; drain via Barrier. The apply-cursor advance is transactional with the apply, so no gap should exist — this is the standing safety net, and (because local writes never advance the cursor) it re-applies the whole prior session's local ops idempotently on every boot.
-3. **Reconcile drafts.** Walk `block_drafts`; for each row, emit a synthetic `edit_block` op iff no newer op supersedes it (`src-tauri/agaric-sync/src/recovery/draft_recovery.rs`; `recover_single_draft` only ever constructs `OpPayload::EditBlock` — there is no `create_block` synthesis path). A draft whose block is missing or soft-deleted is dropped as orphan noise rather than recreating the block. Supersession is the **#1256 seq-anchor** check: each draft carries `(draft_anchor_device, draft_anchor_seq)` — the local device's op-log high-water seq at save time (migration 0092) — and is superseded iff a block-scoped `edit_block`/`create_block` op exists with `device_id = draft_anchor_device AND seq > draft_anchor_seq`. This replaced the #384 wall-clock comparison, which a backward clock step (NTP correction) could defeat.
-4. **Delete all draft rows.** After reconciliation. Followed by an explicit cache rebuild for any blocks resurrected by step 3.
+1. **Replay unmaterialized ops** (C-2b). Walk `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`; enqueue each row through the materializer foreground queue; drain via Barrier. The apply-cursor advance is transactional with the apply, so no gap should exist — this is the standing safety net, and (because local writes never advance the cursor) it re-applies the whole prior session's local ops idempotently on every boot.
+2. **Reconcile drafts.** Walk `block_drafts`; for each row, emit a synthetic `edit_block` op iff no newer op supersedes it (`src-tauri/agaric-sync/src/recovery/draft_recovery.rs`; `recover_single_draft` only ever constructs `OpPayload::EditBlock` — there is no `create_block` synthesis path). A draft whose block is missing or soft-deleted is dropped as orphan noise rather than recreating the block. Supersession is the **#1256 seq-anchor** check: each draft carries `(draft_anchor_device, draft_anchor_seq)` — the local device's op-log high-water seq at save time (migration 0092) — and is superseded iff a block-scoped `edit_block`/`create_block` op exists with `device_id = draft_anchor_device AND seq > draft_anchor_seq`. This replaced the #384 wall-clock comparison, which a backward clock step (NTP correction) could defeat.
+3. **Delete all draft rows.** After reconciliation. Followed by an explicit cache rebuild for any blocks resurrected by step 2.
 
 Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does not block boot.
 

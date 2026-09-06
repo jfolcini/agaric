@@ -55,20 +55,6 @@ use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_store::peer_refs;
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// VESTIGIAL since #3487 (256 MB).
-///
-/// It capped the LEGACY CBOR path only — the `size_bytes > MAX_SNAPSHOT_SIZE`
-/// check on a `SnapshotOffer`, and the `recv_bulk` backstop reachable only from
-/// that arm. Both are gone, so nothing reads this. The Loro catch-up is bounded
-/// by `transport::session::MAX_FRAME_SIZE` instead, independently of this value.
-///
-/// Kept because #3487 named it a constraint; #4692 tracks removing it.
-pub const MAX_SNAPSHOT_SIZE: u64 = 256 * 1024 * 1024;
-
-// ---------------------------------------------------------------------------
 // Responder side — Loro-snapshot catch-up (#2503, production path)
 // ---------------------------------------------------------------------------
 
@@ -226,13 +212,12 @@ pub struct EngineReloadCtx<'a> {
 }
 
 /// Result of an initiator-side snapshot catch-up attempt.
+///
+/// One variant: the catch-up either applied or returned `Err`. It used to
+/// carry a `Rejected` arm for an over-cap CBOR `SnapshotOffer`; #3487 deleted
+/// that message and #4699 the arm.
 #[derive(Debug, PartialEq)]
 pub enum CatchupOutcome {
-    /// VESTIGIAL since #3487: no longer constructible. It meant the
-    /// initiator declined an over-cap `SnapshotOffer`, and that message no
-    /// longer exists, so the `#2538` arm in `session_supervisor` that reads
-    /// this can never run. #4692 tracks removing both.
-    Rejected { size_bytes: u64 },
     /// Snapshot was received, decoded, applied, and the initiator's
     /// frontier advanced to the snapshot's `up_to_hash`.
     Applied {

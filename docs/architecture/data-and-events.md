@@ -231,14 +231,15 @@ Each counter is bumped on *every* reach (fresh INSERT and every escalating UPSER
 
 ### Crash recovery (boot)
 
-Four steps, runs once per process (guarded by `AtomicBool`):
+Three steps, runs once per process (guarded by `AtomicBool`). #4699 removed a
+fourth that came first — the `log_snapshots WHERE status = 'pending'` sweep for
+a crash mid-blob-write; there is no blob and no two-phase write any more.
 
-1. Delete `log_snapshots WHERE status = 'pending'` (incomplete snapshot writes from a previous crash).
-2. **Replay unmaterialized ops** (C-2b): walk `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`; enqueue each through the foreground queue; drain via Barrier.
-3. **Reconcile drafts**: walk `block_drafts`; emit a synthetic `edit_block` op (never `create_block` — a draft for a missing/deleted block is dropped as orphan noise) iff no matching op supersedes it per the #1256 seq-anchor check (`draft_anchor_device`/`draft_anchor_seq` vs `op_log.seq`; see [crdt-and-recovery.md](crdt-and-recovery.md) § Crash recovery).
-4. Delete all draft rows.
+1. **Replay unmaterialized ops** (C-2b): walk `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`; enqueue each through the foreground queue; drain via Barrier.
+2. **Reconcile drafts**: walk `block_drafts`; emit a synthetic `edit_block` op (never `create_block` — a draft for a missing/deleted block is dropped as orphan noise) iff no matching op supersedes it per the #1256 seq-anchor check (`draft_anchor_device`/`draft_anchor_seq` vs `op_log.seq`; see [crdt-and-recovery.md](crdt-and-recovery.md) § Crash recovery).
+3. Delete all draft rows.
 
-Followed by an explicit cache rebuild for any blocks resurrected by step 3.
+Followed by an explicit cache rebuild for any blocks resurrected by step 2.
 
 Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does not block boot.
 

@@ -56,9 +56,11 @@ pub struct CompactionStatus {
 }
 
 /// Result of an op log compaction, returned by [`compact_op_log_cmd`].
+///
+/// #4699 dropped the `snapshot_id` field: compaction no longer writes a
+/// snapshot blob, so there was no id to report and the field was always null.
 #[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
 pub struct CompactionResult {
-    pub snapshot_id: Option<String>,
     pub ops_deleted: i64,
 }
 
@@ -113,22 +115,19 @@ pub async fn get_compaction_status(
 /// This function takes a `BEGIN IMMEDIATE` lock purely to perform
 /// a TOCTOU recount of eligible ops under the writer lock — it does
 /// **not** provide atomicity for the compaction itself.
-/// `snapshot::compact_op_log` (`snapshot/create.rs:243-295`) wraps its
-/// own write phase in `BEGIN IMMEDIATE`, so the actual delete is
-/// already atomic. The wrapper tx exists so we can serve the
-/// fast-path early-return when no ops match the cutoff and emit a
-/// `warn` log via `begin_immediate_logged` if writers are contending.
+/// [`agaric_sync::snapshot::compact_op_log`] wraps its own write phase in
+/// `BEGIN IMMEDIATE`, so the actual delete is already atomic. The wrapper tx
+/// exists so we can serve the fast-path early-return when no ops match the
+/// cutoff and emit a `warn` log via `begin_immediate_logged` if writers are
+/// contending.
 ///
 /// The returned `CompactionResult.ops_deleted` is the real number
-/// of rows the inner DELETE removed (sourced from
-/// `snapshot::compact_op_log`'s `(snapshot_id, deleted_count)` return
-/// value), **not** the recounted "eligible at start" figure. The
-/// pre-flight `eligible_in_tx` count is logged at `debug` level for
-/// drift observability and otherwise unused on the return path.
-#[instrument(skip(pool, device_id), fields(retention_days), err)]
+/// of rows the inner DELETE removed, **not** the recounted "eligible at
+/// start" figure. The pre-flight `eligible_in_tx` count is logged at `debug`
+/// level for drift observability and otherwise unused on the return path.
+#[instrument(skip(pool), fields(retention_days), err)]
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
-    device_id: &str,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
     // Reject pathologically small retention windows at the IPC boundary
@@ -157,10 +156,7 @@ pub async fn compact_op_log_cmd_inner(
     .await?;
 
     if eligible == 0 {
-        return Ok(CompactionResult {
-            snapshot_id: None,
-            ops_deleted: 0,
-        });
+        return Ok(CompactionResult { ops_deleted: 0 });
     }
 
     // This BEGIN IMMEDIATE is *not* providing atomicity for the
@@ -196,10 +192,7 @@ pub async fn compact_op_log_cmd_inner(
 
     if eligible_in_tx == 0 {
         tx.rollback().await?;
-        return Ok(CompactionResult {
-            snapshot_id: None,
-            ops_deleted: 0,
-        });
+        return Ok(CompactionResult { ops_deleted: 0 });
     }
 
     // Release the recount tx before calling `compact_op_log`. The inner
@@ -213,21 +206,17 @@ pub async fn compact_op_log_cmd_inner(
     // figure that goes stale the moment we commit and call into
     // `compact_op_log`. Between the commit above and the inner write
     // phase, more ops can be appended (their `created_at` may still be
-    // `< cutoff` if the wall clock advanced), and the snapshot-frontier
-    // guard inside `compact_op_log` (`seq <= up_to_seqs[device]`) can
-    // also drop ops the pre-flight count assumed would be deleted.
+    // `< cutoff` if the wall clock advanced), and the frontier guard inside
+    // `compact_op_log` (`seq <= up_to_seqs[device]`) can also drop ops the
+    // pre-flight count assumed would be deleted.
     //
-    // `snapshot::compact_op_log` now returns
-    // `Some((snapshot_id, deleted_count))` where `deleted_count` is the
-    // sum of `rows_affected()` across the per-device DELETEs (see
-    // `snapshot/create.rs` phase 3). Surface that figure verbatim. The
-    // `eligible_in_tx` value is logged as a pre-flight metric only —
-    // never returned over the wire.
-    let (snapshot_id, real_deleted_count) =
-        match agaric_sync::snapshot::compact_op_log(pool, device_id, retention_days).await? {
-            Some((id, n)) => (Some(id), n),
-            None => (None, 0),
-        };
+    // `compact_op_log` returns the sum of `rows_affected()` across the
+    // per-device DELETEs. Surface that figure verbatim. The `eligible_in_tx`
+    // value is logged as a pre-flight metric only — never returned over the
+    // wire.
+    let real_deleted_count = agaric_sync::snapshot::compact_op_log(pool, retention_days)
+        .await?
+        .unwrap_or(0);
 
     tracing::debug!(
         eligible_in_tx,
@@ -237,14 +226,10 @@ pub async fn compact_op_log_cmd_inner(
 
     // `CompactionResult.ops_deleted` is `i64`; the real count is at
     // most the number of rows in `op_log` and cannot exceed `i64::MAX`
-    // in any realistic deployment. The cast matches the wire shape (no
-    // Tauri/specta binding change needed).
+    // in any realistic deployment.
     let ops_deleted: i64 = i64::try_from(real_deleted_count)
         .expect("invariant: op_log row count fits in i64 in any realistic deployment");
-    Ok(CompactionResult {
-        snapshot_id,
-        ops_deleted,
-    })
+    Ok(CompactionResult { ops_deleted })
 }
 
 /// Tauri command: trigger op log compaction.
@@ -262,7 +247,7 @@ pub async fn compact_op_log_cmd(
     ctx: State<'_, WriteCtx>,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    let result = compact_op_log_cmd_inner(ctx.pool(), ctx.device_id(), retention_days)
+    let result = compact_op_log_cmd_inner(ctx.pool(), retention_days)
         .await
         .map_err(sanitize_internal_error)?;
 
