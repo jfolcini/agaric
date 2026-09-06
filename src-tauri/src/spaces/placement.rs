@@ -17,6 +17,12 @@
 //! row on the read path before it takes the write lock, so a session that
 //! delivered nothing space-less costs one indexed lookup. The boot pass
 //! stays as the backstop for every other ingress.
+//!
+//! #4781: `sync:complete` is forwarded before the placement commits, so the
+//! frontend's reload on it still sees the unplaced block. Once the placement
+//! and the tag-ref rebuilds it enqueues have drained, the sink emits
+//! `blocks:changed` with no page ids — the full-reload form — the same signal
+//! an MCP write uses for an out-of-band local write.
 
 use std::sync::Arc;
 
@@ -26,6 +32,7 @@ use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
 
 use super::bootstrap::place_space_less_blocks;
 use crate::materializer::Materializer;
+use crate::mcp::view_notify::ViewChangeEmitter;
 
 /// Sink layer that places space-less blocks after an inbound sync.
 pub struct SpacePlacementSink {
@@ -35,6 +42,7 @@ pub struct SpacePlacementSink {
     pub read_pool: SqlitePool,
     pub device_id: String,
     pub materializer: Materializer,
+    pub view: Arc<dyn ViewChangeEmitter>,
     /// The task spawned by the latest `Complete`, so a test can await it.
     #[cfg(test)]
     pub last_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -47,6 +55,7 @@ impl SpacePlacementSink {
         read_pool: SqlitePool,
         device_id: String,
         materializer: Materializer,
+        view: Arc<dyn ViewChangeEmitter>,
     ) -> Self {
         Self {
             inner,
@@ -54,6 +63,7 @@ impl SpacePlacementSink {
             read_pool,
             device_id,
             materializer,
+            view,
             #[cfg(test)]
             last_task: std::sync::Mutex::new(None),
         }
@@ -73,16 +83,29 @@ impl SyncEventSink for SpacePlacementSink {
             let read_pool = self.read_pool.clone();
             let device_id = self.device_id.clone();
             let materializer = self.materializer.clone();
+            let view = self.view.clone();
             let peer = remote_device_id.clone();
             let task = tokio::spawn(async move {
                 match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
                     Ok((0, 0)) => {}
-                    Ok((pages, tags)) => tracing::info!(
-                        peer_id = %peer,
-                        pages,
-                        tags,
-                        "placed space-less blocks after inbound sync"
-                    ),
+                    Ok((pages, tags)) => {
+                        tracing::info!(
+                            peer_id = %peer,
+                            pages,
+                            tags,
+                            "placed space-less blocks after inbound sync"
+                        );
+                        // The rebuilds are what turn a raw `#[ULID]` back into
+                        // a tag; signal only once they have drained.
+                        if let Err(e) = materializer.flush_background().await {
+                            tracing::warn!(
+                                peer_id = %peer,
+                                error = %e,
+                                "placement rebuilds did not drain; signalling anyway"
+                            );
+                        }
+                        view.emit_blocks_changed(Vec::new());
+                    }
                     // Non-fatal: the boot pass remains the backstop.
                     Err(e) => tracing::warn!(
                         peer_id = %peer,
@@ -114,6 +137,7 @@ mod tests {
 
     use super::*;
     use crate::db::init_pool;
+    use crate::mcp::view_notify::RecordingViewChangeEmitter;
     use crate::spaces::bootstrap::{
         SPACE_PERSONAL_ULID, SPACE_WORK_ULID, bootstrap_spaces_for_test,
     };
@@ -178,16 +202,22 @@ mod tests {
     fn sink(
         pool: &SqlitePool,
         materializer: &Materializer,
-    ) -> (SpacePlacementSink, Arc<RecordingEventSink>) {
+    ) -> (
+        SpacePlacementSink,
+        Arc<RecordingEventSink>,
+        Arc<RecordingViewChangeEmitter>,
+    ) {
         let recording = Arc::new(RecordingEventSink(std::sync::Mutex::new(Vec::new())));
+        let view = Arc::new(RecordingViewChangeEmitter::new());
         let sink = SpacePlacementSink::new(
             recording.clone(),
             pool.clone(),
             pool.clone(),
             DEV.into(),
             materializer.clone(),
+            view.clone(),
         );
-        (sink, recording)
+        (sink, recording, view)
     }
 
     async fn places_the_synced_in_tag_after(changed_blocks: Option<usize>) {
@@ -195,7 +225,7 @@ mod tests {
         let tag_id = seed_synced_in_orphan_tag(&pool).await;
         assert_eq!(space_of(&pool, &tag_id).await, None);
         let materializer = Materializer::new(pool.clone());
-        let (sink, recording) = sink(&pool, &materializer);
+        let (sink, recording, view) = sink(&pool, &materializer);
 
         sink.on_sync_event(complete(changed_blocks));
         let task = sink
@@ -219,6 +249,24 @@ mod tests {
         assert!(work.engine_mut().contains_block(&tag_id));
         // The event still reaches the wrapped sink.
         assert_eq!(recording.0.lock().unwrap().len(), 1);
+        // #4781 — and the frontend is told to reload once the placement landed.
+        assert_eq!(view.blocks_changed(), vec![Vec::<String>::new()]);
+        materializer.shutdown();
+    }
+
+    /// A session that moved blocks but delivered nothing space-less must not
+    /// trigger a full frontend reload.
+    #[tokio::test]
+    async fn a_session_with_nothing_to_place_signals_nothing_4781() {
+        let (pool, _dir) = seeded_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let (sink, _recording, view) = sink(&pool, &materializer);
+
+        sink.on_sync_event(complete(Some(3)));
+        let task = sink.last_task.lock().unwrap().take().expect("spawned");
+        task.await.unwrap();
+
+        assert!(view.blocks_changed().is_empty());
         materializer.shutdown();
     }
 
@@ -267,13 +315,14 @@ mod tests {
         let (pool, _dir) = seeded_pool().await;
         let tag_id = seed_synced_in_orphan_tag(&pool).await;
         let materializer = Materializer::new(pool.clone());
-        let (sink, recording) = sink(&pool, &materializer);
+        let (sink, recording, view) = sink(&pool, &materializer);
 
         sink.on_sync_event(complete(Some(0)));
 
         assert!(sink.last_task.lock().unwrap().is_none());
         assert_eq!(space_of(&pool, &tag_id).await, None);
         assert_eq!(recording.0.lock().unwrap().len(), 1);
+        assert!(view.blocks_changed().is_empty());
         materializer.shutdown();
     }
 }
