@@ -83,6 +83,12 @@ exclude_globs = [
 # locally on 2026-07-31: `cargo nextest run -p agaric` → 3383 passed in 123s.
 test_tool = "nextest"
 
+# #4696 (lever B): build every mutant under `[profile.mutants]` (workspace
+# `Cargo.toml`), the `test` profile minus debug info. A mutant is expected
+# to fail its tests, so its symbols are never read; measured 48.7 s → 41 s
+# per incremental rebuild (3 samples each), ~80 runner-minutes a run.
+profile = "mutants"
+
 # Skip mutants whose unmutated build/test already fails to build or times
 # out — keeps the survivor list to genuine test-coverage gaps.
 # (Per-mutant timeout is supplied on the CLI by the workflow so it can be
