@@ -109,8 +109,11 @@ export function ensureRegistered(): void {
   // tag: — bare ALU/Unicode tag name, optional leading `#`. The
   // tag-name itself preserves Unicode (the plan calls this out
   // explicitly: `tag:#日本語`, `tag:#📌` must round-trip).
+  // #3288 — `tag:#"my tag"` peels the quotes like path:/prop: do, so a
+  // multi-word tag (creatable through the importers) round-trips.
   registerTokenPrefix('tag:', (value, span) => {
-    const cleaned = value.startsWith('#') ? value.slice(1) : value
+    const unquoted = stripSurroundingQuotes(value)
+    const cleaned = unquoted.startsWith('#') ? stripSurroundingQuotes(unquoted.slice(1)) : unquoted
     if (cleaned.length === 0) {
       return {
         kind: 'invalid',

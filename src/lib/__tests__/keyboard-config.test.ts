@@ -412,6 +412,29 @@ describe('keyboard-config', () => {
     expect(c?.keys).toBe('Ctrl + K')
   })
 
+  it('findConflicts flags a same-category rebind onto one alternative of a multi-chord binding (#3288)', () => {
+    // undoLastPageOp and redoLastUndoneOp share category and condition;
+    // rebinding undo onto redo's second alternative must co-bucket on that chord.
+    setCustomShortcut('undoLastPageOp', 'Ctrl + Shift + Z')
+
+    const conflicts = findConflicts()
+    const c = conflicts.filter(
+      (x) => x.ids.includes('undoLastPageOp') && x.ids.includes('redoLastUndoneOp'),
+    )
+    expect(c).toHaveLength(1)
+    expect(c[0]?.keys).toBe('Ctrl + Shift + Z')
+    expect(c[0]?.category).toBe('keyboard.category.undoRedo')
+  })
+
+  it('findConflicts reports two bindings sharing every alternative once (#3288)', () => {
+    setCustomShortcut('undoLastPageOp', 'Ctrl + Y / Ctrl + Shift + Z')
+
+    const c = findConflicts().filter(
+      (x) => x.ids.includes('undoLastPageOp') && x.ids.includes('redoLastUndoneOp'),
+    )
+    expect(c).toHaveLength(1)
+  })
+
   it('findConflicts pass 3 matches individual chord alternatives (#754)', () => {
     // createNewPage (global, wildcard) rebound to ONE alternative of
     // redoLastUndoneOp's 'Ctrl + Y / Ctrl + Shift + Z' (undoRedo,
