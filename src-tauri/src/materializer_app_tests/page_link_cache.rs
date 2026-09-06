@@ -888,7 +888,7 @@ async fn all_edges(pool: &SqlitePool) -> Vec<(String, String)> {
 /// reindexer has exactly ONE trigger: a change to the SOURCE's content. Only
 /// `CreateBlock` and `EditBlock` enqueue `ReindexBlockLinks`, both keyed on
 /// the source. There is no vault-wide `rebuild_block_links` behind it —
-/// `truncate_block_links`' only caller is agaric-sync's snapshot-restore wipe
+/// the one wholesale wipe of it went with the snapshot restore (#4699)
 /// — and every downstream artefact (`page_link_cache`,
 /// `pages_cache.inbound_link_count`) folds `block_links` as ground truth, so
 /// the loss is self-consistent and invisible. The edge was gone permanently.
@@ -2526,6 +2526,166 @@ async fn a_tombstoned_referrers_edge_to_a_live_target_survives_an_unrelated_rest
          deleted — it is still owed (S is tombstoned, so it owes nothing yet), and \
          `reconciliation_oracle.rs`'s EXTRA arm reasons about exactly these rows \
          being present"
+    );
+
+    mat.shutdown();
+}
+
+// ====================================================================
+// #4293 — a target made linkable by a PEER's op
+// ====================================================================
+
+/// The page the referrer lives on.
+const REMOTE_PAGE_P: &str = "01C10000000000000000000000";
+/// The referrer whose `[[ULID]]` is written before its target exists.
+const REMOTE_SOURCE_S: &str = "01C20000000000000000000000";
+/// The target, created by a PEER — never touched locally.
+const REMOTE_TARGET_T: &str = "01C30000000000000000000000";
+
+/// #4293 — THE reported scenario, on the REMOTE path.
+///
+/// #4118 fixed this for a target created locally: `invalidations_for_op`
+/// enqueues a per-block `ReindexBlockLinks`, whose `resolve_referrers_of` half
+/// pushes to everyone recorded as waiting on that target. But
+/// `invalidations_for_op`'s only production caller chain is
+/// `CommandTx::commit_and_dispatch`, so the whole push half was local-path
+/// only. Inbound sync fanned out through `enqueue_inbound_sync_rebuilds`, which
+/// carried per-block FTS and `block_tag_refs` reindexes and a debounced global
+/// set — and no per-block link reindex.
+///
+/// The debt row was present and correct throughout; only the trigger was
+/// missing. So a peer creating the page a local block had been linking to left
+/// that `[[ULID]]` dead until something local touched one of the two blocks.
+///
+/// Neither block is touched locally here after the seed: the target row is
+/// written directly, the way the inbound apply path writes it, and the ONLY
+/// thing that runs afterwards is the inbound fan-out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_target_created_by_a_peer_relinks_its_referrers_4293() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(REMOTE_PAGE_P)
+        .bind(REMOTE_PAGE_P)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The referrer names a target that does not exist yet.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(REMOTE_SOURCE_S)
+    .bind(format!("see [[{REMOTE_TARGET_T}]]"))
+    .bind(REMOTE_PAGE_P)
+    .bind(REMOTE_PAGE_P)
+    .execute(&pool)
+    .await
+    .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(REMOTE_SOURCE_S),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        Vec::<(String, String)>::new(),
+        "seed: the token names a block that does not exist, so no edge is stored"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, REMOTE_SOURCE_S).await,
+        vec![REMOTE_TARGET_T.to_owned()],
+        "seed: and the declined token is recorded as debt against the absent target"
+    );
+
+    // --- The peer's `CreateBlock` lands: the row appears, no local op. ---
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(REMOTE_TARGET_T)
+        .bind(REMOTE_TARGET_T)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The whole of what inbound sync does after applying a remote op.
+    mat.enqueue_inbound_sync_rebuilds(&[agaric_core::ulid::BlockId::test_id(REMOTE_TARGET_T)], &[])
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(REMOTE_SOURCE_S.to_owned(), REMOTE_TARGET_T.to_owned())],
+        "#4293: the referrer's edge must exist — the target became linkable, and \
+         nothing local touched either block"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, REMOTE_SOURCE_S).await,
+        Vec::<String>::new(),
+        "and the debt is discharged, not merely shadowed by a live edge"
+    );
+
+    mat.shutdown();
+}
+
+/// #4293, the large-import half. Above `SYNC_BLOCK_LINKS_PER_BLOCK_MAX`
+/// changed blocks the fan-out is one `ReindexBlockLinksBatch` on a single
+/// blocking send — not a blocking send per block inside the session's
+/// dispatch budget, and not a per-block shed storm through the retry queue.
+/// Every source's OWN outbound edge is what is asserted, the half a remotely
+/// created block needs from this task in the first place.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_snapshot_sized_import_relinks_every_changed_block_4293() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    for (id, title) in [(REMOTE_PAGE_P, "P"), (REMOTE_TARGET_T, "T")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let n = agaric_engine::materializer::SYNC_BLOCK_LINKS_PER_BLOCK_MAX + 1;
+    let sources: Vec<String> = (0..n).map(|i| format!("01C4{i:0>22}")).collect();
+    for (i, id) in sources.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("see [[{REMOTE_TARGET_T}]]"))
+        .bind(REMOTE_PAGE_P)
+        .bind(REMOTE_PAGE_P)
+        .bind(i64::try_from(i).expect("fits") + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let changed: Vec<_> = sources
+        .iter()
+        .map(|id| agaric_core::ulid::BlockId::test_id(id))
+        .collect();
+
+    mat.enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let edges = all_edges(&pool).await;
+    assert_eq!(
+        edges.len(),
+        n,
+        "#4293: every one of the {n} remotely changed blocks must carry its own edge"
+    );
+    assert!(
+        edges.iter().all(|(_, target)| target == REMOTE_TARGET_T),
+        "every edge points at T"
     );
 
     mat.shutdown();

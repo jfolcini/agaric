@@ -300,17 +300,12 @@ pub async fn dispatch_restore_ancestors(
 /// idempotent, and the alternative (special-casing which path enqueued what)
 /// is worth less than the uniformity.
 ///
-/// # Scope this does NOT extend to
+/// # Scope
 ///
-/// A target made linkable by a PEER's non-restore op still does not reach the
-/// push half. Inbound sync fans out through `enqueue_inbound_sync_rebuilds`,
-/// which enqueues per-changed-block `UpdateFtsBlock` + `ReindexBlockTagRefs`
-/// and a debounced global set, but no per-block link reindex — so a remotely
-/// delivered `CreateBlock`/`EditBlock` that resolves a waiting referrer is
-/// repaired only when something local touches one of the two blocks. That is
-/// the pre-existing #4118 path bound (tracked in #4293), not something this
-/// helper introduces; restores specifically ARE covered on the remote path,
-/// because `apply_op` calls this.
+/// A target made linkable by a PEER's non-restore op reaches the push half
+/// through `enqueue_inbound_sync_rebuilds`, which enqueues one
+/// `ReindexBlockLinks` per changed block (#4293). Restores are covered twice
+/// on the remote path: that task, and `apply_op` calling this.
 ///
 /// Infallible / log-only, mirroring the engine fan-outs' call shape: the SQL
 /// restore has already committed and a failed repair must not fail the op. A

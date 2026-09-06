@@ -81,6 +81,10 @@ pub use handlers::apply_op_projected;
 // production build.
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::invalidations_for_op;
+// #4293: test-only for the same reason — the app-crate test that drives a
+// snapshot-sized import sizes its fixture from it.
+#[cfg(any(test, feature = "test-util"))]
+pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
 // local move command (`commands/blocks/move_ops.rs`) is its production caller.
 // It lives next to `invalidations_for_op`'s `MoveBlock` arm because the
@@ -113,10 +117,8 @@ pub use handlers::{
     GC_RACE_RENDEZVOUS, handle_background_task, handle_background_task_metered,
     handle_foreground_task,
 };
-// Pinned from `agaric-sync`, which sees both halves of each pair: the snapshot
-// RESET wipe list against the post-restore rebuild set, and the transport
+// Pinned from `agaric-sync`, which sees both halves of the pair: the transport
 // receive timeout against the attachment temp-file reap window.
-pub use coordinator::POST_SNAPSHOT_CACHE_REBUILDS;
 pub use handlers::TRANSFER_TEMP_REAP_AFTER;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -177,6 +179,17 @@ pub enum MaterializeTask {
     ReindexBlockLinks {
         block_id: Arc<str>,
     },
+    /// #4293: the inbound-sync shape of [`Self::ReindexBlockLinks`] above the
+    /// per-block threshold — every changed block of one import, run as a loop
+    /// in the consumer. FTS and tag-refs collapse to a vault-wide rebuild
+    /// there; `block_links` has none (`RebuildPageLinkCache` folds the table,
+    /// it does not re-derive it), so the batch is the single task that keeps
+    /// a snapshot-sized fan-out off the dispatch path. Not persisted by the
+    /// retry queue, like `RebuildFtsIndex`: it is enqueued with one blocking
+    /// send, never shed.
+    ReindexBlockLinksBatch {
+        block_ids: Arc<[Arc<str>]>,
+    },
     /// Incremental reindex of `block_tag_refs` for a single
     /// block after a content mutation. Mirrors `ReindexBlockLinks`.
     ReindexBlockTagRefs {
@@ -204,13 +217,13 @@ pub enum MaterializeTask {
         block_id: Arc<str>,
     },
     /// Full-vault recompute of `block_tag_refs`. Fires on
-    /// delete / restore / purge and from `apply_snapshot` / boot-time
-    /// "table is empty" fallback.
+    /// delete / restore / purge and from the boot-time "table is empty"
+    /// fallback.
     RebuildBlockTagRefsCache,
     /// Full-vault recompute of `page_link_cache`
     /// (the page-level roll-up of `block_links`). Fires on delete /
-    /// restore / purge and from `apply_snapshot` / boot-time "table
-    /// is empty" fallback. Per-content-edit invalidation rolls up
+    /// restore / purge and from the boot-time "table is empty" fallback.
+    /// Per-content-edit invalidation rolls up
     /// inside the [`MaterializeTask::ReindexBlockLinks`] handler.
     RebuildPageLinkCache,
     Barrier(Arc<tokio::sync::Notify>),

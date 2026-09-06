@@ -1217,8 +1217,8 @@ fn fold_block_space(by_id: &BTreeMap<&str, &BaseBlock>, block_id: &str) -> Optio
 ///
 /// It re-derives what the writers WOULD insert against the CURRENT state of
 /// `blocks`. It is not a claim that production ever recomputes this set: there
-/// is no vault-wide `rebuild_block_links` (`truncate_block_links`' sole caller
-/// is `agaric-sync`'s snapshot-restore wipe), and the per-block reindexer is a
+/// is no vault-wide `rebuild_block_links` (the one wholesale wipe of it went
+/// with the snapshot restore, #4699), and the per-block reindexer is a
 /// DIFF driven by content change alone. The gap between the two is real and is
 /// enumerated on [`reconcile_block_links`].
 pub async fn rebuild_block_links_from_content(
@@ -1343,7 +1343,7 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
      ReindexBlockLinks at all (only CreateBlock and EditBlock do) — plus \
      recovery::cache_refresh's draft-recovery path, which enqueues it \
      directly. There is still NO vault-wide rebuild_block_links: \
-     truncate_block_links' sole caller is agaric-sync's snapshot-restore WIPE, \
+     the one wholesale wipe of it went with the snapshot restore (#4699), \
      and every other link artefact (pages_cache.inbound_link_count, \
      page_link_cache) folds this table as ground truth, so a loss here is \
      consistent on both sides of their diffs and invisible to reconcile(). \

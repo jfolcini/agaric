@@ -15,8 +15,8 @@ That second obligation is the durable per-device seq high-water mark
 without recording the pre-delete `MAX(seq)` per device and the floor is gone,
 so the allocator restarts at `seq = 1` and re-mints `(device_id, seq)`
 addresses a paired peer still holds. That peer's `INSERT OR IGNORE` then
-silently swallows this device's entire post-wipe history. `truncate` and
-`prune` in `bypass.rs` capture the frontier before deleting; the raw
+silently swallows this device's entire post-wipe history. `prune` in
+`bypass.rs` captures the frontier before deleting; the raw
 `enable_op_log_mutation_bypass` / `disable_op_log_mutation_bypass` pair does
 not, and it is `pub` with a doc that invites callers to "drive their own
 multi-statement bypass window".
@@ -35,7 +35,7 @@ A production (non-test) `DELETE FROM op_log` may appear only in
 `src-tauri/agaric-store/src/op_log/bypass.rs`. Test code is exempt: the seven
 existing open-coded delete sites are all `#[cfg(test)]` and they are how the
 immutability triggers themselves get tested. A new production site must either
-call `truncate` / `prune` (which is almost always the right answer) or move
+call `prune` (which is almost always the right answer) or move
 its statement into `bypass.rs` next to the frontier capture, where the pairing
 is reviewable in one place.
 
@@ -100,7 +100,7 @@ is_excluded_file = _to.is_excluded_file
 
 # The ONE module allowed to delete `op_log` rows in production: it owns both
 # halves of the obligation (the mutation-bypass sentinel bracket AND the
-# pre-delete seq high-water capture) in `truncate` / `prune`.
+# pre-delete seq high-water capture) in `prune`.
 ALLOWED_FILES: frozenset[str] = frozenset(
     {"src-tauri/agaric-store/src/op_log/bypass.rs"}
 )
@@ -129,11 +129,10 @@ HINT = (
     "       over the emptied log and re-mints (device_id, seq) addresses a\n"
     "       paired peer still holds — whose INSERT OR IGNORE then silently\n"
     "       swallows this device's post-wipe history.\n"
-    "       Call `agaric_store::op_log::truncate` (RESET) or `prune`\n"
-    "       (compaction) instead: they bracket the mutation bypass AND capture\n"
-    "       the frontier. If you genuinely need a new bespoke delete, put it in\n"
-    "       bypass.rs next to `capture_all_frontiers` so the pairing is\n"
-    "       reviewable in one place."
+    "       Call `agaric_store::op_log::prune` (compaction) instead: it\n"
+    "       brackets the mutation bypass AND captures the frontier. If you\n"
+    "       genuinely need a new bespoke delete, put it in bypass.rs next to\n"
+    "       `prune` so the pairing is reviewable in one place."
 )
 
 

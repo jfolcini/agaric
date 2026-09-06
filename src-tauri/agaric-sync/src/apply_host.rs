@@ -22,9 +22,6 @@ pub trait ApplyHost: Send + Sync + std::fmt::Debug {
         changed_blocks: &[BlockId],
         purged_blocks: &[BlockId],
     ) -> Result<(), AppError>;
-    /// Enqueue the fixed full-vault cache-rebuild task set after a snapshot
-    /// restore replaces vault state wholesale.
-    async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError>;
     /// Await both foreground and background materialize queues draining.
     async fn flush(&self) -> Result<(), AppError>;
 
@@ -92,10 +89,6 @@ impl ApplyHost for Materializer {
         Materializer::app_data_dir(self)
     }
 
-    async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
-        Materializer::enqueue_post_snapshot_rebuilds(self).await
-    }
-
     async fn flush(&self) -> Result<(), AppError> {
         Materializer::flush(self).await
     }
@@ -138,7 +131,6 @@ pub mod test_support {
     #[derive(Debug, Default)]
     struct Calls {
         inbound_rebuilds: Vec<InboundRebuild>,
-        post_snapshot_rebuilds: usize,
         flushes: usize,
     }
 
@@ -161,7 +153,6 @@ pub mod test_support {
             let calls = self.lock();
             f.debug_struct("RecordingApplyHost")
                 .field("inbound_rebuilds", &calls.inbound_rebuilds.len())
-                .field("post_snapshot_rebuilds", &calls.post_snapshot_rebuilds)
                 .field("flushes", &calls.flushes)
                 .finish_non_exhaustive()
         }
@@ -190,15 +181,6 @@ pub mod test_support {
         #[must_use]
         pub fn inbound_rebuilds(&self) -> Vec<InboundRebuild> {
             self.lock().inbound_rebuilds.clone()
-        }
-
-        /// How many times a post-snapshot rebuild set was enqueued.
-        ///
-        /// # Panics
-        /// If the internal mutex was poisoned by a panic in another thread.
-        #[must_use]
-        pub fn post_snapshot_rebuild_count(&self) -> usize {
-            self.lock().post_snapshot_rebuilds
         }
 
         /// How many times the session awaited a materialize flush.
@@ -230,11 +212,6 @@ pub mod test_support {
                 changed_blocks: changed_blocks.to_vec(),
                 purged_blocks: purged_blocks.to_vec(),
             });
-            Ok(())
-        }
-
-        async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
-            self.lock().post_snapshot_rebuilds += 1;
             Ok(())
         }
 

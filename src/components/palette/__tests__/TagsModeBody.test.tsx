@@ -8,7 +8,7 @@
  * happy-path render.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TagsModeBody } from '@/components/palette/TagsModeBody'
@@ -35,7 +35,7 @@ const mockNotify = vi.mocked(notify)
 // `{ kind: 'cancelled' }`, so a bare Error takes the real-failure path.
 const realFailure = new Error('search backend down')
 
-function renderBody() {
+function renderBody(onEscalate: (query: string) => void = vi.fn()) {
   // The search effect only fires once the space store is ready.
   useSpaceStore.setState({ currentSpaceId: 'space-1', isReady: true })
   const t = ((key: string) => key) as never
@@ -43,7 +43,7 @@ function renderBody() {
   // primitives that require the `Command` root's context.
   return render(
     <Command>
-      <TagsModeBody onEscalate={vi.fn()} t={t} />
+      <TagsModeBody onEscalate={onEscalate} t={t} />
     </Command>,
   )
 }
@@ -67,6 +67,18 @@ describe('TagsModeBody', () => {
     })
     expect(mockSearch).toHaveBeenCalled()
     expect(mockNotify.error).not.toHaveBeenCalled()
+  })
+
+  // #3288 — a multi-word tag escalates as one `tag:` chip, not `tag:#my`
+  // plus the free text `tag`.
+  it('quotes a spaced tag name when escalating to search', async () => {
+    mockSearch.mockResolvedValue({
+      items: [{ id: 'b1', content: 'my tag' } as never],
+    } as never)
+    const onEscalate = vi.fn()
+    renderBody(onEscalate)
+    fireEvent.click(await screen.findByTestId('palette-tag-b1'))
+    expect(onEscalate).toHaveBeenCalledWith('tag:#"my tag"')
   })
 
   // #1270 error-path: a rejected (non-cancellation) tag search must

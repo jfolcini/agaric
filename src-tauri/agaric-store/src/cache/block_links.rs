@@ -7,63 +7,6 @@ use agaric_core::error::AppError;
 use crate::db::MAX_SQL_PARAMS;
 
 // ---------------------------------------------------------------------------
-// truncate_block_links (#2895 slice 4)
-// ---------------------------------------------------------------------------
-
-/// Wholesale-wipe the `block_links` table (RESET path, #2895 slice 4).
-///
-/// Runs a single `DELETE FROM block_links` on the caller's
-/// connection/transaction. Extracted from `agaric-sync`'s snapshot RESET so
-/// the raw write to the store-owned `block_links` derived cache lives beside
-/// the rest of its owner-crate maintenance ([`reindex_block_links_conn`])
-/// rather than open-coded cross-crate.
-///
-/// Opens NO transaction and commits nothing — the caller controls the
-/// transaction boundary (the RESET wipes `block_links` inside the same
-/// `defer_foreign_keys = ON` tx that swaps the core tables).
-///
-/// # `block_links_unresolved` goes with it (#4118)
-///
-/// The unresolved-token index (migration 0112) is a satellite of `block_links`
-/// written by the same diff, so a RESET that wiped one and not the other would
-/// leave the restored vault claiming a set of pending link repairs derived from
-/// the PREVIOUS vault's content. It is wiped here rather than added to
-/// `agaric-sync`'s `CACHE_TABLES` inventory for the reason that inventory's own
-/// doc gives for `block_links`: this crate owns the table, and the wipe belongs
-/// beside the maintenance.
-///
-/// The wipe is IDEMPOTENT WITH A CASCADE, not load-bearing against an FK
-/// check — the same standing `CACHE_TABLES` gives for listing `page_link_cache`
-/// explicitly. `source_id REFERENCES blocks(id) ON DELETE CASCADE`, and the
-/// RESET's later `DELETE FROM blocks` fires that cascade immediately (cascade
-/// ACTIONS are not deferred by `PRAGMA defer_foreign_keys = ON`; only violation
-/// CHECKS are), so the rows could not have survived to COMMIT and could not
-/// have failed one. What the explicit DELETE buys is that the table is empty at
-/// the point the restore starts inserting, rather than depending on a cascade
-/// several statements away staying where it is.
-///
-/// # The other half of the RESET (#4218)
-///
-/// `block_links` is refilled from the snapshot's own rows. The satellite is
-/// not — the snapshot format carries none, because it is derived — so this
-/// wipe shipped with nothing behind it and a restored vault inherited the
-/// sender's edge set with no record of what it was missing.
-/// [`rebuild_block_links_unresolved_conn`] is that other half, called from the
-/// same restore transaction; keep the two together.
-///
-/// # Errors
-/// Returns [`AppError`] if either DELETE fails.
-pub async fn truncate_block_links(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
-    sqlx::query!("DELETE FROM block_links")
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query!("DELETE FROM block_links_unresolved")
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // block_links_unresolved (#4118)
 // ---------------------------------------------------------------------------
 
@@ -219,9 +162,9 @@ const UNRESOLVED_REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 /// Recompute the WHOLE `block_links_unresolved` table from `blocks.content`
 /// and the `block_links` rows that exist right now (#4218).
 ///
-/// Connection-scoped and transaction-less, exactly like
-/// [`truncate_block_links`]: the caller owns the boundary. That is what lets
-/// `agaric-sync`'s snapshot RESET call it INSIDE the restore transaction, so
+/// Connection-scoped and transaction-less: the caller owns the boundary.
+/// That is what let the (#4699-deleted) snapshot RESET call it INSIDE the
+/// restore transaction, so
 /// the wipe and the reconstruction cannot be separated — see "Why the restore
 /// calls this in-transaction" below.
 ///
@@ -272,12 +215,12 @@ const UNRESOLVED_REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 /// below has none — it exists for the #4229 oracle's settle. No new task kind,
 /// no new queue, no periodic trigger.
 ///
-/// # Why the restore calls this in-transaction
+/// # Why the restore called this in-transaction
 ///
-/// `truncate_block_links` empties this table as part of the RESET wipe, and
-/// before #4218 nothing refilled it: the snapshot format carries no rows for
-/// it, and `restore.rs`'s `CACHE_TABLES` / `enqueue_post_snapshot_rebuilds`
-/// pairing — the mechanism that repopulates every OTHER wiped cache — never
+/// The snapshot RESET (deleted in #4699) wiped this table, and before #4218
+/// nothing refilled it: the snapshot format carried no rows for it, and the
+/// restore's wipe-list / post-restore-rebuild pairing — the mechanism that
+/// repopulated every OTHER wiped cache — never
 /// listed it. A restored vault therefore inherited the sender's `block_links`
 /// with no record of what that edge set was missing, which is #4118's
 /// permanent loss reintroduced on the restore path.
