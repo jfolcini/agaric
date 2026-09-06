@@ -1732,11 +1732,15 @@ mod reader_delegation_tests {
     const HARNESS_RS: &str = include_str!("conformance_query.rs");
 
     /// The number of commands wired into `run_step` when the WRITE sweep below
-    /// was taken. A 20th arm reddens
+    /// was taken. One more arm reddens
     /// [`the_write_sweep_denominator_still_matches`], which is the only thing
     /// that makes the sweep's conclusion a claim about the CURRENT code.
     // #3264 retired `get_blocks`, a plain SELECT, from the 20 arms swept.
-    const SWEPT_ARM_COUNT: usize = 19;
+    // #3829 wired `list_trash`, `list_all_pages_in_space` and
+    // `list_template_page_ids_in_space`: each is a plain SELECT behind its
+    // `*_inner` (`pagination::list_trash`, `commands/pages/listing.rs`), so
+    // the writer set below is unchanged.
+    const SWEPT_ARM_COUNT: usize = 22;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
