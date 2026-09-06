@@ -67,11 +67,9 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
           window.clearTimeout(pendingDeleteClearRef.current)
           pendingDeleteClearRef.current = null
         }
-        // Toasts + logs its own failure (useBlockAttachments); never rejects.
+        // Toasts its own outcome (useBlockAttachments); never rejects.
         void handleDeleteAttachment(attachment.id)
         setPendingDeleteId(null)
-        // #4626 — unconditional; a failed delete toasts twice.
-        notify.success(t('attachments.deleted', { name: attachment.filename }))
       } else {
         // First click — show confirmation via toast
         setPendingDeleteId(attachment.id)

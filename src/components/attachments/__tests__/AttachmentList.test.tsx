@@ -134,9 +134,33 @@ describe('AttachmentList', () => {
     // Second click — actually deletes
     await user.click(deleteBtn)
     expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
-    expect(mockedToastSuccess).toHaveBeenCalledWith(
-      t('attachments.deleted', { name: 'to-delete.txt' }),
-    )
+    // #4626 — toasted by the hook once the IPC resolves, not by the click.
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(
+        t('attachments.deleted', { name: 'to-delete.txt' }),
+      )
+    })
+  })
+
+  it('a failed delete shows the error toast alone, never the success one (#4626)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+    expect(await screen.findByText('keep.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment keep\.txt/i })
+    await user.click(deleteBtn)
+    mockedInvoke.mockRejectedValueOnce(new Error('bytes not reclaimed'))
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('attachments.deleteFailed'))
+    })
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
+    expect(screen.getByText('keep.txt')).toBeInTheDocument()
   })
 
   it('reflects the armed (pending-confirm) state on the delete control accessible name (#2281)', async () => {

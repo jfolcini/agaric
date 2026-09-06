@@ -94,9 +94,14 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         unwrap(await commands.deleteAttachment(attachmentId))
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+        // #4626 — the success toast lives here, next to the error one, because
+        // this is the only place that knows the delete landed; the promise
+        // resolves either way, so a caller cannot tell.
+        const name = attachments.find((a) => a.id === attachmentId)?.filename
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         // Invalidate the page-level batch cache.
         batchProvider?.invalidate(blockId)
+        notify.success(i18n.t('attachments.deleted', { name }))
       } catch (err) {
         logger.error(
           'useBlockAttachments',
@@ -107,7 +112,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         notify.error(i18n.t('attachments.deleteFailed'))
       }
     },
-    [blockId, pageStore, batchProvider],
+    [blockId, pageStore, batchProvider, attachments],
   )
 
   const handleRenameAttachment = useCallback(

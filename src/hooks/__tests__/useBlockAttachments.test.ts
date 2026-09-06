@@ -28,6 +28,7 @@ import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
 
 let pageStore: StoreApi<PageBlockState>
 const wrapper = ({ children }: { children: ReactNode }) =>
@@ -250,6 +251,10 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
     expect(result.current.attachments).toHaveLength(1)
     expect(result.current.attachments[0]?.id).toBe('ATT_2')
+    // #4626 — the success toast names the deleted file and fires from the
+    // one place that knows the delete landed.
+    expect(mockedToastSuccess).toHaveBeenCalledTimes(1)
+    expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringContaining('file1.pdf'))
   })
 
   it('does not notify undo on failure', async () => {
@@ -277,6 +282,8 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
     expect(onNewActionSpy).not.toHaveBeenCalled()
     expect(mockedToastError).toHaveBeenCalledWith('Failed to delete attachment')
+    // #4626 — a failed delete must not also claim success.
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
     // Attachment should still be present (no removal on failure)
     expect(result.current.attachments).toHaveLength(1)
   })
