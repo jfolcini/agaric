@@ -40,7 +40,7 @@ test.describe('Tags view — seed tags', () => {
     await navigateToTags(page)
 
     // All three seed tags should be visible via their stable data-testids
-    // (the visible button text is `${tag.name} ${usage_count}`, e.g. "work 0",
+    // (the visible button text is `${tag.name} ${usage_count}`, e.g. "work 3",
     // so a getByText('work', { exact: true }) query does not match).
     await expect(page.getByTestId('tag-item-work')).toBeVisible()
     await expect(page.getByTestId('tag-item-personal')).toBeVisible()

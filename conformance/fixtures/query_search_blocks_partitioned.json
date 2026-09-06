@@ -1,0 +1,474 @@
+{
+  "description": "#3823 — READ-command differential over `search_blocks_partitioned`, the palette's two-partition envelope. The projection tags every row with its partition (`B1#partition=pages`) and closes each partition with its own `has_more` token (`pages#has_more=true`), so the two independently-capped envelopes are one comparable row list. The steps pin the split (a page hit appears in BOTH partitions), that each cap holds back its own partition only, the `0` cap (legal, never has_more), the `[0, 100]` refusal, and the two blank-query arms. Content arrives through `edit_block` ops so both FTS indexes hold it.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Widget catalog",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "widget assembly",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "widget teardown",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "sprocket only",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Widget roadmap",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "widget offsite",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gadget",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma index",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_wide_caps",
+      "rows": [
+        "B1#partition=pages",
+        "B5#partition=pages",
+        "pages#has_more=false",
+        "B1#partition=blocks",
+        "B5#partition=blocks",
+        "B6#partition=blocks",
+        "B2#partition=blocks",
+        "B3#partition=blocks",
+        "blocks#has_more=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_page_cap_holds_back",
+      "rows": [
+        "B1#partition=pages",
+        "pages#has_more=true",
+        "B1#partition=blocks",
+        "B5#partition=blocks",
+        "B6#partition=blocks",
+        "B2#partition=blocks",
+        "B3#partition=blocks",
+        "blocks#has_more=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_block_cap_holds_back",
+      "rows": [
+        "B1#partition=pages",
+        "B5#partition=pages",
+        "pages#has_more=false",
+        "B1#partition=blocks",
+        "B5#partition=blocks",
+        "blocks#has_more=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_zero_caps",
+      "rows": ["blocks#has_more=false", "pages#has_more=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "partitioned_over_cap_rejected",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_blank_query_unfiltered",
+      "rows": ["blocks#has_more=false", "pages#has_more=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "partitioned_blank_query_parent_filter",
+      "rows": [
+        "pages#has_more=false",
+        "B4#partition=blocks",
+        "B3#partition=blocks",
+        "B2#partition=blocks",
+        "blocks#has_more=false"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "query_search_blocks_partitioned",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S1",
+        "toText": "Widget catalog"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "Widget roadmap"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "Gamma index"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "widget assembly"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "widget teardown"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "sprocket only"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "widget offsite"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "toText": "gadget"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 10,
+        "query": "widget"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "Two scans of one match set: `pages` holds the `block_type = 'page'` hits, `blocks` every hit (pages included), each `ORDER BY rank, id`; under wide caps neither has more.",
+      "name": "partitioned_wide_caps",
+      "ordered": true
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 1,
+        "query": "widget"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "`page_limit` caps the page partition alone: one page row, `pages` has_more, `blocks` untouched at ten.",
+      "name": "partitioned_page_cap_holds_back",
+      "ordered": true
+    },
+    {
+      "args": {
+        "blockLimit": 2,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 10,
+        "query": "widget"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "…and `block_limit` the block partition alone.",
+      "name": "partitioned_block_cap_holds_back",
+      "ordered": true
+    },
+    {
+      "args": {
+        "blockLimit": 0,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 0,
+        "query": "widget"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "`0` is legal here (unlike `search_blocks`): both partitions empty and NEITHER has_more — `page_limit_usize > 0 && …` — so a mock computing `rows.len() > 0` diverges.",
+      "name": "partitioned_zero_caps"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 101,
+        "query": "widget"
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "Either limit above `MAX_SEARCH_RESULTS` (100) is refused with `validation`, not clamped.",
+      "expect_error": "validation",
+      "name": "partitioned_over_cap_rejected"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 10,
+        "query": ""
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "A blank query with no structural filter is two empty partitions.",
+      "name": "partitioned_blank_query_unfiltered"
+    },
+    {
+      "args": {
+        "blockLimit": 10,
+        "filter": {
+          "parentId": "S1",
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "pageLimit": 10,
+        "query": ""
+      },
+      "command": "search_blocks_partitioned",
+      "comment": "A blank query WITH a structural filter lists the filtered partitions recency-ordered: no page is a child of S1, and the blocks partition is S1's three children newest first.",
+      "name": "partitioned_blank_query_parent_filter",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S7",
+        "parent_id": "S5",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma",
+        "id": "S8",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

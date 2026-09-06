@@ -14,6 +14,7 @@ import {
   appErrorRejection,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
+  compareBinary,
   notFoundRejection,
   returnEmptyPage,
   validationRejection,
@@ -345,7 +346,7 @@ export const propertiesHandlers = {
       }
     }
     return [...counts.entries()]
-      .toSorted((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))
+      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
       .map(([key]) => key)
   },
 
@@ -362,9 +363,8 @@ export const propertiesHandlers = {
       if (typeof value !== 'string') continue
       counts.set(value, (counts.get(value) ?? 0) + 1)
     }
-    // `value_text ASC` is BINARY, so a code-unit compare, not `localeCompare`.
     return [...counts.entries()]
-      .toSorted((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))
+      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
       .map(([value]) => value)
   },
 

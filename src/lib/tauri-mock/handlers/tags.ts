@@ -12,6 +12,7 @@
 import {
   type TagExprNode,
   type TypedHandlers,
+  compareBinary,
   refInclusiveTags,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -74,7 +75,7 @@ function tagCacheRows(): TagCacheRow[] {
       updated_at: new Date().toISOString(),
     })
   }
-  rows.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
+  rows.sort((x, y) => compareBinary(x.name, y.name))
   return rows
 }
 

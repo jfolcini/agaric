@@ -204,6 +204,14 @@ type RowsLocation =
   | { readonly kind: 'bare-array' }
   /** The response IS one row, or null/undefined for a miss (`Option<T>`). */
   | { readonly kind: 'bare-row' }
+  /**
+   * The response holds several `PageResponse` partitions under `keys` (#3823 —
+   * `search_blocks_partitioned`'s `{ pages, blocks }`). Every row carries its
+   * partition as an attribute and each partition closes with its own
+   * `<key>#has_more=<bool>` token, so two independently-capped envelopes become
+   * one comparable row list; `hasMoreKey` / `totalKey` stay `null`.
+   */
+  | { readonly kind: 'partitions'; readonly keys: readonly string[] }
   /** The response is a `HashMap<K, Row>`; each entry projects `K-><row>`. */
   | { readonly kind: 'map-of-row' }
   /**
@@ -330,6 +338,12 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: 'total_count',
   },
   search_blocks: { rows: PAGED, token: ID_TOKEN, hasMoreKey: 'has_more', totalKey: 'total_count' },
+  search_blocks_partitioned: {
+    rows: { kind: 'partitions', keys: ['pages', 'blocks'] },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
   list_unfinished_tasks: {
     rows: PAGED,
     token: ID_TOKEN,
@@ -911,12 +925,26 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
       return response == null ? [] : [response]
     }
     case 'map-of-row':
-    case 'map-of-rows': {
-      // Handled by `rawRows` — the map KEY is half of every token, so the
-      // entries cannot be flattened into a bare row array first.
+    case 'map-of-rows':
+    case 'partitions': {
+      // Handled by `rawRows` — the map KEY / partition is part of every token,
+      // so the entries cannot be flattened into a bare row array first.
       return response
     }
   }
+}
+
+/** Mirror of `partitioned_result` in the Rust twin. */
+function partitionRows(response: unknown, keys: readonly string[], token: TokenSpec): string[] {
+  const envelope = (response ?? {}) as Record<string, unknown>
+  const out: string[] = []
+  for (const key of keys) {
+    const part = (envelope[key] ?? {}) as Record<string, unknown>
+    const items = Array.isArray(part['items']) ? part['items'] : []
+    for (const r of items) out.push(`${rowToken(r, token)}#partition=${key}`)
+    out.push(`${key}#has_more=${attrValue('has_more', part['has_more'])}`)
+  }
+  return out
 }
 
 /**
@@ -971,6 +999,9 @@ export function groupTokens(response: unknown): string[] {
 }
 
 function rawRows(response: unknown, shape: WireShape): string[] {
+  if (shape.rows.kind === 'partitions') {
+    return partitionRows(response, shape.rows.keys, shape.token)
+  }
   if (shape.rows.kind === 'map-of-row' || shape.rows.kind === 'map-of-rows') {
     const map = (response ?? {}) as Record<string, unknown>
     if (typeof map !== 'object') return []
