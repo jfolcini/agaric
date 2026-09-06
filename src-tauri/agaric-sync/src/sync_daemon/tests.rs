@@ -11281,10 +11281,17 @@ struct PairingClaimRun4230 {
 ///   `None` is the pairing branch: a window is armed and no row names the key.
 /// * `expected_peer` — the id whose row the run is expected to key bookkeeping
 ///   on; its post-run row and frontier are returned for the caller to judge.
+/// * `bind_victim` — whether the victim's row carries its own `endpoint_id`.
+///   `true` is #4230's fixture. `false` is #4251's: a row that exists and holds
+///   a floor but was never bound, which `peer_is_bound_to_another_key` permits
+///   by construction (`None.is_some_and(..)` is `false`). It is not a contrived
+///   state — an interrupted pair, or a peer whose bind failed, leaves exactly
+///   this.
 async fn drive_pairing_claim_4230(
     joiner_identity: &str,
     prebind_joiner_as: Option<&str>,
     expected_peer: &str,
+    bind_victim: bool,
 ) -> PairingClaimRun4230 {
     let space = agaric_store::space::SpaceId::from_trusted(SPACE_4230);
 
@@ -11303,9 +11310,11 @@ async fn drive_pairing_claim_4230(
     peer_refs::upsert_peer_ref(&host_pool, VICTIM_DEV_4230)
         .await
         .unwrap();
-    peer_refs::bind_endpoint_id(&host_pool, VICTIM_DEV_4230, &victim_key)
-        .await
-        .unwrap();
+    if bind_victim {
+        peer_refs::bind_endpoint_id(&host_pool, VICTIM_DEV_4230, &victim_key)
+            .await
+            .unwrap();
+    }
     {
         let mut tx = host_pool.begin().await.unwrap();
         peer_refs::update_on_stream_in_tx(&mut tx, VICTIM_DEV_4230)
@@ -11601,7 +11610,7 @@ fn assert_victim_untouched_4230(out: &PairingClaimRun4230) {
 /// refusal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_pairing_claim_on_a_bound_peers_id_writes_no_bookkeeping_4230() {
-    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, None, VICTIM_DEV_4230).await;
+    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, None, VICTIM_DEV_4230, true).await;
 
     // The session really ran: the host streamed, the joiner applied, both saw a
     // terminal Complete. Without this the assertions below could be satisfied by
@@ -11654,7 +11663,7 @@ async fn a_pairing_claim_on_a_bound_peers_id_writes_no_bookkeeping_4230() {
 /// device that just paired (#4084/#4103). This is where that hides.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_legitimate_pairing_still_records_its_own_bookkeeping_4230() {
-    let out = drive_pairing_claim_4230(JOINER_DEV_4230, None, JOINER_DEV_4230).await;
+    let out = drive_pairing_claim_4230(JOINER_DEV_4230, None, JOINER_DEV_4230, true).await;
 
     let row = out
         .expected_after
@@ -11699,6 +11708,96 @@ async fn a_legitimate_pairing_still_records_its_own_bookkeeping_4230() {
     assert_victim_untouched_4230(&out);
 }
 
+/// #4251 — the residual #4230 left open by construction.
+///
+/// #4230 gates the claimed-id bookkeeping on `peer_is_bound_to_another_key`,
+/// which is `p.endpoint_id.is_some_and(|k| k != endpoint_id)`. That is `false`
+/// for an UNBOUND row — `None.is_some_and(..)` is `false` — so a
+/// passphrase-holder inside the pairing window could still stamp `streamed_at`
+/// and, materially, `loro_vv_bytes` on any row that existed but had never been
+/// bound.
+///
+/// The `loro_vv_bytes` half is the one that matters, and it does not heal on
+/// its own the way a stamp does: `bind_endpoint_id` is
+/// `ON CONFLICT DO UPDATE SET endpoint_id`, touching only its own column, so a
+/// poisoned floor SURVIVES the real device's later TOFU bind and is thereafter
+/// indistinguishable from a genuine one. The first real session with that
+/// device then computes its delta from a baseline the device never held.
+///
+/// The fixture is the same impostor as `*_4230`, against a victim row that
+/// exists and carries a floor but was never bound — an interrupted pair, or one
+/// whose bind failed. Both are states production reaches without an attacker:
+/// #2481 means a joiner advertises the frontier of every device it holds, and
+/// `get_local_heads` sorts by a random v4 uuid, so in a three-device vault the
+/// responder claims another device's id on roughly a coin flip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claim_on_an_unbound_row_writes_no_bookkeeping_4251() {
+    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, None, VICTIM_DEV_4230, false).await;
+
+    let before = out
+        .victim_before
+        .as_ref()
+        .expect("fixture: the victim row exists before the session");
+    assert_eq!(
+        before.endpoint_id, None,
+        "fixture: the victim row must be UNBOUND, or this test is #4230's and the \
+         residual it exists for goes unexercised"
+    );
+    assert!(
+        out.victim_vv_before.is_some(),
+        "fixture: and it must carry a floor, or there is nothing to poison"
+    );
+
+    // #4251's invariant, and only it: the two bookkeeping columns.
+    //
+    // Deliberately NOT `assert_victim_untouched_4230` — that helper asserts the
+    // whole column set, which is right for the BOUND victim (where the bind is
+    // refused, so nothing around it can move) and wrong here. On an unbound row
+    // the bind SUCCEEDS: that is ordinary TOFU, and `peer_is_bound_to_another_key`
+    // permitting it is the same `None.is_some_and(..)` hole seen from the bind's
+    // side rather than the guard's. It is #4380, filed separately and explicitly
+    // out of scope for this change, so a run of this test still shows the binding
+    // and `remote_device_name` moving onto the victim's row. Asserting them here
+    // would make this test fail for a defect it is not fixing.
+    let after = out
+        .victim_after
+        .as_ref()
+        .expect("the victim row must survive the session");
+    assert_eq!(
+        out.victim_vv_after.as_deref(),
+        out.victim_vv_before.as_deref(),
+        "#4251: the export floor is the write that does not heal — `bind_endpoint_id` \
+         is `ON CONFLICT DO UPDATE SET endpoint_id` and touches only its own column, \
+         so a poisoned floor survives the real device's later bind and is thereafter \
+         indistinguishable from a genuine one"
+    );
+    assert_eq!(
+        after.streamed_at, before.streamed_at,
+        "#4251: and `streamed_at` feeds #4203's refusal-suppression gate, which reads \
+         it as evidence that the device holding the pinned key streamed to us"
+    );
+
+    // #4252's half, on the same run: the responder must not read a floor off a
+    // row it may not key on either. Had it read the victim's, the stream would
+    // have been computed from a baseline the joiner never held, and the joiner's
+    // reachability gate would have answered with a reset rather than converging.
+    assert!(
+        !out.joiner_events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "reset_required")),
+        "#4252: reading another device's export floor makes the stream a delta from \
+         a baseline this joiner never had, which its reachability gate answers with \
+         ResetRequired instead of converging; got {:?}",
+        out.joiner_events
+    );
+    assert_eq!(
+        out.host_block_on_joiner.as_deref(),
+        Some(HOST_CONTENT_4230),
+        "and the session still converged — the guard withholds bookkeeping, it does \
+         not fail the session"
+    );
+}
+
 /// The bound-peer branch, which this change must not disturb.
 ///
 /// The joiner's key is already bound as `BOUND4230`, so `handle_incoming_sync`
@@ -11710,7 +11809,8 @@ async fn a_legitimate_pairing_still_records_its_own_bookkeeping_4230() {
 /// and the guard is inert here (it is never armed on this branch).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_bound_branch_keys_bookkeeping_on_the_authenticated_row_4230() {
-    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, Some(BOUND_DEV_4230), BOUND_DEV_4230).await;
+    let out =
+        drive_pairing_claim_4230(VICTIM_DEV_4230, Some(BOUND_DEV_4230), BOUND_DEV_4230, true).await;
 
     let row = out
         .expected_after
