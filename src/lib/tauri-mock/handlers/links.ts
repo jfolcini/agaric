@@ -22,6 +22,40 @@ import {
 import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 /**
+ * `BacklinkFilter::PropertyText`'s `CompareOp` over a stored `value_text`:
+ * `<>` / `<` / `>` / `<=` / `>=` are SQLite text compares; `Contains` /
+ * `StartsWith` are `LIKE`, ASCII-case-insensitive over a literal needle.
+ */
+function textCompare(op: string, lhs: string, rhs: string): boolean {
+  switch (op) {
+    case 'Neq': {
+      return lhs !== rhs
+    }
+    case 'Lt': {
+      return lhs < rhs
+    }
+    case 'Gt': {
+      return lhs > rhs
+    }
+    case 'Lte': {
+      return lhs <= rhs
+    }
+    case 'Gte': {
+      return lhs >= rhs
+    }
+    case 'Contains': {
+      return lhs.toLowerCase().includes(rhs.toLowerCase())
+    }
+    case 'StartsWith': {
+      return lhs.toLowerCase().startsWith(rhs.toLowerCase())
+    }
+    default: {
+      return lhs === rhs
+    }
+  }
+}
+
+/**
  * Narrow a backlink candidate set by `BacklinkFilter`s (mirrors the filter
  * evaluation `eval_backlink_query_grouped` runs on the backend).
  */
@@ -64,12 +98,16 @@ function applyBacklinkFilters(
     } else if (type === 'PropertyText') {
       const key = filter['key'] as string
       const value = filter['value'] as string
+      const op = (filter['op'] as string | undefined) ?? 'Eq'
       backlinkItems = backlinkItems.filter((b) => {
-        const blockProps = properties.get(b['id'] as string)
-        if (!blockProps) return false
-        const prop = blockProps.get(key)
-        if (!prop) return false
-        return (prop['value_text'] as string | null) === value
+        const text = properties.get(b['id'] as string)?.get(key)?.['value_text'] as
+          | string
+          | null
+          | undefined
+        // `EXISTS (… key = ? AND value_text <op> ?)` on the backend: a block
+        // without the property matches under no operator, `Neq` included.
+        if (text == null) return false
+        return textCompare(op, text, value)
       })
     }
     // Unsupported filter types are ignored (graceful degradation)

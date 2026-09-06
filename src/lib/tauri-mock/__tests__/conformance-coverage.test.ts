@@ -394,7 +394,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Point reads over blocks / properties / tags ──
   //
   // #3826 CLOSED this group. Eleven commands (`batch_resolve`,
-  // `first_child_for_blocks`, `get_block`, `get_blocks`, `get_batch_properties`,
+  // `first_child_for_blocks`, `get_block`, `get_blocks` (gone since #3264), `get_batch_properties`,
   // `get_properties`, `get_property`, `list_blocks`, `list_tags_for_block`,
   // `list_inherited_tags_for_block`, `load_page_subtree`) were waived here as
   // "point reads over rows the #763 snapshot already diffs". True, and not a

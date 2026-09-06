@@ -37,11 +37,7 @@ import {
 // tests observe the same group the real backend reverts. Walks the in-memory `opLog` newest-first,
 // filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
 // and counts consecutive same-device + within-window ops.
-function findUndoGroupSize(args: unknown): number {
-  const a = (args ?? {}) as Record<string, unknown>
-  const depth = (a['depth'] as number) ?? 0
-  const windowMs = (a['windowMs'] as number) ?? 0
-
+function findUndoGroupSize(depth: number, windowMs: number): number {
   // Newest-first ordering on (created_at DESC, seq DESC) — see
   // `sortOpLogNewestFirst` (shared.ts).
   const undoableOps = sortOpLogNewestFirst(
@@ -141,7 +137,7 @@ export const historyHandlers = {
       // cross-module lookup through the barrel's `HANDLERS`.)
       throw new Error('undo_page_group mock: missing sibling handler')
     }
-    const groupSize = findUndoGroupSize({ pageId: a['pageId'], depth, windowMs })
+    const groupSize = findUndoGroupSize(depth, windowMs)
     const results: unknown[] = []
     for (let i = 0; i < groupSize; i++) {
       results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))

@@ -2343,6 +2343,41 @@ describe('list_backlinks_grouped', () => {
     expect(result.total_count).toBeGreaterThan(result.filtered_count)
   })
 
+  // #3264 — `PropertyText` honours its `CompareOp`; a block without the
+  // property matches under no operator (the backend's `EXISTS` shape).
+  it('applies the PropertyText comparison op instead of always equality', () => {
+    const ids: Record<string, string> = {}
+    for (const status of ['open', 'done']) {
+      const created = invoke('create_block', {
+        blockType: 'content',
+        content: `${status} [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+        parentId: SEED_IDS.PAGE_QUICK_NOTES,
+      }) as Record<string, unknown>
+      ids[status] = created['id'] as string
+      invoke('set_property', {
+        blockId: ids[status],
+        key: 'status',
+        value: {
+          value_text: status,
+          value_num: null,
+          value_date: null,
+          value_bool: null,
+          value_ref: null,
+        },
+      })
+    }
+    const query = (op: string) =>
+      (
+        invoke('list_backlinks_grouped', {
+          blockId: SEED_IDS.PAGE_GETTING_STARTED,
+          filters: [{ type: 'PropertyText', key: 'status', op, value: 'open' }],
+        }) as { groups: Array<{ blocks: Array<Record<string, unknown>> }> }
+      ).groups.flatMap((g) => g.blocks.map((b) => b['id']))
+    expect(query('Eq')).toEqual([ids['open']])
+    expect(query('Neq')).toEqual([ids['done']])
+    expect(query('StartsWith')).toEqual([ids['open']])
+  })
+
   it('returns backlinks grouped by source page', () => {
     const result = invoke('list_backlinks_grouped', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
