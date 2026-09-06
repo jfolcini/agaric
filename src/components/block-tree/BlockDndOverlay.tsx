@@ -18,8 +18,8 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { renderRichContent } from '@/components/RichContentRenderer'
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { shouldReduceMotion } from '@/lib/preferences'
 import { useResolveStore } from '@/stores/resolve'
 
 interface BlockDndOverlayProps {

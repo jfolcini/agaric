@@ -19,7 +19,7 @@
 
 import { type RefObject, useEffect, useRef } from 'react'
 
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 /** Distance in px from viewport edge that triggers auto-scroll. */
 export const SCROLL_ZONE = 50

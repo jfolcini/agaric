@@ -32,7 +32,7 @@ import {
   type UseListKeyboardNavigationOptions,
   useListKeyboardNavigation,
 } from '@/hooks/useListKeyboardNavigation'
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 export interface UseKeyboardNavigableListOptions {
   /** Enable Home/End keys (default: false). */

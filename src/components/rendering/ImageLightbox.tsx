@@ -20,8 +20,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import { getShortcutKeys } from '@/lib/keyboard-config'
+import { shouldReduceMotion } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
 
 /**

@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   applyMotionPreference,
   getMotionPreference,
-  shouldReduceMotion,
   useMotionPreference,
 } from '@/hooks/useMotionPreference'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 const KEY = 'agaric-motion'
 

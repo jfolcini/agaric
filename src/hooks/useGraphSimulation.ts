@@ -43,7 +43,6 @@ import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
 import { useGraphZoom } from '@/hooks/useGraphZoom'
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
 import {
   applyRovingTabindex,
   attachNodeRovingKeys,
@@ -57,6 +56,7 @@ import {
   type SimulationHandle,
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 export interface UseGraphSimulationArgs {
   svgRef: React.RefObject<SVGSVGElement | null>

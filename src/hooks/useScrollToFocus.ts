@@ -27,7 +27,7 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
-import { shouldReduceMotion } from '@/hooks/useMotionPreference'
+import { shouldReduceMotion } from '@/lib/preferences'
 
 export interface UseScrollToFocusOptions {
   /**
