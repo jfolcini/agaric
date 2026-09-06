@@ -15,7 +15,6 @@
   "src/components/editor/useImageProperties.ts",
   "src/components/graph/GraphView.helpers.ts",
   "src/components/history/HistoryPanel.tsx",
-  "src/components/history/HistoryView.tsx",
   "src/components/journal/UnfinishedTasks.tsx",
   "src/components/pages/PageBrowserBatchToolbar.tsx",
   "src/components/pages/PageEditor.tsx",
@@ -40,6 +39,5 @@
   "src/lib/query-result-columns.ts",
   "src/lib/template-utils.ts",
   "src/lib/vault-import.ts",
-  "src/stores/resolve.ts",
-  "src/stores/undo.ts"
+  "src/stores/resolve.ts"
 ]
