@@ -1,5 +1,5 @@
 {
-  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, ignores the space or paginates on the wrong keyset diverges here. The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort.",
+  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, orders on anything but `deleted_at DESC`, or accepts a `Global` scope diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort.",
   "expected": {
     "block_tags": [
       {
@@ -388,8 +388,7 @@
       },
       "command": "list_template_page_ids_in_space",
       "comment": "S2 only: S3 is also `template = true` but deleted.",
-      "name": "template_page_ids",
-      "ordered": true
+      "name": "template_page_ids"
     }
   ],
   "seed": {

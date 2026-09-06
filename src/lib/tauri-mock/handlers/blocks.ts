@@ -274,7 +274,11 @@ function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
  * SENTINEL rather than reject the cursor, so the query pages from that
  * sentinel key instead of refusing the request. Rejecting a missing lead
  * slot here made the mock STRICTER than production in the opposite direction
- * from the one this harness exists to close (#3942 review note 3).
+ * from the one this harness exists to close (#3942 review note 3). The
+ * `deleted_at` lead is the exception: `pagination::list_trash` REFUSES a
+ * cursor without its slot (`cursor missing deleted_at for trash query`) where
+ * this decodes `['', id]` and serves an empty page. Neither stack mints such
+ * a cursor, so the gap is unreachable and left open.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
