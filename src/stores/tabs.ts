@@ -73,12 +73,14 @@ export interface Tab {
 let nextTabId = 1
 
 /**
- * #754 — per-tab page-stack depth cap. `navigateToPage` holds one entry per
- * DISTINCT page (#4707), so a long browsing session still grows the stack (and
- * the persisted `agaric:tabs` blob) without bound. When a push would exceed
- * the cap the OLDEST entry is dropped — the back gesture keeps its most recent
- * 50 steps, which is far beyond any realistic back-tracking while keeping the
- * localStorage payload small.
+ * #754 — per-tab page-stack depth cap. `navigateToPage` appends one entry per
+ * HOP, not per distinct page: A → B → A leaves three entries, so Back retraces
+ * every step the way a browser's history does, and `e2e/inner-links.spec.ts`
+ * pins that ("back to first Getting Started"). A long session therefore grows
+ * the stack (and the persisted `agaric:tabs` blob) without bound, so when a
+ * push would exceed the cap the OLDEST entry is dropped — the back gesture
+ * keeps its most recent 50 steps, far beyond any realistic back-tracking while
+ * keeping the localStorage payload small.
  */
 export const MAX_PAGE_STACK_DEPTH = 50
 
@@ -548,7 +550,7 @@ export const useTabsStore = create<TabsStore>()(
         // visited in between reachable by Back.
         // #754 — drop-oldest cap so the back stack (and its persisted
         // blob) can't grow without bound. See `MAX_PAGE_STACK_DEPTH`.
-        const pushed = [...pageStack.filter((entry) => entry.pageId !== pageId), { pageId, title }]
+        const pushed = [...pageStack, { pageId, title }]
         const newStack =
           pushed.length > MAX_PAGE_STACK_DEPTH
             ? pushed.slice(pushed.length - MAX_PAGE_STACK_DEPTH)

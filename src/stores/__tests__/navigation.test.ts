@@ -327,39 +327,6 @@ describe('useNavigationStore', () => {
     // between the same handful of pages queued each of them several times
     // over — a reported stack held 28 entries for 18 distinct pages — and
     // Back then replayed every copy on the way out of the editor.
-    it('revisiting a page already in the stack moves it to the top instead of lengthening the stack', () => {
-      const { navigateToPage } = useTabsStore.getState()
-      navigateToPage('P1', 'Page 1')
-      navigateToPage('P2', 'Page 2')
-      navigateToPage('P3', 'Page 3')
-
-      navigateToPage('P1', 'Page 1')
-
-      // Three distinct pages, three entries — and the pages visited between
-      // the two P1 visits are still there, so Back keeps retracing the path
-      // actually walked (that is why the earlier copy is dropped rather than
-      // the stack truncated back to it).
-      expect(selectPageStack(useTabsStore.getState())).toEqual([
-        { pageId: 'P2', title: 'Page 2' },
-        { pageId: 'P3', title: 'Page 3' },
-        { pageId: 'P1', title: 'Page 1' },
-      ])
-      expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 1')
-    })
-
-    it('walking a two-page cycle keeps the stack at two entries', () => {
-      const { navigateToPage } = useTabsStore.getState()
-      for (let i = 0; i < 5; i++) {
-        navigateToPage('P1', 'Page 1')
-        navigateToPage('P2', 'Page 2')
-      }
-
-      expect(selectPageStack(useTabsStore.getState())).toEqual([
-        { pageId: 'P1', title: 'Page 1' },
-        { pageId: 'P2', title: 'Page 2' },
-      ])
-    })
-
     it('updates the active tab label to the top page title', () => {
       useTabsStore.getState().navigateToPage('P1', 'My Page')
 

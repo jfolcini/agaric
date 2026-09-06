@@ -64,18 +64,29 @@ Also deleted: `expect(tabs[0]?.enteredFrom).toBeUndefined()` sitting two lines b
 `setState` literal that omits `enteredFrom`, with no coercion in between — an assertion restating
 its own precondition.
 
-## Move-to-top, not truncate
+## The dedupe that a pinned e2e test refuted
 
-Revisiting a page anywhere in the stack used to push a duplicate; only the top was deduped. Hence
-28 entries for 18 distinct pages, one appearing five times, climbing toward the cap of 50.
+Revisiting a page anywhere in the stack pushes a duplicate; only the top is deduped. Hence 28
+entries for 18 distinct pages, one appearing five times.
 
-Truncating back to the existing entry looks tidier and is wrong: A→B→C→A would collapse to `[A]`,
-so Back exits the editor immediately and silently discards B and C — pages visited more recently
-than the first A. Move-to-top gives `[B, C, A]`: Back retraces the path actually walked, minus the
-repeats. It is the Alt-Tab semantic, and it matches what Back means to a user — the last *distinct*
-place they were.
+That looked like a defect worth fixing in the same change, and both a build and a review pass
+agreed on move-to-top as the fix (A→B→C→A leaving `[B, C, A]`), with truncate-to-index rejected
+because it would collapse to `[A]` and discard B and C. The reasoning was sound and the conclusion
+was wrong, because it answered a question the product had already answered.
 
-Safe because every production reader of `pageStack` uses only `.at(-1)` or `.length`; the two that
-look positional are not — `renamePage` matches on `pageId` (#3322) and `coerceTab`'s rehydration
-is an order-preserving filter. The `#754` cap survives the change with the off-by-one intact: a
-revisit filters to 49 and pushes to 50, which is not `> 50`.
+`e2e/inner-links.spec.ts:132` walks Getting Started → Quick Notes → Getting Started and then
+presses Back twice, and its second assertion is labelled *"Back to first Getting Started"*. That
+is browser history semantics, deliberately pinned: every hop is an entry, and Back retraces the
+repeat. The dedupe turns the stack into `[QN, GS]`, so the second Back empties it and leaves the
+editor — `element(s) not found`, which is exactly how CI failed.
+
+Reverted. What #4707 asked for is the `enteredFrom` fix; the stack length was a *symptom* of never
+being able to leave the editor, and that is what the origin fix addresses. The 28 entries were
+evidence of the bug, not a second bug.
+
+Two things worth keeping. First, neither the builder nor the reviewer consulted the e2e suite —
+both ran vitest, which has no opinion here, and both reasoned from first principles about what
+Back "should" mean. A pinned product decision outranks that reasoning and was one grep away.
+Second, the argument that convinced both of them (Alt-Tab semantics, "the last distinct place I
+was") is a perfectly good design — for a different product than the one whose tests are in this
+repo.
