@@ -420,9 +420,9 @@ fn reverse_add_attachment_fs_path(
 /// `sanitize_attachment_filename` call every FORWARD writer of
 /// `attachments.filename` already makes —
 /// `agaric_engine::apply::attachments::apply_add_attachment_tx`,
-/// `…::apply_rename_attachment_tx`, `db::recovery`'s rename replay, and
-/// `agaric_sync::snapshot::restore`. Three writers sanitized and a fourth
-/// binding the payload value raw is exactly the shape that eventually gets
+/// `…::apply_rename_attachment_tx`, and `db::recovery`'s rename replay.
+/// Three writers sanitized and a fourth binding the payload value raw is
+/// exactly the shape that eventually gets
 /// one of them wrong, and it is the same asymmetry #3370 closed for
 /// `fs_path` in this very arm (see [`reverse_add_attachment_fs_path`]).
 ///
