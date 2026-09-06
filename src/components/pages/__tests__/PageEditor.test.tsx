@@ -55,11 +55,24 @@ vi.mock('@/components/editor/BlockTree', () => ({
 // The read-only renderer PageEditor uses for a tag page's legacy children.
 // Mocked for the same reason BlockTree is: it pulls in the whole
 // RichContentRenderer chain.
+// The rows carry `data-embed-block-id` as the real renderer does — that is
+// the attribute PageEditor's reveal resolves against on a tag page (#4789).
 let capturedEmbeddedRows: readonly { id: string }[] | undefined
+let capturedEmbeddedOnNavigate: ((id: string) => void) | undefined
 vi.mock('@/components/editor/embed/EmbeddedBlockTree', () => ({
-  EmbeddedBlockTree: (props: { rows: readonly { id: string }[] }) => {
+  EmbeddedBlockTree: (props: {
+    rows: readonly { id: string }[]
+    onNavigate?: (id: string) => void
+  }) => {
     capturedEmbeddedRows = props.rows
-    return <div data-testid="embedded-block-tree" data-row-count={props.rows.length} />
+    capturedEmbeddedOnNavigate = props.onNavigate
+    return (
+      <div data-testid="embedded-block-tree" data-row-count={props.rows.length}>
+        {props.rows.map((row) => (
+          <div key={row.id} data-embed-block-id={row.id} />
+        ))}
+      </div>
+    )
   },
 }))
 
@@ -181,6 +194,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
   capturedEmbeddedRows = undefined
+  capturedEmbeddedOnNavigate = undefined
   capturedAutoCreateFirstBlock = undefined
   capturedOnRevealSettled = undefined
   capturedRevealNonce = undefined
@@ -683,6 +697,84 @@ describe('PageEditor tag page is read-only (#4725)', () => {
     })
     expect(capturedEmbeddedRows?.map((r) => r.id)).toEqual(['LEGACY'])
     expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+  })
+
+  // #4789 — links, block refs and tag chips inside a legacy child did
+  // nothing on click: the embed got no navigation callback at all.
+  it('gives the legacy children the page navigation callback', async () => {
+    stubTagPage()
+    const onNavigateToPage = vi.fn()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" onNavigateToPage={onNavigateToPage} />)
+
+    act(() => {
+      getPageStore('TAG_1')?.setState({
+        blocks: [makeBlock({ id: 'LEGACY', content: 'stray', parent_id: 'TAG_1', position: 0 })],
+      })
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('embedded-block-tree')).toBeInTheDocument()
+    })
+
+    capturedEmbeddedOnNavigate?.('TARGET_1')
+    expect(onNavigateToPage).toHaveBeenCalledWith('TARGET_1')
+  })
+
+  // #4789 — a search hit on a legacy child registered a pending reveal that
+  // only BlockTree can settle, and BlockTree is not mounted here: no scroll,
+  // no notice, and `selectedBlockId` stuck forever. The reveal must resolve
+  // against the embed's own rows instead.
+  it('scrolls a search hit on a legacy child into view', async () => {
+    stubTagPage()
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    act(() => {
+      getPageStore('TAG_1')?.setState({
+        blocks: [makeBlock({ id: 'LEGACY', content: 'stray', parent_id: 'TAG_1', position: 0 })],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'LEGACY' })
+    })
+
+    await waitFor(() => {
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
+    expect(scrollSpy).toHaveBeenCalled()
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  // The fail-closed half of the same fix: with no BlockTree to report back, a
+  // row the embed does not render has to settle as not-found rather than wait
+  // for a report that never comes. The renderer mounts every row it is given,
+  // so the state is forced through an explicit `blocksById`.
+  it('reports blockNotFound for a legacy child the embed does not render', async () => {
+    stubTagPage()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    })
+
+    const rendered = makeBlock({ id: 'LEGACY', content: 'stray', parent_id: 'TAG_1', position: 0 })
+    const unrendered = makeBlock({ id: 'GONE', content: 'gone', parent_id: 'TAG_1', position: 1 })
+    act(() => {
+      getPageStore('TAG_1')?.setState({
+        blocks: [rendered],
+        blocksById: new Map([
+          [rendered.id, rendered],
+          [unrendered.id, unrendered],
+        ]),
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'GONE' })
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith(t('error.blockNotFound'))
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
   })
 
   it('has no a11y violations', async () => {
