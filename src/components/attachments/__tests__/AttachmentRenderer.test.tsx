@@ -1082,7 +1082,6 @@ describe('AttachmentRenderer', () => {
     // opening the gate: with no observer nothing else can ever flip it, so
     // the placeholder never resolves and no byte read fires.
     it('loads eagerly in a runtime without IntersectionObserver', async () => {
-      MockIntersectionObserver.autoEnter = false
       vi.stubGlobal('IntersectionObserver', undefined)
 
       render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)

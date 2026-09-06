@@ -86,7 +86,7 @@ export function JournalControls(): React.ReactElement {
   // active tab.
   const [rovingMode, setRovingMode] = useState<JournalMode>(mode as JournalMode)
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- realigns the roving tab stop when `mode` changes from outside the tablist; arrow keys move it independently, so it is not derivable; see #4407
+    // oxlint-disable-next-line react/set-state-in-effect -- realigns the roving tab stop to `mode`; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
     setRovingMode(mode as JournalMode)
   }, [mode])
 

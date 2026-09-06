@@ -90,7 +90,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
   // focused date is no longer in this grid). Keyed on the in-month set so it
   // re-seeds exactly once per month change.
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- re-seeds the roving tab stop when the month's in-month day set changes; arrow/Home/End move it independently, so it is not derivable; see #4407
+    // oxlint-disable-next-line react/set-state-in-effect -- re-seeds the roving tab stop each month; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
     setFocusedDate((prev) =>
       prev !== null && inMonthDates.includes(prev) ? prev : defaultFocusedDate,
     )

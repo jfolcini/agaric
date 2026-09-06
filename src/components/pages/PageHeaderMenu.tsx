@@ -134,7 +134,7 @@ export function PageHeaderMenu({
   const firstId = orderedIds[0] ?? null
   useEffect(() => {
     if (!kebabOpen) {
-      // oxlint-disable-next-line react/set-state-in-effect -- clears the roving focus id when the Radix kebab menu closes; arrow keys advance that id, so it is not derivable from props; see #4407
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the roving focus id on close; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
       setActiveId(null)
       return
     }

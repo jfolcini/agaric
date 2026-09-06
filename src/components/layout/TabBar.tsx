@@ -102,7 +102,7 @@ export function TabBar(): React.ReactElement | null {
   // — the next open re-seeds.
   useEffect(() => {
     if (dropdownOpen) {
-      // oxlint-disable-next-line react/set-state-in-effect -- seeds the roving menu index when Radix opens the dropdown; the index then moves on arrow keys, so it cannot be derived from `activeTabIndex`; see #4407
+      // oxlint-disable-next-line react/set-state-in-effect -- seeds the roving menu index on open; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
       setDropdownFocusedIndex(activeTabIndex * 2)
     }
   }, [dropdownOpen, activeTabIndex])
