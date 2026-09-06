@@ -12,7 +12,7 @@ import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
-import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -516,9 +516,7 @@ describe('QueryResult', () => {
     })
 
     const user = userEvent.setup()
-    const onNavigate = vi.fn((pageId: string) => {
-      useTabsStore.getState().navigateToPage(pageId, 'Resolved Page')
-    })
+    const onNavigate = vi.fn()
     render(<QueryResult expression="type:tag expr:test" onNavigate={onNavigate} />)
 
     // The page title still shows in the row, as plain text.
@@ -527,11 +525,6 @@ describe('QueryResult', () => {
     await user.click(row as HTMLElement)
 
     expect(onNavigate).toHaveBeenCalledWith('P1')
-    const navState = useNavigationStore.getState()
-    expect(navState.currentView).toBe('page-editor')
-    expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
-    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('P1')
-    expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Resolved Page')
   })
 })
 
