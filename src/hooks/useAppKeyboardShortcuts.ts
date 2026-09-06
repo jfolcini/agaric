@@ -37,15 +37,13 @@ import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date
 import { useEffect } from 'react'
 
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
-import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { getPaletteCommand } from '@/lib/palette-commands'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
+import { createUntitledPage } from '@/lib/untitled-page'
 import { type JournalMode, useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -304,10 +302,11 @@ function tryPaletteOpen(e: KeyboardEvent): boolean {
 }
 
 /**
- * `createNewPage` — create an "Untitled" page in the active space and navigate
- * To it. Phase 2: every page must belong to a space, so it routes through
- * the atomic `createPageInSpace` command. The `isReady`/`currentSpaceId` guard
- * is defensive — the shortcut only fires after boot resolves the space list.
+ * `createNewPage` — create an untitled page in the active space and navigate
+ * To it, through the shared `createUntitledPage` (#4723 — the title it settles
+ * on is the first free `Untitled N`, so the chord never reopens the last one).
+ * The `isReady`/`currentSpaceId` guard is defensive — the shortcut only fires
+ * after boot resolves the space list.
  */
 function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean {
   if (!matchesShortcutBinding(e, 'createNewPage')) return false
@@ -318,15 +317,10 @@ function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean
     notify.error(t('space.notReady'))
     return true
   }
-  commands
-    .createPageInSpace(null, 'Untitled', currentSpaceId)
-    .then(unwrap)
-    .then((newId) => {
-      useResolveStore.getState().set(newId, 'Untitled', false)
-      // #4338 — publish the create so warm picker caches stay right. Same
-      // rationale as `App.tsx`'s `handleNewPage`, which this mirrors.
-      notifyPageAdded(newId, 'Untitled', currentSpaceId)
-      useTabsStore.getState().navigateToPage(newId, 'Untitled')
+  createUntitledPage(currentSpaceId)
+    .then(({ id, title }) => {
+      useResolveStore.getState().set(id, title, false)
+      useTabsStore.getState().navigateToPage(id, title)
       announce(t('announce.newPageCreated'))
     })
     .catch((err: unknown) => {

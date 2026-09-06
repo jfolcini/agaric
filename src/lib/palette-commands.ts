@@ -48,9 +48,9 @@ import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
+import { createUntitledPage } from '@/lib/untitled-page'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -219,14 +219,10 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         notify.error(t('space.notReady'))
         return
       }
-      commands
-        .createPageInSpace(null, 'Untitled', currentSpaceId)
-        .then(unwrap)
-        .then((newId) => {
-          useResolveStore.getState().set(newId, 'Untitled', false)
-          // #4338 — publish the create so warm picker caches stay right.
-          notifyPageAdded(newId, 'Untitled', currentSpaceId)
-          useTabsStore.getState().navigateToPage(newId, 'Untitled')
+      createUntitledPage(currentSpaceId)
+        .then(({ id, title }) => {
+          useResolveStore.getState().set(id, title, false)
+          useTabsStore.getState().navigateToPage(id, title)
           announce(t('announce.newPageCreated'))
         })
         .catch((err: unknown) => {

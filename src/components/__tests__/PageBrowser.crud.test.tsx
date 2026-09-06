@@ -106,6 +106,8 @@ function stubInvoke(overrides: Readonly<Record<string, InvokeHandler>> = {}) {
       list_pages_with_metadata: () => emptyPage,
       // Alias resolution: no alias match unless a test says otherwise.
       resolve_page_by_alias: () => null,
+      // #4723 — the create form asks the space for its pages before creating.
+      list_all_pages_in_space: () => [],
       // Speculative row prefetch — fires on pointer dwell, not on any
       // assertion; modelled here so it can never stand in for a real call.
       load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),

@@ -80,6 +80,10 @@ pub enum ValidationCode {
     /// of the generic "failed to save property" toast — which is the whole
     /// point of validating at the point of entry.
     InvalidRepeatRule,
+    /// Renaming a page to a title another live page in the same space
+    /// already carries (`edit_block_inner`, #4723). Coded so the title
+    /// editor can name the clash instead of the generic rename failure.
+    DuplicatePageTitle,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -773,7 +777,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 7] = [
+        let cases: [(ValidationCode, &str); 8] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -781,6 +785,7 @@ mod tests {
             (ValidationCode::RequiresRefresh, "RequiresRefresh"),
             (ValidationCode::PageNotInSpace, "PageNotInSpace"),
             (ValidationCode::InvalidRepeatRule, "InvalidRepeatRule"),
+            (ValidationCode::DuplicatePageTitle, "DuplicatePageTitle"),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -818,6 +823,7 @@ mod tests {
                 ValidationCode::RequiresRefresh => "RequiresRefresh",
                 ValidationCode::PageNotInSpace => "PageNotInSpace",
                 ValidationCode::InvalidRepeatRule => "InvalidRepeatRule",
+                ValidationCode::DuplicatePageTitle => "DuplicatePageTitle",
             }
         }
         for code in [
@@ -828,6 +834,7 @@ mod tests {
             ValidationCode::RequiresRefresh,
             ValidationCode::PageNotInSpace,
             ValidationCode::InvalidRepeatRule,
+            ValidationCode::DuplicatePageTitle,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

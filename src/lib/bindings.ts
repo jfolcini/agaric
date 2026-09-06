@@ -4350,7 +4350,13 @@ export type ValidationCode =
  *  of the generic "failed to save property" toast — which is the whole
  *  point of validating at the point of entry.
  */
-"InvalidRepeatRule";
+"InvalidRepeatRule" | 
+/**
+ *  Renaming a page to a title another live page in the same space
+ *  already carries (`edit_block_inner`, #4723). Coded so the title
+ *  editor can name the clash instead of the generic rename failure.
+ */
+"DuplicatePageTitle";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

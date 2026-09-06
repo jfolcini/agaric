@@ -132,6 +132,18 @@ export function TemplatesView(): React.ReactElement {
         setIsCreating(false)
         return
       }
+      // #4723 — `create_page_in_space` RESOLVES an existing title to that
+      // page instead of creating one, so stamping the returned id would turn
+      // an ordinary page into a template. Same pre-check as the welcome
+      // flow's `ensureSamplePage`.
+      const spacePages = unwrap(
+        await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
+      )
+      if (spacePages.some((page) => page.content === name)) {
+        notify.error(t('templates.titleTaken', { name }))
+        setIsCreating(false)
+        return
+      }
       const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
       // #4338 — published BEFORE the `template` property is set, because
       // that is when the row starts being returned by

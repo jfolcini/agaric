@@ -158,6 +158,10 @@ pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpac
 /// happens inside the transaction so the validation is TOCTOU-safe
 /// against a concurrent delete of the target space.
 ///
+/// A live page in `space_id` already titled `content` is returned as-is
+/// (nothing created, no op appended): page titles are unique per space
+/// (#4723).
+///
 /// Returns the new page's `BlockId`. The Tauri wrapper serialises that
 /// via `BlockId`'s transparent `Serialize` impl — the frontend receives
 /// a plain string.
@@ -259,6 +263,14 @@ pub async fn create_page_in_space_inner(
         }
     }
 
+    // #4723 — a title is unique among live pages of one space, and a caller
+    // asking for an existing title (`[[name]]`) means that page: resolve to
+    // it, create nothing, append nothing.
+    if let Some(existing) = find_live_page_by_title(&mut tx, &space_id, &content, None).await? {
+        tx.commit_without_dispatch().await?;
+        return Ok(BlockId::from_trusted(&existing));
+    }
+
     // 2. Create the page block. `create_block_in_tx` generates the ULID,
     //    appends a `CreateBlock` op, and inserts the materialized row.
     let (block, page_op_record) = create_block_in_tx(
@@ -299,6 +311,32 @@ pub async fn create_page_in_space_inner(
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(new_page_id)
+}
+
+/// The live page in `space_id` titled exactly `title` (the comparison
+/// `resolve_or_create_journal_page` uses), skipping `exclude_id` so a rename
+/// does not collide with the page being renamed (#4723).
+pub(crate) async fn find_live_page_by_title(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    title: &str,
+    exclude_id: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    let id = sqlx::query_scalar!(
+        r#"SELECT id as "id!: String" FROM blocks
+           WHERE block_type = 'page'
+             AND deleted_at IS NULL
+             AND content = ?
+             AND space_id = ?
+             AND id IS NOT ?
+           LIMIT 1"#,
+        title,
+        space_id,
+        exclude_id,
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(id)
 }
 
 /// Tauri command wrapper around [`create_page_in_space_inner`].
@@ -800,6 +838,139 @@ mod tests {
             per_block, 2,
             "both appended ops must reference the new page id (got {per_block})"
         );
+    }
+
+    /// #4723 — a live page already titled `content` in the target space is
+    /// the answer: same id back, no new row, no new op.
+    #[tokio::test]
+    async fn create_page_in_space_resolves_to_existing_title_in_same_space() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let first = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+        let ops_before = count_op_log(&pool).await;
+        let pages_before = count_live_pages_titled(&pool, "Home").await;
+
+        let second = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            second, first,
+            "same title in the same space resolves to the existing page"
+        );
+        assert_eq!(
+            count_op_log(&pool).await,
+            ops_before,
+            "resolving appends no op"
+        );
+        assert_eq!(count_live_pages_titled(&pool, "Home").await, pages_before);
+        assert_eq!(pages_before, 1);
+    }
+
+    /// #4723 — uniqueness is per space: the same title in another space is a
+    /// legitimate second page.
+    #[tokio::test]
+    async fn create_page_in_space_same_title_in_other_space_creates() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let personal = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+        let work = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_WORK_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(work, personal, "a cross-space title pair is two pages");
+        assert_eq!(count_live_pages_titled(&pool, "Home").await, 2);
+        assert_eq!(
+            get_space_property_ref(&pool, work.as_str())
+                .await
+                .as_deref(),
+            Some(SPACE_WORK_ULID)
+        );
+    }
+
+    /// #4723 — only LIVE pages hold a title: after the page is soft-deleted the
+    /// title is free again and a create makes a fresh page.
+    #[tokio::test]
+    async fn create_page_in_space_reuses_title_of_deleted_page() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let first = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+        crate::commands::delete_block_inner(&pool, DEV, &materializer, first.clone())
+            .await
+            .unwrap();
+
+        let second = create_page_in_space_inner(
+            &pool,
+            DEV,
+            &materializer,
+            None,
+            "Home".into(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(second, first, "a deleted page does not hold its title");
+        assert_eq!(count_live_pages_titled(&pool, "Home").await, 1);
+    }
+
+    /// Live `page` rows titled exactly `title`, across every space.
+    async fn count_live_pages_titled(pool: &SqlitePool, title: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM blocks \
+             WHERE block_type = 'page' AND deleted_at IS NULL AND content = ?",
+        )
+        .bind(title)
+        .fetch_one(pool)
+        .await
+        .unwrap()
     }
 
     #[tokio::test]

@@ -19,6 +19,9 @@ import { useSpaceStore } from '@/stores/space'
 // `(parentId, content, spaceId)`; the shim wraps a fulfilment in the
 // `{ status: 'ok', data }` envelope `unwrap` expects.
 const mockedCreate = vi.hoisted(() => vi.fn())
+// #4723 — the create path asks the space for its full page list first, so an
+// existing title never reaches `createPageInSpace`.
+const mockedListPages = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -28,6 +31,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreate(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListPages(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -81,6 +86,7 @@ function makeHarness(wireFilters: FilterPrimitive[] = []): Harness & {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedListPages.mockResolvedValue([])
   useSpaceStore.setState({ currentSpaceId: 'SPACE_A', isReady: true })
 })
 
@@ -114,6 +120,28 @@ describe('usePageCreation', () => {
     expect(countUpdater(5)).toBe(6)
     expect(countUpdater(undefined)).toBeUndefined()
     expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000000', 'My Page')
+  })
+
+  // #4723 — an existing title resolves to that page on the backend, so the
+  // create is skipped entirely: a resolve past the loaded window would
+  // otherwise prepend a duplicate row and bump the count.
+  it('selects the existing page and never calls create when the title already exists in the space', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
+    const h = makeHarness([])
+    const { result } = h.render()
+
+    act(() => {
+      result.current.setNewPageName('My Page')
+    })
+    await act(async () => {
+      await result.current.handleCreatePage()
+    })
+
+    expect(mockedCreate).not.toHaveBeenCalled()
+    expect(h.setPages).not.toHaveBeenCalled()
+    expect(h.setDisplayTotalCount).not.toHaveBeenCalled()
+    expect(h.reload).not.toHaveBeenCalled()
+    expect(h.onPageSelect).toHaveBeenCalledWith('OLD', 'My Page')
   })
 
   // #4338 — the Pages view has no `useBlockResolve()` to register with, so

@@ -69,6 +69,7 @@ export const pages: Record<string, string> = {
   'pageHeader.redoFailed': 'Redo failed',
   'pageHeader.pageRenamed': 'Page renamed',
   'pageHeader.renameFailed': 'Failed to rename page',
+  'pageHeader.renameDuplicateTitle': 'A page with this title already exists in this space',
   'pageHeader.aliases': 'Also known as:',
   'pageHeader.aliasUpdateFailed': 'Failed to update aliases',
   'pageHeader.loadAliasesFailed': 'Failed to load aliases',
@@ -119,6 +120,7 @@ export const pages: Record<string, string> = {
   'templates.newTemplatePlaceholder': 'New template name...',
   'templates.newTemplateInputLabel': 'New template name',
   'templates.createFailed': 'Failed to create template',
+  'templates.titleTaken': 'A page titled "{{name}}" already exists in this space',
   // #215 — dynamic-variable discoverability. These tokens are expanded by
   // `expandTemplateVariables` when a template is inserted; previously they
   // were documented only in code comments.

@@ -52,10 +52,10 @@
  * a later `preload` will re-fetch. `TagList`, `useBlockTags`,
  * `useRichContentCallbacks`, `paste-internalize`, `page-rename`,
  * `usePageDeleteAction`, `onCreatePage` / `onCreateTag`, the journal /
- * date-picker page seeds, and the three `createPageInSpace(…, 'Untitled')`
- * new-page paths (`App.tsx`, `useAppKeyboardShortcuts.ts`,
- * `palette-commands.ts` — whose `'Untitled'` is the PERSISTED content, so it
- * must stay that untranslated literal to match what `preload` reads back).
+ * date-picker page seeds, and `createUntitledPage` (`@/lib/untitled-page.ts`,
+ * behind the three new-page paths — whose `Untitled` / `Untitled N` title is
+ * the PERSISTED content, so it stays an untranslated literal to match what
+ * `preload` reads back).
  *
  * ## The blank cells, and where the cache-miss signal lives now (#4238)
  *

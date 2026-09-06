@@ -20,7 +20,7 @@ import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
-import { useTabsStore } from '@/stores/tabs'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -28,11 +28,14 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }))
 
-// #2927 phase 7 — the hook calls `commands.createPageInSpace` from
-// `@/lib/bindings` directly. The spy sees the real wire arguments
-// `(parentId, content, spaceId)`; the shim wraps its fulfilment in the
-// `{ status: 'ok', data }` envelope `unwrap` expects.
+// #2927 phase 7 — the hook creates through `@/lib/untitled-page`, which calls
+// `commands.createPageInSpace` from `@/lib/bindings` directly. The spy sees the
+// real wire arguments `(parentId, content, spaceId)`; the shim wraps its
+// fulfilment in the `{ status: 'ok', data }` envelope `unwrap` expects.
+// #4723 — the helper reads the space's page list first to pick a free
+// `Untitled N`, so that command is mocked too.
 const mockedCreate = vi.hoisted(() => vi.fn(async () => 'NEW_PAGE_ID_00000000000000'))
+const mockedListPages = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -41,6 +44,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreate(...(args as [])).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListPages(...(args as [])).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -167,6 +172,27 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     await Promise.resolve()
 
     expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_PERSONAL')
+  })
+
+  // #4723 — `create_page_in_space` resolves an existing title to that page, so
+  // a second Ctrl+N with an un-renamed "Untitled" around used to navigate into
+  // it instead of creating anything.
+  it('Ctrl+N creates the first free Untitled title and navigates to the NEW page', async () => {
+    mockedListPages.mockResolvedValueOnce([
+      { id: 'P_OLD_0000000000000000000', content: 'Untitled' },
+    ])
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+
+    await waitFor(() =>
+      expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_PERSONAL'),
+    )
+    await waitFor(() =>
+      expect(selectPageStack(useTabsStore.getState())).toContainEqual(
+        expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled 2' }),
+      ),
+    )
   })
 
   // #4338 — the chord creates a page from module scope, with no
