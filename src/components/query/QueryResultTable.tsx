@@ -3,6 +3,10 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PageLink } from '@/components/pages/PageLink'
+import {
+  QueryResultRowContent,
+  useRefTitleResolver,
+} from '@/components/query/QueryResultRowContent'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { BlockRow } from '@/lib/bindings'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
@@ -62,6 +66,11 @@ export function QueryResultTable({
   partial = false,
 }: QueryResultTableProps): React.ReactElement {
   const { t } = useTranslation()
+  // #4719 — see `QueryResultList`: the cell's accessible name substitutes
+  // inline references through the CHIP's resolver, so a caller that renders
+  // this table without the optional `resolveBlockTitle` prop still names the
+  // cell after what the cell shows.
+  const resolveRefTitle = useRefTitleResolver()
   return (
     <ScrollArea className="w-full">
       <table className="w-full text-xs">
@@ -106,7 +115,12 @@ export function QueryResultTable({
         </thead>
         <tbody className="divide-y divide-muted-foreground/10">
           {results.map((block) => {
-            const { title, pageTitle } = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+            const { title, displayMarkdown, pageTitle } = resolveBlockDisplay(
+              block,
+              pageTitles,
+              resolveBlockTitle,
+              resolveRefTitle,
+            )
             return (
               <tr key={block.id} className="hover:bg-muted/40 transition-colors">
                 {columns.map((col) => (
@@ -115,12 +129,19 @@ export function QueryResultTable({
                       <button
                         type="button"
                         className="text-left hover:underline truncate max-w-[300px] block"
+                        // See `resolveBlockDisplay` for why this string is
+                        // safe as a name.
+                        aria-label={title}
                         onClick={(e) => {
                           e.stopPropagation()
                           handleBlockNavigation(block, onNavigate)
                         }}
                       >
-                        {title}
+                        {displayMarkdown !== null ? (
+                          <QueryResultRowContent content={displayMarkdown} />
+                        ) : (
+                          title
+                        )}
                       </button>
                     ) : (
                       <span className="text-muted-foreground">
