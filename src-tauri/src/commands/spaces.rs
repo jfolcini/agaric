@@ -30,6 +30,7 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_engine::apply::loro_apply::hydrate_space_block_into_own_engine;
 use agaric_store::space::SpaceId;
 
 use super::sanitize_internal_error;
@@ -454,6 +455,16 @@ pub async fn create_space_inner(
     )
     .await?;
     tx.enqueue_background(is_space_op);
+
+    // #4775: the block now registers a space; seed it into that space's own
+    // doc so it reaches peers (and so the accent below takes the doc path).
+    hydrate_space_block_into_own_engine(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &SpaceId::from_trusted(new_space_id.as_str()),
+    )
+    .await?;
 
     // 3. Optional accent color (consumer). Stored as
     //    `value_text` so the palette token (`accent-violet`,

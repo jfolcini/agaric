@@ -1716,6 +1716,18 @@ pub(crate) async fn import_and_project(
         }
     }
 
+    // #4775: the space's own block travels in its own doc, and its `is_space`
+    // row is what registers the space here (the 0089 trigger). Project it
+    // first, so every sibling's `space_id` subquery in Pass A already
+    // resolves; the delta's order is otherwise kept.
+    if let Some(i) = changed_blocks
+        .iter()
+        .position(|b| b.as_str() == space_id.as_str())
+    {
+        changed_blocks[..=i].rotate_right(1);
+        block_states[..=i].rotate_right(1);
+    }
+
     // Pass A — core columns + properties.  This upserts EVERY changed
     // block (including the tag blocks themselves), so all `blocks` rows
     // referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
