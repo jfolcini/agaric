@@ -16,14 +16,16 @@
 //! the hash preimage) but the derived-state row converges on the ULID.
 
 pub mod bootstrap;
+pub mod placement;
 // #2621 (THE INVERSION): `cross_space_validation` is store-clean blocks/spaces
 // SQL, so it moved DOWN into `agaric-store`. This re-export keeps every existing
 // `agaric_store::cross_space_validation::…` call site compiling unchanged.
 
 pub use bootstrap::{
     SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
-    bootstrap_spaces,
+    bootstrap_spaces, place_space_less_blocks,
 };
+pub use placement::SpacePlacementSink;
 
 #[cfg(any(test, feature = "test-util"))]
 pub use bootstrap::bootstrap_spaces_for_test;
