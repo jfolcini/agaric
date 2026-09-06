@@ -51,22 +51,6 @@ pub enum SyncProgressUpdate {
         /// Aggregate byte total advertised for the current `phase`.
         bytes_total: u64,
     },
-    /// Per-frame snapshot catch-up transfer progress. Emitted by
-    /// `sync_daemon::snapshot_transfer` between 5 MB binary frames while
-    /// the compressed snapshot blob streams over the wire, so the UI can
-    /// render a real bytes-done bar for the catch-up blob the same way the
-    /// `Files` variant does for attachments.
-    Snapshot {
-        /// `"sending"` (responder is shipping the snapshot blob),
-        /// `"receiving"` (initiator is pulling it), or `"complete"`
-        /// (the blob finished transferring for this session).
-        phase: String,
-        remote_device_id: String,
-        /// Bytes shipped/received so far in the current `phase`.
-        bytes_done: u64,
-        /// Total compressed snapshot size advertised for the transfer.
-        bytes_total: u64,
-    },
 }
 
 /// Payload sent over Tauri events for sync progress/completion/errors.
@@ -134,17 +118,6 @@ pub enum SyncEvent {
         remote_device_id: String,
         files_done: u64,
         files_total: u64,
-        bytes_done: u64,
-        bytes_total: u64,
-    },
-    /// Per-frame snapshot catch-up transfer progress emitted by
-    /// `sync_daemon::snapshot_transfer`. The `ChannelEventSink` forwards
-    /// these to the `Channel<SyncProgressUpdate>` as the `Snapshot`
-    /// variant; the production `TauriEventSink` drops them (the
-    /// channel is the single canonical source, mirroring `FileProgress`).
-    SnapshotProgress {
-        phase: String,
-        remote_device_id: String,
         bytes_done: u64,
         bytes_total: u64,
     },

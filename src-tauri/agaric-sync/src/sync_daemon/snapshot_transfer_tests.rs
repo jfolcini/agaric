@@ -425,26 +425,22 @@ async fn snapshot_catchup_with_no_identity_at_all_still_warns_4097() {
 /// peer.
 ///
 /// The id was resolved only at the completion write, so a fallback session
-/// emitted `Progress`, `SnapshotProgress` and its terminal `Complete` with
-/// `remote_device_id: ""` — a UI keyed on that field drops or mis-attributes
-/// the whole transfer, including the progress bar for a multi-hundred-MB
-/// snapshot. Resolving up front fixes the events, not just the log line.
+/// emitted `Progress` and its terminal `Complete` with `remote_device_id: ""`
+/// — a UI keyed on that field drops or mis-attributes the whole transfer.
+/// Resolving up front fixes the events, not just the log line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn snapshot_catchup_events_carry_the_resolved_peer_id_4097() {
     let (_init_pool, _dir, result, sink) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
     result.expect("the fallback path must complete the catch-up");
 
     let events = sink.events();
-    // The four peer-keyed variants a catch-up emits. The daemon-level
+    // The three peer-keyed variants a catch-up emits. The daemon-level
     // variants (MdnsDisabled, InternetFacingBind, …) are not peer-scoped and
     // this path never emits them.
     let peer_ids: Vec<String> = events
         .iter()
         .filter_map(|e| match e {
             SyncEvent::Progress {
-                remote_device_id, ..
-            }
-            | SyncEvent::SnapshotProgress {
                 remote_device_id, ..
             }
             | SyncEvent::Complete {

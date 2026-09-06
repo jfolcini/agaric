@@ -2506,12 +2506,6 @@ pub async fn run_sync_session(
         )
         .await
         {
-            // #2538: `Applied` is the only success. The sub-flow's other
-            // outcome used to be `Rejected` — an over-cap CBOR
-            // `SnapshotOffer`, which #3487 deleted and #4699 removed the arm
-            // for. A failed catch-up now arrives as `Err` and is recorded as
-            // a session failure below, which is what keeps the scheduler from
-            // re-selecting the peer every 30 s while the UI says "complete".
             Ok(snapshot_transfer::CatchupOutcome::Applied { .. }) => {
                 tracing::info!(
                     peer_id = %peer_id,
@@ -2526,10 +2520,11 @@ pub async fn run_sync_session(
                 return Ok(());
             }
             Err(e) => {
-                // The catch-up sub-flow had its own error handling
+                // #2538: the catch-up sub-flow had its own error handling
                 // (decode/apply failure, unexpected message). Surface the
-                // error here so the scheduler records the failure and
-                // backs off.
+                // error here so the session is recorded as a failure, which
+                // keeps the scheduler from re-selecting the peer every 30 s
+                // while the UI says "complete".
                 if let Err(close_err) =
                     finish_session(false, send, conn, SessionLimits::default()).await
                 {

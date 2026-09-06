@@ -213,9 +213,7 @@ pub struct EngineReloadCtx<'a> {
 
 /// Result of an initiator-side snapshot catch-up attempt.
 ///
-/// One variant: the catch-up either applied or returned `Err`. It used to
-/// carry a `Rejected` arm for an over-cap CBOR `SnapshotOffer`; #3487 deleted
-/// that message and #4699 the arm.
+/// One variant: the catch-up either applied or returned `Err`.
 #[derive(Debug, PartialEq)]
 pub enum CatchupOutcome {
     /// Snapshot was received, decoded, applied, and the initiator's
