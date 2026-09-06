@@ -227,6 +227,19 @@ pub struct OracleCoverage {
     /// Counted so the tolerance is visible: a fixture where this is large and
     /// `fts_indexable_blocks` is small is auditing very little.
     pub fts_tombstoned_rows_tolerated: i64,
+    /// #4679: live blocks carrying a non-NULL `due_date` or `scheduled_date`
+    /// column — the `agenda_cache` column arms' source rows. Before #4679 the
+    /// generator's date op projected a column CLEAR, so this was always 0.
+    pub date_column_rows: i64,
+    /// #4679: rows in `block_tags` — the `agenda_cache` tag arm's and
+    /// `tags_cache.usage_count`'s source. B6 dropped every tag op before
+    /// #4679, so this was always 0 there.
+    pub block_tag_edges: i64,
+    /// #4679: distinct non-NULL `blocks.space_id` values. A chain that
+    /// migrates its page group into the second registered space reads 2 here
+    /// (the link-target page and the tag stay in the first); one that never
+    /// leaves reads 1. Peak-tracked by B6 because a chain may migrate back.
+    pub distinct_block_spaces: i64,
 }
 
 /// Count the artefact rows the oracle is auditing.
@@ -268,6 +281,23 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     let fts_indexable_blocks = i64::try_from(fts.expected.len()).unwrap_or(i64::MAX);
     let fts_tombstoned_rows_tolerated =
         i64::try_from(fts.tombstoned_with_content.len()).unwrap_or(i64::MAX);
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let date_column_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks \
+         WHERE deleted_at IS NULL AND (due_date IS NOT NULL OR scheduled_date IS NOT NULL)",
+    )
+    .fetch_one(pool)
+    .await?;
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let block_tag_edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
+        .fetch_one(pool)
+        .await?;
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let distinct_block_spaces: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT space_id) FROM blocks WHERE space_id IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
 
     // Both page-shaped counters come from the SAME Rust folds the artefacts
     // use, so "the fixture covers this" and "the oracle audited this" can
@@ -295,6 +325,9 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         fts_blocks_rows,
         fts_indexable_blocks,
         fts_tombstoned_rows_tolerated,
+        date_column_rows,
+        block_tag_edges,
+        distinct_block_spaces,
     })
 }
 
@@ -2137,6 +2170,50 @@ pub async fn settle_fts_for_op(
                 ran += 1;
             }
             _ => {}
+        }
+    }
+    Ok(ran)
+}
+
+/// #4679: run the `blocks.space_id` maintainer PRODUCTION's dispatch table
+/// says this op needs — and only that.
+///
+/// Same contract as [`settle_page_link_cache_for_op`]. A created block's
+/// `space_id` has no synchronous arm: the engine read-back leaves the column
+/// NULL and the deferred `SetBlockPageId` task fills it from the parent
+/// (`set_block_space_id_from_parent`, the second half of that task's handler
+/// in `task_handlers.rs`). Until #4679 the apply-path drivers stamped the
+/// column themselves after every create, so an oracle over it would have
+/// diffed the test's own write against a rebuild rooted in the same constant.
+/// This asks `invalidations_for_op` instead and runs the production function
+/// for each `SetBlockPageId` it names, so a create arm that forgets the task
+/// leaves the column NULL for the oracle to see.
+///
+/// Only the SPACE half of the handler runs here. The drivers still stamp
+/// `page_id` themselves (the engine-path guard needs the NEXT op's
+/// `resolve_block_space` to succeed in-line, which it does through the owning
+/// page), so the handler's `set_block_page_id_from_parent_in_tx` would match
+/// zero rows; running it would be a no-op dressed as coverage.
+///
+/// A `SetProperty(space)` needs nothing from here: its page-group
+/// `blocks.space_id` write is in-tx (`project_set_property_to_sql`), and the
+/// dispatch table enqueues no space task for it.
+///
+/// `block_type_hint: None` models remote replay, inbound sync and boot — the
+/// same hint the apply-path proptest drivers carry.
+pub async fn settle_block_space_ids_for_op(
+    pool: &SqlitePool,
+    record: &agaric_store::op_log::OpRecord,
+    block_type_hint: Option<&str>,
+) -> Result<usize, AppError> {
+    use crate::materializer::MaterializeTask;
+
+    let tasks = crate::materializer::invalidations_for_op(record, block_type_hint, None)?;
+    let mut ran = 0usize;
+    for task in &tasks {
+        if let MaterializeTask::SetBlockPageId { block_id } = task {
+            agaric_store::cache::set_block_space_id_from_parent(pool, block_id).await?;
+            ran += 1;
         }
     }
     Ok(ran)

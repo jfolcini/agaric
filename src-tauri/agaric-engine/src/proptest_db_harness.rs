@@ -99,7 +99,7 @@ use agaric_core::ulid::BlockId;
 use agaric_store::op::{
     AddAttachmentPayload, CreateBlockPayload, DeleteAttachmentPayload, DeleteBlockPayload,
     DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
-    RestoreBlockPayload, SetPropertyPayload,
+    RestoreBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
 };
 use agaric_store::op_log::{OpRecord, append_local_op_at};
 
@@ -123,7 +123,28 @@ const DEFAULT_POOL_SIZE: usize = 4;
 
 /// Property keys the generator draws from — short identifiers matching
 /// production property shapes (`status`, `priority`, …).
-const PROP_KEYS: &[&str] = &["status", "priority", "due_date", "owner"];
+///
+/// #4679: the two reserved DATE keys carry `value_date` and `space` carries a
+/// `value_ref` into one of [`HARNESS_SPACE_IDS`]; `resolve_inner` routes the
+/// payload shape by key so every emitted `SetProperty` is one the command
+/// layer's `validate_property_value` accepts (pinned by
+/// `every_generated_set_property_passes_command_validation_4679`).
+const PROP_KEYS: &[&str] = &[
+    "status",
+    "priority",
+    "due_date",
+    "scheduled_date",
+    "owner",
+    SPACE_PROPERTY_KEY,
+];
+
+/// #4679: the two registered spaces a generated `SetProperty(space)` may point
+/// at. The apply-path suites (`materializer_app_tests::apply_reproject_proptest`)
+/// register BOTH in `spaces` before driving a chain, so the `value_ref` always
+/// names a real space and the projection's #708 unregistered-target skip is
+/// never what makes the op a no-op. Fixed 26-char ULID shape.
+pub const HARNESS_SPACE_IDS: [&str; 2] =
+    ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01HZ0000000000000000SPACE2"];
 
 /// #2681: filenames the `AddAttachment` generator draws from. A tiny fixed set
 /// keeps shrunk counter-examples small; the attachment_id (not the filename) is
@@ -182,10 +203,16 @@ pub enum OpKind {
         parent_choice: Option<usize>,
         position: i64,
     },
+    /// #4679: carries one candidate value per payload shape; `resolve_inner`
+    /// picks the one the selected key takes (`date` for the reserved date
+    /// keys, `space_index` into [`HARNESS_SPACE_IDS`] for `space`, `value` as
+    /// `value_text` otherwise) and ignores the rest.
     SetProperty {
         live_index: usize,
         key_index: usize,
         value: String,
+        date: String,
+        space_index: usize,
     },
     DeleteProperty {
         live_index: usize,
@@ -216,6 +243,14 @@ fn prop_value_strategy() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9]{1,12}".prop_map(|s| s)
 }
 
+/// #4679: a calendar-valid `YYYY-MM-DD` for the reserved date keys. Days stop
+/// at 28 so every month is valid without a leap-year table; `is_valid_iso_date`
+/// (the command layer's check) rejects impossible dates, not this range.
+fn prop_date_strategy() -> impl Strategy<Value = String> {
+    (2020i32..2030, 1u32..=12, 1u32..=28)
+        .prop_map(|(year, month, day)| format!("{year:04}-{month:02}-{day:02}"))
+}
+
 fn position_strategy() -> impl Strategy<Value = i64> {
     // 1-based positions only. `block_positions` / `move_block_inner`
     // reject 0 and negatives, so the generator never emits them.
@@ -244,8 +279,10 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
             .prop_map(|(live_index, parent_choice, position)| OpKind::Move {
                 live_index, parent_choice, position,
             }),
-        3 => (any::<usize>(), any::<usize>(), prop_value_strategy())
-            .prop_map(|(live_index, key_index, value)| OpKind::SetProperty { live_index, key_index, value }),
+        3 => (any::<usize>(), any::<usize>(), prop_value_strategy(), prop_date_strategy(), any::<usize>())
+            .prop_map(|(live_index, key_index, value, date, space_index)| OpKind::SetProperty {
+                live_index, key_index, value, date, space_index,
+            }),
         // #181: `DeleteProperty` is emitted by the random generator now
         // that `reverse::reverse_set_property` honours an intervening
         // `delete_property` when computing the prior value of a later
@@ -592,6 +629,8 @@ impl ChainModel {
                 live_index,
                 key_index,
                 value,
+                date,
+                space_index,
             } => {
                 let live = self.live_ids();
                 if live.is_empty() {
@@ -599,14 +638,44 @@ impl ChainModel {
                 }
                 let target = live[live_index % live.len()].clone();
                 let key = PROP_KEYS[key_index % PROP_KEYS.len()].to_string();
-                self.props.insert((target.clone(), key.clone()), ());
+                // #4679: route the payload shape by key — the shape
+                // `validate_property_value` demands, and the one
+                // `project_set_property_to_sql` reads (a date key's value lives
+                // in `value_date`; `value_text` on it projects a column CLEAR).
+                let (value_text, value_date, value_ref) = match key.as_str() {
+                    "due_date" | "scheduled_date" => (None, Some(date.clone()), None),
+                    SPACE_PROPERTY_KEY => {
+                        // A space reassignment re-seeds the target's subtree
+                        // into the new space's engine from LIVE rows only
+                        // (`hydrate_page_subtree_into_engine`), so a tombstone
+                        // in the chain would be dropped from the engine and its
+                        // later restore would take the SQL-only fallback the
+                        // apply-path suites forbid. Same structural rule as
+                        // "restore only a seed whose parent is live": emit the
+                        // op only while nothing is soft-deleted.
+                        if !self.deleted_at.is_empty() {
+                            return None;
+                        }
+                        let space = HARNESS_SPACE_IDS[space_index % HARNESS_SPACE_IDS.len()];
+                        (None, None, Some(BlockId::from_trusted(space)))
+                    }
+                    _ => (Some(value.clone()), None, None),
+                };
+                // `space` is deliberately NOT recorded in `props`: a
+                // `DeleteProperty(space)` clears `blocks.space_id` for the
+                // whole page group and every later op on it takes production's
+                // SpaceUnresolved fallback, which the apply-path suites assert
+                // never fires.
+                if key != SPACE_PROPERTY_KEY {
+                    self.props.insert((target.clone(), key.clone()), ());
+                }
                 Some(OpPayload::SetProperty(SetPropertyPayload {
                     block_id: BlockId::from_trusted(&target),
                     key,
-                    value_text: Some(value.clone()),
+                    value_text,
                     value_num: None,
-                    value_date: None,
-                    value_ref: None,
+                    value_date,
+                    value_ref,
                     value_bool: None,
                 }))
             }
@@ -879,24 +948,26 @@ pub fn observe_prior_position(
     pos
 }
 
-/// The latest text-value of property `key` on `block_id` strictly before
+/// The typed value of property `key` on `block_id` strictly before
 /// `(created_at, seq)`, by independent replay of set/delete property ops.
-/// Outer `None` = property never set / was deleted; inner is the
-/// `value_text`.
+/// Outer `None` = property never set / was deleted; inner is the payload's
+/// `(value_text, value_date, value_ref)` — #4679: the generator now emits all
+/// three shapes, so an oracle that read only `value_text` would compare
+/// `None == None` on every date and space op.
 pub fn observe_prior_property(
     chain: &AppliedChain,
     block_id: &str,
     key: &str,
     before_seq: i64,
-) -> Option<Option<String>> {
-    let mut val: Option<Option<String>> = None;
+) -> Option<PriorPropertyValue> {
+    let mut val: Option<PriorPropertyValue> = None;
     for (rec, payload) in chain.iter() {
         if rec.seq >= before_seq {
             break;
         }
         match payload {
             OpPayload::SetProperty(p) if p.block_id == block_id && p.key == key => {
-                val = Some(p.value_text.clone());
+                val = Some(PriorPropertyValue::from(p));
             }
             OpPayload::DeleteProperty(p) if p.block_id == block_id && p.key == key => {
                 val = None;
@@ -905,4 +976,69 @@ pub fn observe_prior_property(
         }
     }
     val
+}
+
+/// The value fields of a `SetProperty` op an oracle replay observed. Compared
+/// against the reverse op's fields in `reverse_proptest_b1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorPropertyValue {
+    pub value_text: Option<String>,
+    pub value_date: Option<String>,
+    pub value_ref: Option<String>,
+}
+
+impl From<&SetPropertyPayload> for PriorPropertyValue {
+    fn from(p: &SetPropertyPayload) -> Self {
+        Self {
+            value_text: p.value_text.clone(),
+            value_date: p.value_date.clone(),
+            value_ref: p.value_ref.as_ref().map(|r| r.as_str().to_owned()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::{Config, TestRunner};
+
+    /// #4679 acceptance: every `SetProperty` the generator emits is one the
+    /// command layer's `validate_property_value` accepts. Before this the
+    /// `due_date` arm carried its value in `value_text`, which the LOCAL
+    /// command path rejects and the apply path projects as a column CLEAR —
+    /// the generator was modelling an op production cannot produce.
+    #[test]
+    fn every_generated_set_property_passes_command_validation_4679() {
+        let mut runner = TestRunner::new(Config::default());
+        let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+        for _ in 0..64 {
+            let sketches = op_chain_strategy(1..=24)
+                .new_tree(&mut runner)
+                .expect("chain strategy")
+                .current();
+            for payload in resolve_chain(&sketches) {
+                let OpPayload::SetProperty(p) = payload else {
+                    continue;
+                };
+                crate::block_ops::validate_property_value(&p, None).unwrap_or_else(|e| {
+                    panic!("generated SetProperty rejected by the command layer: {e} — {p:?}")
+                });
+                let shape = match p.key.as_str() {
+                    "due_date" | "scheduled_date" => "date",
+                    SPACE_PROPERTY_KEY => "space",
+                    _ => "text",
+                };
+                *seen.entry(shape).or_default() += 1;
+            }
+        }
+        // Non-vacuity: each routed shape was actually generated, so the
+        // validation above ran on a date op and a space op, not only on text.
+        for shape in ["date", "space", "text"] {
+            assert!(
+                seen.get(shape).copied().unwrap_or(0) > 0,
+                "generator never emitted a {shape}-shaped SetProperty in 64 chains: {seen:?}"
+            );
+        }
+    }
 }

@@ -39,8 +39,8 @@
 
 use agaric_core::error::AppError;
 use agaric_engine::proptest_db_harness::{
-    AppliedChain, HARNESS_DEVICE, observe_prior_position, observe_prior_property,
-    observe_prior_text, op_chain_strategy, seed_chain,
+    AppliedChain, HARNESS_DEVICE, PriorPropertyValue, observe_prior_position,
+    observe_prior_property, observe_prior_text, op_chain_strategy, seed_chain,
 };
 use agaric_engine::reverse::*;
 use agaric_store::op::{OpPayload, OpType};
@@ -255,9 +255,9 @@ async fn assert_inverse_law(
                 (OpPayload::SetProperty(r), Some(prior_val)) => {
                     prop_assert_eq!(&r.key, &p.key);
                     prop_assert_eq!(
-                        &r.value_text,
-                        &prior_val,
-                        "reverse of set_property must restore prior value_text"
+                        PriorPropertyValue::from(r),
+                        prior_val,
+                        "reverse of set_property must restore the prior typed value"
                     );
                 }
                 // No prior value -> reverse deletes the key.
@@ -278,9 +278,9 @@ async fn assert_inverse_law(
                 (OpPayload::SetProperty(r), Some(prior_val)) => {
                     prop_assert_eq!(&r.key, &p.key);
                     prop_assert_eq!(
-                        &r.value_text,
-                        &prior_val,
-                        "reverse of delete_property must restore prior value_text"
+                        PriorPropertyValue::from(r),
+                        prior_val,
+                        "reverse of delete_property must restore the prior typed value"
                     );
                 }
                 (other, prior) => {

@@ -26,9 +26,13 @@
 //!   re-anchors every harness ROOT `CreateBlock` under that page, so
 //!   `resolve_block_space` always resolves and ops route through
 //!   `apply_*_via_loro`, not the fallback;
-//! * stamps `parent_id` / `page_id` / `space_id` after each create (mirroring
-//!   `move_convergence_tests`) so the NEXT op's space resolves in-line without
-//!   waiting on the deferred `SetBlockPageId` background task; and
+//! * stamps `parent_id` / `page_id` after each create (mirroring
+//!   `move_convergence_tests`) so the NEXT op's space resolves in-line — via
+//!   `resolve_block_space`'s owning-page fallback — without waiting on the
+//!   deferred `SetBlockPageId` background task. `space_id` is NOT stamped
+//!   (#4679): it is a derived column production fills from that task, and a
+//!   harness write to it would make any oracle over it self-confirming; B6
+//!   settles it through production's own fan-out instead; and
 //! * asserts `sql_only_fallback::count()` did NOT advance across the whole chain
 //!   — a hard, per-case guard that the production engine path actually ran.
 //!
@@ -63,9 +67,11 @@ use agaric_core::ulid::BlockId;
 use agaric_engine::loro::projection::reproject_dense_positions;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_engine::proptest_db_harness::{
-    HARNESS_DEVICE, op_chain_strategy, resolve_chain, ts_for,
+    HARNESS_DEVICE, HARNESS_SPACE_IDS, op_chain_strategy, resolve_chain, ts_for,
 };
-use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
+use agaric_store::op::{
+    CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload, SPACE_PROPERTY_KEY,
+};
 use agaric_store::op_log::{OpRecord, append_local_op_at};
 use agaric_store::space::SpaceId;
 use agaric_sync::sync_protocol::loro_sync::{
@@ -107,7 +113,15 @@ const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=14;
 
 /// Fixed test-space + page ids (26-char ULID shape). The page roots every
 /// harness chain so `resolve_block_space` succeeds and the engine path engages.
-const SPACE_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+/// The space ids are the harness's own ([`HARNESS_SPACE_IDS`]) so a generated
+/// `SetProperty(space)` always names a space these suites registered.
+const SPACE_ID: &str = HARNESS_SPACE_IDS[0];
+/// #4679: the SECOND registered space. B5 and B6 register it so a generated
+/// `SetProperty(space)` (remapped onto [`PAGE_ID`] by [`prepare_chain_b5`]) is
+/// a real page-group migration — the only reachable way for `blocks.space_id`
+/// to CHANGE on a chain block, and therefore the only thing that makes an
+/// oracle over that column observe anything.
+const SPACE_2_ID: &str = HARNESS_SPACE_IDS[1];
 const PAGE_ID: &str = "01HZ0000000000000000001683";
 /// #2325/#2250 B5 tag coverage: the single real `tag` block every remapped
 /// `AddTag`/`RemoveTag` edge points at (satisfies `block_tags.tag_id REFERENCES
@@ -122,8 +136,8 @@ async fn fresh_pool(name: &str) -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-/// Register the test space (`blocks` row + `spaces` FK target) in a fresh DB.
-async fn seed_space_row(pool: &SqlitePool) {
+/// Register a test space (`blocks` row + `spaces` FK target) in a fresh DB.
+async fn seed_space_row(pool: &SqlitePool, space_id: &str) {
     // The space block itself carries `space_id = NULL` (membership is itself);
     // a self-referencing `space_id` would violate the `blocks.space_id
     // REFERENCES blocks(id)` FK at insert time. The `blocks` row must exist
@@ -132,16 +146,17 @@ async fn seed_space_row(pool: &SqlitePool) {
     // dynamic-sql: test-only harness seed/readback (not a production query path)
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'page', 'TestSpace', NULL, 1, ?)",
+             VALUES (?, 'page', ?, NULL, 1, ?)",
     )
-    .bind(SPACE_ID)
-    .bind(SPACE_ID)
+    .bind(space_id)
+    .bind(format!("TestSpace {space_id}"))
+    .bind(space_id)
     .execute(pool)
     .await
     .unwrap();
     // dynamic-sql: test-only harness seed/readback (not a production query path)
     sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
-        .bind(SPACE_ID)
+        .bind(space_id)
         .execute(pool)
         .await
         .unwrap();
@@ -244,6 +259,12 @@ async fn seed_page_via_engine(
 ///   affect `parent_id` / `position` / `block_links` / `block_properties`, so it
 ///   is orthogonal to the reprojection pipeline these tests target. Attachment
 ///   coverage lives in the B1 inverse-law property.
+/// * `SetProperty(space)` (#4679) — a page-group space migration prunes the
+///   group from one per-space engine and re-seeds it into another
+///   (`apply_set_property_via_loro`'s #2907 arm), while B2's rank check and
+///   B4's snapshot exchange read ONE engine, `for_space(SPACE_ID)`. Retained
+///   only by [`prepare_chain_b5`], whose LOCAL/REMOTE parity and B6 oracle
+///   read the resolved SQL state instead.
 fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
     payloads
         .into_iter()
@@ -255,7 +276,7 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
                     | OpPayload::PurgeBlock(_)
                     | OpPayload::AddAttachment(_)
                     | OpPayload::DeleteAttachment(_)
-            )
+            ) && !matches!(p, OpPayload::SetProperty(sp) if sp.key == SPACE_PROPERTY_KEY)
         })
         .map(|p| match p {
             OpPayload::CreateBlock(mut c) if c.parent_id.is_none() => {
@@ -271,17 +292,26 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
         .collect()
 }
 
-/// #2325/#2250 — B5-only variant of [`prepare_chain`] that RETAINS
+/// #2325/#2250 — the B5 + B6 variant of [`prepare_chain`] that RETAINS
 /// `AddTag`/`RemoveTag` so the LOCAL-vs-REMOTE parity property covers the tag
-/// projection + inheritance fan-out.
+/// projection + inheritance fan-out, and (#4679) the B6 oracle sees tag edges.
 ///
 /// Each tag edge's `tag_id` is remapped to the seeded [`TAG_ID`] (the harness
 /// draws `tag_id` from the block-id pool, so an un-remapped edge would
 /// FK-violate `block_tags.tag_id`). The tagged `block_id` is left untouched —
 /// the harness always targets a live block (`ChainModel::live_ids()`), and by
-/// the time an `AddTag` runs that block is stamped with `page_id`/`space_id`
-/// (both drivers stamp on create), so `resolve_block_space` succeeds and the tag
-/// stays on the ENGINE path (no `sql_only` fallback).
+/// the time an `AddTag` runs that block is stamped with `page_id` (both drivers
+/// stamp on create), so `resolve_block_space` succeeds via the owning page and
+/// the tag stays on the ENGINE path (no `sql_only` fallback).
+///
+/// **#4679:** every `SetProperty(space)` is re-targeted onto [`PAGE_ID`]. The
+/// harness draws its target from the live CONTENT blocks, but production only
+/// accepts the `space` key on a page or a top-level tag
+/// (`set_property_in_tx`'s R17 guard) and projects it as a whole-page-group
+/// `blocks.space_id` write — so the page is the one target that makes the op
+/// something production can produce. The `value_ref` is left as generated:
+/// one of the two registered spaces, so the chain migrates the page group
+/// between [`SPACE_ID`] and [`SPACE_2_ID`] (and, from the same space, no-ops).
 ///
 /// **#2681:** `DeleteBlock` / `RestoreBlock` are now RETAINED (the harness mints
 /// valid `deleted_at_ref`s and the driver appends with `ts_for(step)` so the
@@ -320,13 +350,17 @@ fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
                 r.tag_id = BlockId::from_trusted(TAG_ID);
                 OpPayload::RemoveTag(r)
             }
+            OpPayload::SetProperty(mut sp) if sp.key == SPACE_PROPERTY_KEY => {
+                sp.block_id = BlockId::from_trusted(PAGE_ID);
+                OpPayload::SetProperty(sp)
+            }
             other => other,
         })
         .collect()
 }
 
 /// #2325/#2250 — seed the single real `tag` block ([`TAG_ID`]) into `pool`'s
-/// SQL so B5's remapped `AddTag`/`RemoveTag` edges satisfy the
+/// SQL so the remapped `AddTag`/`RemoveTag` edges satisfy the
 /// `block_tags.tag_id REFERENCES blocks(id)` FK.
 ///
 /// SQL-only on purpose: the engine's `apply_add_tag` stores the tag id as a
@@ -335,12 +369,19 @@ fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
 /// needed, and keeping the tag OUT of the engine tree also keeps it out of
 /// `PAGE_ID`'s child-order reprojection. Seeded IDENTICALLY into both B5 pools,
 /// so it is symmetric in the LOCAL-vs-REMOTE comparison. Parent/page NULL so it
-/// never appears as a sibling of the chain's `PAGE_ID` children.
+/// never appears as a sibling of the chain's `PAGE_ID` children — and, since
+/// #4789 a tag may not be a tree parent, it is a LEAF the generator can never
+/// pick as a `parent_id` (only pool ids are candidates).
+///
+/// #4679: its name is a `date/YYYY-MM-DD` tag — the exact shape
+/// `agaric_store::cache::agenda`'s tag arm selects (`LIKE 'date/%'`, length
+/// 15) — so a generated tag edge is an `agenda_cache` source, not just a
+/// `block_tags` row. Nothing here audits `agenda_cache` yet (#3345 next).
 async fn seed_tag(pool: &SqlitePool) {
     // dynamic-sql: test-only harness seed/readback (not a production query path)
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
-             VALUES (?, 'tag', 'tag', NULL, 0, NULL, ?)",
+             VALUES (?, 'tag', 'date/2025-01-15', NULL, 0, NULL, ?)",
     )
     .bind(TAG_ID)
     .bind(SPACE_ID)
@@ -412,8 +453,8 @@ impl ChainDriver {
 
     /// Append `payload` to the op_log and apply it through `apply_op_tx` in its
     /// own tx (the production engine path). After a create, stamp the new
-    /// block's `parent_id`/`page_id`/`space_id` so the NEXT op resolves a space
-    /// in-line (the discipline `move_convergence_tests` uses).
+    /// block's `parent_id`/`page_id` so the NEXT op resolves a space in-line
+    /// (the discipline `move_convergence_tests` uses).
     ///
     /// Returns the appended [`OpRecord`] so a caller can drive the SAME op's
     /// production background fan-out (B6 does, for `page_link_cache` — the one
@@ -467,23 +508,26 @@ impl ChainDriver {
 
         if let Some((id, parent)) = created {
             // The engine read-back projected at create time can leave
-            // `blocks.parent_id` / `page_id` / `space_id` NULL (the engine tracks
-            // parentage in its Loro tree; these SQL columns are reconciled
-            // post-commit by a deferred bg task in production). The next op on
+            // `blocks.parent_id` / `page_id` NULL (the engine tracks parentage
+            // in its Loro tree; these SQL columns are reconciled post-commit by
+            // the deferred `SetBlockPageId` task in production). The next op on
             // this block must resolve a space in-line, so stamp them here. Every
             // harness block lives under PAGE_ID's subtree ⇒ page_id == PAGE_ID,
-            // space_id == SPACE_ID. This makes the NEXT op on the block resolve a
-            // space and
-            // take the engine path.
+            // and `resolve_block_space` falls back to the owning page's
+            // `space_id`, so the NEXT op takes the engine path.
+            //
+            // #4679: `space_id` is deliberately NOT stamped. It is derived
+            // state the same deferred task fills (`set_block_space_id_from_parent`);
+            // a harness write would be the thing an oracle over the column
+            // diffs against. B6 settles it through production's fan-out table.
             // dynamic-sql: test-only harness seed/readback (not a production query path)
-            sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
+            sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ? WHERE id = ?")
                 .bind(&parent)
                 .bind(PAGE_ID)
-                .bind(SPACE_ID)
                 .bind(&id)
                 .execute(pool)
                 .await
-                .expect("stamp created block space");
+                .expect("stamp created block page");
         }
         record
     }
@@ -494,7 +538,7 @@ impl ChainDriver {
     /// `apply_op_tx`, and deliberately WITHOUT advancing the apply cursor
     /// (#1257). The op is still appended to the op_log (as the LOCAL path does
     /// in production) so both drivers see an identical log, but the projection
-    /// is driven by the direct helper call. The post-create space stamp is
+    /// is driven by the direct helper call. The post-create page stamp is
     /// identical to [`ChainDriver::drive`], so the two entry points resolve
     /// spaces the same way and any divergence must come from the apply path
     /// itself.
@@ -528,7 +572,7 @@ impl ChainDriver {
             .expect("append op");
 
         let mut tx = pool.begin().await.expect("begin apply");
-        // prepare_chain retains only these five op kinds, mirroring the command
+        // prepare_chain_b5 retains only these op kinds, mirroring the command
         // handlers that call the via_loro helpers directly on the LOCAL path.
         match &payload {
             OpPayload::CreateBlock(p) => {
@@ -603,16 +647,15 @@ impl ChainDriver {
         tx.commit().await.expect("commit apply");
 
         if let Some((id, parent)) = created {
-            // Same post-create space stamp as `drive` (see its comment).
+            // Same post-create page stamp as `drive` (see its comment).
             // dynamic-sql: test-only harness seed/readback (not a production query path)
-            sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ?, space_id = ? WHERE id = ?")
+            sqlx::query("UPDATE blocks SET parent_id = ?, page_id = ? WHERE id = ?")
                 .bind(&parent)
                 .bind(PAGE_ID)
-                .bind(SPACE_ID)
                 .bind(&id)
                 .execute(pool)
                 .await
-                .expect("stamp created block space");
+                .expect("stamp created block page");
         }
     }
 }
@@ -766,7 +809,7 @@ proptest! {
             let state = &agaric_engine::loro::shared::LoroState::new();
 
             let (pool, _dir) = fresh_pool("b2").await;
-            seed_space_row(&pool).await;
+            seed_space_row(&pool, SPACE_ID).await;
             seed_page_via_engine(&pool, state, HARNESS_DEVICE).await;
 
             let fallback_before = sql_only_fallback::count();
@@ -961,6 +1004,21 @@ async fn page_link_cache_rows(pool: &SqlitePool) -> i64 {
         .expect("page_link_cache row count")
 }
 
+/// #4679: every block's `blocks.space_id`, keyed by id. B6 diffs this before
+/// and after each op (plus its settle) to count `space_id` CHANGES — the
+/// deferred `SetBlockPageId` stamp on a create, and the page-group write of a
+/// `SetProperty(space)` migration — so a green oracle over the column can be
+/// shown to have watched it move.
+async fn block_space_ids(pool: &SqlitePool) -> BTreeMap<String, Option<String>> {
+    // dynamic-sql: test-only harness read-back (not a production query path)
+    sqlx::query_as::<_, (String, Option<String>)>("SELECT id, space_id FROM blocks")
+        .fetch_all(pool)
+        .await
+        .expect("space_id read-back")
+        .into_iter()
+        .collect()
+}
+
 /// Does this op defer its `pages_cache` count maintenance to the background
 /// `RebuildPagesCacheCounts` task?
 ///
@@ -1002,9 +1060,14 @@ proptest! {
             let state = &agaric_engine::loro::shared::LoroState::new();
 
             let (pool, _dir) = fresh_pool("b6").await;
-            seed_space_row(&pool).await;
+            seed_space_row(&pool, SPACE_ID).await;
+            // #4679: the second space a generated `SetProperty(space)` can
+            // migrate the page group into, and the `date/…` tag the retained
+            // tag edges point at.
+            seed_space_row(&pool, SPACE_2_ID).await;
             seed_page_via_engine(&pool, state, HARNESS_DEVICE).await;
             seed_link_target_page(&pool).await;
+            seed_tag(&pool).await;
 
             // Seed the `pages_cache` ROWS the way production does — via the
             // title/orphan rebuild, which inserts one row per live page block
@@ -1030,7 +1093,11 @@ proptest! {
 
             let fallback_before = sql_only_fallback::count();
 
-            let payloads = inject_link_tokens(prepare_chain(resolve_chain(&sketches)));
+            // #4679: `prepare_chain_b5` — tags retained (remapped onto the
+            // seeded date tag) and `SetProperty(space)` retained (re-targeted
+            // onto PAGE_ID), so the chain can reach `block_tags`, the date
+            // columns and a `blocks.space_id` migration.
+            let payloads = inject_link_tokens(prepare_chain_b5(resolve_chain(&sketches)));
             // What this particular chain is CAPABLE of driving. Used below to
             // turn "the oracle was green" into "the oracle was green about
             // something", per column.
@@ -1038,15 +1105,62 @@ proptest! {
                 .iter()
                 .filter(|p| matches!(p, OpPayload::CreateBlock(_)))
                 .count();
-            let chain_links = payloads.iter().filter(|p| match p {
-                OpPayload::CreateBlock(c) => c.content.contains(LINK_PAGE_ID),
-                OpPayload::EditBlock(e) => e.to_text.contains(LINK_PAGE_ID),
-                _ => false,
-            }).count();
+            // #4679: a link token written while the page group sits in
+            // SPACE_2_ID can never become an edge — LINK_PAGE_ID stays in
+            // SPACE_ID and `reindex_block_links_conn` drops cross-space
+            // targets — so only tokens written while the group is in SPACE_ID
+            // count towards what this chain can drive. Edges written before a
+            // migration survive it (nothing re-indexes an unchanged block), so
+            // the PEAK counters below still see them.
+            let chain_links = {
+                let mut current_space = SPACE_ID;
+                let mut n = 0usize;
+                for p in &payloads {
+                    match p {
+                        OpPayload::SetProperty(sp) if sp.key == SPACE_PROPERTY_KEY => {
+                            current_space = sp
+                                .value_ref
+                                .as_ref()
+                                .map_or(SPACE_ID, |r| if r.as_str() == SPACE_2_ID { SPACE_2_ID } else { SPACE_ID });
+                        }
+                        OpPayload::CreateBlock(c)
+                            if c.content.contains(LINK_PAGE_ID) && current_space == SPACE_ID =>
+                        {
+                            n += 1;
+                        }
+                        OpPayload::EditBlock(e)
+                            if e.to_text.contains(LINK_PAGE_ID) && current_space == SPACE_ID =>
+                        {
+                            n += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                n
+            };
 
             let chain_moves = payloads
                 .iter()
                 .filter(|p| matches!(p, OpPayload::MoveBlock(_)))
+                .count();
+            // #4679: what the chain can drive on the three newly reachable
+            // artefacts — a date column write, a tag edge, and a page-group
+            // migration INTO the second space (a `SetProperty(space)` naming
+            // the space the group is already in is a legitimate no-op).
+            let chain_date_sets = payloads
+                .iter()
+                .filter(|p| matches!(p, OpPayload::SetProperty(sp)
+                    if sp.key == "due_date" || sp.key == "scheduled_date"))
+                .count();
+            let chain_tag_adds = payloads
+                .iter()
+                .filter(|p| matches!(p, OpPayload::AddTag(_)))
+                .count();
+            let chain_space_moves = payloads
+                .iter()
+                .filter(|p| matches!(p, OpPayload::SetProperty(sp)
+                    if sp.key == SPACE_PROPERTY_KEY
+                        && sp.value_ref.as_ref().is_some_and(|r| r.as_str() == SPACE_2_ID)))
                 .count();
 
             let mut peak_child_count: i64 = 0;
@@ -1055,6 +1169,11 @@ proptest! {
             let mut page_link_maintainers_run: usize = 0;
             let mut fts_maintainers_run: usize = 0;
             let mut same_page_move_hints: usize = 0;
+            let mut peak_date_rows: i64 = 0;
+            let mut peak_tag_edges: i64 = 0;
+            let mut peak_distinct_spaces: i64 = 0;
+            let mut space_maintainers_run: usize = 0;
+            let mut space_id_changes: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
             for (index, payload) in payloads.into_iter().enumerate() {
@@ -1086,6 +1205,7 @@ proptest! {
                     Some(id) => block_page_id(&pool, id).await,
                     None => None,
                 };
+                let space_ids_before = block_space_ids(&pool).await;
                 let record = driver.drive(&pool, state, payload).await;
                 let move_same_page = match &moved_block {
                     Some(id) => {
@@ -1138,6 +1258,22 @@ proptest! {
                         .await
                         .expect("fts_blocks fan-out");
 
+                // #4679: `blocks.space_id` on a created block has no
+                // synchronous arm either — the driver no longer stamps it, so
+                // the deferred `SetBlockPageId` task's space half is the only
+                // writer. Same rule: ask the dispatch table, run what it names.
+                space_maintainers_run +=
+                    crate::reconciliation_oracle::settle_block_space_ids_for_op(
+                        &pool, &record, None,
+                    )
+                    .await
+                    .expect("space_id fan-out");
+                let space_ids_after = block_space_ids(&pool).await;
+                space_id_changes += space_ids_after
+                    .iter()
+                    .filter(|(id, space)| space_ids_before.get(*id) != Some(*space))
+                    .count();
+
                 let context = format!("op #{index} ({op_type})");
                 if let Some(report) =
                     crate::reconciliation_oracle::reconciliation_failure(&pool, &context).await
@@ -1149,6 +1285,14 @@ proptest! {
                 peak_inbound_count =
                     peak_inbound_count.max(page_count_column(&pool, LINK_PAGE_ID, "inbound_link_count").await);
                 peak_page_link_rows = peak_page_link_rows.max(page_link_cache_rows(&pool).await);
+                // #4679: peaks, not end-of-chain values — a later
+                // DeleteProperty / RemoveTag / migration back can undo each.
+                let now = crate::reconciliation_oracle::oracle_coverage(&pool)
+                    .await
+                    .expect("per-op oracle coverage");
+                peak_date_rows = peak_date_rows.max(now.date_column_rows);
+                peak_tag_edges = peak_tag_edges.max(now.block_tag_edges);
+                peak_distinct_spaces = peak_distinct_spaces.max(now.distinct_block_spaces);
             }
 
             // ENGINE-PATH GUARD (#891): no op silently degraded to sql_only.
@@ -1159,27 +1303,27 @@ proptest! {
             );
 
             // NON-VACUITY: a green oracle over an empty artefact observes
-            // nothing. Three live pages were seeded (the space block, the
+            // nothing. Four live pages were seeded (the two space blocks, the
             // rooting page, the link target), so the count columns the oracle
             // diffs must actually exist.
             let coverage = crate::reconciliation_oracle::oracle_coverage(&pool)
                 .await
                 .expect("oracle coverage");
             prop_assert!(
-                coverage.pages_cache_rows >= 3,
+                coverage.pages_cache_rows >= 4,
                 "pages_cache must hold the seeded pages for the oracle to observe anything, got {:?}",
                 coverage
             );
             // #3654 row membership: the key-set diff is only meaningful if the
-            // from-base rebuild actually produced a non-empty set. Three live
-            // page blocks were seeded (space, rooting page, link target); the
-            // chain's ops are all `content`-typed, so production's
+            // from-base rebuild actually produced a non-empty set. Four live
+            // page blocks were seeded (two spaces, rooting page, link target);
+            // the chain's ops are all `content`-typed, so production's
             // `RebuildPagesCache` is narrowed out of their task sets (#2037
             // pt2) and membership must hold with NO settle — a stray cache-row
             // delete (an over-broad FK cascade, a bad orphan sweep) fires here.
             prop_assert!(
-                coverage.live_page_blocks >= 3,
-                "the row-membership rebuild folded fewer than the 3 seeded live page \
+                coverage.live_page_blocks >= 4,
+                "the row-membership rebuild folded fewer than the 4 seeded live page \
                  blocks, so the key-set diff compared near-empty sets, got {:?}",
                 coverage
             );
@@ -1311,6 +1455,52 @@ proptest! {
                 "fts_blocks must hold the seeded blocks for the oracle to observe anything, got {:?}",
                 coverage
             );
+            // #4679 non-vacuity for the three artefacts this issue made
+            // reachable. None of them has an oracle yet (#3345 takes them
+            // next); what is pinned here is that the GENERATOR now produces
+            // them, so an oracle written against B6 cannot pass unconditionally
+            // the way one would have before:
+            //
+            //  * a date op leaves a non-NULL `due_date` / `scheduled_date`
+            //    column (before #4679 it projected a column CLEAR, so this
+            //    peak was provably 0 on every chain);
+            //  * a tag op leaves a `block_tags` row (before #4679 B6 dropped
+            //    every tag op);
+            //  * a `SetProperty(space)` naming the second space leaves the
+            //    page group there, so two distinct spaces are observable;
+            //  * a create asks production's table for the `SetBlockPageId`
+            //    task and its space half actually moves `blocks.space_id`
+            //    (NULL → the parent's space) — the harness no longer writes
+            //    that column, so a zero here would mean nothing does.
+            prop_assert!(
+                chain_date_sets == 0 || peak_date_rows > 0,
+                "chain set a reserved date key {} times but no live block ever carried a \
+                 non-NULL due_date/scheduled_date — the date op projected a column clear",
+                chain_date_sets
+            );
+            prop_assert!(
+                chain_tag_adds == 0 || peak_tag_edges > 0,
+                "chain added {} tag edges but block_tags never held a row",
+                chain_tag_adds
+            );
+            prop_assert!(
+                chain_space_moves == 0 || peak_distinct_spaces > 1,
+                "chain migrated the page group into SPACE_2_ID {} times but blocks.space_id \
+                 never held two distinct spaces — the migration did not land",
+                chain_space_moves
+            );
+            prop_assert!(
+                chain_creates == 0 || space_maintainers_run > 0,
+                "chain created {} blocks but production's fan-out table asked for ZERO \
+                 SetBlockPageId tasks — nothing would ever fill blocks.space_id",
+                chain_creates
+            );
+            prop_assert!(
+                chain_creates == 0 || space_id_changes > 0,
+                "chain created {} blocks but blocks.space_id never changed on any row — the \
+                 deferred space stamp did not land and the column is unobservable",
+                chain_creates
+            );
             Ok(())
         })?;
     }
@@ -1342,7 +1532,7 @@ proptest! {
             // --- First boot: apply the chain through the live pipeline. ---
             state.registry.clear();
             let (pool_a, _dir_a) = fresh_pool("b3a").await;
-            seed_space_row(&pool_a).await;
+            seed_space_row(&pool_a, SPACE_ID).await;
             seed_page_via_engine(&pool_a, state, HARNESS_DEVICE).await;
 
             let fallback_before = sql_only_fallback::count();
@@ -1377,7 +1567,7 @@ proptest! {
             //     fallback-count guard below proves neither boot degraded).
             state.registry.clear();
             let (pool_b, _dir_b) = fresh_pool("b3b").await;
-            seed_space_row(&pool_b).await;
+            seed_space_row(&pool_b, SPACE_ID).await;
             seed_page_via_engine(&pool_b, state, HARNESS_DEVICE).await;
 
             let replay_fallback_before = sql_only_fallback::count();
@@ -1438,7 +1628,7 @@ proptest! {
 
             // --- Peer A's final pool: import A then B through apply_remote. ---
             let (pool_a, _dir_a) = fresh_pool("b4-final-a").await;
-            seed_space_row(&pool_a).await;
+            seed_space_row(&pool_a, SPACE_ID).await;
             let reg_a = LoroEngineRegistry::new();
             merge_snapshot(&pool_a, &reg_a, "peer-A", &snap_a).await?;
             merge_snapshot(&pool_a, &reg_a, "peer-A", &snap_b).await?;
@@ -1446,7 +1636,7 @@ proptest! {
 
             // --- Peer B's final pool: import B then A through apply_remote. ---
             let (pool_b, _dir_b) = fresh_pool("b4-final-b").await;
-            seed_space_row(&pool_b).await;
+            seed_space_row(&pool_b, SPACE_ID).await;
             let reg_b = LoroEngineRegistry::new();
             merge_snapshot(&pool_b, &reg_b, "peer-B", &snap_b).await?;
             merge_snapshot(&pool_b, &reg_b, "peer-B", &snap_a).await?;
@@ -1479,7 +1669,7 @@ proptest! {
 async fn build_base_snapshot(state: &agaric_engine::loro::shared::LoroState) -> Vec<u8> {
     state.registry.clear();
     let (pool, _dir) = fresh_pool("b4-base").await;
-    seed_space_row(&pool).await;
+    seed_space_row(&pool, SPACE_ID).await;
     seed_page_via_engine(&pool, state, "base-peer").await;
     let space = SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
@@ -1504,7 +1694,7 @@ async fn build_peer_snapshot(
 ) -> Result<Vec<u8>, TestCaseError> {
     state.registry.clear();
     let (pool, _dir) = fresh_pool(name).await;
-    seed_space_row(&pool).await;
+    seed_space_row(&pool, SPACE_ID).await;
     let space = SpaceId::from_trusted(SPACE_ID);
 
     // Re-seed the global engine from the shared base (page only), and mirror the
@@ -1655,7 +1845,8 @@ proptest! {
             // --- REMOTE path: dispatch via `apply_op_tx`. ---
             state.registry.clear();
             let (pool_remote, _dir_r) = fresh_pool("b5-remote").await;
-            seed_space_row(&pool_remote).await;
+            seed_space_row(&pool_remote, SPACE_ID).await;
+            seed_space_row(&pool_remote, SPACE_2_ID).await;
             seed_page_via_engine(&pool_remote, state, HARNESS_DEVICE).await;
             seed_tag(&pool_remote).await;
 
@@ -1678,7 +1869,8 @@ proptest! {
             // --- LOCAL path: call `apply_*_via_loro` directly. ---
             state.registry.clear();
             let (pool_local, _dir_l) = fresh_pool("b5-local").await;
-            seed_space_row(&pool_local).await;
+            seed_space_row(&pool_local, SPACE_ID).await;
+            seed_space_row(&pool_local, SPACE_2_ID).await;
             seed_page_via_engine(&pool_local, state, HARNESS_DEVICE).await;
             seed_tag(&pool_local).await;
 
@@ -1814,7 +2006,7 @@ async fn run_delete_restore(
 ) -> DeleteRestoreObs {
     state.registry.clear();
     let (pool, _dir) = fresh_pool(name).await;
-    seed_space_row(&pool).await;
+    seed_space_row(&pool, SPACE_ID).await;
     seed_page_via_engine(&pool, state, HARNESS_DEVICE).await;
 
     // PAGE -> PARENT -> CHILD through the production create path (append +
