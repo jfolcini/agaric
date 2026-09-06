@@ -515,7 +515,7 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
         page_link_edges: 0,
         fts_blocks_rows: 0,
         fts_indexable_blocks: 0,
-        fts_tombstoned_rows_tolerated: 0,
+        fts_tombstoned_blocks: 0,
         date_column_rows: 0,
         block_tag_edges: 0,
         distinct_block_spaces: 0,
@@ -805,6 +805,11 @@ async fn pages_cache_row_membership_reconciles_in_both_directions() {
     // the orphan sweep runs. Its counts stay reconciled (it has no children),
     // so the row itself is the only thing the oracle can be reporting.
     soft_delete_block(&pool, PAGE_B).await;
+    // #4733: a delete de-indexes its cohort. This fixture tombstones the row
+    // by hand, so it must run that maintainer by hand too — otherwise the FTS
+    // artefact reports the leftover row and masks the pages_cache divergence
+    // this test is about.
+    settle_fts_for_block(&pool, PAGE_B).await;
     let extra = reconciliation_failure(&pool, "page soft-deleted before the sweep")
         .await
         .expect("oracle must report the stale cache row");
@@ -1123,6 +1128,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     // Direction 2 — WRONG VALUE: a soft-deleted SOURCE block stops holding its
     // edge up, so PAGE_A's row must drop to 1 while the cache still says 2.
     soft_delete_block(&pool, A_GRAND).await;
+    settle_fts_for_block(&pool, A_GRAND).await; // #4733, see above
     settle_pages_cache(&pool).await;
     let stale_count = reconciliation_failure(&pool, "source block deleted before the rebuild")
         .await
@@ -1144,6 +1150,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     // Direction 3 — EXTRA row: delete the LAST live source on PAGE_A and its
     // row must go entirely, not merely drop to zero.
     soft_delete_block(&pool, A_CHILD).await;
+    settle_fts_for_block(&pool, A_CHILD).await; // #4733, see above
     settle_pages_cache(&pool).await;
     let extra = reconciliation_failure(&pool, "last source on the page deleted")
         .await
@@ -1163,6 +1170,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     // drawing. `edge_count` is unchanged here, so the flag is the only thing
     // this divergence can be about.
     soft_delete_block(&pool, PAGE_B).await;
+    settle_fts_for_block(&pool, PAGE_B).await; // #4733, see above
     settle_pages_cache(&pool).await;
     let stale_flag = reconciliation_failure(&pool, "link target soft-deleted")
         .await
@@ -2622,36 +2630,72 @@ async fn fts_index_reconciles_membership_in_both_directions_3345() {
         "the tag ref must strip to the tag name"
     );
 
-    // 3. A tombstoned block's row is TOLERATED by the oracle — production's
-    // delete arm removes only the cohort root and nothing sweeps the rest
-    // (#4733) — so the two maintainers that DO clear it are pinned on the
-    // table directly. That is deliberate: an assertion on the divergence list
-    // would be vacuous here, and these are the assertions that fail if either
-    // maintainer stops working.
+    // 3. A tombstoned block owes NO row, in the shape a delete really leaves:
+    // the seed AND a descendant of it. `FTS_PLAIN` is a child of `FTS_PAGE`,
+    // so this is the cascade's cohort. `FTS_TAGGER` is left LIVE and is the
+    // control for the pass below — see there for what it actually pins.
+    soft_delete_block(&pool, FTS_PAGE).await;
     soft_delete_block(&pool, FTS_PLAIN).await;
+    let tombstoned = fts_divergences(&pool).await;
     assert_eq!(
-        fts_divergences(&pool).await,
-        vec![],
-        "a tombstoned block's surviving row is production's rule, not a divergence"
+        tombstoned.len(),
+        2,
+        "both tombstoned blocks owe no row, got {tombstoned:#?}"
+    );
+    assert!(
+        tombstoned
+            .iter()
+            .all(|d| d.artefact == "fts_blocks.row" && d.expected.starts_with("no indexed row")),
+        "every divergence must be an EXTRA row, got {tombstoned:#?}"
     );
     assert_eq!(
         oracle_coverage(&pool)
             .await
             .expect("coverage")
-            .fts_tombstoned_rows_tolerated,
-        1,
-        "the tolerance must be COUNTED, not silent"
+            .fts_tombstoned_blocks,
+        2,
+        "the removal half's obligations must be COUNTED, not silent"
     );
 
-    // Production's per-block remover — the `RemoveFtsBlock` arm.
-    agaric_store::fts::remove_fts_for_block(&pool, FTS_PLAIN)
+    // Production's per-block remover — the `RemoveFtsBlock` arm — reaches the
+    // SEED alone. The descendant's row survives it: that is #4733, and it is
+    // why the delete arm enqueues the cohort pass as well.
+    agaric_store::fts::remove_fts_for_block(&pool, FTS_PAGE)
         .await
         .expect("remove_fts_for_block");
+    let seed_only = fts_divergences(&pool).await;
+    assert_eq!(
+        seed_only.len(),
+        1,
+        "the seed-only remover leaves the descendant behind, got {seed_only:#?}"
+    );
+    assert_eq!(seed_only[0].key, FTS_PLAIN);
+
+    // Production's cohort pass — the post-commit `remove_deleted_cohort_fts`
+    // over the list the cascade consumed — clears the descendant.
+    //
+    // `remove_fts_for_blocks` is a plain batched DELETE: no `deleted_at` term,
+    // no walk, no re-derivation. It removes exactly the ids it is handed, and
+    // the `FTS_TAGGER` assertion below is what pins that "exactly" — it is not
+    // in the literal, and a DELETE that over-reached (dropping the table,
+    // keying on the parent, or ignoring its `json_each` filter) would take it
+    // with the rest. Which ids belong in the list is the CALLER's obligation,
+    // pinned at the command sites in `commands/blocks/crud.rs` and on the
+    // reverse path in `commands/history.rs`.
+    agaric_store::fts::remove_fts_for_blocks(&pool, &[FTS_PAGE.to_owned(), FTS_PLAIN.to_owned()])
+        .await
+        .expect("remove_fts_for_blocks");
     assert_eq!(
         fts_stored(&pool, FTS_PLAIN).await,
         Vec::<String>::new(),
-        "remove_fts_for_block must drop the row"
+        "the cohort pass must drop a tombstoned descendant's row"
     );
+    assert_eq!(
+        fts_stored(&pool, FTS_TAGGER).await,
+        vec!["ship it urgent".to_owned()],
+        "the DELETE must touch only the ids it was handed"
+    );
+    assert_eq!(fts_divergences(&pool).await, vec![]);
 
     // And the vault-wide rebuild must NOT put it back. Running it with a
     // tombstone already in `blocks` is what makes its `deleted_at IS NULL` term
@@ -2812,12 +2856,12 @@ async fn fts_coverage_counts_the_index_and_its_obligations_3345() {
     let dupe = oracle_coverage(&pool).await.expect("coverage");
     assert_eq!(dupe.fts_blocks_rows, 5);
     assert_eq!(dupe.fts_indexable_blocks, 4);
-    assert_eq!(dupe.fts_tombstoned_rows_tolerated, 0);
+    assert_eq!(dupe.fts_tombstoned_blocks, 0);
 
-    // A tombstone moves a block from the obligation set into the tolerated set
+    // A tombstone moves a block from "must be indexed" to "must NOT be"
     // (#4733) — the two counters must not both claim it.
     soft_delete_block(&pool, FTS_PLAIN).await;
     let tombstoned = oracle_coverage(&pool).await.expect("coverage");
     assert_eq!(tombstoned.fts_indexable_blocks, 3);
-    assert_eq!(tombstoned.fts_tombstoned_rows_tolerated, 1);
+    assert_eq!(tombstoned.fts_tombstoned_blocks, 1);
 }

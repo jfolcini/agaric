@@ -65,9 +65,12 @@ pub use handlers::purge_block_sql_cascade;
 // #4285: `reindex_restored_cohort_links` joins it for the same reason — the
 // LOCAL restore paths repair the restored cohort's LINK edges themselves
 // post-commit, because `invalidations_for_op` sees only the seed's id.
+// #4733: the two `*_cohort_fts` helpers are the FTS half of the same repair,
+// on the delete paths as well.
 pub use handlers::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_links,
+    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
+    reindex_restored_cohort_links, remove_deleted_cohort_fts,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).

@@ -222,11 +222,11 @@ pub struct OracleCoverage {
     /// The FTS artefact compares a map of this size against the index's key
     /// set, so a zero means the membership diff was `{} == {}`.
     pub fts_indexable_blocks: i64,
-    /// Tombstoned blocks that still carry content — rows [`reconcile`] declines
-    /// to report as EXTRA because nothing in production removes them (#4733).
-    /// Counted so the tolerance is visible: a fixture where this is large and
-    /// `fts_indexable_blocks` is small is auditing very little.
-    pub fts_tombstoned_rows_tolerated: i64,
+    /// Tombstoned blocks that still carry content — each one an obligation to
+    /// hold NO row (#4733). This is the non-vacuity counter for the REMOVAL
+    /// half: a fixture where it is zero exercised only the "index a live
+    /// block" direction, whatever the divergence list says.
+    pub fts_tombstoned_blocks: i64,
     /// #4679: live blocks carrying a non-NULL `due_date` or `scheduled_date`
     /// column — the `agenda_cache` column arms' source rows. Before #4679 the
     /// generator's date op projected a column CLEAR, so this was always 0.
@@ -277,10 +277,8 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         .fetch_one(pool)
         .await?;
     // Folded, not counted in SQL — same reason as `page_link_edges`.
-    let fts = rebuild_fts_index_from_base(pool).await?;
-    let fts_indexable_blocks = i64::try_from(fts.expected.len()).unwrap_or(i64::MAX);
-    let fts_tombstoned_rows_tolerated =
-        i64::try_from(fts.tombstoned_with_content.len()).unwrap_or(i64::MAX);
+    let fts_indexable_blocks =
+        i64::try_from(rebuild_fts_index_from_base(pool).await?.len()).unwrap_or(i64::MAX);
     // dynamic-sql: static SQL, test-only oracle read-back.
     let date_column_rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks \
@@ -303,6 +301,15 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     // use, so "the fixture covers this" and "the oracle audited this" can
     // never drift apart.
     let blocks = dump_blocks(pool).await?;
+    // The removal half's obligations, folded from the same dump — the
+    // complement of `fts_indexable_blocks` within the blocks that have content.
+    let fts_tombstoned_blocks = i64::try_from(
+        blocks
+            .iter()
+            .filter(|b| b.deleted_at.is_some() && b.content.is_some())
+            .count(),
+    )
+    .unwrap_or(i64::MAX);
     let live_page_blocks = i64::try_from(fold_live_page_blocks(&blocks).len()).unwrap_or(i64::MAX);
     let ownership = fold_page_ownership(&blocks);
     let blocks_owned_by_another_page = i64::try_from(
@@ -324,7 +331,7 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         page_link_edges,
         fts_blocks_rows,
         fts_indexable_blocks,
-        fts_tombstoned_rows_tolerated,
+        fts_tombstoned_blocks,
         date_column_rows,
         block_tag_edges,
         distinct_block_spaces,
@@ -1974,18 +1981,6 @@ fn fold_ref_maps(
     (tag_names, page_titles)
 }
 
-/// What a from-base rebuild of the FTS index says, split by what production
-/// actually maintains.
-#[derive(Debug, Clone)]
-pub struct FtsRebuild {
-    /// `block_id` → `stripped`, for every block that MUST be indexed.
-    pub expected: BTreeMap<String, String>,
-    /// Tombstoned blocks that still carry content — the rows production leaves
-    /// behind and never removes. See [`rebuild_fts_index_from_base`] for why
-    /// [`reconcile`] tolerates them.
-    pub tombstoned_with_content: BTreeSet<String>,
-}
-
 /// Recompute the whole FTS index from `blocks` alone.
 ///
 /// The membership rule, transcribed from the column semantics rather than from
@@ -2022,48 +2017,42 @@ pub struct FtsRebuild {
 /// So the claim this artefact makes is precise: **membership, freshness and
 /// row multiplicity**, not projection semantics.
 ///
-/// # A tombstoned block's row is tolerated, and that is production's rule
+/// # A tombstoned block's row is a divergence (#4733)
 ///
-/// `DeleteBlock` soft-deletes the whole cohort but its dispatch arm emits
-/// `RemoveFtsBlock` for `record.block_id` ALONE, and `RebuildFtsIndex` is not a
-/// member of `FULL_CACHE_REBUILD_TASKS`. So every DESCENDANT of a deleted
-/// subtree keeps its row, and no maintainer ever removes it — this is not a
-/// deferral with a settling pass behind it, it is permanent until the next full
-/// rebuild (boot, or a large inbound sync).
+/// It used to be tolerated, and counted, because production really did leave
+/// one behind: `DeleteBlock` soft-deletes the whole cohort but its dispatch
+/// arm emitted `RemoveFtsBlock` for `record.block_id` ALONE, and
+/// `RebuildFtsIndex` is not a member of `FULL_CACHE_REBUILD_TASKS`, so every
+/// DESCENDANT of a deleted subtree kept its row until the next full rebuild
+/// (boot, or a large inbound sync). The rows were unreachable — every search
+/// read inner-joins `blocks` and filters `b.deleted_at IS NULL`
+/// (`fts/search/fetch.rs`, `fts/toggle_filter.rs`) — but they cost trigram
+/// index size and skewed bm25 corpus statistics.
 ///
-/// It is not a wrong answer: every search read inner-joins `blocks` and filters
-/// `b.deleted_at IS NULL` (`fts/search/fetch.rs`, `fts/toggle_filter.rs`), so
-/// the row is unreachable. What it costs is index size and bm25 corpus
-/// statistics — tracked as #4733, not excused here.
-///
-/// [`reconcile`] therefore reports an EXTRA row only when the block is ABSENT
-/// from `blocks` or its `content` is NULL — the two shapes production really
-/// does maintain — and counts the tolerated ones in
-/// [`OracleCoverage::fts_tombstoned_rows_tolerated`] so the tolerance is
-/// measured rather than assumed. An oracle that fired on every ordinary delete
-/// would be muted within a week, and the four arms that matter (a live block
-/// missing from the index, a row for a purged or emptied block, a stale
-/// `stripped`, a duplicate) all survive intact. The rebuild's own
-/// `deleted_at IS NULL` term is pinned directly on the table instead, by
-/// `fts_index_reconciles_membership_in_both_directions_3345`.
+/// #4733 closed it with a post-commit fan-out over the cohort the cascade
+/// consumed (`remove_deleted_cohort_fts` / `reindex_restored_cohort_fts`,
+/// beside the engine fan-outs at every delete and restore site), so the rule
+/// the column semantics state is now the rule production keeps, and this
+/// rebuild states it without a carve-out: a tombstoned block owes no row, and
+/// a row it still has is reported.
 ///
 /// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
 /// re-read on every call, which is what makes a stale row after a tag rename
 /// or a page retitle expressible: production propagates those through
 /// `ReindexFtsReferences`, and an arm that forgets to enqueue it leaves the
 /// old name sitting in `stripped` while this rebuild resolves the new one.
-pub async fn rebuild_fts_index_from_base(pool: &SqlitePool) -> Result<FtsRebuild, AppError> {
+pub async fn rebuild_fts_index_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<String, String>, AppError> {
     let blocks = dump_blocks(pool).await?;
     let (tag_names, page_titles) = fold_ref_maps(&blocks);
 
     let mut expected = BTreeMap::new();
-    let mut tombstoned_with_content = BTreeSet::new();
     for block in &blocks {
         let Some(content) = block.content.as_deref() else {
             continue;
         };
         if block.deleted_at.is_some() {
-            tombstoned_with_content.insert(block.id.clone());
             continue;
         }
         expected.insert(
@@ -2076,10 +2065,7 @@ pub async fn rebuild_fts_index_from_base(pool: &SqlitePool) -> Result<FtsRebuild
             ),
         );
     }
-    Ok(FtsRebuild {
-        expected,
-        tombstoned_with_content,
-    })
+    Ok(expected)
 }
 
 /// Read the maintained index, keeping EVERY row per `block_id`.
@@ -2128,11 +2114,15 @@ async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<Strin
 /// The task → function WIRING is bypassed, exactly as in
 /// [`settle_page_link_cache_for_op`]: this calls
 /// `agaric_store::fts::{update_fts_for_block_with_maps, remove_fts_for_block,
-/// reindex_fts_references, rebuild_fts_index}` directly rather than through
+/// reindex_fts_references}` directly rather than through
 /// `handle_background_task`, so deleting a call there leaves this green. Nor
 /// does it model the split read/write pool the handler prefers when one is
 /// available. Both are pinned elsewhere (`materializer/tests/agenda_fts_misc.rs`,
 /// `fts/tests.rs`); do not read a green B6 as evidence the handler is wired up.
+///
+/// Nor are the #4733 cohort fan-outs here: they are not tasks but post-commit
+/// calls beside the engine fan-outs, and the B6 driver mirrors them the way it
+/// mirrors those (`apply_reproject_proptest::Driver::drive`).
 ///
 /// `block_type_hint: None` models remote replay, inbound sync and boot — the
 /// same hint the apply-path proptest drivers carry.
@@ -2454,12 +2444,12 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
     const FTS_OWNER: &str = "update_fts_for_block(_with_maps) / remove_fts_for_block / \
          reindex_fts_references / rebuild_fts_index (the UpdateFtsBlock, RemoveFtsBlock, \
          ReindexFtsReferences and RebuildFtsIndex tasks — NOTHING maintains this index \
-         inside apply_op_tx) — and, one level up, the arm of \
-         materializer::dispatch::invalidations_for_op that decides whether any of them is \
-         enqueued at all: search reads fts_blocks EXCLUSIVELY, so a block missing from it \
-         is a block the user cannot find";
-    let fts = rebuild_fts_index_from_base(pool).await?;
-    let expected_fts = &fts.expected;
+         inside apply_op_tx) plus the post-commit cohort fan-outs \
+         remove_deleted_cohort_fts / reindex_restored_cohort_fts (#4733) — and, one level \
+         up, the arm of materializer::dispatch::invalidations_for_op that decides whether \
+         any of the tasks is enqueued at all: search reads fts_blocks EXCLUSIVELY, so a \
+         block missing from it is a block the user cannot find";
+    let expected_fts = &rebuild_fts_index_from_base(pool).await?;
     let actual_fts = read_fts_blocks(pool).await?;
     for (block_id, expected) in expected_fts {
         match actual_fts.get(block_id) {
@@ -2491,16 +2481,14 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
         }
     }
     for (block_id, rows) in &actual_fts {
-        // Tolerated by production's own rule — `rebuild_fts_index_from_base`
-        // § "A tombstoned block's row is tolerated".
-        if expected_fts.contains_key(block_id) || fts.tombstoned_with_content.contains(block_id) {
+        if expected_fts.contains_key(block_id) {
             continue;
         }
         out.push(Divergence {
             artefact: "fts_blocks.row",
             key: block_id.clone(),
-            expected: "no indexed row (the block is gone from `blocks`, or its content \
-                       is NULL)"
+            expected: "no indexed row (the block is tombstoned, gone from `blocks`, or \
+                       its content is NULL)"
                 .to_owned(),
             actual: format!("{} row(s) in fts_blocks: {rows:?}", rows.len()),
             owner: FTS_OWNER,

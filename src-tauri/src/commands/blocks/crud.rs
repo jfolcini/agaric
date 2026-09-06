@@ -802,6 +802,12 @@ pub async fn delete_block_inner(
         materializer.loro_state(),
     )
     .await;
+    // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
+    // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
+    // never sees the cohort), so every descendant kept its `fts_blocks` row
+    // until the next full rebuild. Same list the soft-delete consumed, same
+    // site argument as the #4285 link repair on the restore path.
+    crate::materializer::remove_deleted_cohort_fts(pool, &effects.deleted_cohort).await;
 
     Ok(DeleteResponse {
         block_id,
@@ -1115,6 +1121,12 @@ pub async fn delete_blocks_by_ids_inner(
         )
         .await;
     }
+    // #4733: ONE removal over the union the cohort UPDATE consumed, not one
+    // per root. `remove_fts_for_blocks` is a single batched DELETE, so a
+    // per-root call would repeat it over overlapping id sets for no gain —
+    // and `union_cohort` is already the deduped list the SQL cascade used, so
+    // the rows removed and the rows tombstoned cannot drift.
+    crate::materializer::remove_deleted_cohort_fts(pool, &union_cohort).await;
 
     // `deleted_count` is the number of blocks the cascade soft-deleted (roots
     // + descendants combined) — callers can compare against `block_ids.len()`
@@ -1621,6 +1633,14 @@ pub async fn restore_block_inner(
         &restored_chain.chain,
     )
     .await;
+    // #4733: the FTS half of the same two sets — `UpdateFtsBlock` reached the
+    // seed alone, and the delete's cohort removal is what created the debt.
+    let restored_fts: Vec<&str> = restore_cohort
+        .iter()
+        .chain(restored_chain.chain.iter())
+        .map(String::as_str)
+        .collect();
+    crate::materializer::reindex_restored_cohort_fts(pool, &restored_fts).await;
 
     Ok(RestoreResponse {
         block_id,
@@ -2069,6 +2089,17 @@ pub async fn restore_all_deleted_inner(
         // per call, and repeats across roots are idempotent.
         crate::materializer::reindex_restored_cohort_links(pool, cohort, &[]).await;
     }
+    // #4733: the FTS rows of every restored cohort, in ONE pass. Unlike the
+    // link repair above, `reindex_fts_for_ids` pays a `load_ref_maps` — a full
+    // scan of every tag and page block — per CALL, so a per-root call would
+    // cost N of them to reach the same answer. The helper dedupes what it is
+    // handed, so overlapping cohorts are free.
+    let restored_union: Vec<&str> = restore_fanout
+        .iter()
+        .flat_map(|(_, cohort)| cohort.iter())
+        .map(String::as_str)
+        .collect();
+    crate::materializer::reindex_restored_cohort_fts(pool, &restored_union).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -2526,6 +2557,16 @@ pub async fn restore_blocks_by_ids_inner(
         // whose single-root fan-out this loop is the batch form of.
         crate::materializer::reindex_restored_cohort_links(pool, cohort, ancestors).await;
     }
+    // #4733: the FTS rows of every restored cohort AND ancestor chain, in ONE
+    // pass — same reason as `restore_all_deleted_inner`: `reindex_fts_for_ids`
+    // loads the tag and page reference maps per call, so N roots would pay N
+    // full scans.
+    let restored_union: Vec<&str> = restore_fanout
+        .iter()
+        .flat_map(|(_, cohort, ancestors)| cohort.iter().chain(ancestors.iter()))
+        .map(String::as_str)
+        .collect();
+    crate::materializer::reindex_restored_cohort_fts(pool, &restored_union).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -3514,6 +3555,194 @@ mod saturation_probe_tests {
         assert!(
             out.contains("crossed the depth-100 CTE cap"),
             "a past-cap batch delete must emit the batched-walk breadcrumb warn, got: {out:?}"
+        );
+        mat.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // #4733 — every LOCAL delete / restore site must move the whole cohort
+    // out of and back into `fts_blocks`, not just the seed. The remote /
+    // replay shapes (`apply_op`, `BatchApplyOps`) are pinned in
+    // `materializer/tests/agenda_fts_misc.rs`; these are the command sites,
+    // which never route through `apply_op` (#1257) and run their own
+    // post-commit fan-out.
+    // ------------------------------------------------------------------
+
+    const FTS_P: &str = "FTS-COHORT-P";
+    const FTS_C: &str = "FTS-COHORT-C";
+    const FTS_G: &str = "FTS-COHORT-G";
+    const FTS_X: &str = "FTS-COHORT-X";
+
+    /// P → C → G plus an unrelated root X, all indexed the way boot does it.
+    async fn seed_fts_subtree(pool: &SqlitePool) {
+        for (id, parent, content) in [
+            (FTS_P, None, "parent body"),
+            (FTS_C, Some(FTS_P), "child body"),
+            (FTS_G, Some(FTS_C), "grandchild body"),
+            (FTS_X, None, "unrelated body"),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id) \
+                 VALUES (?, 'content', ?, ?)",
+            )
+            .bind(id)
+            .bind(content)
+            .bind(parent)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        agaric_store::fts::rebuild_fts_index(pool).await.unwrap();
+    }
+
+    /// Every `block_id` currently in the index, sorted.
+    async fn fts_ids(pool: &SqlitePool) -> Vec<String> {
+        let mut ids: Vec<String> = sqlx::query_scalar("SELECT block_id FROM fts_blocks")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        ids.sort();
+        ids
+    }
+
+    fn all_four() -> Vec<String> {
+        vec![
+            FTS_C.to_owned(),
+            FTS_G.to_owned(),
+            FTS_P.to_owned(),
+            FTS_X.to_owned(),
+        ]
+    }
+
+    /// Delete P through the single-block command and assert the cohort left
+    /// the index. Returns the `deleted_at` the cascade stamped, for restores.
+    async fn delete_p_and_assert_de_indexed(pool: &SqlitePool, mat: &Materializer) -> i64 {
+        let resp = delete_block_inner(pool, DEV, mat, BlockId::from_trusted(FTS_P))
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            resp.descendants_affected, 3,
+            "seed: the cascade must reach G"
+        );
+        assert_eq!(
+            fts_ids(pool).await,
+            vec![FTS_X.to_owned()],
+            "delete_block_inner: only the untouched root may keep its row"
+        );
+        resp.deleted_at
+    }
+
+    #[tokio::test]
+    async fn delete_block_inner_de_indexes_the_whole_cohort_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+        assert_eq!(fts_ids(&pool).await, all_four(), "seed: fully indexed");
+        delete_p_and_assert_de_indexed(&pool, &mat).await;
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_block_inner_re_indexes_the_whole_cohort_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+        let deleted_at = delete_p_and_assert_de_indexed(&pool, &mat).await;
+
+        restore_block_inner(&pool, DEV, &mat, BlockId::from_trusted(FTS_P), deleted_at)
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            fts_ids(&pool).await,
+            all_four(),
+            "restore_block_inner: every restored descendant must be searchable again"
+        );
+        mat.shutdown();
+    }
+
+    /// Restoring the GRANDCHILD un-deletes the contiguous ancestor chain
+    /// (#1884); those come back live and must come back searchable.
+    #[tokio::test]
+    async fn restore_block_inner_re_indexes_the_un_deleted_ancestor_chain_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+        let deleted_at = delete_p_and_assert_de_indexed(&pool, &mat).await;
+
+        restore_block_inner(&pool, DEV, &mat, BlockId::from_trusted(FTS_G), deleted_at)
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        let p_live: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(FTS_P)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            p_live, None,
+            "seed: the restore must have un-deleted the chain"
+        );
+        assert_eq!(
+            fts_ids(&pool).await,
+            all_four(),
+            "restore_block_inner: an un-deleted ancestor is live and must be searchable"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn delete_blocks_by_ids_inner_de_indexes_the_whole_cohort_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(FTS_P)])
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            fts_ids(&pool).await,
+            vec![FTS_X.to_owned()],
+            "delete_blocks_by_ids_inner: only the untouched root may keep its row"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_blocks_by_ids_inner_re_indexes_the_cohort_and_chain_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+        delete_p_and_assert_de_indexed(&pool, &mat).await;
+
+        // The grandchild, so the ancestor pair is exercised on this site too.
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(FTS_G)])
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            fts_ids(&pool).await,
+            all_four(),
+            "restore_blocks_by_ids_inner: cohort and un-deleted chain must be searchable"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_all_deleted_inner_re_indexes_the_whole_cohort_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_subtree(&pool).await;
+        delete_p_and_assert_de_indexed(&pool, &mat).await;
+
+        restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            fts_ids(&pool).await,
+            all_four(),
+            "restore_all_deleted_inner: every restored descendant must be searchable again"
         );
         mat.shutdown();
     }

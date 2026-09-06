@@ -737,6 +737,45 @@ async fn require_reverse_attachment_bytes(
     })
 }
 
+/// The `fts_blocks` repair an [`apply_reverse_in_tx`] call owes once its
+/// transaction commits (#4733). Empty for every arm but the two cascade ones.
+///
+/// The callers only `enqueue_background(op_record)`, which yields
+/// `UpdateFtsBlock` / `RemoveFtsBlock` for the SEED, and `RebuildFtsIndex` is
+/// a member of neither `FULL_CACHE_REBUILD_TASKS` nor
+/// `CONTENT_RESTORE_REBUILD_TASKS` — so nothing else reaches a cascade's
+/// descendants. Without this an undone delete restores a subtree the user
+/// cannot find until the next boot rebuild.
+#[derive(Debug, Default)]
+pub struct ReverseFtsFanout {
+    /// Ids the `DeleteBlock` arm tombstoned — their rows must go.
+    pub deleted: Vec<String>,
+    /// Ids the `RestoreBlock` arm un-deleted: the descendant cohort followed by
+    /// the #1884 ancestor chain — their rows must come back.
+    pub restored: Vec<String>,
+}
+
+impl ReverseFtsFanout {
+    /// Fold another call's fan-out in, so a batch undo repairs ONCE over the
+    /// union instead of once per op. `reindex_fts_for_ids` loads the tag and
+    /// page reference maps per call (a full scan of both), and
+    /// `reindex_restored_cohort_fts` already dedupes what it is handed.
+    fn merge(&mut self, other: Self) {
+        self.deleted.extend(other.deleted);
+        self.restored.extend(other.restored);
+    }
+
+    /// Run the repair. POST-COMMIT and infallible / log-only, the same
+    /// contract as the command sites' fan-outs: the reverse has committed, and
+    /// a row left wrong is the pre-#4733 state, which the next rebuild
+    /// reconciles. Both helpers return immediately on an empty list, so the
+    /// non-cascade arms cost nothing.
+    pub async fn apply(&self, pool: &sqlx::SqlitePool) {
+        crate::materializer::remove_deleted_cohort_fts(pool, &self.deleted).await;
+        crate::materializer::reindex_restored_cohort_fts(pool, &self.restored).await;
+    }
+}
+
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
 ///
@@ -796,7 +835,8 @@ pub async fn apply_reverse_in_tx(
     reverse_payload: &OpPayload,
     op_created_at: i64,
     app_data_dir: Option<&std::path::Path>,
-) -> Result<(), AppError> {
+) -> Result<ReverseFtsFanout, AppError> {
+    let mut fanout = ReverseFtsFanout::default();
     match reverse_payload {
         // Idempotency policy:
         //
@@ -885,6 +925,11 @@ pub async fn apply_reverse_in_tx(
                 }
                 Ok(())
             })?;
+
+            // #4733: the same cohort owes an FTS removal after the commit —
+            // see [`ReverseFtsFanout`]. The seed's own `RemoveFtsBlock` covers
+            // only the seed.
+            fanout.deleted = cohort;
         }
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
@@ -989,6 +1034,16 @@ pub async fn apply_reverse_in_tx(
                     }
                     Ok(())
                 })?;
+
+                // #4733: everything this arm brought back to life owes an FTS
+                // re-index after the commit — see [`ReverseFtsFanout`]. Same
+                // two sets the engine fan-out just walked, for the same
+                // reason: the seed's `UpdateFtsBlock` reaches the seed alone.
+                fanout.restored = cohort
+                    .iter()
+                    .chain(restored_chain.chain.iter())
+                    .cloned()
+                    .collect();
             }
         }
         OpPayload::EditBlock(p) => {
@@ -1279,7 +1334,7 @@ pub async fn apply_reverse_in_tx(
             )));
         }
     }
-    Ok(())
+    Ok(fanout)
 }
 
 /// List all ops for blocks descended from a page, with cursor pagination
@@ -1343,7 +1398,7 @@ pub async fn revert_ops_inner(
     // non-reversible op aborts the whole revert (skip_non_reversible =
     // false). The discarded skip count is irrelevant on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped) = revert_ops_in_tx(
+    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -1357,6 +1412,11 @@ pub async fn revert_ops_inner(
     // Commits, then fires queued dispatches in enqueue order. If commit
     // fails, no dispatches fire.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT, and only here — an earlier `?` leaves the tx to roll
+    // back, and repairing FTS for a cascade that never landed would be the
+    // divergence this PR removes, inverted.
+    fts_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -1378,8 +1438,11 @@ pub async fn revert_ops_inner(
 ///   * `true` (point-in-time restore) — non-reversible ops are SKIPPED and
 ///     COUNTED; the reversible remainder is applied.
 ///
-/// Returns `(results, non_reversible_skipped)`. The skip count is always 0
-/// when `skip_non_reversible` is `false` (such a batch errors out instead).
+/// Returns `(results, non_reversible_skipped, fts_fanout)`. The skip count is
+/// always 0 when `skip_non_reversible` is `false` (such a batch errors out
+/// instead). The fan-out is the batch's merged [`ReverseFtsFanout`] — the
+/// caller owns the commit, so it owns the post-commit repair, and MUST NOT run
+/// it on a path that rolls back.
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
@@ -1389,11 +1452,11 @@ async fn revert_ops_in_tx(
     ops: Vec<OpRef>,
     skip_non_reversible: bool,
     app_data_dir: Option<&std::path::Path>,
-) -> Result<(Vec<UndoResult>, u64), AppError> {
+) -> Result<(Vec<UndoResult>, u64, ReverseFtsFanout), AppError> {
     use agaric_engine::reverse;
 
     if ops.is_empty() {
-        return Ok((vec![], 0));
+        return Ok((vec![], 0, ReverseFtsFanout::default()));
     }
 
     // C5 (#344): bound the batch size before any DB work. This is the
@@ -1579,6 +1642,8 @@ async fn revert_ops_in_tx(
     // Collected in APPLICATION order tagged with the original op's `created_at`,
     // then re-sorted newest-first to preserve the returned-order contract.
     let mut results_tagged: Vec<(i64, UndoResult)> = Vec::with_capacity(reverses.len());
+    // #4733: merged across the batch — see [`ReverseFtsFanout`].
+    let mut fts_fanout = ReverseFtsFanout::default();
 
     for idx in apply_order {
         let (op_ref, reverse_payload, created_at, reversed_op_type) = &reverses[idx];
@@ -1669,7 +1734,12 @@ async fn revert_ops_in_tx(
             // preflight, so the `AddAttachment` arm's own check is a no-op
             // here; the argument is threaded rather than passed `None` so the
             // two can never disagree if the preflight is ever narrowed.
-            apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts, app_data_dir).await?;
+            // #4733: fold this op's cascade lists into the batch's fan-out —
+            // one repair over the union after the commit, not one per op.
+            fts_fanout.merge(
+                apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts, app_data_dir)
+                    .await?,
+            );
         }
 
         results_tagged.push((
@@ -1698,7 +1768,7 @@ async fn revert_ops_in_tx(
     });
     let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
 
-    Ok((results, non_reversible_skipped))
+    Ok((results, non_reversible_skipped, fts_fanout))
 }
 
 /// Restore a page to its state at a specific operation (point-in-time restore).
@@ -1917,7 +1987,7 @@ pub async fn restore_page_to_op_inner(
         (vec![], 0)
     } else {
         let app_data_dir = materializer.app_data_dir();
-        let (results, skipped) = revert_ops_in_tx(
+        let (results, skipped, fts_fanout) = revert_ops_in_tx(
             &mut tx,
             pool,
             materializer.loro_state(),
@@ -1933,6 +2003,9 @@ pub async fn restore_page_to_op_inner(
             tx.rollback().await?;
         } else {
             tx.commit_and_dispatch(materializer).await?;
+            // #4733: only on the COMMITTED branch — the rollback above undoes
+            // the cascades this fan-out would otherwise repair FTS for.
+            fts_fanout.apply(pool).await;
         }
         (results, skipped)
     };
@@ -2210,7 +2283,7 @@ pub async fn undo_page_op_inner(
     .await?;
 
     let app_data_dir = materializer.app_data_dir();
-    apply_reverse_in_tx(
+    let fts_fanout = apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -2226,6 +2299,11 @@ pub async fn undo_page_op_inner(
     let new_op_seq = op_record.seq;
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
+    // `enqueue_background(op_record)` above reaches the SEED only — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
 
     Ok(UndoResult {
         reversed_op: target_ref,
@@ -2336,7 +2414,7 @@ pub async fn redo_page_op_inner(
     // `revert_ops_in_tx`'s preflight, so the guard inside
     // `apply_reverse_in_tx` is what covers it.
     let app_data_dir = materializer.app_data_dir();
-    apply_reverse_in_tx(
+    let fts_fanout = apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -2352,6 +2430,11 @@ pub async fn redo_page_op_inner(
     let new_op_seq = op_record.seq;
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
+    // `enqueue_background(op_record)` above reaches the SEED only — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
 
     Ok(UndoResult {
         reversed_op: undo_ref,
@@ -2738,7 +2821,7 @@ pub async fn undo_page_group_inner(
     // the ops newest-first and applies the reverses in that order; the
     // discarded skip count is always 0 on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped) = revert_ops_in_tx(
+    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -2752,6 +2835,10 @@ pub async fn undo_page_group_inner(
     // Commit, then fire queued dispatches in enqueue order. If commit fails, no
     // dispatches fire.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -2838,7 +2925,7 @@ pub async fn undo_ops_inner(
     // non-reversible op aborts the whole batch (the tx rolls back, nothing
     // is applied). The discarded skip count is always 0 on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped) = revert_ops_in_tx(
+    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -2852,6 +2939,10 @@ pub async fn undo_ops_inner(
     // Commit, then fire queued dispatches in enqueue order. If commit
     // fails, no dispatches fire.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -5225,6 +5316,134 @@ mod tests {
         assert_eq!(&result.reversed_op, page.edit_ref.as_ref().unwrap());
         assert_eq!(content_4741(&pool, &page.real_id).await, "v1");
         assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    // ------------------------------------------------------------------
+    // #4733 — the reverse path owes the same cohort fan-out the command
+    // sites run. `apply_reverse_in_tx` cascades a whole subtree, but its
+    // callers only `enqueue_background(op_record)`, which reaches the SEED;
+    // `RebuildFtsIndex` is in neither `FULL_CACHE_REBUILD_TASKS` nor
+    // `CONTENT_RESTORE_REBUILD_TASKS`, so nothing else gets there. Before
+    // #4733 the restore half survived by accident — the matching delete left
+    // the descendants' rows in place — and the moment the delete started
+    // removing them, undoing it restored a subtree the user could not find
+    // until the next boot rebuild.
+    // ------------------------------------------------------------------
+
+    const FTS_UNDO_P: &str = "FTS-UNDO-P";
+    const FTS_UNDO_C: &str = "FTS-UNDO-C";
+
+    /// P → C, indexed the way boot does it.
+    async fn seed_fts_cohort_4733(pool: &SqlitePool) {
+        for (id, parent, content) in [
+            (FTS_UNDO_P, None, "parent body"),
+            (FTS_UNDO_C, Some(FTS_UNDO_P), "child body"),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id) \
+                 VALUES (?, 'content', ?, ?)",
+            )
+            .bind(id)
+            .bind(content)
+            .bind(parent)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        agaric_store::fts::rebuild_fts_index(pool).await.unwrap();
+    }
+
+    async fn fts_ids_4733(pool: &SqlitePool) -> Vec<String> {
+        let mut ids: Vec<String> = sqlx::query_scalar("SELECT block_id FROM fts_blocks")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        ids.sort();
+        ids
+    }
+
+    /// The most recently appended op — the one an undo addresses.
+    async fn newest_op_ref_4733(pool: &SqlitePool) -> OpRef {
+        // dynamic-sql: static SQL, test-only read-back; kept off the offline
+        // `.sqlx` cache so this test needs no cache regeneration.
+        let (device_id, seq): (String, i64) =
+            sqlx::query_as("SELECT device_id, seq FROM op_log ORDER BY seq DESC LIMIT 1")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        OpRef { device_id, seq }
+    }
+
+    fn both_4733() -> Vec<String> {
+        vec![FTS_UNDO_C.to_owned(), FTS_UNDO_P.to_owned()]
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undoing_a_delete_re_indexes_the_whole_restored_cohort_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_cohort_4733(&pool).await;
+        assert_eq!(
+            fts_ids_4733(&pool).await,
+            both_4733(),
+            "seed: fully indexed"
+        );
+
+        crate::commands::delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(FTS_UNDO_P))
+            .await
+            .expect("delete must succeed");
+        mat.flush().await.unwrap();
+        assert!(
+            fts_ids_4733(&pool).await.is_empty(),
+            "seed: the delete de-indexed the whole cohort"
+        );
+
+        let delete_op = newest_op_ref_4733(&pool).await;
+        revert_ops_inner(&pool, DEV, &mat, vec![delete_op])
+            .await
+            .expect("undo must succeed");
+        mat.flush().await.unwrap();
+
+        assert_eq!(
+            fts_ids_4733(&pool).await,
+            both_4733(),
+            "#4733: undoing the delete must re-index the DESCENDANT too — the \
+             reverse op's own background task reaches the seed alone"
+        );
+        mat.shutdown();
+    }
+
+    /// The other half, and the reason `ReverseFtsFanout` carries two lists:
+    /// redoing the delete (reverse-of-restore) must take the cohort back out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn redoing_a_delete_de_indexes_the_whole_cohort_again_4733() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        seed_fts_cohort_4733(&pool).await;
+
+        crate::commands::delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(FTS_UNDO_P))
+            .await
+            .expect("delete must succeed");
+        mat.flush().await.unwrap();
+        let delete_op = newest_op_ref_4733(&pool).await;
+        let undo = revert_ops_inner(&pool, DEV, &mat, vec![delete_op])
+            .await
+            .expect("undo must succeed");
+        mat.flush().await.unwrap();
+        assert_eq!(fts_ids_4733(&pool).await, both_4733(), "undo re-indexed");
+
+        // The undo's own new op is the redo target.
+        let redo_target = undo[0].new_op_ref.clone();
+        revert_ops_inner(&pool, DEV, &mat, vec![redo_target])
+            .await
+            .expect("redo must succeed");
+        mat.flush().await.unwrap();
+
+        assert!(
+            fts_ids_4733(&pool).await.is_empty(),
+            "#4733: redoing the delete must de-index the DESCENDANT again"
+        );
+        mat.shutdown();
     }
 
     /// The other acceptable outcome: when the sweep's ops are the ONLY ops

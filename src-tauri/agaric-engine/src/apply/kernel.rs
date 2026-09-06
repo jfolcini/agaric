@@ -464,6 +464,28 @@ pub struct ApplyEffects {
     /// matches #2868's purge helper, which resolves the same way for the same
     /// reason.
     pub unswept_space_id: Option<agaric_store::space::SpaceId>,
+    /// #4733 — every id under a `MoveBlock` whose tail moved the SUBJECT
+    /// across the live/tombstoned line, in either direction: the #4390
+    /// un-sweep's clears, the #4112 sweep's stamps, and #4188's
+    /// clear-then-restamp. Their `fts_blocks` membership changed with their
+    /// `deleted_at`, and the `MoveBlock` arm of `invalidations_for_op`
+    /// enqueues no FTS task at all — deliberately, because before #4733 a
+    /// tombstoned block was allowed to keep its row and search filtered
+    /// `deleted_at` at read time. Now that a delete removes the rows, an
+    /// un-swept subtree would come back live and unfindable, and a swept one
+    /// would keep rows the oracle reports.
+    ///
+    /// ONE list for both directions because `reindex_fts_for_ids` re-derives
+    /// membership per id: a live id gets a fresh row, a tombstoned one loses
+    /// the row it had. Empty on every op type but `MoveBlock`, and on every
+    /// move whose tail left the subject's `deleted_at` alone — which is every
+    /// local move and the overwhelming majority of remote ones.
+    ///
+    /// Separate from [`Self::unswept_cohort`], which the ENGINE mirror
+    /// consumes: the sweep already mirrors its cohort onto the engine inline,
+    /// and widening that field would change what `dispatch_unswept_cohort`
+    /// replays and what #4390's skip metric counts.
+    pub move_fts_cohort: Vec<String>,
 }
 
 /// One block whose INHERITED tombstone a `MoveBlock`'s un-sweep re-derived,
@@ -701,8 +723,25 @@ pub async fn apply_op_tx_with_mode(
             // mirror the re-derivation onto the per-space engine — otherwise
             // the next `reproject_block_deleted_at_from_engine` re-trashes the
             // subtree from the stale register.
+            // #4733: the subject's own `deleted_at` is the tell for BOTH tail
+            // halves. The un-sweep clears an INHERITED tombstone rooted at the
+            // subject; the sweep stamps the subject and its subtree; #4188's
+            // shape does both and settles on a different cohort ts. Each moves
+            // this value, and each derives every descendant's value through
+            // the subject — so an unchanged subject means an unchanged
+            // subtree, and the walk below is skipped.
+            let deleted_at_before = subject_deleted_at(conn, p.block_id.as_str()).await?;
             let unswept =
                 apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
+            if subject_deleted_at(conn, p.block_id.as_str()).await? != deleted_at_before {
+                effects.move_fts_cohort =
+                    agaric_store::block_descendants::collect_subtree_ids_unbounded(
+                        conn,
+                        p.block_id.as_str(),
+                        agaric_store::block_descendants::DescendantWalkFilter::All,
+                    )
+                    .await?;
+            }
             if !unswept.is_empty() {
                 effects.unswept_cohort = read_settled_deleted_at(conn, &unswept).await?;
                 // `resolve_soft_deleted_block_space`, not `resolve_block_space`:
@@ -777,6 +816,24 @@ pub async fn apply_op_tx_with_mode(
 /// A row that vanished between the clear and this read is dropped rather than
 /// reported as `None` — "absent" is not "live", and mirroring a restore for a
 /// row SQL no longer has would resurrect it on the next import.
+/// One block's `deleted_at`, or `None` when the row is absent.
+///
+/// #4733 — read either side of the `MoveBlock` tail to see whether it moved
+/// the subject across the live/tombstoned line. `None` for "absent" and for
+/// "live" alike is deliberate: neither owes an `fts_blocks` row, so the two
+/// are the same answer to the only question this asks.
+async fn subject_deleted_at(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<i64>, AppError> {
+    Ok(
+        sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten(),
+    )
+}
+
 async fn read_settled_deleted_at(
     conn: &mut sqlx::SqliteConnection,
     ids: &[String],
