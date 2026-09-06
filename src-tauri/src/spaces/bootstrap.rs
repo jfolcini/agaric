@@ -42,7 +42,7 @@ use agaric_store::op_log::OpRecord;
 // app-side bootstrap stays their single canonical `crate::spaces::…` entry.
 pub use agaric_engine::spaces::{
     SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
-    migrate_orphan_tags_to_space,
+    migrate_orphan_tags_to_space, repair_misfiled_tag_spaces,
 };
 
 // The inner-core helpers driven by the shim below now live in the engine.
@@ -180,6 +180,19 @@ pub async fn bootstrap_spaces(
     // so steady-state boots see zero candidates.
     let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
 
+    // Repair pass — move any tag an earlier, buggy run of the migration
+    // above parked in the WRONG space. That version decided placement by
+    // reading `block_tag_refs`, which `reindex_block_tag_refs` refuses to
+    // populate for a tag that has no space yet, so every orphan tag scored
+    // zero references and fell back to Personal regardless of where it was
+    // used. `migrate_orphan_tags_to_space` cannot undo that itself: it only
+    // considers tags with NO space, and these have one.
+    //
+    // Runs on every boot for the same reason the two migrations above do,
+    // and is idempotent for the same reason — once a tag agrees with the
+    // space that references it, it stops being a candidate.
+    let tags_repaired = repair_misfiled_tag_spaces(&mut tx, device_id, &mut records).await?;
+
     // (#110) — couple every emitted op record to a
     // post-commit cache rebuild. Mirrors `flush_all_drafts_inner`.
     for record in records {
@@ -196,6 +209,7 @@ pub async fn bootstrap_spaces(
         accent_props_set,
         pages_migrated = migrated,
         tags_migrated,
+        tags_repaired,
         seeded_blocks_already_done,
         "spaces bootstrap complete"
     );

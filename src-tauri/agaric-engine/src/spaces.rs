@@ -402,13 +402,111 @@ pub async fn pages_without_space(
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
+/// The space that most often references each of `tag_ids_json`.
+///
+/// A reference is counted from EITHER source, de-duplicated per
+/// `(tag_id, source_block)` so a reference recorded in both is one vote:
+///
+/// 1. the inline `#[<tag_id>]` token in `blocks.content` — the primary
+///    evidence, present whether or not the cache was allowed to record it;
+/// 2. a `block_tag_refs` row — the cache, plus explicit associations.
+///
+/// # Why (1) has to be there
+///
+/// Reading only `block_tag_refs` deadlocked — see the note on
+/// [`migrate_orphan_tags_to_space`]. `reindex_block_tag_refs` refuses to
+/// write a row whose tag is in a different space from the referencing block,
+/// and a tag with NO space matches no block's space, so a tag needing
+/// placement is precisely the tag guaranteed to have zero cache rows.
+///
+/// A referencing block's space is its own `blocks.space_id` (first-class
+/// since #533 / migration 0086), falling back to its owning page's when the
+/// block itself is unscoped. Blocks that resolve to no space contribute no
+/// vote rather than voting for NULL.
+///
+/// Ties break on the smallest `space_id`, so the answer is deterministic
+/// across runs and across devices replaying the same log.
+///
+/// `#[` and a ULID contain no LIKE metacharacters, so the pattern needs no
+/// `ESCAPE` clause. The leading `%` makes (1) a scan; it is bounded by the
+/// caller only invoking this when at least one candidate tag exists.
+async fn majority_space_by_content_refs(
+    conn: &mut sqlx::SqliteConnection,
+    tag_ids_json: &str,
+) -> Result<Vec<(String, String)>, AppError> {
+    // Runtime query (not macro) so no .sqlx cache entry is needed for the
+    // dynamic json_each + window-function shape.
+    Ok(sqlx::query_as(
+        r"WITH refs AS (
+              SELECT t.value AS tag_id, b.id AS source_id
+                FROM json_each(?1) t
+                INNER JOIN blocks b
+                    ON b.deleted_at IS NULL
+                   AND b.block_type <> 'tag'
+                   AND b.content LIKE '%#[' || t.value || ']%'
+              UNION
+              SELECT btr.tag_id AS tag_id, b.id AS source_id
+                FROM block_tag_refs btr
+                INNER JOIN blocks b
+                    ON b.id = btr.source_id
+                   AND b.deleted_at IS NULL
+               WHERE btr.tag_id IN (SELECT value FROM json_each(?2))
+          )
+          SELECT tag_id, space_id
+            FROM (
+                SELECT
+                    r.tag_id AS tag_id,
+                    COALESCE(b.space_id, p.space_id) AS space_id,
+                    COUNT(*) AS cnt,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.tag_id
+                        ORDER BY COUNT(*) DESC, COALESCE(b.space_id, p.space_id) ASC
+                    ) AS rn
+                  FROM refs r
+                  INNER JOIN blocks b ON b.id = r.source_id
+                  LEFT JOIN blocks p ON p.id = b.page_id
+                 WHERE COALESCE(b.space_id, p.space_id) IS NOT NULL
+                 GROUP BY r.tag_id, COALESCE(b.space_id, p.space_id)
+            ) ranked
+           WHERE rn = 1",
+    )
+    .bind(tag_ids_json)
+    .bind(tag_ids_json)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Phase 1 — Path A tag-space bootstrap.
 ///
 /// Every tag block without a `space` property is assigned to the space
-/// that most frequently references it (via `block_tag_refs`). Tags with
-/// zero references fall back to Personal. The migration emits one
-/// `SetProperty` op per orphan tag via the normal op-log pipeline,
-/// preserving the append-only invariant.
+/// that most frequently references it. Tags with zero references fall back
+/// to Personal. The migration emits one `SetProperty` op per orphan tag via
+/// the normal op-log pipeline, preserving the append-only invariant.
+///
+/// # Why the reference count scans content rather than `block_tag_refs`
+///
+/// It used to read `block_tag_refs`, and that could never work: the two
+/// paths deadlocked.
+///
+/// `reindex_block_tag_refs` refuses to write a row whose tag is in a
+/// different space from the referencing block ("Phase 3 — filter out
+/// cross-space tag-refs before inserting"). A tag with NO space matches no
+/// source block's space, so it gets **zero** rows in `block_tag_refs`. This
+/// migration then saw zero references and fell back to Personal — for every
+/// orphan tag, regardless of where it was actually used. Once parked in
+/// Personal, a tag referenced from Work is permanently cross-space, so the
+/// gate keeps refusing the row and the tag stays broken forever: it is
+/// invisible to `list_all_tags_in_space` for the space that uses it, and
+/// every inline `#[ULID]` reference to it renders and filters as nothing.
+///
+/// Observed on a real vault: three tags (`meet`, `qa`, `pa`) created and
+/// referenced only from the Work space, all sitting in Personal, with
+/// `block_tag_refs` holding one row in total across 48 tag blocks.
+///
+/// Scanning `blocks.content` for the `#[<tag_id>]` token breaks the cycle,
+/// because the token is present in the content whether or not the ref cache
+/// has been allowed to record it. The scan runs only when orphan tags exist
+/// (the early return above), so steady-state boots do not pay for it.
 ///
 /// This runs once on every boot (like `pages_without_space` above)
 /// but is naturally idempotent: the query filters to tags WITHOUT a
@@ -442,48 +540,22 @@ pub async fn migrate_orphan_tags_to_space(
         return Ok(0);
     }
 
-    // Step 2 — compute the majority space for ALL orphan tags in a single
-    // query. This replaces the original N+1 pattern (one GROUP BY per tag)
-    // with a single bulk pass using json_each + ROW_NUMBER() OVER (PARTITION
-    // BY tag_id ...) so only one round-trip is needed regardless of the
-    // number of orphan tags.
+    // Step 2 — compute the majority space for ALL orphan tags in one bulk
+    // pass (json_each + ROW_NUMBER), so the round-trip count is independent
+    // of how many orphan tags there are.
     //
     // Tags with zero references are absent from the result; the loop below
-    // falls back to Personal for those (same policy as before).
+    // falls back to Personal for those (same policy as before). What changed
+    // is where a "reference" is read from — see the deadlock note on this
+    // function's doc comment.
     let tag_ids_json = serde_json::to_string(
         &orphan_tags
             .iter()
             .map(|r| r.id.as_str())
             .collect::<Vec<_>>(),
     )?;
-    // Runtime query (not macro) so no .sqlx cache entry is needed for the
-    // dynamic json_each + window-function shape.
-    let majority_rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT tag_id, space_id \
-         FROM ( \
-             SELECT \
-                 btr.tag_id, \
-                 p.space_id AS space_id, \
-                 COUNT(*) AS cnt, \
-                 ROW_NUMBER() OVER ( \
-                     PARTITION BY btr.tag_id \
-                     ORDER BY COUNT(*) DESC, p.space_id ASC \
-                 ) AS rn \
-             FROM block_tag_refs btr \
-             INNER JOIN blocks b \
-                 ON b.id = btr.source_id \
-                AND b.deleted_at IS NULL \
-             INNER JOIN blocks p \
-                 ON p.id = b.page_id \
-                AND p.space_id IS NOT NULL \
-             WHERE btr.tag_id IN (SELECT value FROM json_each(?1)) \
-             GROUP BY btr.tag_id, p.space_id \
-         ) ranked \
-         WHERE rn = 1",
-    )
-    .bind(&tag_ids_json)
-    .fetch_all(&mut **tx)
-    .await?;
+    let majority_rows: Vec<(String, String)> =
+        majority_space_by_content_refs(&mut **tx, &tag_ids_json).await?;
 
     // Build a tag_id → majority_space_id lookup.  Tags absent from the
     // result had zero references and will fall back to Personal below.
@@ -531,6 +603,114 @@ pub async fn migrate_orphan_tags_to_space(
     }
 
     Ok(migrated)
+}
+
+/// Repair pass — move a tag that is sitting in the WRONG space.
+///
+/// [`migrate_orphan_tags_to_space`] only ever fires for a tag with NO space,
+/// so it cannot correct a tag that a previous run of the buggy version
+/// already parked in the wrong one. Those tags are permanently broken
+/// without this: `list_all_tags_in_space` hides them from the space that
+/// actually uses them, and `reindex_block_tag_refs` refuses every reference
+/// to them as cross-space, so they render as raw `#[ULID]` and match no
+/// filter.
+///
+/// # Deliberately conservative: unanimous evidence only
+///
+/// A tag is moved only when **every** live block that references it resolves
+/// to one and the same space, and that space is not the tag's current one.
+/// A tag referenced from two spaces is left exactly where it is.
+///
+/// The majority rule used for placing a brand-new orphan is fine when the
+/// alternative is "no space at all", but it is not a good enough reason to
+/// MOVE a tag the user may have deliberately filed: the minority space's
+/// references would be severed by the cross-space gate as a side effect of a
+/// repair the user never asked for. Unanimity means the move can only ever
+/// take a tag from a space where nothing references it to the one space
+/// where everything does.
+///
+/// # Cost
+///
+/// Unlike the two migrations it runs beside, this one has no cheap
+/// precondition to test — a misfiled tag looks exactly like a correctly
+/// filed one until its references are counted — so it pays one sequential
+/// scan of `blocks` per boot to collect the rows containing a `#[` token at
+/// all. The quadratic part (`LIKE '%#[' || t.id || ']%'` against every tag)
+/// is then joined against that subset rather than the whole table, which is
+/// what keeps it bounded on a vault with many tags. Steady-state boots find
+/// zero candidates and emit nothing.
+///
+/// Returns the number of tags moved.
+pub async fn repair_misfiled_tag_spaces(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    records: &mut Vec<OpRecord>,
+) -> Result<usize, AppError> {
+    // Runtime query (not macro) for the dynamic CTE + window-function shape.
+    let misfiled: Vec<(String, String)> = sqlx::query_as(
+        r"WITH tokened AS (
+              SELECT
+                  b.id AS source_id,
+                  b.content AS content,
+                  COALESCE(b.space_id, p.space_id) AS src_space
+                FROM blocks b
+                LEFT JOIN blocks p ON p.id = b.page_id
+               WHERE b.deleted_at IS NULL
+                 AND b.block_type <> 'tag'
+                 AND b.content LIKE '%#[%'
+          ),
+          refs AS (
+              SELECT t.id AS tag_id, k.source_id AS source_id, k.src_space AS src_space
+                FROM blocks t
+                INNER JOIN tokened k
+                    ON k.content LIKE '%#[' || t.id || ']%'
+               WHERE t.block_type = 'tag'
+                 AND t.deleted_at IS NULL
+                 AND t.space_id IS NOT NULL
+                 AND k.src_space IS NOT NULL
+          )
+          SELECT r.tag_id, MIN(r.src_space) AS target_space
+            FROM refs r
+            INNER JOIN blocks t ON t.id = r.tag_id
+           GROUP BY r.tag_id
+          HAVING COUNT(DISTINCT r.src_space) = 1
+             AND MIN(r.src_space) <> MIN(t.space_id)
+           ORDER BY r.tag_id",
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut repaired = 0;
+    for (tag_id, target_space) in &misfiled {
+        // Same emit shape as `migrate_orphan_tags_to_space`: a SetProperty op
+        // through the normal pipeline (so replay / sync / undo see a regular
+        // property mutation), then materialize the column immediately so any
+        // later step in this same transaction observes the new membership.
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(tag_id),
+            key: "space".to_owned(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::from(target_space.as_str())),
+            value_bool: None,
+        });
+        let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
+        records.push(record);
+
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
+            target_space,
+            tag_id,
+            tag_id,
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        repaired += 1;
+    }
+
+    Ok(repaired)
 }
 
 #[cfg(test)]
@@ -771,6 +951,265 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
+    }
+
+    #[tokio::test]
+    async fn orphan_tag_placed_from_content_token_when_ref_cache_is_empty() {
+        // THE DEADLOCK CASE, and the one every other fixture here misses:
+        // `block_tag_refs` is EMPTY, exactly as it is in reality for a tag
+        // that still needs placing.
+        //
+        // `reindex_block_tag_refs` refuses to record a ref whose tag is in a
+        // different space from the source block ("Phase 3 — filter out
+        // cross-space tag-refs"). A tag with NO space matches nothing, so it
+        // can never earn a cache row *before* it has been placed — and the
+        // placement used to be decided by reading that very cache. Every
+        // orphan tag therefore scored zero references and fell back to
+        // Personal, no matter where it was actually used; once parked there,
+        // a Work-space reference stayed permanently cross-space and the ref
+        // was dropped forever.
+        //
+        // Seeding `block_tag_refs` (as the sibling tests do) hides this
+        // completely: the fixture hands the migration the very row the
+        // production gate would have refused. So this test seeds ONLY the
+        // `#[ULID]` token in the content, which is what the vault actually
+        // contains, and asserts the tag lands in Work rather than Personal.
+        let (pool, _tmp) = fresh_pool().await;
+        let tag_id = BlockId::new().to_string();
+        let page_id = BlockId::new().to_string();
+        let content_id = BlockId::new().to_string();
+        let body = format!("standup #[{tag_id}] with the team");
+
+        // Runtime queries (not the `sqlx::query!` macro) because the block
+        // content is BOUND here rather than a literal — the token has to
+        // carry the generated `tag_id` — so there is no .sqlx cache entry to
+        // hit and none worth adding for a fixture.
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'tag', 'meet', NULL, 1, NULL)",
+        )
+        .bind(&tag_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'Standups', NULL, 1, ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(SPACE_WORK_ULID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, 2, ?, ?)",
+        )
+        .bind(&content_id)
+        .bind(&body)
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(SPACE_WORK_ULID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        // The point of the test: nothing in the ref cache.
+        let cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(cached, 0, "fixture must not pre-seed the ref cache");
+
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(migrated, 1);
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            space,
+            Some(SPACE_WORK_ULID.to_string()),
+            "a tag referenced only from Work must land in Work, not fall back to Personal"
+        );
+    }
+
+    /// Seed a tag block, a page in `page_space`, and a content block on that
+    /// page whose text carries the `#[tag_id]` token. Returns the tag id.
+    async fn seed_tag_referenced_from(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tag_name: &str,
+        tag_space: Option<&str>,
+        page_space: &str,
+    ) -> String {
+        let tag_id = BlockId::new().to_string();
+        let page_id = BlockId::new().to_string();
+        let content_id = BlockId::new().to_string();
+        let body = format!("note #[{tag_id}] here");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'tag', ?, NULL, 1, NULL, ?)",
+        )
+        .bind(&tag_id)
+        .bind(tag_name)
+        .bind(tag_space)
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'P', NULL, 1, ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(page_space)
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, 2, ?, ?)",
+        )
+        .bind(&content_id)
+        .bind(&body)
+        .bind(&page_id)
+        .bind(&page_id)
+        .bind(page_space)
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+        tag_id
+    }
+
+    #[tokio::test]
+    async fn misfiled_tag_moves_to_the_only_space_that_references_it() {
+        // The shape found on a real vault: `meet`, `qa` and `pa` were created
+        // and used exclusively in Work, and all three sat in Personal because
+        // the old placement logic read an empty `block_tag_refs`. They are
+        // invisible to the Work tag list and every reference to them is
+        // dropped as cross-space, so they can never recover on their own.
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let tag_id =
+            seed_tag_referenced_from(&mut tx, "meet", Some(SPACE_PERSONAL_ULID), SPACE_WORK_ULID)
+                .await;
+
+        let repaired = repair_misfiled_tag_spaces(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(repaired, 1);
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
+
+        // Idempotent: the tag now agrees with its references, so a second
+        // boot finds no candidate and emits nothing.
+        let mut tx2 = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let again = repair_misfiled_tag_spaces(&mut tx2, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx2.commit().await.unwrap();
+        assert_eq!(again, 0, "second run must be a pure no-op");
+    }
+
+    #[tokio::test]
+    async fn tag_already_in_the_referencing_space_is_left_alone() {
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let tag_id =
+            seed_tag_referenced_from(&mut tx, "book", Some(SPACE_WORK_ULID), SPACE_WORK_ULID).await;
+        let repaired = repair_misfiled_tag_spaces(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(repaired, 0);
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
+    }
+
+    #[tokio::test]
+    async fn tag_referenced_from_two_spaces_is_never_moved() {
+        // The unanimity guard. A majority rule would move this tag to
+        // whichever space referenced it more, and the cross-space gate would
+        // then sever the other space's references — damage caused BY the
+        // repair. Leaving it put is the only choice that cannot lose a
+        // reference the user still has.
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        // One tag in Personal, referenced from a Work page AND a Personal
+        // page — seeded by hand so both references point at the same tag.
+        let tag_id = BlockId::new().to_string();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'tag', 'shared', NULL, 1, NULL, ?)",
+        )
+        .bind(&tag_id)
+        .bind(SPACE_PERSONAL_ULID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for space in [SPACE_WORK_ULID, SPACE_WORK_ULID, SPACE_PERSONAL_ULID] {
+            let page_id = BlockId::new().to_string();
+            let content_id = BlockId::new().to_string();
+            let body = format!("x #[{tag_id}] y");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'page', 'P', NULL, 1, ?, ?)",
+            )
+            .bind(&page_id)
+            .bind(&page_id)
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'content', ?, ?, 2, ?, ?)",
+            )
+            .bind(&content_id)
+            .bind(&body)
+            .bind(&page_id)
+            .bind(&page_id)
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+
+        let repaired = repair_misfiled_tag_spaces(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(
+            repaired, 0,
+            "a tag referenced from two spaces must stay where the user put it, \
+             even though Work is the majority"
+        );
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space, Some(SPACE_PERSONAL_ULID.to_string()));
     }
 
     #[tokio::test]

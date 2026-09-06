@@ -104,8 +104,9 @@ pub mod recurrence;
 /// (`agaric_store::{op_log, op, db}`); carries the spaces `sqlx::query!` sites.
 /// The app keeps the `CommandTx` / `Materializer` orchestration behind an
 /// unchanged shim (`crate::spaces::bootstrap::bootstrap_spaces`) and
-/// re-exports the consts + `migrate_orphan_tags_to_space` at
-/// `crate::spaces::…` so those call sites resolve unchanged.
+/// re-exports the consts + `migrate_orphan_tags_to_space` /
+/// `repair_misfiled_tag_spaces` at `crate::spaces::…` so those call sites
+/// resolve unchanged.
 pub mod spaces;
 
 /// The op-log DAG-traversal core (#2621 THE INVERSION) — the edit-chain /
