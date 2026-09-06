@@ -134,6 +134,9 @@ describe('AttachmentList', () => {
     // Second click — actually deletes
     await user.click(deleteBtn)
     expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
+    // #4626 — a failed delete must not also fire the success toast; pin the
+    // count so a regression back to unconditional firing goes red.
+    expect(mockedToastSuccess).toHaveBeenCalledTimes(1)
     expect(mockedToastSuccess).toHaveBeenCalledWith(
       t('attachments.deleted', { name: 'to-delete.txt' }),
     )

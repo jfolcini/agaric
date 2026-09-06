@@ -94,9 +94,13 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         unwrap(await commands.deleteAttachment(attachmentId))
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+        const deleted = attachments.find((a) => a.id === attachmentId)
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         // Invalidate the page-level batch cache.
         batchProvider?.invalidate(blockId)
+        // The id always comes from this same list; the fallback only satisfies
+        // `find`'s possibly-undefined type.
+        notify.success(i18n.t('attachments.deleted', { name: deleted?.filename ?? attachmentId }))
       } catch (err) {
         logger.error(
           'useBlockAttachments',
@@ -107,7 +111,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         notify.error(i18n.t('attachments.deleteFailed'))
       }
     },
-    [blockId, pageStore, batchProvider],
+    [blockId, pageStore, batchProvider, attachments],
   )
 
   const handleRenameAttachment = useCallback(
