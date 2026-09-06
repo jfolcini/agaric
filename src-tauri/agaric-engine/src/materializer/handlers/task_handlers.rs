@@ -364,14 +364,12 @@ async fn reindex_one_block_links(
 /// rather than re-deriving it). Adding a fourth means enqueueing the task, not
 /// touching this function.
 ///
-/// All four are arms of `invalidations_for_op`, which is reached only from
-/// `CommandTx::commit_and_dispatch` — so this pass is bound to the LOCAL
-/// command path. An inbound-sync import maintains a changed block's OUTBOUND
-/// edges in-tx (`agaric-engine`'s `maintain_pages_cache_counts_after_op` calls
-/// `reindex_block_links_conn` directly, which records the unresolved debt) but
-/// fans out through `enqueue_inbound_sync_rebuilds`, which enqueues no
-/// per-block `ReindexBlockLinks` — so a target that becomes linkable by a
-/// REMOTE op does not reach this push half until something local touches it.
+/// All four are arms of `invalidations_for_op`, reached from
+/// `CommandTx::commit_and_dispatch`; an inbound-sync import reaches this same
+/// handler through `enqueue_inbound_sync_rebuilds`, which enqueues one
+/// `ReindexBlockLinks` per changed block (#4293). The Loro projection writes
+/// no `block_links` at all, so on that path this task is where a remote op's
+/// own edges and its push half both come from.
 ///
 /// # Why push and not pull
 ///

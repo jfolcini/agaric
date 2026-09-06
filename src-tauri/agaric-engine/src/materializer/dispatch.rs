@@ -771,13 +771,18 @@ impl Materializer {
         // No threshold, unlike the two fan-outs above, because neither
         // fallback shape exists: `RebuildPageLinkCache` (already in the
         // debounced set this call arms) rolls UP from `block_links` and never
-        // re-parses content, so it cannot discharge unresolved debt. Safe
-        // unconditionally because `RetryKind::from_task` maps this task — a
-        // shed drop is persisted and re-driven by the sweeper.
+        // re-parses content, so it cannot discharge unresolved debt. The
+        // blocking enqueue is what makes the unbounded count safe: a snapshot
+        // import hands this every block in the vault, and `try_enqueue` would
+        // shed all but `BACKGROUND_CAPACITY` of them into one retry-queue
+        // INSERT each on the two-connection write pool, which times out and
+        // drops the very reindex this exists to guarantee. On an incremental
+        // import the channel has room and the two shapes are the same send.
         for block_id in changed_blocks {
-            self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
+            self.enqueue_background(MaterializeTask::ReindexBlockLinks {
                 block_id: Arc::from(block_id.as_str()),
-            })?;
+            })
+            .await?;
         }
         Ok(())
     }
@@ -1681,13 +1686,10 @@ pub fn invalidations_for_op(
                 // `enqueue_background_tasks` is reached only from
                 // `CommandTx::commit_and_dispatch`; an inbound-sync import
                 // fans out through `enqueue_inbound_sync_rebuilds`, which
-                // carries per-changed-block FTS and `block_tag_refs` tasks but
-                // no per-block link reindex. A RESTORE arriving from a peer is
-                // nonetheless covered since #4285, because the apply handlers
-                // repair the cohort directly; what still does not reach any
-                // push half is a target made linkable by a peer's
-                // create/edit/space-stamp — the pre-existing #4118 path bound,
-                // tracked in #4293.
+                // enqueues the same per-changed-block `ReindexBlockLinks`
+                // (#4293). A RESTORE arriving from a peer is covered twice,
+                // because the apply handlers also repair the cohort directly
+                // (#4285).
                 tasks.push(MaterializeTask::ReindexBlockLinks {
                     block_id: Arc::from(block_id),
                 });
