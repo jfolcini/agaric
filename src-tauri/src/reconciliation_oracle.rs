@@ -2084,9 +2084,13 @@ async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<Strin
 /// `materializer::handlers::task_handlers` dispatches to. Returns how many it
 /// ran, so a caller can see "zero" for itself.
 ///
-/// `FtsOptimize` is deliberately not run: it is an FTS5 index-compaction
-/// command with no effect on which rows exist or what they hold, enqueued on a
-/// metric threshold rather than by an op arm.
+/// Two task variants are deliberately absent. `FtsOptimize` is an FTS5
+/// index-compaction command with no effect on which rows exist or what they
+/// hold, enqueued on a metric threshold rather than by an op arm. And
+/// `RebuildFtsIndex` is not reachable from here at all: no arm of
+/// `invalidations_for_op` pushes it — it comes only from `inbound_sync_fts_tasks`
+/// and boot — so an arm for it would be a repair path for a case this function
+/// cannot be handed.
 ///
 /// # What this does NOT cover
 ///
@@ -2132,10 +2136,6 @@ pub async fn settle_fts_for_op(
             }
             MaterializeTask::ReindexFtsReferences { block_id } => {
                 agaric_store::fts::reindex_fts_references(pool, block_id).await?;
-                ran += 1;
-            }
-            MaterializeTask::RebuildFtsIndex => {
-                agaric_store::fts::rebuild_fts_index(pool).await?;
                 ran += 1;
             }
             _ => {}

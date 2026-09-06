@@ -1295,17 +1295,20 @@ proptest! {
             // `reconciliation_oracle/tests.rs`.
             prop_assert!(
                 chain_creates == 0 || fts_maintainers_run > 0,
-                "chain created {} blocks but production's fan-out table asked for ZERO                  fts_blocks maintainers across the whole chain — the index was never                  maintained, so the oracle audited an artefact nothing writes",
+                "chain created {} blocks but production's fan-out table asked for ZERO \
+                 fts_blocks maintainers across the whole chain — the index was never \
+                 maintained, so the oracle audited an artefact nothing writes",
                 chain_creates
             );
             prop_assert!(
                 coverage.fts_indexable_blocks >= 3,
-                "the FTS rebuild folded fewer than the 3 seeded live blocks with content,                  so the index membership diff compared near-empty sets, got {:?}",
+                "the FTS rebuild folded fewer than the 3 seeded live blocks with content, \
+                 so the index membership diff compared near-empty sets, got {:?}",
                 coverage
             );
             prop_assert!(
                 coverage.fts_blocks_rows >= 3,
-                "fts_blocks must hold the seeded blocks for the oracle to observe anything,                  got {:?}",
+                "fts_blocks must hold the seeded blocks for the oracle to observe anything, got {:?}",
                 coverage
             );
             Ok(())

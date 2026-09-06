@@ -72,17 +72,23 @@ async fn test_env() -> (sqlx::SqlitePool, TempDir, Materializer, Vec<BlockId>) {
         blocks.push(id);
     }
 
-    // #3345 Artefact 8: these blocks are seeded into `blocks` directly, so no
-    // dispatch task ever fired for them and `fts_blocks` would start empty —
-    // which `reconcile` correctly reports as one missing row per block. Seed
-    // the index with production's own vault-wide maintainer (the
-    // `RebuildFtsIndex` task, and what boot runs) so the FTS artefact starts
-    // reconciled and this fixture's assertions stay about their own subject.
-    agaric_store::fts::rebuild_fts_index(&pool)
-        .await
-        .expect("seed the fts_blocks index");
+    seed_fts_index(&pool).await;
 
     (pool, dir, mat, blocks)
+}
+
+/// Seed `fts_blocks` for a fixture that wrote its blocks straight into
+/// `blocks` (#3345 Artefact 8).
+///
+/// No dispatch task ever fired for those rows, so the index would start empty
+/// and `reconcile` would correctly report one missing row per block. This runs
+/// production's own vault-wide maintainer — the `RebuildFtsIndex` task, and
+/// what boot runs — so the FTS artefact starts reconciled and each fixture's
+/// assertions stay about their own subject.
+async fn seed_fts_index(pool: &sqlx::SqlitePool) {
+    agaric_store::fts::rebuild_fts_index(pool)
+        .await
+        .expect("seed the fts_blocks index");
 }
 
 /// Run production's DEFERRED byte/blob reclamation pass — the background
@@ -716,15 +722,7 @@ async fn page_fixture() -> (sqlx::SqlitePool, TempDir) {
     insert_content_block(&pool, N_CHILD, Some(NESTED_PAGE), Some(NESTED_PAGE)).await;
     insert_content_block(&pool, ORPHAN, None, None).await;
 
-    // #3345 Artefact 8: these blocks are seeded into `blocks` directly, so no
-    // dispatch task ever fired for them and `fts_blocks` would start empty —
-    // which `reconcile` correctly reports as one missing row per block. Seed
-    // the index with production's own vault-wide maintainer (the
-    // `RebuildFtsIndex` task, and what boot runs) so the FTS artefact starts
-    // reconciled and this fixture's assertions stay about their own subject.
-    agaric_store::fts::rebuild_fts_index(&pool)
-        .await
-        .expect("seed the fts_blocks index");
+    seed_fts_index(&pool).await;
 
     (pool, dir)
 }
@@ -844,8 +842,6 @@ async fn pages_cache_row_membership_reconciles_in_both_directions() {
     );
 }
 
-/// Soft-delete a block the way a cohort delete does — `deleted_at` in epoch ms
-/// (migration 0080), no row removal.
 /// Re-index one block the way production's fan-out would, after a fixture
 /// mutated it by direct SQL.
 ///
@@ -864,6 +860,8 @@ async fn settle_fts_for_block(pool: &sqlx::SqlitePool, block_id: &str) {
         .expect("update_fts_for_block");
 }
 
+/// Soft-delete a block the way a cohort delete does — `deleted_at` in epoch ms
+/// (migration 0080), no row removal.
 async fn soft_delete_block(pool: &sqlx::SqlitePool, id: &str) {
     // dynamic-sql: test-only state transition (not a production query path).
     sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
@@ -1344,15 +1342,7 @@ async fn bl_fixture() -> (sqlx::SqlitePool, TempDir) {
     )
     .await;
 
-    // #3345 Artefact 8: these blocks are seeded into `blocks` directly, so no
-    // dispatch task ever fired for them and `fts_blocks` would start empty —
-    // which `reconcile` correctly reports as one missing row per block. Seed
-    // the index with production's own vault-wide maintainer (the
-    // `RebuildFtsIndex` task, and what boot runs) so the FTS artefact starts
-    // reconciled and this fixture's assertions stay about their own subject.
-    agaric_store::fts::rebuild_fts_index(&pool)
-        .await
-        .expect("seed the fts_blocks index");
+    seed_fts_index(&pool).await;
 
     (pool, dir)
 }
