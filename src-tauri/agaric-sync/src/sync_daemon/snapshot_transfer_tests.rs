@@ -139,7 +139,7 @@ async fn run_catchup_with_ids(
 ) -> (
     SqlitePool,
     TempDir,
-    Result<CatchupOutcome, AppError>,
+    Result<(), AppError>,
     Arc<RecordingEventSink>,
 ) {
     use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -612,11 +612,7 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
         sent.spaces_sent, 1,
         "responder must stream exactly one space snapshot"
     );
-    let outcome = recv_res.expect("initiator merge catch-up must succeed");
-    assert!(
-        matches!(outcome, CatchupOutcome::Applied { .. }),
-        "expected Applied, got {outcome:?}"
-    );
+    recv_res.expect("initiator merge catch-up must succeed");
 
     init_mat.flush_background().await.unwrap();
 

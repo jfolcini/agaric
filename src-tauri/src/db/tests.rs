@@ -5747,9 +5747,7 @@ async fn peer_refs_0111_streamed_at_add_preserves_existing_rows_4084() {
 ///    "nothing is ever recorded".
 /// 2. **`source_id` DOES cascade.** A purged source owes nothing, and leaving
 ///    its rows behind would keep re-driving a repair for a block that no
-///    longer exists. The RESET path additionally depends on this table being
-///    empt-able (`truncate_block_links` wipes it in the same
-///    `defer_foreign_keys = ON` transaction that swaps `blocks`).
+///    longer exists.
 #[tokio::test]
 async fn block_links_unresolved_0112_target_has_no_fk_and_source_cascades_4118() {
     let (pool, _dir) = test_pool().await;

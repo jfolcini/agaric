@@ -994,7 +994,7 @@ export function rawOpLogLastEditedAt(blockId: string): string | null {
  * (`src-tauri/src/commands/history.rs:1574`).
  *
  * No handler may treat `opLog`'s in-memory ARRAY order (push/insertion order)
- * as already chronological. `find_undo_group` never did — it already sorts
+ * as already chronological. `findUndoGroupSize` never did — it already sorts
  * this way — but `list_page_history` (`[...opLog].toReversed()`) and
  * `undo_page_op` (`undoableOps.length - 1 - undoDepth`) both used to, and
  * `seedBulkPages` (`seed.ts`) proved the
@@ -1002,7 +1002,7 @@ export function rawOpLogLastEditedAt(blockId: string): string | null {
  * `created_at` order (page 001 at `now` pushed FIRST, 005 at `now-4h` pushed
  * LAST, so the array itself is newest-to-oldest for that block of pushes),
  * so `opLog`'s array order stopped matching `created_at` order the moment
- * that seed shipped. Sorting explicitly — the way `find_undo_group` and the
+ * that seed shipped. Sorting explicitly — the way `findUndoGroupSize` and the
  * backend's own `ORDER BY` both already do — closes the whole class rather
  * than pinning it to today's particular seed shape; a future seed, a
  * multi-device merge, or a batch of `pushOpAt` calls in non-chronological

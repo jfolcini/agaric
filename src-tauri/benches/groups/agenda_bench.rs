@@ -1,16 +1,13 @@
 // Bench helpers cast small loop indices between usize/i64 freely.
 #![allow(clippy::cast_possible_wrap)]
 
-//! Criterion benchmarks for the three agenda command inner functions:
-//!   1. `count_agenda_batch_inner`        — weekly badge counts
-//!   2. `count_agenda_batch_by_source_inner` — per-source badge counts
-//!   3. `list_projected_agenda_inner`     — repeating-task projection
+//! Criterion benchmarks for the two agenda command inner functions:
+//!   1. `count_agenda_batch_by_source_inner` — per-source badge counts
+//!   2. `list_projected_agenda_inner`     — repeating-task projection
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
-use agaric_lib::commands::{
-    count_agenda_batch_by_source_inner, count_agenda_batch_inner, list_projected_agenda_inner,
-};
+use agaric_lib::commands::{count_agenda_batch_by_source_inner, list_projected_agenda_inner};
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 use agaric_store::space::SpaceScope;
@@ -104,53 +101,6 @@ async fn seed_repeating_blocks(pool: &SqlitePool, n: usize) {
         .unwrap();
     }
     tx.commit().await.unwrap();
-}
-
-// ===========================================================================
-// count_agenda_batch benchmarks
-// ===========================================================================
-
-fn bench_count_agenda_batch(c: &mut Criterion) {
-    let mut group = c.benchmark_group("count_agenda_batch");
-
-    // 7 dates simulating a weekly view
-    let dates: Vec<String> = (0..7)
-        .map(|d| {
-            let date =
-                chrono::NaiveDate::from_ymd_opt(2025, 7, 1).unwrap() + chrono::Duration::days(d);
-            date.format("%Y-%m-%d").to_string()
-        })
-        .collect();
-
-    // Cap intentional (#1231): dated blocks are a fraction of the vault;
-    // 10K is already a heavy agenda, so this is not extended to 100K.
-    for size in [100, 1_000, 10_000] {
-        let rt = Runtime::new().unwrap();
-        let dir = TempDir::new().unwrap();
-        let pool = rt.block_on(fresh_pool(&dir, &format!("agenda_batch_{size}")));
-        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-        rt.block_on(seed_agenda_blocks(&pool, size));
-
-        group.throughput(Throughput::Elements(size as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{size}_blocks")),
-            &size,
-            |b, _| {
-                b.to_async(&rt).iter(|| {
-                    let pool = pool.clone();
-                    let dates = dates.clone();
-                    async move {
-                        count_agenda_batch_inner(&pool, dates, &SpaceScope::Global)
-                            .await
-                            .unwrap()
-                    }
-                });
-            },
-        );
-
-        rt.block_on(async { materializer.shutdown() });
-    }
-    group.finish();
 }
 
 // ===========================================================================
@@ -249,7 +199,6 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_count_agenda_batch,
     bench_count_agenda_batch_by_source,
     bench_list_projected_agenda,
 );

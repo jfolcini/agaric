@@ -490,6 +490,14 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
     expect(haystack.slice(match.start, match.start + match.length)).toBe('raße')
   })
 
+  it('#3288 — a code point whose fold straddles the match start stays inside the span', () => {
+    // `ß` folds to `ss`; a needle starting on the second `s` still owes its
+    // first character to the `ß`, so the span starts on it.
+    expect(findFoldedMatch('ßx', 'sx')).toEqual({ start: 0, length: 2 })
+    expect(findFoldedMatch('Straße', 'se')).toEqual({ start: 4, length: 2 })
+    expect(findFoldedMatch('aﬁx', 'ix')).toEqual({ start: 1, length: 2 })
+  })
+
   it('ligature ﬁ (U+FB01) + "fi": match covers the single ligature code unit', () => {
     // `ﬁ` folds to `fi` (length 2). The original span is just the
     // ligature itself (length 1). Using `needle.length` would extend

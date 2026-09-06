@@ -1905,8 +1905,8 @@ async fn block_links_unresolved_oracle_audits_the_obligation_index_4229() {
         "the erased obligation must be named, and nothing else, got:\n{lost}"
     );
 
-    // And PRODUCTION's vault-wide arm puts it back — the same
-    // `rebuild_block_links_unresolved` the snapshot RESET runs (#4218). This
+    // And the vault-wide arm puts it back — `rebuild_block_links_unresolved`
+    // (#4218; its production caller went in #4699). This
     // is the pin between the two derivations: the fold above is a
     // transcription, not a call, so a rebuild that disagreed with it would
     // redden here rather than agree with itself.

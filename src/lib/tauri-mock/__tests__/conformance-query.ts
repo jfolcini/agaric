@@ -359,12 +359,6 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: 'total_count',
   },
   get_block: { rows: { kind: 'bare-row' }, token: BLOCK_TOKEN, hasMoreKey: null, totalKey: null },
-  get_blocks: {
-    rows: { kind: 'bare-array' },
-    token: BLOCK_TOKEN,
-    hasMoreKey: null,
-    totalKey: null,
-  },
   batch_resolve: {
     rows: { kind: 'bare-array' },
     token: { kind: 'id', idKey: 'id', attrKeys: RESOLVED_ATTRS },

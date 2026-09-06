@@ -99,13 +99,12 @@ describe('tauri-mock pairing peer reveal (#3469)', () => {
     expect(listPeerRefs()[0]?.['peer_id']).toBe(first[0]?.['peer_id'])
   })
 
-  it('exposes the revealed peer through get_peer_ref and lets delete_peer_ref remove it', () => {
+  it('lets delete_peer_ref remove the revealed peer', () => {
     confirmPairing('alpha bravo charlie delta')
     listPeerRefs()
     listPeerRefs()
     const peerId = listPeerRefs()[0]?.['peer_id'] as string
 
-    expect(dispatch('get_peer_ref', { peerId })).toMatchObject({ peer_id: peerId })
     dispatch('delete_peer_ref', { peerId })
     expect(listPeerRefs()).toEqual([])
   })

@@ -37,24 +37,16 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
 }
 
 /**
- * Read a block that may be TOMBSTONED, through the IPC surface that is allowed
- * to serve one.
+ * Read a block that may be TOMBSTONED, straight from the mock's row store.
  *
  * #3928 — `get_block` is ACTIVE-only on both stacks (it delegates to
  * `get_active_block_inner`, whose SQL carries `AND deleted_at IS NULL`), so it
  * answers `not_found` for a soft-deleted row and cannot be used to inspect a
- * `deleted_at` stamp. `get_blocks` (plural) is the genuinely permissive reader
- * — `get_blocks_inner` has no `deleted_at` filter and documents that — so it is
- * what a tombstone assertion has to go through.
- *
- * The tests below used `get_block` for this until the mock was aligned to
- * production; they were reading a tombstone off a public read surface that
- * never serves one, so they passed against the mock and described something the
- * app cannot do.
+ * `deleted_at` stamp; no public read surface serves one (#3264 retired the
+ * permissive `get_blocks`), so a tombstone assertion reads the store.
  */
 function getRow(id: string): Record<string, unknown> {
-  const rows = invoke('get_blocks', { ids: [id] }) as Array<Record<string, unknown>>
-  const row = rows[0]
+  const row = blocks.get(id)
   if (row === undefined) throw new Error(`block '${id}' not found`)
   return row
 }
@@ -199,13 +191,11 @@ describe('get_block', () => {
    * calling the PERMISSIVE `get_block_inner` and the mock had been aligned to
    * the harness.
    *
-   * Asserted alongside the plural reader on the same id, because the pair is
-   * the point: `get_blocks_inner` genuinely has no `deleted_at` filter, so the
-   * two handlers disagreeing here is the backend's own documented split. A
-   * "get_block 404s a tombstone" test on its own would be satisfied by a mock
-   * that had simply lost the row.
+   * Asserted alongside the row store on the same id, because the pair is the
+   * point: a "get_block 404s a tombstone" test on its own would be satisfied
+   * by a mock that had simply lost the row.
    */
-  it('404s a soft-deleted block, while the plural reader still serves it', () => {
+  it('404s a soft-deleted block that the row store still holds', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
 
     expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
@@ -222,11 +212,7 @@ describe('get_block', () => {
     // still fail the differential.
     expect(err?.['kind']).toBe('not_found')
 
-    const rows = invoke('get_blocks', { ids: [SEED_IDS.BLOCK_GS_1] }) as Array<
-      Record<string, unknown>
-    >
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.['deleted_at']).not.toBeNull()
+    expect(getRow(SEED_IDS.BLOCK_GS_1)['deleted_at']).not.toBeNull()
   })
 
   it('returns dynamically created blocks', () => {
@@ -1565,81 +1551,6 @@ describe('get_backlinks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// query_backlinks_filtered
-// ---------------------------------------------------------------------------
-
-describe('query_backlinks_filtered', () => {
-  it('returns backlinks for target block', () => {
-    // BLOCK_QN_1 contains [[PAGE_GETTING_STARTED]]
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-    }) as { items: Record<string, unknown>[] }
-    expect(result.items.length).toBeGreaterThanOrEqual(1)
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).toContain(SEED_IDS.BLOCK_QN_1)
-  })
-
-  it('returns empty for block with no backlinks', () => {
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.TAG_WORK,
-    }) as { items: Record<string, unknown>[] }
-    expect(result.items).toHaveLength(0)
-  })
-
-  it('applies BlockType filter', () => {
-    // Create a page-type block referencing Getting Started
-    invoke('create_block', {
-      blockType: 'page',
-      content: `Page linking to [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
-    })
-    // Filter to only 'page' type — should exclude the seed content block BLOCK_QN_1
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      filters: [{ type: 'BlockType', block_type: 'page' }],
-    }) as { items: Record<string, unknown>[] }
-    for (const item of result.items) {
-      expect(item['block_type']).toBe('page')
-    }
-    const ids = result.items.map((b) => b['id'])
-    expect(ids).not.toContain(SEED_IDS.BLOCK_QN_1)
-  })
-
-  it('applies Contains filter', () => {
-    // Create another block referencing Getting Started with unique text
-    invoke('create_block', {
-      blockType: 'content',
-      content: `Unique xylophone text [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
-      parentId: SEED_IDS.PAGE_QUICK_NOTES,
-    })
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      filters: [{ type: 'Contains', query: 'xylophone' }],
-    }) as { items: Record<string, unknown>[] }
-    expect(result.items).toHaveLength(1)
-    expect((result.items[0]?.['content'] as string | undefined)?.toLowerCase()).toContain(
-      'xylophone',
-    )
-  })
-
-  it('returns correct total_count', () => {
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-    }) as { total_count: number; items: Record<string, unknown>[] }
-    expect(result.total_count).toBe(result.items.length)
-  })
-
-  it('returns BacklinkQueryResponse shape', () => {
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-    }) as Record<string, unknown>
-    expect(result).toHaveProperty('items')
-    expect(result).toHaveProperty('total_count')
-    expect(result).toHaveProperty('has_more')
-    expect(result).toHaveProperty('next_cursor')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // list_property_keys
 // ---------------------------------------------------------------------------
 
@@ -2394,22 +2305,6 @@ describe('set_scheduled_date', () => {
 })
 
 // ---------------------------------------------------------------------------
-// count_agenda_batch
-// ---------------------------------------------------------------------------
-
-describe('count_agenda_batch', () => {
-  it('returns counts per date', () => {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const result = invoke('count_agenda_batch', {
-      dates: [todayStr, '1900-01-01'],
-    }) as Record<string, number>
-    expect(result[todayStr]).toBeGreaterThanOrEqual(1)
-    expect(result['1900-01-01']).toBe(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // count_backlinks_batch
 // ---------------------------------------------------------------------------
 
@@ -2429,6 +2324,60 @@ describe('count_backlinks_batch', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_backlinks_grouped', () => {
+  // #3264 — `total_count` is the unfiltered base set, `filtered_count` the
+  // narrowed one, so "Showing 1 of 5" says 5 and not 1.
+  it('keeps total_count unfiltered when a filter narrows the groups', () => {
+    for (const word of ['zebra', 'yak']) {
+      invoke('create_block', {
+        blockType: 'content',
+        content: `${word} [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+        parentId: SEED_IDS.PAGE_QUICK_NOTES,
+      })
+    }
+    const result = invoke('list_backlinks_grouped', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      filters: [{ type: 'Contains', query: 'zebra' }],
+    }) as { groups: Array<{ blocks: unknown[] }>; total_count: number; filtered_count: number }
+    expect(result.filtered_count).toBe(1)
+    expect(result.groups.flatMap((g) => g.blocks)).toHaveLength(1)
+    expect(result.total_count).toBeGreaterThan(result.filtered_count)
+  })
+
+  // #3264 — `PropertyText` honours its `CompareOp`; a block without the
+  // property matches under no operator (the backend's `EXISTS` shape).
+  it('applies the PropertyText comparison op instead of always equality', () => {
+    const ids: Record<string, string> = {}
+    for (const status of ['open', 'done']) {
+      const created = invoke('create_block', {
+        blockType: 'content',
+        content: `${status} [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+        parentId: SEED_IDS.PAGE_QUICK_NOTES,
+      }) as Record<string, unknown>
+      ids[status] = created['id'] as string
+      invoke('set_property', {
+        blockId: ids[status],
+        key: 'status',
+        value: {
+          value_text: status,
+          value_num: null,
+          value_date: null,
+          value_bool: null,
+          value_ref: null,
+        },
+      })
+    }
+    const query = (op: string) =>
+      (
+        invoke('list_backlinks_grouped', {
+          blockId: SEED_IDS.PAGE_GETTING_STARTED,
+          filters: [{ type: 'PropertyText', key: 'status', op, value: 'open' }],
+        }) as { groups: Array<{ blocks: Array<Record<string, unknown>> }> }
+      ).groups.flatMap((g) => g.blocks.map((b) => b['id']))
+    expect(query('Eq')).toEqual([ids['open']])
+    expect(query('Neq')).toEqual([ids['done']])
+    expect(query('StartsWith')).toEqual([ids['open']])
+  })
+
   it('returns backlinks grouped by source page', () => {
     const result = invoke('list_backlinks_grouped', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
@@ -2751,13 +2700,6 @@ describe('list_peer_refs', () => {
   it('returns an empty array', () => {
     const result = invoke('list_peer_refs')
     expect(result).toEqual([])
-  })
-})
-
-describe('get_peer_ref', () => {
-  it('returns null', () => {
-    const result = invoke('get_peer_ref', { peerId: 'any-id' })
-    expect(result).toBeNull()
   })
 })
 
@@ -3574,21 +3516,6 @@ describe('scope-filter parity', () => {
   })
 
   // -------------------------------------------------------------------------
-  // query_backlinks_filtered (backend: query_backlinks_filtered)
-  // -------------------------------------------------------------------------
-  it('query_backlinks_filtered honours active scope', () => {
-    const { blockId: foreignBlockId } = seedForeignFixture({
-      linkTarget: SEED_IDS.PAGE_GETTING_STARTED,
-    })
-    const result = invoke('query_backlinks_filtered', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      filters: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-    }) as { items: Array<Record<string, unknown>> }
-    expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
-  })
-
-  // -------------------------------------------------------------------------
   // list_backlinks_grouped (backend: list_backlinks_grouped)
   // -------------------------------------------------------------------------
   it('list_backlinks_grouped honours active scope', () => {
@@ -3810,23 +3737,6 @@ describe('scope-filter parity', () => {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
-  })
-
-  // -------------------------------------------------------------------------
-  // count_agenda_batch (backend: count_agenda_batch)
-  // -------------------------------------------------------------------------
-  it('count_agenda_batch honours active scope', () => {
-    seedForeignFixture({ asTask: { todo_state: 'TODO', due_date: '2026-04-20' } })
-    const globalResult = invoke('count_agenda_batch', {
-      dates: ['2026-04-20'],
-      scope: { kind: 'global' },
-    }) as Record<string, number>
-    const activeResult = invoke('count_agenda_batch', {
-      dates: ['2026-04-20'],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-    }) as Record<string, number>
-    // The foreign block raises the global count above the active count.
-    expect(globalResult['2026-04-20'] ?? 0).toBeGreaterThan(activeResult['2026-04-20'] ?? 0)
   })
 
   // -------------------------------------------------------------------------

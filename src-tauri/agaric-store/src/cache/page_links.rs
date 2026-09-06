@@ -421,7 +421,6 @@ async fn recompute_rows_for_rollup_key(
 /// Deletes all existing rows and re-populates by rolling up
 /// `block_links` to the page level. Used by:
 ///
-/// - snapshot restore (`apply_snapshot`),
 /// - the delete/restore/purge/cross-page-move `FULL_CACHE_REBUILD_TASKS`
 ///   fan-out,
 /// - the read path's lazy heal in `commands::pages::links`, gated on the

@@ -71,10 +71,10 @@ pub const MAX_PAGE_SIZE: i64 = 200;
 /// (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`,
 /// `delete_blocks_by_ids_inner`, `add_tags_by_ids_inner`,
 /// `create_blocks_batch_inner`, `move_blocks_to_space_inner`) and the
-/// batch-read commands (`batch_resolve_inner`, `get_blocks_inner`,
+/// batch-read commands (`batch_resolve_inner`,
 /// `first_child_for_blocks_inner`, `get_batch_properties_inner`,
 /// `list_attachments_batch_inner`, `count_backlinks_batch_inner`,
-/// `count_agenda_batch_inner`, `count_agenda_batch_by_source_inner`,
+/// `count_agenda_batch_by_source_inner`,
 /// `trash_descendant_counts_inner`, and any future `*_by_ids` siblings) so
 /// the limit is not silently inconsistent across the family. Every site
 /// enforces it via [`ensure_batch_within_cap`]. Lives here in the store

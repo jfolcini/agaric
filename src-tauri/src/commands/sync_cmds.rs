@@ -26,17 +26,6 @@ pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, App
     peer_refs::list_peer_refs(pool).await
 }
 
-/// Fetch a single sync peer by its `peer_id`.
-///
-/// Returns `None` if the peer does not exist (not an error).
-#[instrument(skip(pool), err)]
-pub async fn get_peer_ref_inner(
-    pool: &SqlitePool,
-    peer_id: String,
-) -> Result<Option<PeerRef>, AppError> {
-    peer_refs::get_peer_ref(pool, &peer_id).await
-}
-
 /// Delete (unpair) a sync peer by its `peer_id`.
 ///
 /// Returns [`AppError::NotFound`] if the peer does not exist.
@@ -393,18 +382,6 @@ pub fn cancel_sync_inner(
 #[specta::specta]
 pub async fn list_peer_refs(pool: State<'_, ReadPool>) -> Result<Vec<PeerRef>, AppError> {
     list_peer_refs_inner(&pool.0)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`].
-#[tauri::command]
-#[specta::specta]
-pub async fn get_peer_ref(
-    pool: State<'_, ReadPool>,
-    peer_id: String,
-) -> Result<Option<PeerRef>, AppError> {
-    get_peer_ref_inner(&pool.0, peer_id)
         .await
         .map_err(sanitize_internal_error)
 }

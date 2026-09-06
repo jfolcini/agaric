@@ -2486,8 +2486,8 @@ pub async fn run_sync_session(
         };
         // #607: thread the session's engine state (override-aware in tests,
         // process-global in production) plus our own device id into the
-        // catch-up so it can drop + reload the in-memory engines right
-        // after `apply_snapshot` wipes the Loro sidecar tables.
+        // catch-up so the Loro merge runs against the live registry under
+        // our own device id.
         let local_device_id = orch.session().local_device_id.clone();
         let loro_state = orch.loro_state();
         let engine_reload = Some(snapshot_transfer::EngineReloadCtx {
@@ -2506,7 +2506,10 @@ pub async fn run_sync_session(
         )
         .await
         {
-            Ok(snapshot_transfer::CatchupOutcome::Applied { .. }) => {
+            // #2538: a failed catch-up arrives as `Err` and is recorded as a
+            // session failure below, which is what keeps the scheduler from
+            // re-selecting the peer every 30 s while the UI says "complete".
+            Ok(()) => {
                 tracing::info!(
                     peer_id = %peer_id,
                     "snapshot-driven catch-up complete"
@@ -2520,11 +2523,10 @@ pub async fn run_sync_session(
                 return Ok(());
             }
             Err(e) => {
-                // #2538: the catch-up sub-flow had its own error handling
+                // The catch-up sub-flow had its own error handling
                 // (decode/apply failure, unexpected message). Surface the
-                // error here so the session is recorded as a failure, which
-                // keeps the scheduler from re-selecting the peer every 30 s
-                // while the UI says "complete".
+                // error here so the scheduler records the failure and
+                // backs off.
                 if let Err(close_err) =
                     finish_session(false, send, conn, SessionLimits::default()).await
                 {

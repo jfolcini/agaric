@@ -17,6 +17,7 @@ import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
+import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { searchBlocks, searchBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -108,7 +109,7 @@ export function TagsModeBody({
           <CommandItem
             key={tag.id}
             value={`tag:${tag.id}`}
-            onSelect={() => onEscalate(`tag:#${name}`)}
+            onSelect={() => onEscalate(`tag:#${quoteValueIfNeeded(name)}`)}
             data-testid={`palette-tag-${tag.id}`}
             className="gap-2"
           >

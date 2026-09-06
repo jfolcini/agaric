@@ -39,7 +39,7 @@
 // that was literally true of the two lines it mutated and read as a statement
 // about the PR: ~46 lines of new application logic across five unenrolled
 // files drew no mutation signal at all, and nothing in the comment said so.
-// 21 modules are enrolled while the frontend has far more source files than
+// 23 modules are enrolled while the frontend has far more source files than
 // that, so "this diff touched something unenrolled" is the normal case, not
 // the edge case — and the two scopes diverge most exactly when a PR adds new,
 // unenrolled logic, which is when a reviewer would most want to know.

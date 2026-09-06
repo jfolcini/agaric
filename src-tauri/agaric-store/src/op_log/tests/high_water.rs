@@ -9,11 +9,9 @@
 //! delivery. Each test below therefore asserts the harm end-to-end (the op
 //! lands on a second, "peer" database) rather than only the seq number.
 //!
-//! The two wipes are tested as a PAIR on purpose: the floor-clause fix
-//! sketched in #3310 (`AND seq < ?3` on `prune`'s DELETE) would pass
-//! [`prune_to_empty_does_not_restart_seq`] while leaving
-//! [`truncate_does_not_restart_seq`] — the RESET path, whose only production
-//! caller is a live paired-peer catch-up — red.
+//! The floor-clause fix sketched in #3310 (`AND seq < ?3` on `prune`'s
+//! DELETE) would pass [`prune_to_empty_does_not_restart_seq`]; what reddened
+//! on it was the RESET's unbounded wipe, deleted with the RESET in #4699.
 
 use super::*;
 
@@ -247,116 +245,6 @@ async fn repeated_prunes_keep_the_high_water_monotone() {
         "the second wipe must raise the floor to 4, not reset it"
     );
     assert_eq!(high_water_of(&pool, TEST_DEVICE).await, Some(4));
-}
-
-// ── #3998: the snapshot-RESET (`truncate`) path ─────────────────────────
-
-/// The RESET path. `apply_snapshot` wipes `op_log` wholesale; its only
-/// production caller is a live paired-peer snapshot catch-up, so the peer
-/// demonstrably holds this device's pre-RESET ops — the aliasing is
-/// reachable by construction, not hypothetically.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn truncate_does_not_restart_seq() {
-    let (pool, _dir) = test_pool().await;
-    let (peer, _peer_dir) = test_pool().await;
-
-    let pre = author_and_replicate(
-        &pool,
-        &peer,
-        TEST_DEVICE,
-        &["BLK-TR-1", "BLK-TR-2", "BLK-TR-3"],
-        FIXED_TS,
-    )
-    .await;
-    assert_eq!(pre.iter().map(|r| r.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
-
-    // The RESET wipe, exactly as `apply_snapshot` performs it.
-    // allow-raw-tx: test drives the truncate directly
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    super::truncate(&mut tx).await.unwrap();
-    tx.commit().await.unwrap();
-    assert_eq!(
-        op_count(&pool).await,
-        0,
-        "precondition: the RESET empties the log"
-    );
-
-    let post = append_local_op_at(
-        &pool,
-        TEST_DEVICE,
-        make_create_payload("BLK-TR-4"),
-        FIXED_TS + 2,
-    )
-    .await
-    .unwrap();
-
-    // The harm first, then the mechanism that causes it.
-    assert!(
-        peer_ingest(&peer, &post).await,
-        "THE HARM: at a reused address the peer's INSERT OR IGNORE swallows \
-         this device's post-RESET history — silently and permanently, since \
-         the frontier the peer advertises for it already sits above 1."
-    );
-    assert_eq!(
-        post.seq, 4,
-        "the allocator must continue from the pre-RESET frontier, not restart at 1"
-    );
-    assert!(
-        post.parent_seqs.is_some(),
-        "a post-RESET op is not the device's genesis op"
-    );
-    assert_eq!(
-        high_water_of(&pool, TEST_DEVICE).await,
-        Some(3),
-        "truncate must record the pre-delete frontier as the durable floor"
-    );
-}
-
-/// `truncate` is unbounded — it drops every device's rows, including the
-/// audit rows of peers — so it must record a mark per device, not just for
-/// whichever one happens to be first.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn truncate_records_a_mark_for_every_device() {
-    let (pool, _dir) = test_pool().await;
-    const OTHER_DEVICE: &str = "other-device";
-
-    for tag in ["BLK-MD-A1", "BLK-MD-A2"] {
-        append_local_op_at(&pool, TEST_DEVICE, make_create_payload(tag), FIXED_TS)
-            .await
-            .unwrap();
-    }
-    for tag in ["BLK-MD-B1", "BLK-MD-B2", "BLK-MD-B3"] {
-        append_local_op_at(&pool, OTHER_DEVICE, make_create_payload(tag), FIXED_TS)
-            .await
-            .unwrap();
-    }
-
-    // allow-raw-tx: test drives the truncate directly
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    super::truncate(&mut tx).await.unwrap();
-    tx.commit().await.unwrap();
-
-    assert_eq!(high_water_of(&pool, TEST_DEVICE).await, Some(2));
-    assert_eq!(high_water_of(&pool, OTHER_DEVICE).await, Some(3));
-
-    let a = append_local_op_at(
-        &pool,
-        TEST_DEVICE,
-        make_create_payload("BLK-MD-A3"),
-        FIXED_TS + 1,
-    )
-    .await
-    .unwrap();
-    let b = append_local_op_at(
-        &pool,
-        OTHER_DEVICE,
-        make_create_payload("BLK-MD-B4"),
-        FIXED_TS + 1,
-    )
-    .await
-    .unwrap();
-    assert_eq!(a.seq, 3, "each device resumes from its OWN frontier");
-    assert_eq!(b.seq, 4, "each device resumes from its OWN frontier");
 }
 
 // ── The mark itself ─────────────────────────────────────────────────────
