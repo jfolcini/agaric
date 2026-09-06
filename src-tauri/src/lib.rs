@@ -2536,8 +2536,13 @@ pub fn run() {
                     materializer: materializer.clone(),
                     scheduler: scheduler.clone(),
                     endpoint_secret,
-                    sink: std::sync::Arc::new(sync_event_sinks::TauriEventSink(
-                        app.handle().clone(),
+                    // #4717: place a synced-in space-less block when the
+                    // session completes, not at the next boot.
+                    sink: std::sync::Arc::new(spaces::SpacePlacementSink::new(
+                        std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
+                        pools.write.clone(),
+                        device_id.clone(),
+                        materializer.clone(),
                     )),
                     app_handle: app.handle().clone(),
                     lifecycle: lifecycle.clone(),

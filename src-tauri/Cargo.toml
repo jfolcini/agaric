@@ -523,11 +523,10 @@ panic = "unwind"
 lto = false
 codegen-units = 16
 
-# #4696: the cargo-mutants lane's profile (`.cargo/mutants.toml` selects it).
-# `[profile.dev.package."*"] debug = false` below only covers dependencies;
-# the workspace crates are what every mutant recompiles, and a mutant's
-# symbols are never read, so they build without debug info: 48.7 s → 41 s
-# per incremental rebuild, measured on the `agaric-store` package.
+# #4696: the cargo-mutants lane's profile; `.cargo/mutants.toml` selects it
+# and carries the measurement. `[profile.dev.package."*"] debug = false`
+# below only covers dependencies; the workspace crates are what every mutant
+# recompiles, and a mutant's symbols are never read.
 [profile.mutants]
 inherits = "test"
 debug = "none"

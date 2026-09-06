@@ -1850,6 +1850,9 @@ describe('PairingDialog', () => {
         expect(timeoutAlert).toHaveTextContent('No response from the other device')
         expect(timeoutAlert).toHaveTextContent(/pairing code expired/i)
         expect(timeoutAlert).toHaveTextContent(/could not find each other/i)
+        // #3504: the fresh code comes from the host, so the copy sends the
+        // user there instead of back to the word inputs.
+        expect(timeoutAlert).toHaveTextContent(/reopen pairing on the other device/i)
         // Pin the DEFECT, not the hedge: the old string asserted a single
         // cause. Rejecting /may have expired/ would also redden a legitimate
         // future rewording that names both ("the code may have expired, or
