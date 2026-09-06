@@ -54,9 +54,12 @@ export const sync: Record<string, string> = {
   // fine and the packets are simply dropped — so no hint is shown at all.
   // A user told the code expired retries with a fresh code, which fails
   // identically, for ever. Naming both causes is what makes the second one
-  // actionable. The transport gap itself is #4037.
+  // actionable. The transport gap itself is #4037. #3504: the host's code
+  // is armed when its dialog opens and the joiner's wait starts at confirm,
+  // so the host's window always closes first; a fresh code comes from the
+  // host, not from retyping here.
   'pairing.waitTimedOut':
-    'No response from the other device. Either the pairing code expired, or the two devices could not find each other on this network — some guest and corporate WiFi networks block the discovery pairing needs.',
+    'No response from the other device. Either the pairing code expired, or the two devices could not find each other on this network — some guest and corporate WiFi networks block the discovery pairing needs. If the code expired, reopen pairing on the other device to get a fresh one.',
   // #3852 \u2014 the OS is dropping this app's packets (Android 15+'s per-uid
   // background firewall fires the moment the screen sleeps, even with the app
   // top-of-stack). This is the ONLY wording for that banner: the daemon sends
