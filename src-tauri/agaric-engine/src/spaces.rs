@@ -525,6 +525,7 @@ async fn majority_space_by_content_refs(
 /// downstream of this step.
 pub async fn migrate_orphan_tags_to_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
     device_id: &str,
     records: &mut Vec<OpRecord>,
 ) -> Result<usize, AppError> {
@@ -586,22 +587,19 @@ pub async fn migrate_orphan_tags_to_space(
             value_bool: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
-        records.push(record);
 
-        // Materialize the space membership onto the column immediately so
-        // downstream enforcement steps in the same transaction see it
-        // (Phase 2: `blocks.space_id` is the SOLE source of truth; the
-        // op-log append above remains the append-only record). A tag block
-        // carries its own space, and any block whose `page_id` points at
-        // the tag is covered by the `id = ? OR page_id = ?` grouping.
-        sqlx::query!(
-            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-            target_space,
-            tag_id,
-            tag_id,
-        )
-        .execute(&mut **tx)
-        .await?;
+        // Applied IN this transaction through the shared projection, the way
+        // the eager adoption in `commands/tags.rs` and the repair below do.
+        // For the `space` key that is `apply_set_property_via_loro`: the same
+        // `UPDATE blocks SET space_id … WHERE id = ? OR page_id = ?` a
+        // hand-rolled column write would do, and THEN the hydrate of the tag
+        // into the space's `LoroDoc`. The old UPDATE skipped the hydrate, so
+        // the column said Work while Work's engine had never heard of the
+        // block — invisible to a peer, and absent from a reprojection (#4743).
+        // `old_space` is `None` for every candidate, so #2907's prune is a
+        // no-op by construction.
+        crate::apply::kernel::apply_op_projected(tx, &record, state, false).await?;
+        records.push(record);
 
         migrated += 1;
     }
@@ -904,9 +902,10 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -948,7 +947,8 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+        let state = LoroState::new();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, &state, DEV, &mut Vec::new())
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -959,6 +959,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
+        // #4743 — the column saying Work is half of it: Work's engine must
+        // hold the block too, or a peer never learns the tag is there and a
+        // reprojection from Loro loses it.
+        let mut work = state
+            .registry
+            .for_space(
+                &agaric_store::space::SpaceId::from_trusted(SPACE_WORK_ULID),
+                DEV,
+            )
+            .unwrap();
+        assert!(
+            work.engine_mut().contains_block(&tag_id),
+            "the placed tag must be hydrated into its space's LoroDoc"
+        );
     }
 
     #[tokio::test]
@@ -975,14 +989,14 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let m1 = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+        let m1 = migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
             .await
             .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(m1, 1);
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let m2 = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+        let m2 = migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -1010,9 +1024,10 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 0);
@@ -1064,9 +1079,10 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -1147,9 +1163,10 @@ mod tests {
             .unwrap();
         assert_eq!(cached, 0, "fixture must not pre-seed the ref cache");
 
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -1474,9 +1491,10 @@ mod tests {
             .await
             .unwrap();
 
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -1514,9 +1532,10 @@ mod tests {
         .unwrap();
         seed_page_with_content(&mut tx, SPACE_WORK_ULID, Some(1_577_836_800_000), &body).await;
 
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -1616,9 +1635,10 @@ mod tests {
     async fn empty_table_returns_zero() {
         let (pool, _tmp) = fresh_pool().await;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
-            .await
-            .unwrap();
+        let migrated =
+            migrate_orphan_tags_to_space(&mut tx, &LoroState::new(), DEV, &mut Vec::new())
+                .await
+                .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(migrated, 0);
     }
