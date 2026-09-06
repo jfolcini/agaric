@@ -2544,6 +2544,9 @@ pub fn run() {
                         pools.read.clone(),
                         device_id.clone(),
                         materializer.clone(),
+                        std::sync::Arc::new(mcp::view_notify::TauriViewChangeEmitter::new(
+                            app.handle().clone(),
+                        )),
                     )),
                     app_handle: app.handle().clone(),
                     lifecycle: lifecycle.clone(),
