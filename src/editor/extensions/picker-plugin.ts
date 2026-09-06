@@ -337,11 +337,7 @@ export function createPickerTokenFromCommand({
         )
         return
       }
-      editor
-        .chain()
-        .focus()
-        .insertContentAt(pos, [tokenFor(newId), { type: 'text', text: ' ' }])
-        .run()
+      editor.chain().focus().insertContentAt(pos, tokenFor(newId)).run()
     })
     .catch((err: unknown) => {
       logger.error(loggerComponent, errorMessage, undefined, err)
