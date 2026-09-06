@@ -16,7 +16,7 @@
 4 src-tauri/agaric-engine/src/materializer/coordinator.rs
 4 src-tauri/agaric-engine/src/materializer/handlers/attachments.rs
 3 src-tauri/agaric-engine/src/materializer/retry_queue.rs
-2 src-tauri/agaric-engine/src/spaces.rs
+3 src-tauri/agaric-engine/src/spaces.rs
 21 src-tauri/agaric-store/src/backlink/filters.rs
 8 src-tauri/agaric-store/src/backlink/grouped.rs
 9 src-tauri/agaric-store/src/backlink/query.rs
