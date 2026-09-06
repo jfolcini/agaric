@@ -53,6 +53,7 @@ function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
     starred: false,
     showAliasBadge: false,
     deleting: false,
+    duplicateTitle: false,
     lastModifiedAt: Date.now() - 3 * 24 * 60 * 60 * 1000, // 3 days ago (epoch-ms)
     inboundLinkCount: 5,
     childBlockCount: 12,
