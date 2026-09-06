@@ -6,6 +6,7 @@ import { axe } from 'vitest-axe'
 import { EditorTab } from '@/components/settings/EditorTab'
 import { EMOJI_PICKER_ENABLED_KEY } from '@/lib/editor-preferences'
 import { EXTERNAL_IMAGE_ALLOWLIST_KEY } from '@/lib/external-image-policy'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 describe('EditorTab', () => {
   afterEach(() => {
@@ -30,6 +31,26 @@ describe('EditorTab', () => {
     localStorage.setItem(EMOJI_PICKER_ENABLED_KEY, 'false')
     render(<EditorTab />)
     expect(screen.getByTestId('emoji-picker-toggle')).not.toBeChecked()
+  })
+
+  it('link-preview hover-fetch toggle defaults to on', () => {
+    render(<EditorTab />)
+    expect(screen.getByTestId('link-preview-fetch-toggle')).toBeChecked()
+  })
+
+  it('toggling the link-preview hover fetch off persists the preference', async () => {
+    const user = userEvent.setup()
+    render(<EditorTab />)
+    const toggle = screen.getByTestId('link-preview-fetch-toggle')
+    await user.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(readPreference(PREFERENCES.linkPreviewHoverFetch)).toBe(false)
+  })
+
+  it('reflects a stored-off link-preview preference on mount', () => {
+    writePreference(PREFERENCES.linkPreviewHoverFetch, false)
+    render(<EditorTab />)
+    expect(screen.getByTestId('link-preview-fetch-toggle')).not.toBeChecked()
   })
 
   it('has no a11y violations', async () => {

@@ -27,6 +27,7 @@ import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
 import { type ExternalImagePolicy, isExternalImagePolicy } from '@/lib/external-image-policy'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, usePreference } from '@/lib/preferences'
 
 export function EditorTab(): React.ReactElement {
   const { t } = useTranslation()
@@ -40,6 +41,7 @@ export function EditorTab(): React.ReactElement {
   )
   // #1492 — external-image load policy + the managed per-host allowlist.
   const { policy, setPolicy } = useExternalImagePolicy()
+  const [linkPreviewFetch, setLinkPreviewFetch] = usePreference(PREFERENCES.linkPreviewHoverFetch)
   const { allowlist, removeHost } = useExternalImageAllowlist()
 
   const handlePolicyChange = useCallback(
@@ -128,6 +130,17 @@ export function EditorTab(): React.ReactElement {
           </ul>
         </div>
       )}
+
+      {/* #3684 — the hover/focus link-preview fetch is the only outbound
+          request to a host chosen by note content rather than by the user. */}
+      <ToggleRow
+        id="link-preview-fetch-toggle"
+        label={t('settings.editor.linkPreviewLabel')}
+        description={t('settings.editor.linkPreviewHelp')}
+        checked={linkPreviewFetch}
+        onCheckedChange={setLinkPreviewFetch}
+        data-testid="link-preview-fetch-toggle"
+      />
     </div>
   )
 }

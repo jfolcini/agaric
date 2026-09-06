@@ -46,6 +46,9 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageUpdated': 'External image policy updated',
   'settings.editor.externalImageAllowedHosts': 'Allowed image domains',
   'settings.editor.externalImageRemoveHost': 'Remove {{host}}',
+  'settings.editor.linkPreviewLabel': 'Fetch link previews on hover',
+  'settings.editor.linkPreviewHelp':
+    'Hovering or Tab-focusing an external link fetches its title and icon from that site, which tells the site you hold the link. Turn off to stop that fetch; previews already cached still show, and a link you paste or insert yourself is still fetched once.',
   'settings.tabSync': 'Sync & Devices',
   'settings.tabData': 'Data',
   'settings.themeLabel': 'Theme',

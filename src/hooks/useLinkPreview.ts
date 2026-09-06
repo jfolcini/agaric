@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands, type LinkMetadata } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 
 export interface LinkPreviewState {
   url: string | null
@@ -92,7 +93,12 @@ export function useLinkPreview(container: HTMLElement | null): LinkPreviewState 
               }))
               return
             }
-            // Cache miss — fetch from network
+            // Cache miss — the gated fetch (#3684). Off, close the preview
+            // rather than leave a shell up that reads as a failed fetch.
+            if (!readPreference(PREFERENCES.linkPreviewHoverFetch)) {
+              setState(INITIAL_STATE)
+              return
+            }
             return commands
               .fetchLinkMetadata(href)
               .then(unwrap)
