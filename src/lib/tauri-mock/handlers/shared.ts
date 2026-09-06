@@ -635,6 +635,11 @@ export function propertyValueColumn(
   }
 }
 
+/** SQLite's BINARY collation on TEXT: a code-unit compare, never `localeCompare`. */
+export function compareBinary(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 /** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
  * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise. */
 export function compareProperty(op: string, a: string | number, b: string | number): boolean {

@@ -109,8 +109,12 @@ use super::common::pages::{
     list_all_pages_in_space_inner, list_pages_with_metadata_inner,
     list_template_page_ids_in_space_inner,
 };
+use super::common::properties::{list_property_keys_inner, list_property_values_inner};
 use super::common::queries::{query_by_property_inner, search_blocks_partitioned_inner};
-use super::common::tags::{query_by_tag_expr_inner, query_by_tags_inner};
+use super::common::tags::{
+    list_all_tags_in_space_inner, list_tags_by_prefix_inner, query_by_tag_expr_inner,
+    query_by_tags_inner,
+};
 use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
@@ -212,6 +216,35 @@ const DELETED_SENTINEL: &str = "DELETED";
 /// tree links (the #1775 class) still reddens; `deleted_at` says whether the
 /// command's SQL filters tombstones. MUST match `BLOCK_ATTRS` in the TS twin.
 const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"];
+
+/// A `TagCacheRow` listing: `tag_id#name=…#usage_count=…`. `updated_at` is a
+/// clock and stays off the token.
+const TAG_ATTRS: &[&str] = &["name", "usage_count"];
+
+/// Project a bare `Vec<TagCacheRow>` response.
+fn tag_rows(rows: &[agaric_store::tag_query::TagCacheRow]) -> RawResult {
+    let v = serde_json::to_value(rows).expect("serialize Vec<TagCacheRow>");
+    RawResult {
+        rows: v.as_array().map_or_else(Vec::new, |a| {
+            a.iter()
+                .map(|r| row_token(r, "tag_id", TAG_ATTRS))
+                .collect()
+        }),
+        has_more: None,
+        total_count: None,
+        next_cursor: None,
+    }
+}
+
+/// Project a bare `Vec<String>` response.
+fn bare_scalars(rows: &[String]) -> RawResult {
+    RawResult {
+        rows: scalar_tokens(&serde_json::to_value(rows).expect("serialize Vec<String>")),
+        has_more: None,
+        total_count: None,
+        next_cursor: None,
+    }
+}
 
 /// Attributes of a `ResolvedBlock` — the lightweight chip projection.
 /// `title` is the RENAMED `content` column and `deleted` the derived tombstone
@@ -959,12 +992,23 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let scope: SpaceScope = arg_req(args, "scope");
             let space_id = scope.require_active()?;
             let rows = list_template_page_ids_in_space_inner(pool, space_id.as_str()).await?;
-            RawResult {
-                rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
-                has_more: None,
-                total_count: None,
-                next_cursor: None,
-            }
+            bare_scalars(&rows)
+        }
+        // ── Tag and property listings (#3827, the four listing commands) ──
+        "list_all_tags_in_space" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?;
+            tag_rows(&list_all_tags_in_space_inner(pool, space_id.as_str()).await?)
+        }
+        "list_tags_by_prefix" => {
+            let prefix: String = arg_or(args, "prefix");
+            let limit: Option<i64> = opt_arg_as(args, "limit");
+            tag_rows(&list_tags_by_prefix_inner(pool, prefix, limit).await?)
+        }
+        "list_property_keys" => bare_scalars(&list_property_keys_inner(pool).await?),
+        "list_property_values" => {
+            let key: String = arg_req(args, "key");
+            bare_scalars(&list_property_values_inner(pool, &key).await?)
         }
         // ── Point reads over blocks / properties / tags (#3826) ──
         //
@@ -1869,10 +1913,15 @@ mod reader_delegation_tests {
     // `list_template_page_ids_in_space`: each is a plain SELECT behind its
     // `*_inner` (`pagination::list_trash`, `commands/pages/listing.rs`), so
     // the writer set below is unchanged.
+    // #3827 (listings) wired `list_all_tags_in_space`, `list_tags_by_prefix`,
+    // `list_property_keys` and `list_property_values`: SELECTs over
+    // `tags_cache` / `block_properties` (`tag_query::query`,
+    // `backlink::query`); the prefix scan's #768 exact-match reads are
+    // SELECTs too. Writer set unchanged.
     // #3823 wired `search_blocks_partitioned`: the same FTS scan
     // `search_blocks` runs, twice (`fts::search_with_toggles_partitioned`), a
     // SELECT on both partitions. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 26;
+    const SWEPT_ARM_COUNT: usize = 30;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

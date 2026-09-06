@@ -345,7 +345,8 @@ describe('list_tags_by_prefix', () => {
     expect(result).toHaveLength(1)
     expect(result[0] as Record<string, unknown>).toHaveProperty('tag_id', SEED_IDS.TAG_WORK)
     expect(result[0] as Record<string, unknown>).toHaveProperty('name', 'work')
-    expect(result[0] as Record<string, unknown>).toHaveProperty('usage_count', 0)
+    // `usage_count` is the number of live seed holders (`DESIRED_TAGS_SQL`).
+    expect(result[0] as Record<string, unknown>).toHaveProperty('usage_count', 3)
     expect(result[0] as Record<string, unknown>).toHaveProperty('updated_at')
   })
 
@@ -1580,17 +1581,18 @@ describe('list_property_keys', () => {
       },
     })
     const result = invoke('list_property_keys') as string[]
-    // Should be sorted and include 'category', 'status', plus defaults 'priority' and 'todo'
-    expect(result).toEqual([...result].toSorted())
+    // Usage-ranked, `key ASC` on ties (#1424): both hold one row, so
+    // `category` precedes `status`.
     expect(result).toContain('status')
     expect(result).toContain('category')
+    expect(result.indexOf('category')).toBeLessThan(result.indexOf('status'))
   })
 
-  it('includes default keys', () => {
-    // Even with no properties set, 'todo' and 'priority' should always be present
+  it('lists only keys a block holds', () => {
+    // No synthetic defaults: the backend groups `block_properties` and nothing else.
     const result = invoke('list_property_keys') as string[]
-    expect(result).toContain('todo')
-    expect(result).toContain('priority')
+    expect(result).not.toContain('todo')
+    expect(result).not.toContain('priority')
   })
 })
 

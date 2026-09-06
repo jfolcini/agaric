@@ -14,6 +14,7 @@ import {
   appErrorRejection,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
+  compareBinary,
   notFoundRejection,
   returnEmptyPage,
   validationRejection,
@@ -332,18 +333,21 @@ export const propertiesHandlers = {
   // Undo / redo
   // ---------------------------------------------------------------------------
 
+  // #1424 — `GROUP BY key ORDER BY COUNT(*) DESC, key ASC` over every
+  // `block_properties` row, deleted holders included (the backend does not
+  // join `blocks`). The mock-only `space` membership row is the
+  // `blocks.space_id` column on the backend (#3081), never a key there.
   list_property_keys: () => {
-    // Collect all distinct property keys from mock data
-    const keys = new Set<string>()
+    const counts = new Map<string, number>()
     for (const blockProps of properties.values()) {
       for (const key of blockProps.keys()) {
-        keys.add(key)
+        if (key === 'space') continue
+        counts.set(key, (counts.get(key) ?? 0) + 1)
       }
     }
-    // Always include common keys
-    keys.add('todo')
-    keys.add('priority')
-    return [...keys].toSorted()
+    return [...counts.entries()]
+      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
+      .map(([key]) => key)
   },
 
   // #1425 — distinct text values for a key, usage-ranked (most-used
@@ -360,7 +364,7 @@ export const propertiesHandlers = {
       counts.set(value, (counts.get(value) ?? 0) + 1)
     }
     return [...counts.entries()]
-      .toSorted((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
       .map(([value]) => value)
   },
 
