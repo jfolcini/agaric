@@ -61,3 +61,22 @@ Added one e2e case: pick a page from the `[[` popup in a real contenteditable, t
 assert the text contains `, and more` and **not** ` , and more`. Restoring the trailing space to
 `block-link-picker.ts` reddens it with `Received string: " , and more"` — the reported symptom,
 character for character.
+
+## The PR made its own mistake, in the fix for that mistake
+
+The review of this PR pointed out that the corrected CSS comment ran to eleven lines for a
+four-line rule — *in the PR whose stated theme is "a comment longer than the component it
+documents"*.
+
+It was right. Three of those lines were the correction; the rest were "that is deliberate; CSS
+cannot express 'only when touching'" and "the shape every note written before #4708 has", which
+is precisely the archaeology that had just been trimmed out of `AlertSection.tsx` and moved to a
+session log. Same for `CONTRIBUTING.md`, where the added sentence argued the decision — *"it
+deliberately takes whatever `uvx` resolves, which is all a 'can uv reach PyPI' check needs"* —
+rather than stating the fact that fixes it. `.mcp.json` pins the version it runs. That is the
+whole repair.
+
+Worth keeping, because knowing the rule did not prevent it: writing a *correction* feels like it
+licenses explaining, since the reader is being told their previous understanding was wrong and
+that seems to need justifying. The explanation belongs where explanations go. What replaces the
+wrong comment is a right one, the same length.

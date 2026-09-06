@@ -69,9 +69,7 @@ It is wired in the tracked [`.mcp.json`](.mcp.json), which launches the server v
 uvx code-review-graph serve
 ```
 
-`.mcp.json` starts the server on demand and **pins the version** it runs, so the command above is
-not a copy of it — it deliberately takes whatever `uvx` resolves, which is all a "can uv reach
-PyPI" check needs. `uvx` fetches and runs `code-review-graph` without a separate global install,
+`.mcp.json` starts the server on demand and **pins the version** it runs. `uvx` fetches and runs `code-review-graph` without a separate global install,
 so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the graph tools to be usable at all; if it is not available, agents simply fall back to Grep/Glob/Read.
 
 ## Development workflow

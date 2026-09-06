@@ -1379,17 +1379,10 @@
   text-decoration: line-through;
 }
 
-/* #4708 — two chips inserted back to back now sit directly against each
-   other, because the pickers no longer append a trailing space. Same-type
-   chips share a background colour, so `[[Alpha]][[Bravo]]` renders as two
-   touching pills that read as one. An adjacent-sibling rule is the narrow
-   fix: it puts a gap between any two adjacent chips, and nothing else. Note
-   `+` is the next-ELEMENT sibling, so text between two chips is invisible to
-   it — `[[Alpha]] [[Bravo]]`, the shape every note written before #4708 has,
-   matches too and gets the space plus this gap. That is deliberate; CSS
-   cannot express "only when touching". What it never matches is a chip
-   followed by text, so the comma in `[[Alpha]],` — the case the trailing
-   space was removed FOR — stays tight against the pill. */
+/* #4708 — the pickers no longer append a trailing space, so two chips can sit
+   directly against each other and read as one pill. `+` is the next-ELEMENT
+   sibling, so `[[Alpha]] [[Bravo]]` matches too and gets the space plus this
+   gap; a chip followed by text never matches, so `[[Alpha]],` stays tight. */
 :is(.block-link-chip, .tag-ref-chip, .block-ref-chip)
   + :is(.block-link-chip, .tag-ref-chip, .block-ref-chip) {
   margin-left: 0.25em;
