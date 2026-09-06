@@ -28,6 +28,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { pushEmojiRecent } from '@/hooks/useEmojiRecents'
 import { isEmojiPickerEnabled } from '@/lib/editor-preferences'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 export const emojiPickerPluginKey = new PluginKey('emojiPicker')
 
@@ -100,7 +101,11 @@ export const EmojiPicker = Extension.create({
           if (name == null) return null
           const dataset = peekEmojiDataset()
           if (dataset == null) {
-            void loadEmojiDataset()
+            // #4628: a failed load no longer memoizes, so each match here
+            // would otherwise raise a fresh unhandled rejection.
+            loadEmojiDataset().catch((err: unknown) => {
+              logger.warn('EmojiPicker', 'Failed to load emoji dataset', undefined, err)
+            })
             return null
           }
           const emoji = dataset.byShortcode.get(name.toLowerCase()) ?? null

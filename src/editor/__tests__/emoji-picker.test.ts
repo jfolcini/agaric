@@ -329,4 +329,34 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
     expect(insertText).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(dataMod.peekEmojiDataset()).not.toBeNull(), { timeout: 3000 })
   })
+
+  // #4628 — the loader no longer memoizes a rejection, so this fire-and-forget
+  // load must handle its own failure or every later `:name:` match raises a
+  // fresh unhandled rejection.
+  it('logs, rather than leaks, a rejected load kicked off by the input rule', async () => {
+    vi.doMock('@/editor/emoji-data.generated', () => {
+      throw new Error('chunk load failed')
+    })
+    const { logger } = await import('@/lib/logger')
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const onUnhandled = vi.fn()
+    process.on('unhandledRejection', onUnhandled)
+
+    const rule = await loadInputRule()
+    const match = [' :joy:', 'joy'] as unknown as RegExpMatchArray
+    rule.handler({ state: { tr: { insertText: vi.fn() } }, range: { from: 0, to: 6 }, match })
+
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledTimes(1))
+    expect(warnSpy).toHaveBeenCalledWith(
+      'EmojiPicker',
+      'Failed to load emoji dataset',
+      undefined,
+      expect.any(Error),
+    )
+    // Give a leaked rejection a macrotask to surface before asserting none did.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(onUnhandled).not.toHaveBeenCalled()
+    process.off('unhandledRejection', onUnhandled)
+    vi.doUnmock('@/editor/emoji-data.generated')
+  })
 })
