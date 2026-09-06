@@ -90,11 +90,16 @@ describe('Agaric real-backend space-scoped tag (#4671 / #3081)', () => {
     await $(TAG_ITEM).waitForDisplayed({ timeout: NAV_TIMEOUT })
 
     // 4. Absent in A. The empty state is the "list has loaded" signal that
-    //    makes the absence check meaningful (TagList.tsx `tagList.empty`).
+    //    makes the absence check meaningful: EmptyState.tsx stamps the
+    //    message (`tagList.empty`) as the root's aria-label.
     await switchToSpace(spaceA)
     await navigateTo('Journal')
     await navigateTo('Tags')
-    await $('*=No tags yet').waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await $(
+      '[aria-label="No tags yet. Create one above to organize your blocks."]',
+    ).waitForDisplayed({
+      timeout: NAV_TIMEOUT,
+    })
     await expectAbsent(TAG_ITEM, 'the space-B tag')
 
     // 5. Present again in B.

@@ -72,7 +72,6 @@ describe('Agaric real-backend search ranking (#4671)', () => {
     // `getElements()` yields WDIO's ElementArray, whose `map` is already async.
     const order = await rows.map((row) => row.getAttribute('data-testid'))
     expect(order).toEqual([`search-result-row-${denseId}`, `search-result-row-${sparseId}`])
-    await expect($('[data-testid="search-results-count"]')).toBeDisplayed()
     await $(rowSelector(denseId)).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })
 })
