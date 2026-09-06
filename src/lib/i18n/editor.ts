@@ -223,6 +223,9 @@ export const editor: Record<string, string> = {
   // #2671 — the ~150 KB dataset now lazy-loads on first open; this covers the
   // brief window before it resolves.
   'emojiPicker.loading': 'Loading emoji…',
+  // #4628 — that lazy import can reject (a chunk that fails to load); the grid
+  // says so and offers a retry instead of sitting on the placeholder.
+  'emojiPicker.loadFailed': 'Failed to load emoji',
   'emojiPicker.skinTone': 'Skin tone',
   'emojiPicker.skinTone.default': 'Default',
   'emojiPicker.skinTone.light': 'Light',

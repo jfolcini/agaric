@@ -95,14 +95,22 @@ let resolvedDataset: EmojiDataset | null = null
  * grouped/flat/shortcode structures; every subsequent call — concurrent or
  * later — returns the SAME cached promise, so the ~150 KB blob is fetched and
  * processed at most once per session, on first use rather than at module
- * load (#2671).
+ * load (#2671). A rejected load clears the memo, so the next call retries the
+ * import instead of replaying the failure (#4628).
  */
 export function loadEmojiDataset(): Promise<EmojiDataset> {
-  datasetPromise ??= import('@/editor/emoji-data.generated').then(({ EMOJI_DATA }) => {
-    const dataset = buildDataset(EMOJI_DATA)
-    resolvedDataset = dataset
-    return dataset
-  })
+  datasetPromise ??= import('@/editor/emoji-data.generated')
+    .then(({ EMOJI_DATA }) => {
+      const dataset = buildDataset(EMOJI_DATA)
+      resolvedDataset = dataset
+      return dataset
+    })
+    .catch((err: unknown) => {
+      // Memoizing a rejection would replay the same failed chunk load for every
+      // later call, so a retry — or a reopened picker — could never recover (#4628).
+      datasetPromise = null
+      throw err
+    })
   return datasetPromise
 }
 
