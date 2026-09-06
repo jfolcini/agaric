@@ -31,6 +31,8 @@ use crate::materializer::Materializer;
 pub struct SpacePlacementSink {
     pub inner: Arc<dyn SyncEventSink>,
     pub pool: SqlitePool,
+    /// Serves the pre-lock probe, so a converged session never touches a writer.
+    pub read_pool: SqlitePool,
     pub device_id: String,
     pub materializer: Materializer,
     /// The task spawned by the latest `Complete`, so a test can await it.
@@ -42,12 +44,14 @@ impl SpacePlacementSink {
     pub fn new(
         inner: Arc<dyn SyncEventSink>,
         pool: SqlitePool,
+        read_pool: SqlitePool,
         device_id: String,
         materializer: Materializer,
     ) -> Self {
         Self {
             inner,
             pool,
+            read_pool,
             device_id,
             materializer,
             #[cfg(test)]
@@ -66,11 +70,12 @@ impl SyncEventSink for SpacePlacementSink {
             && *changed_blocks != Some(0)
         {
             let pool = self.pool.clone();
+            let read_pool = self.read_pool.clone();
             let device_id = self.device_id.clone();
             let materializer = self.materializer.clone();
             let peer = remote_device_id.clone();
             let task = tokio::spawn(async move {
-                match place_space_less_blocks(&pool, &device_id, &materializer).await {
+                match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
                     Ok((0, 0)) => {}
                     Ok((pages, tags)) => tracing::info!(
                         peer_id = %peer,
@@ -178,6 +183,7 @@ mod tests {
         let sink = SpacePlacementSink::new(
             recording.clone(),
             pool.clone(),
+            pool.clone(),
             DEV.into(),
             materializer.clone(),
         );
@@ -244,7 +250,7 @@ mod tests {
         .unwrap();
         let materializer = Materializer::new(pool.clone());
 
-        let placed = place_space_less_blocks(&pool, DEV, &materializer)
+        let placed = place_space_less_blocks(&pool, &pool, DEV, &materializer)
             .await
             .unwrap();
 

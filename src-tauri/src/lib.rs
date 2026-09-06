@@ -2541,6 +2541,7 @@ pub fn run() {
                     sink: std::sync::Arc::new(spaces::SpacePlacementSink::new(
                         std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
                         pools.write.clone(),
+                        pools.read.clone(),
                         device_id.clone(),
                         materializer.clone(),
                     )),
