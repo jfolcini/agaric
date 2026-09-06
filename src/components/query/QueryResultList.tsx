@@ -2,6 +2,10 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PageLink } from '@/components/pages/PageLink'
+import {
+  QueryResultRowContent,
+  useRefTitleResolver,
+} from '@/components/query/QueryResultRowContent'
 import { Badge } from '@/components/ui/badge'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockRow } from '@/lib/bindings'
@@ -29,6 +33,12 @@ export function QueryResultList({
   onItemSelect,
 }: QueryResultListProps): React.ReactElement {
   const { t } = useTranslation()
+  // #4719 — the accessible name substitutes inline references through the
+  // CHIP's resolver, not through the optional `resolveBlockTitle` prop:
+  // `AdvancedQueryView` / `GroupedResults` render this list without that prop
+  // while their rows still resolve chips, so a single resolver left those
+  // rows named after the raw ULID the chip no longer shows.
+  const resolveRefTitle = useRefTitleResolver()
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: results.length,
     homeEnd: true,
@@ -55,7 +65,23 @@ export function QueryResultList({
       }}
     >
       {results.map((block, index) => {
-        const { title, pageTitle } = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+        const { title, displayMarkdown, pageTitle } = resolveBlockDisplay(
+          block,
+          pageTitles,
+          resolveBlockTitle,
+          resolveRefTitle,
+        )
+        // An `aria-label` REPLACES the row's contents as its accessible name,
+        // so it has to carry everything the row shows, not just the body: the
+        // todo badge and the parent-page name are rendered inside this same
+        // `role="option"` and were part of the computed name before the label
+        // existed ("TODO call the plumber My Page"). Naming the row after the
+        // body alone would quietly drop the state and the page from what a
+        // screen reader announces. The page arm mirrors the render condition
+        // below exactly, so the name never claims a page the row does not show.
+        const rowLabel = [block.todo_state, title, pageTitle && block.parent_id ? pageTitle : null]
+          .filter(Boolean)
+          .join(' ')
         return (
           <div
             key={block.id}
@@ -64,6 +90,16 @@ export function QueryResultList({
             data-testid="query-result-item"
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable result-row div of the custom listbox; native <option> can't host the rich row content + click navigation
             role="option"
+            // #4719 — the row body is now an element tree (chips + inline
+            // text), so the name is pinned to `resolveBlockDisplay`'s plain
+            // string rather than assembled from whatever the chips happen to
+            // contribute. That keeps it non-empty for content the inline
+            // renderer drops entirely (a lone `---`), and independent of how
+            // a chip abbreviates its label. It is NOT the old bracket-stripped
+            // string: `resolveInlineRefs` resolves the same references the
+            // chips do, so the name still contains the visible text
+            // (WCAG 2.5.3) instead of the raw ULID this issue is about.
+            aria-label={rowLabel}
             aria-selected={index === focusedIndex}
             tabIndex={-1}
             onClick={(e) => {
@@ -99,7 +135,13 @@ export function QueryResultList({
                   {block.todo_state}
                 </Badge>
               )}
-              <span className="flex-1 truncate">{title}</span>
+              <span className="flex-1 truncate">
+                {displayMarkdown !== null ? (
+                  <QueryResultRowContent content={displayMarkdown} />
+                ) : (
+                  title
+                )}
+              </span>
               {pageTitle && block.parent_id && (
                 <span className="shrink-0 text-xs text-muted-foreground/60 truncate max-w-[120px]">
                   <PageLink pageId={block.parent_id} title={pageTitle} />

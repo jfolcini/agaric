@@ -97,7 +97,20 @@ function ProjectedEntryContentInner({
   const rendered = useMemo(
     () =>
       renderRichContent(content, {
+        // The row's tag chips ARE meant to be clickable: `DuePanel` wires
+        // `useTagClickHandler()` down to this component explicitly, and the
+        // chips `stopPropagation` so a tag click navigates to the tag rather
+        // than to the entry's page. (Block-link chips stay inert regardless —
+        // `renderBlockLink` needs `onNavigate` too, and none is passed.) So
+        // this stays `true`, unlike the sibling `AlertSection` rows, whose
+        // whole row is the only click target.
         interactive: true,
+        // #4719 — the output lands in `<span className="min-w-0 flex-1
+        // truncate">` below, a single clamped line. Without `inline` a
+        // projected entry whose content starts `# ` or `- ` puts an <h1> /
+        // <ul> block box inside that span and breaks the row layout (#1533).
+        // The sibling `AlertSection` rows in this same panel already pass it.
+        inline: true,
         onTagClick: (id) => onTagClickRef.current(id),
         resolveBlockTitle: (id) => callbacksRef.current.resolveBlockTitle(id),
         resolveBlockStatus: (id) => callbacksRef.current.resolveBlockStatus(id),
