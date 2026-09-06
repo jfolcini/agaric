@@ -1924,15 +1924,15 @@ fn fold_ref_maps(
         if block.deleted_at.is_some() {
             continue;
         }
-        let Some(content) = block.content.clone() else {
+        let Some(content) = block.content.as_deref() else {
             continue;
         };
         match block.block_type.as_str() {
             TAG_BLOCK_TYPE => {
-                tag_names.insert(block.id.clone(), content);
+                tag_names.insert(block.id.clone(), content.to_owned());
             }
             PAGE_BLOCK_TYPE => {
-                page_titles.insert(block.id.clone(), content);
+                page_titles.insert(block.id.clone(), content.to_owned());
             }
             _ => {}
         }
@@ -2050,15 +2050,12 @@ pub async fn rebuild_fts_index_from_base(pool: &SqlitePool) -> Result<FtsRebuild
 
 /// Read the maintained index, keeping EVERY row per `block_id`.
 ///
-/// The multiplicity is the point. `fts_blocks` is an FTS5 virtual table, and
-/// FTS5 accepts no constraints at all — "exactly one row per `block_id`" holds
-/// only because every writer in `fts/index.rs` DELETEs before it INSERTs
-/// (#345 / C6). A writer that forgets produces duplicate search hits and
-/// inflated `bm25` weighting, and nothing fails at write time. The two guards
-/// that exist are narrow: `debug_assert_single_fts_row` is compiled out of
-/// release, and `assert_no_duplicate_fts_rows` is invoked from one targeted
-/// test on one write path. Folding the rows into a `Vec` lets [`reconcile`]
-/// report the duplicate on every path B6 drives.
+/// The multiplicity is the point: one row per block is convention, not a
+/// constraint (`fts/index.rs` § "Single-row-per-`block_id` invariant"), and the
+/// two guards that exist — `debug_assert_single_fts_row`, compiled out of
+/// release, and `assert_no_duplicate_fts_rows`, on one write path — are
+/// narrow. Folding the rows into a `Vec` lets [`reconcile`] report a duplicate
+/// on every path B6 drives.
 async fn read_fts_blocks(pool: &SqlitePool) -> Result<BTreeMap<String, Vec<String>>, AppError> {
     // dynamic-sql: static SQL, test-only oracle read-back of the derived index.
     let rows = sqlx::query_as::<_, (String, String)>("SELECT block_id, stripped FROM fts_blocks")
@@ -2395,10 +2392,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                 actual: "no row in fts_blocks — the block is unsearchable".to_owned(),
                 owner: FTS_OWNER,
             }),
-            // #345 / C6: FTS5 carries no UNIQUE constraint, so the
-            // one-row-per-block invariant is convention held up by every
-            // writer's DELETE-before-INSERT. A second row is duplicate search
-            // hits and a skewed bm25 weight, and nothing failed at write time.
+            // #345 / C6 — see `read_fts_blocks`.
             Some(rows) if rows.len() > 1 => out.push(Divergence {
                 artefact: "fts_blocks.duplicate_row",
                 key: block_id.clone(),
@@ -2419,11 +2413,8 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
         }
     }
     for (block_id, rows) in &actual_fts {
-        // A tombstoned block's row is production's rule, not a divergence: the
-        // delete arm removes only the cohort ROOT and no vault-wide rebuild
-        // follows, so every descendant keeps its row for good (#4733). Search
-        // never returns it — the read path inner-joins `blocks` — so reporting
-        // it would fire on every ordinary delete for no user-visible fault.
+        // Tolerated by production's own rule — `rebuild_fts_index_from_base`
+        // § "A tombstoned block's row is tolerated".
         if expected_fts.contains_key(block_id) || fts.tombstoned_with_content.contains(block_id) {
             continue;
         }

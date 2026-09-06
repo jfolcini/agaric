@@ -1152,7 +1152,6 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     settle_page_link_cache_rebuild(&pool)
         .await
         .expect("page_link_cache rebuild");
-    settle_fts_for_block(&pool, A_CHILD).await;
     assert_reconciled(&pool, "after the rebuild dropped the emptied page's row").await;
 
     // Direction 4 — a stale FLAG. `tgt_deleted` is not decoration: the hot

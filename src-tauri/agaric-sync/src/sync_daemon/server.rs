@@ -958,11 +958,11 @@ async fn handle_incoming_sync_inner(
         // `persist_peer_loro_vvs` upsert a row for it and stamp a `loro_vv_bytes`
         // export floor that is the JOINER's frontier, on a row named for a device
         // that never received those ops. What that costs when the real device does
-        // pair is bounded: the floor is read
-        // back only as the fallback for a space the peer advertised no vv for, and
-        // `apply_remote`'s reachability gate turns an unbridgeable `from_vv` into a
-        // full snapshot — so the price is a `ResetRequired` round trip and a phantom
-        // peer row, not silently dropped ops. That is #4230/#4251's residual, which
+        // pair is bounded: the floor is read back only as the fallback for a space
+        // the peer advertised no vv for, and `apply_remote`'s reachability gate
+        // turns an unbridgeable `from_vv` into a full snapshot — so the price is a
+        // `ResetRequired` round trip and a phantom peer row, not silently dropped
+        // ops. That is #4230/#4251's residual, which
         // this branch neither creates nor closes; it is strictly smaller than what
         // preceded #4380 (the same row, PLUS a permanent mis-bind). Refusing here is
         // a refusal to create permanent state, not a claim that the session wrote
