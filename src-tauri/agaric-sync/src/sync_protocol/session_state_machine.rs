@@ -372,12 +372,14 @@ impl SyncOrchestrator {
     /// sync ship an incremental update computed from a baseline the peer never
     /// held.
     ///
-    /// The post-session *bind* has always refused exactly this — see
+    /// The post-session *bind* has always refused part of this — see
     /// `server::peer_is_bound_to_another_key`, which will not re-point a peer
     /// whose row already names a different key — but the writes happen *during*
-    /// the session, before that check runs. Arming this makes the same
-    /// predicate cover the writes, so the guarantee and the guard now have the
-    /// same edges rather than the guard trailing the guarantee by one session.
+    /// the session, before that check runs. Arming this covers the writes too.
+    ///
+    /// Since #4251 the guard is strictly TIGHTER than the bind rather than its
+    /// equal: it also refuses a row that merely pre-existed, bound or not,
+    /// where the bind still permits an unbound one (#4380).
     ///
     /// "Same edges" is exact only while the claimed row's binding holds still
     /// between the two askings, which is all a second read of a mutable table
@@ -443,10 +445,18 @@ impl SyncOrchestrator {
     ///
     /// `true` for every session whose identity the daemon vouched for
     /// (`unverified_claim_endpoint_id` unset — the guard is inert there, and
-    /// costs not even a query). On a pairing-window session it is the
-    /// [`crate::sync_daemon::server::peer_is_bound_to_another_key`] decision,
-    /// asked with this session's authenticated key: a claimed id whose row is
-    /// already bound to some *other* key is refused, everything else proceeds.
+    /// costs not even a query). On a pairing-window session two rules run, in
+    /// this order:
+    ///
+    /// 1. **#4251** — refuse any id that already had a `peer_refs` row when the
+    ///    guard armed. Bookkeeping may only touch a row THIS session created.
+    /// 2. **#4230** — refuse an id whose row is bound to some *other* key, the
+    ///    [`crate::sync_daemon::server::peer_is_bound_to_another_key`] decision
+    ///    asked with this session's authenticated key.
+    ///
+    /// The first is strictly tighter: that predicate permits an unbound row by
+    /// construction (`None.is_some_and(..)` is `false`), which is the hole
+    /// #4251 closed.
     ///
     /// A failed `list_peer_refs` denies, for the reason that function
     /// documents: the evidence that the row is free is exactly what a failed
@@ -471,9 +481,8 @@ impl SyncOrchestrator {
     /// skipped write but an ABSENT floor, which means a full stream — see
     /// there for why that is the cheap outcome rather than the expensive one.
     ///
-    /// None of this is a regression (the post-session bind already refused the
-    /// same joiner the same way); it is the practical shape of the residual
-    /// behind #4251, stated here so it does not live only in that issue.
+    /// None of this is a regression: the post-session bind already refused the
+    /// same joiner the same way.
     async fn may_key_bookkeeping_on(&self, peer_id: &str) -> bool {
         let Some(endpoint_id) = self.unverified_claim_endpoint_id.as_deref() else {
             return true;
