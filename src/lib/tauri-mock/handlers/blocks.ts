@@ -567,6 +567,12 @@ export const blocksHandlers = {
     // its own id). Stamping the raw `parentId` mis-set `page_id` to a content
     // parent — the same class as the #1775 seed-loader / move-handler fix.
     const createParent = parentId != null ? blocks.get(parentId) : null
+    // #4725 — the tag view is read-only; `create_block_in_tx` rejects a tag parent.
+    if (createParent?.['block_type'] === 'tag') {
+      throw validationRejection(
+        `cannot create a block under tag '${parentId}': the tag view is read-only`,
+      )
+    }
     const createPageId =
       blockType === 'page'
         ? id
@@ -1110,6 +1116,12 @@ export const blocksHandlers = {
       })
     const oldPosition = oldSiblings.findIndex((s) => s['id'] === blockId) + 1
     const newParentId = (a['newParentId'] as string | null) ?? null
+    // #4725 — the tag view is read-only; `validate_move_in_tx` rejects a tag parent.
+    if (newParentId != null && blocks.get(newParentId)?.['block_type'] === 'tag') {
+      throw validationRejection(
+        `cannot move a block under tag '${newParentId}': the tag view is read-only`,
+      )
+    }
     // #400: `newIndex` is a 0-based insertion slot among the target parent's
     // OTHER children. Set the new parent, place the block at the slot, and
     // renumber BOTH the old and new sibling groups to dense 1-based positions

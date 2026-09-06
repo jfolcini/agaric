@@ -1,0 +1,1320 @@
+{
+  "description": "#3827 — READ-command differential over `query_by_property`, `query_by_tags` and `query_by_tag_expr` at their BOUNDARIES, not their centres. Every step is aimed at one decision a second implementation gets nearly right: the comparison operator (`neq` matches a NULL value, `lt` excludes the bound), the half-open `valueDateRange` (`>= from AND < to`), `valueTextIn` as set membership, the three push-downs `filtered_blocks_query` does not offer (`excludeParentId` keeps NULL parents, `contentNonEmpty` trims space/tab/LF/CR, `excludeTodoStates` passes a NULL todo), reserved-key column routing, the two mutual-exclusion refusals, `mode: not` as the complement over EVERY live block (pages and tag blocks included), `Prefix` over `tags_cache` (so `work` matches `workshop`), `includeInherited` reaching a descendant through `block_tag_inherited`, and `And` inside `Or`. Tags are `block_type = 'tag'` seeds because `tags_cache` (the `Prefix` leaf's source) holds only those; they sit under the page S1 and the inherited case runs page S8 -> S9, because the two harnesses seed `page_id` differently for a grandchild and for a parentless non-page block (backend: immediate parent / self; mock: root page / null), which is seed drift, not filter semantics. Content `#[id]` refs (`block_tag_refs`) are deliberately NOT exercised: the mock does not model them (#3827 follow-up).",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B9"
+      },
+      {
+        "block_id": "B2",
+        "tag_id": "B11"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B10"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B11"
+      },
+      {
+        "block_id": "B5",
+        "tag_id": "B9"
+      },
+      {
+        "block_id": "B7",
+        "tag_id": "B9"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Filters",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "gamma",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "delta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": " \t\n",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B7",
+        "parent_id": "B7",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "workshop",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 18,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "due",
+        "value": "2026-01-10",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "due",
+        "value": "2026-01-20",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "status",
+        "value": "closed",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "due",
+        "value": "2026-01-31",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B4",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "due",
+        "value": "2026-02-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B5",
+        "key": "status",
+        "value": "archived",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B6",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_eq_text",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_neq_text",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_neq_matches_a_null_value_column",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_date_lt_excludes_bound",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_date_lte_includes_bound",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_date_range_half_open",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_value_text_in",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_exclude_parent_keeps_others",
+      "rows": ["B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_content_non_empty_trims_whitespace",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_exclude_todo_states_passes_null",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "qbp_reserved_key_routes_to_column",
+      "rows": ["B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "qbp_text_and_date_rejected",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "qbp_in_and_text_rejected",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_or",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B7#parent_id=null#page_id=B7#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_and",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_not_is_the_complement_of_all_live_blocks",
+      "rows": [
+        "B1#parent_id=null#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null",
+        "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
+        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_prefix_matches_workshop_too",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B7#parent_id=null#page_id=B7#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_and_of_tag_and_prefix",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_include_inherited_reaches_descendant",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B7#parent_id=null#page_id=B7#position=2#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_direct_only_by_default",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B7#parent_id=null#page_id=B7#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_empty_selection_is_empty",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "tags_not_with_block_type",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_and_inside_or",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_not_prefix_inside_and",
+      "rows": ["B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_not_with_inherited",
+      "rows": [
+        "B1#parent_id=null#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
+        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_and_of_nothing_is_empty",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_tag_and_property_boundaries",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S10"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S12"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S11"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S12"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "tagId": "S10"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "tagId": "S10"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "status",
+        "value": {
+          "value_text": "closed"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "status",
+        "value": {
+          "value_text": "archived"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "due",
+        "value": {
+          "value_date": "2026-01-10"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "due",
+        "value": {
+          "value_date": "2026-01-20"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "due",
+        "value": {
+          "value_date": "2026-01-31"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "due",
+        "value": {
+          "value_date": "2026-02-01"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "todo_state",
+        "value": {
+          "value_text": "DONE"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "todo_state",
+        "value": {
+          "value_text": "TODO"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "key": "status",
+          "limit": 100,
+          "valueText": "open"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Vacuity guard for the property half: the four `status = open` rows (S2, S4, S6, S9). Every narrowing step below must return a strict subset of these or of the `status` holders.",
+      "name": "qbp_eq_text",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "status",
+          "limit": 100,
+          "operator": "neq",
+          "valueText": "open"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`neq` over the rows that HOLD the key: `(bp.value_text IS NULL OR bp.value_text != ?)`, so it is the complement within `status` holders (S3, S5), never the complement of the vault. An implementation that ignores `operator` returns the `eq` set instead.",
+      "name": "qbp_neq_text",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "operator": "neq",
+          "valueText": "x"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`neq` against a value that lives in the OTHER column: every `due` row holds its value in `value_date`, so `value_text` is NULL on all four, and `NULL != 'x'` is NULL, not TRUE. #384 writes the predicate `(bp.value_text IS NULL OR bp.value_text != ?)`, so all four holders come back; a mock that lets NULL fail `!=` returns nothing.",
+      "name": "qbp_neq_matches_a_null_value_column",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "operator": "lt",
+          "valueDate": "2026-01-20"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`lt` is strict: S3 sits exactly on the bound and must be excluded; only S2 remains.",
+      "name": "qbp_date_lt_excludes_bound",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "operator": "lte",
+          "valueDate": "2026-01-20"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`lte` keeps the bound: S2 and S3. Paired with the step above so the two arms cannot be swapped without one of them reddening.",
+      "name": "qbp_date_lte_includes_bound",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "valueDateRange": ["2026-01-20", "2026-02-01"]
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`valueDateRange` is `>= from AND < to`: S3 sits on `from` (kept), S5 sits on `to` (dropped), S2 is before (dropped), S4 inside. A closed or fully open range gets one endpoint wrong.",
+      "name": "qbp_date_range_half_open",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "status",
+          "limit": 100,
+          "valueTextIn": ["closed", "archived"]
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Set membership over `value_text`: S3 and S5, neither of which is the first member alone.",
+      "name": "qbp_value_text_in",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "excludeParentId": "S1",
+          "key": "status",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`parent_id IS NOT ?`: every `status` holder under S1 goes (S2, S3, S4, S5, S6); S9 under S8 stays.",
+      "name": "qbp_exclude_parent_keeps_others",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "contentNonEmpty": true,
+          "key": "status",
+          "limit": 100,
+          "valueText": "open"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`TRIM(content, space/tab/LF/CR) != ''`: S6's content is only whitespace, so it drops out of the `open` set (S2, S4, S9 remain). A plain empty-string check keeps S6.",
+      "name": "qbp_content_non_empty_trims_whitespace",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "excludeTodoStates": ["DONE"],
+          "key": "status",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`todo_state IS NULL OR todo_state NOT IN (...)`: S3 (DONE) is excluded; every holder with NO todo_state passes, and S4 (TODO) passes. An implementation that ignores the push-down keeps S3; one that requires a todo_state drops everything but S4.",
+      "name": "qbp_exclude_todo_states_passes_null",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "todo_state",
+          "limit": 100,
+          "valueText": "TODO"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "A reserved key reads the native column, not `block_properties`: S4 only.",
+      "name": "qbp_reserved_key_routes_to_column",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "key": "due",
+          "limit": 100,
+          "valueDate": "2026-01-10",
+          "valueText": "x"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "At most one of `valueText` / `valueDate`: the command refuses with `validation`.",
+      "expect_error": "validation",
+      "name": "qbp_text_and_date_rejected"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "status",
+          "limit": 100,
+          "valueText": "open",
+          "valueTextIn": ["open"]
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "`valueTextIn` and `valueText` are mutually exclusive: `validation`.",
+      "expect_error": "validation",
+      "name": "qbp_in_and_text_rejected"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10", "S12"]
+      },
+      "command": "query_by_tags",
+      "comment": "Union of `work` and `home` holders: S2, S4, S5 and the page S8.",
+      "name": "tags_or",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "and",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10", "S12"]
+      },
+      "command": "query_by_tags",
+      "comment": "Intersection: only S2 holds both.",
+      "name": "tags_and",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "not",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10"]
+      },
+      "command": "query_by_tags",
+      "comment": "`not` compiles to `b.id NOT IN (<work holders>)` over EVERY live block in the space — pages, the whitespace block and the tag blocks themselves included — not only over blocks that carry some tag. A mock that treats an unknown mode as `and`, or that skips untagged blocks, diverges here.",
+      "name": "tags_not_is_the_complement_of_all_live_blocks",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": ["work"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": []
+      },
+      "command": "query_by_tags",
+      "comment": "`Prefix(work)` resolves through `tags_cache.name LIKE 'work%'`, so `workshop` (S3) matches alongside `work` (S2, S5, S8).",
+      "name": "tags_prefix_matches_workshop_too",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "and",
+        "prefixes": ["work"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S12"]
+      },
+      "command": "query_by_tags",
+      "comment": "`home AND work*`: S2 alone (S4 has home but no work-prefixed tag).",
+      "name": "tags_and_of_tag_and_prefix",
+      "ordered": true
+    },
+    {
+      "args": {
+        "includeInherited": true,
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10"]
+      },
+      "command": "query_by_tags",
+      "comment": "With `includeInherited`, S9 (a child of the tagged page S8) joins the `work` holders through `block_tag_inherited`: S2, S5, S8, S9. Without the flag the same query returns S2, S5, S8 — the step below pins that.",
+      "name": "tags_include_inherited_reaches_descendant",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10"]
+      },
+      "command": "query_by_tags",
+      "comment": "`includeInherited` absent: S9 is NOT a holder.",
+      "name": "tags_direct_only_by_default",
+      "ordered": true
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": []
+      },
+      "command": "query_by_tags",
+      "comment": "No tags and no prefixes short-circuits to an empty page (not `Or([])`, which would be `WHERE 0` anyway, and not every block).",
+      "expect_empty": true,
+      "name": "tags_empty_selection_is_empty"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "limit": 100,
+        "mode": "not",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S10"]
+      },
+      "command": "query_by_tags",
+      "comment": "`blockType` narrows the complement to content blocks: S3, S4, S6, S9 (pages and tags are not content; S2 and S5 hold work).",
+      "name": "tags_not_with_block_type",
+      "ordered": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Or",
+          "value": [
+            {
+              "type": "And",
+              "value": [
+                {
+                  "type": "Tag",
+                  "value": "S10"
+                },
+                {
+                  "type": "Tag",
+                  "value": "S12"
+                }
+              ]
+            },
+            {
+              "type": "Tag",
+              "value": "S11"
+            }
+          ]
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "`(work AND home) OR workshop`: S2 from the conjunction, S3 from the disjunct. Flattening the nesting into one `Or` would add S4, S5 and S8.",
+      "name": "expr_and_inside_or",
+      "ordered": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "And",
+          "value": [
+            {
+              "type": "Tag",
+              "value": "S12"
+            },
+            {
+              "type": "Not",
+              "value": {
+                "type": "Prefix",
+                "value": "work"
+              }
+            }
+          ]
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "`home AND NOT work*`: S4 only; S2 is excluded by the `Not` over the prefix.",
+      "name": "expr_not_prefix_inside_and",
+      "ordered": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Not",
+          "value": {
+            "type": "Tag",
+            "value": "S10"
+          }
+        },
+        "includeInherited": true,
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "`NOT work` with inheritance on: S9 inherits `work` from S8, so it leaves the complement too (S1, S3, S4, S6, S10, S11, S12).",
+      "name": "expr_not_with_inherited",
+      "ordered": true
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "And",
+          "value": []
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "`And` over no children is the EMPTY set (`resolve.rs`), not the identity of intersection; a mock built on `[].every()` returns every live block.",
+      "expect_empty": true,
+      "name": "expr_and_of_nothing_is_empty"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Filters",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "beta",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "gamma",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "delta",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": " \t\n",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Other",
+        "id": "S8",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "elsewhere",
+        "id": "S9",
+        "parent_id": "S8",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "tag",
+        "content": "workshop",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "tag",
+        "content": "home",
+        "id": "S12",
+        "parent_id": "S1",
+        "position": 8
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

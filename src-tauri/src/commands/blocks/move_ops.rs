@@ -65,6 +65,27 @@ pub async fn move_block_inner(
     Ok(response)
 }
 
+/// The move target must be live, and must not be a tag: #4725 — a tag holds
+/// the blocks tagged with it, never children of its own, exactly as on the
+/// create path (`create_block_in_tx`).
+async fn validate_new_parent_in_tx(tx: &mut CommandTx, pid: &str) -> Result<(), AppError> {
+    let parent = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        pid
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    let Some(parent) = parent else {
+        return Err(AppError::NotFound(format!("parent block '{pid}'")));
+    };
+    if parent.block_type == "tag" {
+        return Err(AppError::validation(format!(
+            "cannot move a block under tag '{pid}': the tag view is read-only"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate ONE move against the CURRENT in-tx state WITHOUT mutating
 /// anything: self-parent, block liveness, target-parent liveness, cycle, and
 /// depth-cap checks — the read-only validation phase extracted verbatim from
@@ -108,17 +129,9 @@ async fn validate_move_in_tx(
         )));
     }
 
-    // Validate new parent exists and is not deleted (TOCTOU-safe)
+    // Validate new parent is live and can hold children (TOCTOU-safe)
     if let Some(pid) = new_parent_id {
-        let exists = sqlx::query!(
-            r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-            pid
-        )
-        .fetch_optional(&mut ***tx)
-        .await?;
-        if exists.is_none() {
-            return Err(AppError::NotFound(format!("parent block '{pid}'")));
-        }
+        validate_new_parent_in_tx(tx, pid).await?;
 
         // Cycle detection (#1323 Step 4): the SHARED
         // `block_descendants::move_would_cycle` probe — the SAME helper the

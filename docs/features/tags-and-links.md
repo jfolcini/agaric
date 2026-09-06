@@ -9,6 +9,7 @@ Tags are first-class entities — each tag is a record with its own page in the 
 
 - **Inline insertion**: type `@` inside the editor to open the **AtTagPicker**. Pick an existing tag or create a new one.
 - **Tag chip**: tags render as coloured pills. Click to jump to the tag's page.
+- **Read-only tag page**: a tag holds no blocks of its own, so its page has no editor and no "Add block" button.
 - **Tag namespaces**: `/` in a tag name is a naming convention, not a structure — `@projects/website` is one tag whose name happens to contain a slash. What makes it useful is the **prefix query**: searching the prefix `projects/` matches `projects/website`, `projects/api`, and so on. It does *not* match the bare `@projects` tag, and tagging a block `@projects/website` does not implicitly tag it `@projects`.
 - **Tag colour**: assign a colour in the Tags view; the chip uses it everywhere on **that device**. Colours are stored locally and are not synced, so the same tag can look different on your phone and your laptop.
 - **Usage count**: the Tags view shows how many blocks carry each tag.
