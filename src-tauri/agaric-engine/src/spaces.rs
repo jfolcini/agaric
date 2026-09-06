@@ -522,7 +522,6 @@ async fn majority_space_by_content_refs(
 /// of the three Path A sub-phases enumerated in the plan body. Phases
 /// 2 (enforcement wiring) and 3 (cross-space severance migration) are
 /// downstream of this step.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn migrate_orphan_tags_to_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -559,7 +558,7 @@ pub async fn migrate_orphan_tags_to_space(
             .collect::<Vec<_>>(),
     )?;
     let majority_rows: Vec<(String, String)> =
-        majority_space_by_content_refs(&mut **tx, &tag_ids_json).await?;
+        majority_space_by_content_refs(tx, &tag_ids_json).await?;
 
     // Build a tag_id → majority_space_id lookup.  Tags absent from the
     // result had zero references and will fall back to Personal below.
@@ -607,6 +606,53 @@ pub async fn migrate_orphan_tags_to_space(
     }
 
     Ok(migrated)
+}
+
+/// Tags whose current space disagrees with the ONE space every live block
+/// that references them resolves to.
+///
+/// Driven from blocks that contain a `#[` token at all, so the correlated
+/// `LIKE` join runs against that subset rather than the whole table.
+/// `HAVING COUNT(DISTINCT ...) = 1` is the unanimity rule — a tag referenced
+/// from two spaces is not a candidate at any margin.
+async fn misfiled_tag_spaces(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<Vec<(String, String)>, AppError> {
+    // dynamic-sql: recursive-shaped CTE chain with a ROW_NUMBER window and a
+    // correlated `LIKE '%#[' || t.id || ']%'` join built over the tag table —
+    // not expressible as a fixed-arity compile-checked macro.
+    Ok(sqlx::query_as(
+        r"WITH tokened AS (
+              SELECT
+                  b.id AS source_id,
+                  b.content AS content,
+                  COALESCE(b.space_id, p.space_id) AS src_space
+                FROM blocks b
+                LEFT JOIN blocks p ON p.id = b.page_id
+               WHERE b.deleted_at IS NULL
+                 AND b.block_type <> 'tag'
+                 AND b.content LIKE '%#[%'
+          ),
+          refs AS (
+              SELECT t.id AS tag_id, k.source_id AS source_id, k.src_space AS src_space
+                FROM blocks t
+                INNER JOIN tokened k
+                    ON k.content LIKE '%#[' || t.id || ']%'
+               WHERE t.block_type = 'tag'
+                 AND t.deleted_at IS NULL
+                 AND t.space_id IS NOT NULL
+                 AND k.src_space IS NOT NULL
+          )
+          SELECT r.tag_id, MIN(r.src_space) AS target_space
+            FROM refs r
+            INNER JOIN blocks t ON t.id = r.tag_id
+           GROUP BY r.tag_id
+          HAVING COUNT(DISTINCT r.src_space) = 1
+             AND MIN(r.src_space) <> MIN(t.space_id)
+           ORDER BY r.tag_id",
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
 /// `app_settings` key recording that [`repair_misfiled_tag_spaces`] has run.
@@ -684,41 +730,7 @@ pub async fn repair_misfiled_tag_spaces(
         return Ok(0);
     }
 
-    // dynamic-sql: recursive-shaped CTE chain with a ROW_NUMBER window and a
-    // correlated `LIKE '%#[' || t.id || ']%'` join built over the tag table —
-    // not expressible as a fixed-arity compile-checked macro.
-    let misfiled: Vec<(String, String)> = sqlx::query_as(
-        r"WITH tokened AS (
-              SELECT
-                  b.id AS source_id,
-                  b.content AS content,
-                  COALESCE(b.space_id, p.space_id) AS src_space
-                FROM blocks b
-                LEFT JOIN blocks p ON p.id = b.page_id
-               WHERE b.deleted_at IS NULL
-                 AND b.block_type <> 'tag'
-                 AND b.content LIKE '%#[%'
-          ),
-          refs AS (
-              SELECT t.id AS tag_id, k.source_id AS source_id, k.src_space AS src_space
-                FROM blocks t
-                INNER JOIN tokened k
-                    ON k.content LIKE '%#[' || t.id || ']%'
-               WHERE t.block_type = 'tag'
-                 AND t.deleted_at IS NULL
-                 AND t.space_id IS NOT NULL
-                 AND k.src_space IS NOT NULL
-          )
-          SELECT r.tag_id, MIN(r.src_space) AS target_space
-            FROM refs r
-            INNER JOIN blocks t ON t.id = r.tag_id
-           GROUP BY r.tag_id
-          HAVING COUNT(DISTINCT r.src_space) = 1
-             AND MIN(r.src_space) <> MIN(t.space_id)
-           ORDER BY r.tag_id",
-    )
-    .fetch_all(&mut **tx)
-    .await?;
+    let misfiled: Vec<(String, String)> = misfiled_tag_spaces(tx).await?;
 
     let mut repaired = 0;
     for (tag_id, target_space) in &misfiled {
