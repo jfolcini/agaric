@@ -96,6 +96,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   useEffect(() => {
     // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `list_property_defs` IPC load; `loadDefinitions` sets loading/error state around that await, which no render-time derivation can replace; see #4407
     void loadDefinitions()
   }, [loadDefinitions])
 

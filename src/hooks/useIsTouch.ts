@@ -42,8 +42,6 @@ export function useIsTouch(): boolean {
     const handler = () => {
       setIsTouch(detectTouch())
     }
-    // Sync once in case the initial state is stale (e.g. hydration mismatch).
-    setIsTouch(detectTouch())
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)
   }, [])

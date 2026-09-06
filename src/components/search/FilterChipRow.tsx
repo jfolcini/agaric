@@ -73,6 +73,7 @@ export function FilterChipRow({
   const [settledErrorMessage, setSettledErrorMessage] = useState('')
   useEffect(() => {
     if (errorMessage === '') {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the shared alert region immediately while the non-empty branch publishes on a 300 ms timer; a derived value would announce mid-typing; see #4407
       setSettledErrorMessage('')
       return undefined
     }

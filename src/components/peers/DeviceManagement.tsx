@@ -126,6 +126,7 @@ export function DeviceManagement(): React.ReactElement {
 
   useEffect(() => {
     // `executeLoadData` consumes its own rejection (useIpcCommand).
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the device-id + peer-list IPC load; `loadData` sets its loading/error state around an await, an async system not a render-time derivation; see #4407
     void loadData()
   }, [loadData])
 

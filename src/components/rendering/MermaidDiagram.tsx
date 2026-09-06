@@ -65,6 +65,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
 
   useEffect(() => {
     cancelledRef.current = false
+    // oxlint-disable-next-line react/set-state-in-effect -- starts an async `mermaid.render` for the current code and theme; `loading` tracks that promise, cleared by its resolve/reject handlers; see #4407
     setLoading(true)
     setSvg(null)
     setError(null)

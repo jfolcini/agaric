@@ -91,18 +91,17 @@ function useEnteredViewport(
   enabled: boolean,
   rootMargin = '200px 0px',
 ): [boolean, React.RefObject<HTMLDivElement | null>] {
-  const [entered, setEntered] = useState(!enabled)
+  // A runtime without `IntersectionObserver` has no gate to wait for, so it
+  // starts entered and mounts eagerly.
+  const [entered, setEntered] = useState(
+    () => !enabled || typeof IntersectionObserver === 'undefined',
+  )
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!enabled || entered) return
     const el = ref.current
     if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      // Defensive: jsdom/older runtimes — eagerly mark as entered.
-      setEntered(true)
-      return
-    }
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {

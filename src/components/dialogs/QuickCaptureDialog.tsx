@@ -69,6 +69,7 @@ export function QuickCaptureDialog({
   // would linger in the input on the next hotkey activation.
   useEffect(() => {
     if (open) {
+      // oxlint-disable-next-line react/set-state-in-effect -- each hotkey re-open must start from an empty textarea; `content` is user-typed between opens, so it cannot be derived during render; see #4407
       setContent('')
       // Defer to the next microtask so Radix has time to portal-mount
       // the dialog content; otherwise `.focus()` would target a node

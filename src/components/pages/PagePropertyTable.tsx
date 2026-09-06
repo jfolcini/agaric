@@ -58,6 +58,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // and the failed slice falls back to an empty array so the user still sees
   // the half that loaded.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- starts the per-page properties/definitions IPC load; `loading` tracks that async round-trip, not a value derivable during render; see #4407
     setLoading(true)
     // #2792 — drop any unsaved draft rows from a previous page so they can't
     // leak into this page's table (drafts are transient, never persisted).

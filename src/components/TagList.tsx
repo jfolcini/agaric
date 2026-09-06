@@ -104,6 +104,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
 
   useEffect(() => {
     // `loadTags` toasts its own failure; never rejects.
+    // oxlint-disable-next-line react/set-state-in-effect -- `loadTags` is the `listAllTagsInSpace` loader; its synchronous `setLoading(true)` arms the spinner for a backend fetch; see #4407
     void loadTags()
   }, [loadTags])
 

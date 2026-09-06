@@ -175,6 +175,7 @@ export function PagesTreeSection({
     // bare IPC during pre-bootstrap that would either error or return
     // foreign-space data.
     if (currentSpaceId == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the fetched descendant rows when `currentSpaceId` goes null pre-bootstrap; `pages` otherwise holds an IPC result, not a render-derivable value; see #4407
       setPages([])
       return
     }

@@ -1077,6 +1077,22 @@ describe('AttachmentRenderer', () => {
       expect(mockedReadAttachment).toHaveBeenCalledTimes(1)
     })
 
+    // #4407 — the no-`IntersectionObserver` fallback is a `useState`
+    // initializer, not an effect write. Reddens if the initializer stops
+    // opening the gate: with no observer nothing else can ever flip it, so
+    // the placeholder never resolves and no byte read fires.
+    it('loads eagerly in a runtime without IntersectionObserver', async () => {
+      MockIntersectionObserver.autoEnter = false
+      vi.stubGlobal('IntersectionObserver', undefined)
+
+      render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+
+      const img = await screen.findByRole('img')
+      expect(img.getAttribute('src')).toMatch(/^blob:/)
+      expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
+      expect(MockIntersectionObserver.instances).toHaveLength(0)
+    })
+
     it('has no a11y violations in the gated placeholder state', async () => {
       MockIntersectionObserver.autoEnter = false
 

@@ -24,6 +24,7 @@ export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, num
       // would emit a fresh object every effect run and, if the caller ever
       // passes an unstable empty `blocks` array, drive an infinite render
       // loop (the new state shape would re-trigger the consumer's memos).
+      // oxlint-disable-next-line react/set-state-in-effect -- clears counts fetched by `trashDescendantCounts` once the trash list is empty, reusing the previous empty object reference; see #4407
       setCounts((prev) => (Object.keys(prev).length === 0 ? prev : {}))
       return
     }

@@ -112,6 +112,7 @@ export function TemplatesView(): React.ReactElement {
 
   useEffect(() => {
     // `loadTemplates` reports its own failure (reportIpcError); never rejects.
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the template-page + journal-template IPC load; `loadTemplates` sets loading/error state around those awaits, not a render-time derivation; see #4407
     void loadTemplates()
   }, [loadTemplates])
 

@@ -157,6 +157,7 @@ export function JournalCalendarDropdown({
   // not refetch for a selected-day change within the same month.
   useEffect(() => {
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- arms `aria-busy` for the agenda-count IPC this effect fires for the displayed month; loading tracks that request; see #4407
     setAgendaLoading(true)
     setAgendaBySource({})
     const dates = getCalendarDateRange(displayedMonth)

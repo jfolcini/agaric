@@ -98,6 +98,7 @@ export function AgentAccessTab(): React.ReactElement {
   }, [t])
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the MCP RO/RW status IPC load; `loadStatus` awaits both commands and sets loading/error state from their results; see #4407
     void loadStatus()
   }, [loadStatus])
 

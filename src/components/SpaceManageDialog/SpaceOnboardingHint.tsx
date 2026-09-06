@@ -89,6 +89,7 @@ export function SpaceOnboardingHint({
   // `resetOnboardingSeen` from Settings) is observed on the next open.
   useEffect(() => {
     if (!open) return
+    // oxlint-disable-next-line react/set-state-in-effect -- re-reads the localStorage dismissal flag on each dialog open; `handleDismiss` also writes `visible`, so a render-time derive would be impure; see #4407
     setVisible(availableSpaceCount <= 2 && !readOnboardingSeen())
   }, [open, availableSpaceCount])
 

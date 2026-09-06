@@ -47,6 +47,7 @@ export function useHasHardwareKeyboard(): boolean {
 
   useEffect(() => {
     if (sessionLatch) {
+      // oxlint-disable-next-line react/set-state-in-effect -- adopts the module-level session latch when another consumer set it between this render and this commit; see #4407
       setHasKeyboard(true)
       return
     }

@@ -249,6 +249,7 @@ export function GraphView(): React.ReactElement {
     // render guard sits before the populated-graph branch, so without this
     // a successful refetch (tag/space change) would stay masked by the old
     // "failed to load" screen until a full remount.
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous fetch's failure as this effect starts a new graph load, so a successful refetch is not masked by the stale error; see #4407
     setError(null)
 
     const graphCache = getGraphCacheEntry(tagCacheKey)
@@ -373,6 +374,7 @@ export function GraphView(): React.ReactElement {
   // visually inert while there's no seed, but silently reactivating the
   // moment a page reopens. Resetting forces a deliberate re-entry instead.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- clears local-graph mode when the active tab loses its seed page (#1752), so the flag cannot silently reactivate when a page reopens; see #4407
     if (seedPageId === null && localMode) setLocalMode(false)
   }, [seedPageId, localMode])
 

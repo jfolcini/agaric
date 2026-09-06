@@ -104,18 +104,15 @@ function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string):
 function useEnteredViewport<T extends HTMLElement>(
   rootMargin = '200px 0px',
 ): [boolean, React.RefObject<T | null>] {
-  const [entered, setEntered] = useState(false)
+  // A runtime without `IntersectionObserver` has no gate to wait for, so it
+  // starts entered and loads eagerly.
+  const [entered, setEntered] = useState(() => typeof IntersectionObserver === 'undefined')
   const ref = useRef<T | null>(null)
 
   useEffect(() => {
     if (entered) return
     const el = ref.current
     if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      // Defensive: older runtimes — load eagerly.
-      setEntered(true)
-      return
-    }
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
@@ -374,6 +371,7 @@ function AttachmentImage({
 
     let cancelled = false
     let objectUrl: string | null = null
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous attachment's object URL before this effect's `readAttachment` IPC; the blob URL is created asynchronously, never derived; see #4407
     setUrl(null)
     setError(false)
 
@@ -650,6 +648,7 @@ function MarkdownAttachment({
   useEffect(() => {
     if (!inView) return
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous preview before this effect's `readAttachment` IPC; the decoded markdown arrives asynchronously, never derived; see #4407
     setText(null)
     setError(false)
     readAttachment(att.id)

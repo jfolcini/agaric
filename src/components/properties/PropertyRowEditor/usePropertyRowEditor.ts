@@ -128,6 +128,7 @@ export function usePropertyRowEditor({
 
   // Sync localValue when prop changes externally
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- resyncs the local edit draft when the saved property value changes underneath it; the draft diverges on every keystroke, so it cannot be derived; see #4407
     setLocalValue(currentValue)
   }, [currentValue])
 

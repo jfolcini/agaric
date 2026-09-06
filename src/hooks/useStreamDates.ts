@@ -129,6 +129,7 @@ export function useStreamDates(): UseStreamDatesResult {
     // to an empty page map instead of dispatching (a Global scope is
     // rejected by the backend).
     if (currentSpaceId == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- empties the journal page map when no space is active, since `listJournalPagesInRange` is required-active and never runs; see #4407
       setPageMap(new Map())
       setLoading(false)
       setLoadingOlder(false)

@@ -172,6 +172,7 @@ export function SettingsView(): React.ReactElement {
   useEffect(() => {
     if (pendingSettingsTab === null) return
     if ((TAB_IDS as readonly string[]).includes(pendingSettingsTab)) {
+      // oxlint-disable-next-line react/set-state-in-effect -- consumes the navigation store's one-shot deep-link handoff slot; the tab is also user-driven, so it cannot be derived from `pendingSettingsTab`; see #4407
       setActiveTab(pendingSettingsTab as SettingsTab)
     }
     // Clear only if the slot still holds the value this effect consumed —

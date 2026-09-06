@@ -32,8 +32,6 @@ export function useIsMobile() {
     const onChange = () => {
       setIsMobile(detectIsMobile())
     }
-    // Sync once in case the initial state is stale (e.g. hydration mismatch).
-    setIsMobile(detectIsMobile())
     mql.addEventListener('change', onChange)
     return () => mql.removeEventListener('change', onChange)
   }, [])

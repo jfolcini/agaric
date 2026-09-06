@@ -120,6 +120,7 @@ export function QueryControlsBar({
   // While typing this is a no-op: the prop only changes once the debounced
   // commit lands, at which point it already equals the draft.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- resyncs the debounced input mirror when the committed `fulltext` prop changes externally (space switch); deriving it would discard in-flight typing; see #4407
     setFulltextDraft(fulltext)
   }, [fulltext])
   const debounced = useDebouncedCallback(onFulltextChange, 300)

@@ -131,6 +131,7 @@ export function useTagResolution(
   // with a fresh one (which would re-trigger the resolve effect above and
   // fire a duplicate lookup + cancellation on every mount).
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- drops the space-scoped tag-id cache on space switch; the map accumulates backend lookups, so it cannot be derived during render; see #4407
     setTagNameMap((prev) => (prev.size === 0 ? prev : new Map()))
   }, [currentSpaceId])
 

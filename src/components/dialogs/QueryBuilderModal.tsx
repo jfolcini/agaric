@@ -179,6 +179,7 @@ export function QueryBuilderModal({
     // tree rehydrated; a legacy text block opens the simple form as before.
     const structured = decodeInlineQueryPayload(initialExpression)
     if (structured) {
+      // oxlint-disable-next-line react/set-state-in-effect -- a changed `initialExpression` rehydrates the builder form from the decoded query; the modal stays mounted across edits, so the user-edited fields cannot derive; see #4407
       setMode('advanced')
       setBuilderRoot(filterExprToBuilderTree(structured.filter, nextId))
       setShowAsTable(structured.table)

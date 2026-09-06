@@ -102,6 +102,7 @@ export function usePollingQuery<T>(
     if (!enabled) {
       // The discarded in-flight request's `finally` won't clear loading
       // (its rid no longer matches), so clear it here.
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the spinner for the in-flight request this run just invalidated; its own `finally` no longer matches the request id; see #4407
       setLoading(false)
       return
     }

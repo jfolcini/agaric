@@ -64,6 +64,7 @@ export function TagsModeBody({
     // null (zero-space / list_spaces-failure state), so guard on the id too.
     if (!spaceIsReady || currentSpaceId == null) return
     const gen = tagsGen.next()
+    // oxlint-disable-next-line react/set-state-in-effect -- starts the debounced `search_blocks` tag query; `loading` tracks that in-flight IPC and is cleared by its own resolve/reject handlers; see #4407
     setLoading(true)
     // #2110 (M4) — trace the palette tag-lookup interaction. The invoke is
     // dispatched synchronously inside the callback so the backend command span

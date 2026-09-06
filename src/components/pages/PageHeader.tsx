@@ -103,6 +103,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // Two-phase approach: mount tag section first, then open picker on next render
   useEffect(() => {
     if (forceTagSection) {
+      // oxlint-disable-next-line react/set-state-in-effect -- second phase of the mount-then-open handshake: the tag section must be in the DOM before the Radix popover anchored to it opens; see #4407
       setShowTagPicker(true)
       setForceTagSection(false)
     }
@@ -336,6 +337,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- resets the user-editable title draft when navigation swaps the `title` prop; the same effect rewrites the contentEditable's textContent, an external DOM system; see #4407
     setEditableTitle(title)
     if (titleRef.current && titleRef.current.textContent !== title) {
       titleRef.current.textContent = title
