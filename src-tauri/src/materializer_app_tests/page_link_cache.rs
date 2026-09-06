@@ -2662,7 +2662,7 @@ async fn a_snapshot_sized_import_relinks_every_changed_block_4293() {
         .bind(format!("see [[{REMOTE_TARGET_T}]]"))
         .bind(REMOTE_PAGE_P)
         .bind(REMOTE_PAGE_P)
-        .bind(i as i64 + 1)
+        .bind(i64::try_from(i).expect("fits") + 1)
         .execute(&pool)
         .await
         .unwrap();
