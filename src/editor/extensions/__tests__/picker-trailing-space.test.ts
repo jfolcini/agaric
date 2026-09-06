@@ -31,7 +31,34 @@ import type { PickerItem } from '@/editor/SuggestionList'
 
 type PickerCommand = NonNullable<SuggestionOptions<PickerItem>['command']>
 
-const capturedCommands = new Map<PluginKey, PickerCommand>()
+// #4742: hoisted so the file-scope `vi.mock` factory below can reach it.
+// `vi.mock` is lifted above the imports, so a plain `const` would not exist yet.
+const { capturedCommands } = vi.hoisted(() => ({
+  capturedCommands: new Map<unknown, unknown>(),
+}))
+
+// #4742: registered ONCE for the file, not per test.
+//
+// This was a `vi.doMock` inside `loadEditorStack` paired with a `vi.doUnmock`
+// in `afterEach`, and that pairing is what made the file fail ~10% of runs on
+// `main` — on whichever case happened to run when the mock was not in effect,
+// so the failure moved between tests and looked like a per-case race. It was
+// not: the picker was always open (`state.active` held), only the capture was
+// missing, which is the signature of the real `Suggestion` having run.
+//
+// A file-scope `vi.mock` has no window to lose: it is hoisted above every
+// import and never de-registered, while `resetModules()` in `loadEditorStack`
+// still hands each test a fresh module graph for the mock to apply to.
+vi.mock('@tiptap/suggestion', async () => {
+  const actual = await vi.importActual<typeof import('@tiptap/suggestion')>('@tiptap/suggestion')
+  return {
+    ...actual,
+    Suggestion: (opts: SuggestionOptions<PickerItem>) => {
+      capturedCommands.set(opts.pluginKey, opts.command)
+      return actual.Suggestion(opts)
+    },
+  }
+})
 
 let editor: EditorType | undefined
 
@@ -39,7 +66,6 @@ afterEach(() => {
   editor?.destroy()
   editor = undefined
   capturedCommands.clear()
-  vi.doUnmock('@tiptap/suggestion')
   vi.resetModules()
 })
 
@@ -53,16 +79,6 @@ afterEach(() => {
  */
 async function loadEditorStack() {
   vi.resetModules()
-  vi.doMock('@tiptap/suggestion', async () => {
-    const actual = await vi.importActual<typeof import('@tiptap/suggestion')>('@tiptap/suggestion')
-    return {
-      ...actual,
-      Suggestion: (opts: SuggestionOptions<PickerItem>) => {
-        capturedCommands.set(opts.pluginKey as PluginKey, opts.command as PickerCommand)
-        return actual.Suggestion(opts)
-      },
-    }
-  })
 
   const [
     { Editor },
@@ -127,7 +143,7 @@ interface PluginRange {
  */
 function pick(ed: EditorType, pluginKey: PluginKey, item: PickerItem): void {
   const state = pluginKey.getState(ed.state) as { active: boolean; range: PluginRange } | undefined
-  const command = capturedCommands.get(pluginKey)
+  const command = capturedCommands.get(pluginKey) as PickerCommand | undefined
   expect(state?.active, 'picker must be open before an item can be picked').toBe(true)
   expect(command, 'the picker must have registered a suggestion command').toBeDefined()
   if (!state || !command) return
