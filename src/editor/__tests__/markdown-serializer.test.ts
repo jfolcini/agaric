@@ -3291,6 +3291,66 @@ describe('#710 round-trip corruption family', () => {
         expect(serialize(parse(md))).toBe(md)
       })
     })
+
+    // -- #4731: the verdict must not depend on where the PARSER split the text -
+    //
+    // The escape verdict is per text NODE, but the parser splits a run wherever
+    // a degenerate delimiter pair (`====`, `~~~~`) collapses, so the same
+    // rendered run reached the serializer split in one doc and whole in the
+    // next and got two different verdicts. The serializer merges same-marked
+    // neighbours before escaping — the split is invisible in the output, so
+    // merging it away cannot change anything but the verdict.
+    describe('#4731 adjacent same-mark text nodes share one escape verdict', () => {
+      it('the #4731 repro is a strict fixpoint', () => {
+        // `====` collapses on the first parse and leaves `a` and `_a` as two
+        // adjacent unmarked text nodes; the second parse yields the single node
+        // `a_a`, where the same `_` is plainly intraword.
+        const stored = 'a====\\_a#[00000000000000000000000000]'
+        const once = serialize(parse(stored))
+        expect(once).toBe('a_a#[00000000000000000000000000]')
+        expect(serialize(parse(once))).toBe(once)
+        // Churn-free: the backslash this drops was pure spelling — the escaped
+        // form the old serializer wrote parses to the same doc as the new one.
+        expect(parse(once)).toEqual(parse('a\\_a#[00000000000000000000000000]'))
+      })
+
+      it('a split INSIDE a mark run is a fixpoint too', () => {
+        // Same collapse, one mark deeper: the parser leaves bold(`a`) and
+        // bold(`_b`), which the walk emits back to back with no delimiter
+        // between them, so the `_` is intraword there too.
+        for (const stored of ['**a====\\_b**', '*a====\\_b*', '==a====\\_b==']) {
+          const once = serialize(parse(stored))
+          expect(serialize(parse(once))).toBe(once)
+        }
+        expect(serialize(parse('**a====\\_b**'))).toBe('**a_b**')
+      })
+
+      it('an unmarked split hides no escape: `a` + `_a` is intraword', () => {
+        expect(serialize(doc(paragraph(text('a'), text('_a'))))).toBe('a_a')
+      })
+
+      it('a same-marked split hides no escape either', () => {
+        expect(serialize(doc(paragraph(bold('a'), bold('_b'))))).toBe('**a_b**')
+        expect(serialize(doc(paragraph(linked('a', 'u'), linked('_b', 'u'))))).toBe('[a_b](u)')
+      })
+
+      it('a mark boundary still escapes: the `_` opens the bold node', () => {
+        expect(serialize(doc(paragraph(text('a'), bold('_a'))))).toBe('a**\\_a**')
+        expect(parse(serialize(doc(paragraph(text('a'), bold('_a')))))).toEqual(
+          doc(paragraph(text('a'), bold('_a'))),
+        )
+      })
+
+      it('two hrefs and two code spans are not one run', () => {
+        // Merging either would change the content, not just the spelling: one
+        // link would swallow the other's href, and two code spans would become
+        // one span.
+        expect(serialize(doc(paragraph(linked('a', 'u1'), linked('_b', 'u2'))))).toBe(
+          '[a](u1)[\\_b](u2)',
+        )
+        expect(serialize(doc(paragraph(code('a'), code('b'))))).toBe('`a``b`')
+      })
+    })
   })
 
   describe('2. inline code containing backticks (delimiter-run fences)', () => {

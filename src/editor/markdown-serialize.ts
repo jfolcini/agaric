@@ -639,6 +639,47 @@ function serializeInlineChild(
 }
 
 /**
+ * A text node that may merge with a same-marked neighbour. A `code` node may
+ * not: `serializeInlineText` gives each one its own backtick span, so two of
+ * them are two spans and merging would change the content.
+ */
+function mergeableText(node: InlineNode | undefined): node is TextNode {
+  return node?.type === 'text' && !(node.marks ?? []).some((m) => m.type === 'code')
+}
+
+/** Mark identity for the merge: the href is what makes two link marks differ. */
+function markKey(node: TextNode): string {
+  return (node.marks ?? [])
+    .map((m) => JSON.stringify(m))
+    .toSorted()
+    .join()
+}
+
+/**
+ * Merge adjacent text nodes carrying the same marks (#4731). `escapeText`
+ * decides per NODE, so an intraword `_` the parser happened to leave at a node
+ * boundary looks edge-adjacent and gets escaped: the same rendered run then
+ * serializes differently depending on where the split fell, and the fixpoint
+ * breaks. Same-marked neighbours are emitted back to back with no delimiter
+ * between them, so the split is invisible in the output and merging it away is
+ * lossless; a mark change or an atom is a real delimiter position and keeps its
+ * boundary. Applied at the paragraph entry so every pass below — the escaping
+ * walk, `defuseLeadingItalicMarker`, `groupByLink` — reads the same nodes.
+ */
+function coalesceSameMarkText(nodes: readonly InlineNode[]): readonly InlineNode[] {
+  const merged: InlineNode[] = []
+  for (const node of nodes) {
+    const prev = merged.at(-1)
+    if (mergeableText(node) && mergeableText(prev) && markKey(prev) === markKey(node)) {
+      merged[merged.length - 1] = { ...prev, text: prev.text + node.text }
+    } else {
+      merged.push(node)
+    }
+  }
+  return merged
+}
+
+/**
  * Serialize a list of inline nodes with mark coalescing.
  *
  * Instead of wrapping each TextNode independently (which creates ambiguous
@@ -791,7 +832,8 @@ function serializeParagraph(
   // dispatched as a block either — same exemption as the callers that pass
   // `atLineStart: false` (see `defuseLeadingItalicMarker`).
   const dispatched = atLineStart && taskPrefix === ''
-  const groups = groupByLink(dispatched ? defuseLeadingItalicMarker(node.content) : node.content)
+  const content = coalesceSameMarkText(node.content)
+  const groups = groupByLink(dispatched ? defuseLeadingItalicMarker(content) : content)
 
   // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
   // it in its final surroundings consumes exactly the href again. When the
