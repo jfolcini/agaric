@@ -74,9 +74,17 @@ let mockActiveBlockId: string | null = null
 let mockUnmountReturn: string | null = null
 /** Value that mock getMarkdown() returns (simulates the live editor doc). */
 let mockGetMarkdownReturn: string | null = null
+/**
+ * Value that mock splitAtCaret() returns. `null` (the default) keeps
+ * `handleEnterSave` on its LEGACY flush-and-create-empty-below path, which is
+ * what every pre-existing test in this file assumes. Set it to a `{before,
+ * after}` pair to drive the #909 caret-split branch.
+ */
+let mockSplitAtCaretReturn: { before: string; after: string } | null = null
 const mockMount = vi.fn()
 const mockUnmount = vi.fn(() => mockUnmountReturn)
 const mockGetMarkdown = vi.fn(() => mockGetMarkdownReturn)
+const mockSplitAtCaret = vi.fn(() => mockSplitAtCaretReturn)
 
 // #2939 — BlockTree now consumes the roving editor via `useLazyRovingEditor`
 // (which lazily loads the real editor and returns a drop-in handle facade plus a
@@ -104,6 +112,7 @@ vi.mock('@/hooks/useLazyRovingEditor', () => ({
         mount: mockMount,
         unmount: mockUnmount,
         getMarkdown: mockGetMarkdown,
+        splitAtCaret: mockSplitAtCaret,
         activeBlockId: mockActiveBlockId,
       },
       editorHost: null,
@@ -425,6 +434,7 @@ beforeEach(() => {
   mockActiveBlockId = null
   mockUnmountReturn = null
   mockGetMarkdownReturn = null
+  mockSplitAtCaretReturn = null
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [], loading: false })
   useBlockStore.setState({
@@ -5840,6 +5850,11 @@ describe('BlockTree Enter creates new sibling block', () => {
       if (cmd === 'delete_block') {
         return { deleted_count: 1 }
       }
+      // #4729 — the focus-leave cleanup probes for inbound references before
+      // deleting; `get_backlinks` returns a PageResponse, not a bare array.
+      if (cmd === 'get_backlinks') {
+        return { items: [], next_cursor: null }
+      }
       return []
     })
 
@@ -5954,6 +5969,409 @@ describe('BlockTree Enter creates new sibling block', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', {
       blockId: newId,
     })
+  })
+})
+
+// =========================================================================
+// Leaked-empty-block cleanup on focus-leave (#4729 Part 1)
+// =========================================================================
+
+describe('BlockTree leaked-empty-block cleanup', () => {
+  /** Backend that answers the cleanup's probes with "carries nothing". */
+  function mockBareBackend(overrides: Record<string, unknown> = {}) {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd in overrides) return overrides[cmd]
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'delete_block') return { deleted_count: 1, op_refs: [] }
+      if (cmd === 'get_backlinks') return { items: [], next_cursor: null }
+      return []
+    })
+  }
+
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockBareBackend()
+  })
+
+  it('deletes a pre-existing empty block stranded mid-page when focus leaves it', async () => {
+    // NOT a just-created block — this is the leak class the old cleanup could
+    // never see: 106 of the vault's empties have real content on both sides.
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'STRANDED', content: '', position: 1 }),
+        makeBlock({ id: 'B', content: 'after', position: 2 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'STRANDED' })
+
+    renderBlockTree()
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    // The delete goes through the store's `remove` action, whose IPC is
+    // `delete_block` — the op-emitting path, not a store poke.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'STRANDED' })
+    })
+    await waitFor(() => {
+      expect(pageStore.getState().blocksById.has('STRANDED')).toBe(false)
+    })
+  })
+
+  it('leaves the newly focused block untouched when it deletes the one just left', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'STRANDED', content: '', position: 0 }),
+        makeBlock({ id: 'NEXT', content: 'clicked into this one', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'STRANDED' })
+
+    renderBlockTree()
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'NEXT' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'STRANDED' })
+    })
+    // Focus stays where the user put it, and the surviving block is not
+    // re-created, re-edited or re-positioned by the cleanup.
+    expect(useBlockStore.getState().focusedBlockId).toBe('NEXT')
+    expect(pageStore.getState().blocksById.get('NEXT')?.content).toBe('clicked into this one')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+  })
+
+  it('keeps the last remaining block of a page', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'ONLY', content: '' })],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'ONLY' })
+
+    renderBlockTree()
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'ONLY' })
+    expect(pageStore.getState().blocksById.has('ONLY')).toBe(true)
+  })
+
+  it('keeps a block that another block references', async () => {
+    mockBareBackend({
+      get_backlinks: {
+        items: [makeBlock({ id: 'SOURCE', content: 'see ((STRANDED))' })],
+        next_cursor: null,
+      },
+    })
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'STRANDED', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'STRANDED' })
+
+    renderBlockTree()
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'STRANDED' })
+  })
+
+  it('keeps the source block Enter split at the START of a line', async () => {
+    // Enter at position 0 keeps `before = ''` in the source block and moves the
+    // whole line into a new sibling below, with focus following the text. That
+    // empty source is the user's blank line; deleting it would make the
+    // keystroke a visible no-op.
+    mockBareBackend({
+      create_block: {
+        id: 'SERVER_IGNORED',
+        block_type: 'content',
+        content: 'the whole line',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        op_refs: [],
+      },
+      edit_block: { op_refs: [] },
+    })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'SRC', content: 'the whole line', position: 0 })],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'SRC' })
+    mockActiveBlockId = 'SRC'
+    mockGetMarkdownReturn = 'the whole line'
+    mockSplitAtCaretReturn = { before: '', after: 'the whole line' }
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
+    })
+
+    await act(async () => {
+      await (capturedBlockKeyboardOpts as { onEnterSave: () => Promise<void> }).onEnterSave()
+    })
+
+    // The text moved into a new sibling below …
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ content: 'the whole line' }),
+      )
+    })
+    // … and the source block, now empty, SURVIVES the focus-leave cleanup
+    // that `setFocused(newBlockId)` just triggered: it is the blank line the
+    // keystroke was for.
+    await act(async () => {})
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'SRC' })
+    expect(pageStore.getState().blocksById.has('SRC')).toBe(true)
+    expect(pageStore.getState().blocksById.get('SRC')?.content).toBe('')
+  })
+
+  it('keeps the source block when focus leaves it DURING the split round trip', async () => {
+    // Enter at line start empties the source optimistically and then awaits
+    // `edit_block`. A click elsewhere during that round trip moves focus off
+    // the already-empty source BEFORE `createBelow` has run — so the exemption
+    // must already be registered, or the cleanup deletes the source and the
+    // after-text has no anchor left to be created below.
+    let releaseEdit!: () => void
+    const editGate = new Promise<void>((resolve) => {
+      releaseEdit = resolve
+    })
+    mockBareBackend({
+      edit_block: editGate.then(() => ({ op_refs: [] })),
+      create_block: {
+        id: 'SERVER_IGNORED',
+        block_type: 'content',
+        content: 'the whole line',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        op_refs: [],
+      },
+    })
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'SRC', content: 'the whole line', position: 0 }),
+        makeBlock({ id: 'OTHER', content: 'elsewhere on the page', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'SRC' })
+    mockActiveBlockId = 'SRC'
+    mockGetMarkdownReturn = 'the whole line'
+    mockSplitAtCaretReturn = { before: '', after: 'the whole line' }
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
+    })
+
+    let enter!: Promise<void>
+    await act(async () => {
+      enter = (capturedBlockKeyboardOpts as { onEnterSave: () => Promise<void> }).onEnterSave()
+    })
+    // The source is already empty in the store and `edit_block` is still in
+    // flight when the user clicks another block.
+    expect(pageStore.getState().blocksById.get('SRC')?.content).toBe('')
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'OTHER' })
+    })
+    await act(async () => {
+      releaseEdit()
+      await enter
+    })
+    await act(async () => {})
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'SRC' })
+    expect(pageStore.getState().blocksById.get('SRC')?.content).toBe('')
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: 'the whole line' }),
+    )
+  })
+
+  // ── Dialogs that empty the block and then write back into it (#4729) ──
+  // The `{{` picker / `/query` slash command DELETE the trigger text and then
+  // open a modal, so the block is blank at the moment the modal's focus trap
+  // blurs the editor. Deleting it there strands the modal's write-back — the
+  // e2e "typing {{ opens the visual builder and inserts a query on save"
+  // (#215) failed exactly this way. Same shape for the other block-targeting
+  // dialogs a slash command can open. `data-editor-portal` is what spares the
+  // date/template/context-menu overlays (their blur never fires); these four
+  // deliberately do NOT carry it, which is why they need the exemption.
+
+  it('keeps the block the visual query builder was opened for, and saves into it', async () => {
+    mockBareBackend({ edit_block: { op_refs: [] } })
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        // Blank because the picker consumed the `{{` the user typed.
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY' })
+    })
+    await waitFor(() => expect(capturedQueryOpen).toBe(true))
+
+    // The modal's focus trap blurs the editor, which clears the store focus.
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+
+    // … so "Insert Query" still has a block to write the expression into.
+    await act(async () => {
+      await (capturedQuerySave as unknown as (e: string) => Promise<void>)?.('todo')
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'TARGET', toText: '{{query todo}}' }),
+    )
+  })
+
+  it('keeps the block the emoji picker was opened for', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'emoji', label: 'EMOJI' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    // `insertEmojiIntoActiveEditor` targets the block's editor; a deleted
+    // block has none, and the picked emoji is silently dropped.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+  })
+
+  it('keeps the block the property drawer was opened for by /assignee', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    // #2656 — the bare `/assignee` collects its free-text value in the
+    // property drawer, which then writes the property back to this block.
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'assignee', label: 'ASSIGNEE' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+  })
+
+  it('still deletes a leaked empty block when NO dialog was opened for it', async () => {
+    // The negative half: the exemption is registered per open, not a blanket
+    // stand-down. Opening the builder for A must not spare a blank B.
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'anchor', position: 0 }),
+        makeBlock({ id: 'B', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'A' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY' })
+    })
+    await waitFor(() => expect(capturedQueryOpen).toBe(true))
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'B' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
+    })
+  })
+
+  it('does not delete on a window blur (alt-tab / tab switch)', async () => {
+    const spy = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    try {
+      pageStore.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'before', position: 0 }),
+          makeBlock({ id: 'STRANDED', content: '', position: 1 }),
+        ],
+        loading: false,
+      })
+      useBlockStore.setState({ focusedBlockId: 'STRANDED' })
+
+      renderBlockTree()
+
+      await act(async () => {
+        useBlockStore.setState({ focusedBlockId: null })
+      })
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'STRANDED' })
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

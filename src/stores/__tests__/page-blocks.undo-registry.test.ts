@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import {
+  _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import {
   createPageBlockStore,
@@ -195,6 +200,85 @@ describe('PageBlockStore', () => {
       await store.getState().remove('A')
 
       expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    // -------------------------------------------------------------------------
+    // #4729 — HOUSEKEEPING deletes must not occupy the user's undo stack.
+    //
+    // The leaked-empty-block cleanup fires on focus-leave and deletes a block
+    // the user never asked it to. Routing that through the normal
+    // `notifyUndoNewAction` made it the top undo entry, so the user's next
+    // Ctrl+Z reverted an invisible cleanup instead of their own last action
+    // (and, because `onNewAction` also clears `redoStack`, it ate a pending
+    // Ctrl+Y as well). `remove(id, { undoable: false })` skips the undo
+    // notification and NOTHING else — the op, the soft delete, sync and Trash
+    // are unchanged, and the graph-structure signal still fires because the
+    // link topology really did change.
+    //
+    // Both arms are asserted deliberately: the suppression must not be able to
+    // silently disable undo for a real, user-initiated delete.
+    // -------------------------------------------------------------------------
+    describe('#4729 housekeeping deletes are not undoable', () => {
+      const DELETE_RESP = {
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }
+
+      it('remove with { undoable: false } does NOT notify the undo store', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
+        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+
+        await store.getState().remove('A', { undoable: false })
+
+        expect(mockOnNewAction).not.toHaveBeenCalled()
+      })
+
+      it('remove with { undoable: true } notifies the undo store (explicit opt-in)', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
+        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+
+        await store.getState().remove('A', { undoable: true })
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_RESP.op_refs)
+      })
+
+      it('a user-initiated remove still notifies the undo store (no options)', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
+        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+
+        await store.getState().remove('A')
+
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_RESP.op_refs)
+      })
+
+      it('the block is still deleted, and the delete IPC still issued', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
+        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+
+        await store.getState().remove('A', { undoable: false })
+
+        expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'A' })
+        expect(store.getState().blocksById.has('A')).toBe(false)
+      })
+
+      it('still bumps the graph-structure signal (only the undo half is skipped)', async () => {
+        vi.useFakeTimers()
+        try {
+          _resetGraphStructureEventsForTest()
+          store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
+          mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+
+          await store.getState().remove('A', { undoable: false })
+          vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
+
+          expect(getGraphStructureKey()).toBe(1)
+        } finally {
+          _resetGraphStructureEventsForTest()
+          vi.useRealTimers()
+        }
+      })
     })
 
     // -------------------------------------------------------------------------
