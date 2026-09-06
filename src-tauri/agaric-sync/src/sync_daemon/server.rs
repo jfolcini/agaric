@@ -754,7 +754,9 @@ async fn handle_incoming_sync_inner(
         // Arming the guard with the authenticated key makes
         // `peer_is_bound_to_another_key` cover them too, so a passphrase-holder
         // cannot poison an already-bound peer's export floor on the way past.
-        orch = orch.with_unverified_claim_guard(endpoint_id_str.clone());
+        orch = orch
+            .with_unverified_claim_guard(endpoint_id_str.clone())
+            .await;
     }
 
     // ── The session ───────────────────────────────────────────────────────────
