@@ -1,7 +1,7 @@
 /**
  * Composite hook that wraps `useListKeyboardNavigation` with the
- * scroll-into-view + reset-on-filter-change patterns used by every
- * keyboard-navigable list panel in the app (DonePanel, DuePanel).
+ * scroll-into-view pattern used by every keyboard-navigable list
+ * panel in the app (DonePanel, DuePanel).
  *
  * Why a separate hook? The keyboard primitive only manages
  * `focusedIndex` + a key-event handler. Every consumer additionally
@@ -12,9 +12,6 @@
  *   2. A `useEffect` that scrolls the focused item into view when
  *      focus is inside the list (avoids hijacking scroll position
  *      when focus is elsewhere).
- *   3. A `useEffect` that resets `focusedIndex` to 0 when an external
- *      "view signature" changes (e.g. the filter selection or the
- *      target date the panel is rendering).
  *
  * Item lookup uses a CSS selector (default `[data-block-list-item]`)
  * scoped under `listRef`. This matches the existing DOM-attribute
@@ -47,7 +44,9 @@ export interface UseKeyboardNavigableListOptions {
   /**
    * A value that, when changed, resets `focusedIndex` to 0. Use a stable
    * scalar (e.g. a JSON-stringified filter signature) so the dependency
-   * comparison is referentially correct.
+   * comparison is referentially correct. Forwarded to the primitive, so
+   * supplying it also switches a plain `itemCount` change from a reset to a
+   * clamp (see `useListKeyboardNavigation`).
    */
   resetKey?: unknown
   /**
@@ -101,17 +100,10 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
     ...(pageSize !== undefined && { pageSize }),
     ...(wrap !== undefined && { wrap }),
     ...(horizontal !== undefined && { horizontal }),
+    ...(resetKey !== undefined && { resetKey }),
   }
 
   const { focusedIndex, setFocusedIndex, handleKeyDown } = useListKeyboardNavigation(navOptions)
-
-  // Reset focusedIndex to 0 whenever the caller-provided resetKey changes.
-  // `setFocusedIndex` is the stable useState setter (forwarded from
-  // useListKeyboardNavigation), so including it is safe and does not re-run
-  // the effect on its own — resetKey remains the sole trigger.
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [resetKey, setFocusedIndex])
 
   // Scroll the focused item into view, but only when focus is actually inside
   // the list — avoids hijacking the page's scroll position when the user
