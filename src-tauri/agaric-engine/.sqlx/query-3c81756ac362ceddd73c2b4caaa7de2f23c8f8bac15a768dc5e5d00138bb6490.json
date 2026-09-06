@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_replicated = 0 AS \"local!: bool\"\n               FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "local!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3c81756ac362ceddd73c2b4caaa7de2f23c8f8bac15a768dc5e5d00138bb6490"
+}
