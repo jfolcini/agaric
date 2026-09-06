@@ -19,100 +19,76 @@
  * The pickers run against a real editor here, with the real `@tiptap/suggestion`
  * plugin: the mock is a pass-through that hands the tests the same `command`
  * callback the suggestion popup invokes on Enter, so the production insertion
- * chain is what runs.
+ * chain is what runs. It is ONE hoisted `vi.mock` for the file, not a
+ * `vi.doMock` / `vi.doUnmock` pair per test: those only queue, every concurrent
+ * module fetch drains the queue in full, and a sibling drain's `unmock` landing
+ * after this test's `mock` loads the real plugin uncaptured (#4742).
  */
 
-import type { Editor as EditorType } from '@tiptap/core'
+import { Editor } from '@tiptap/core'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
 import type { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionOptions } from '@tiptap/suggestion'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { AtTagPicker, atTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
+import { BlockLink } from '@/editor/extensions/block-link'
+import { BlockLinkPicker, blockLinkPickerPluginKey } from '@/editor/extensions/block-link-picker'
+import { BlockRef } from '@/editor/extensions/block-ref'
+import { BlockRefPicker, blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
+import { TagRef } from '@/editor/extensions/tag-ref'
 import type { PickerItem } from '@/editor/SuggestionList'
 
 type PickerCommand = NonNullable<SuggestionOptions<PickerItem>['command']>
 
-const capturedCommands = new Map<PluginKey, PickerCommand>()
+const { capturedCommands } = vi.hoisted(() => ({
+  capturedCommands: new Map<PluginKey, PickerCommand>(),
+}))
 
-let editor: EditorType | undefined
+vi.mock('@tiptap/suggestion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tiptap/suggestion')>()
+  return {
+    ...actual,
+    Suggestion: (opts: SuggestionOptions<PickerItem>) => {
+      capturedCommands.set(opts.pluginKey as PluginKey, opts.command as PickerCommand)
+      return actual.Suggestion(opts)
+    },
+  }
+})
+
+let editor: Editor | undefined
 
 afterEach(() => {
   editor?.destroy()
   editor = undefined
   capturedCommands.clear()
-  vi.doUnmock('@tiptap/suggestion')
-  vi.resetModules()
 })
 
-/**
- * Load the whole editor stack from ONE fresh module graph.
- *
- * `vi.resetModules()` is required to make the `@tiptap/suggestion` mock take
- * effect, and a statically imported `Editor` would then come from a different
- * copy of `@tiptap/core` than the extensions do (the module-copy footgun), so
- * every participant is imported here instead.
- */
-async function loadEditorStack() {
-  vi.resetModules()
-  vi.doMock('@tiptap/suggestion', async () => {
-    const actual = await vi.importActual<typeof import('@tiptap/suggestion')>('@tiptap/suggestion')
-    return {
-      ...actual,
-      Suggestion: (opts: SuggestionOptions<PickerItem>) => {
-        capturedCommands.set(opts.pluginKey as PluginKey, opts.command as PickerCommand)
-        return actual.Suggestion(opts)
-      },
-    }
+function build(
+  items: (query: string) => PickerItem[],
+  onCreate?: (label: string) => Promise<string>,
+): Editor {
+  return new Editor({
+    element: document.createElement('div'),
+    extensions: [
+      Document,
+      Paragraph,
+      Text,
+      TagRef.configure({ resolveName: (id: string) => `Tag:${id}` }),
+      BlockLink.configure({ resolveTitle: (id: string) => `Title:${id}` }),
+      BlockRef.configure({ resolveContent: (id: string) => `Ref:${id}` }),
+      AtTagPicker.configure({ items, ...(onCreate ? { onCreate } : {}) }),
+      BlockLinkPicker.configure({ items }),
+      BlockRefPicker.configure({ items }),
+    ],
+    content: { type: 'doc', content: [{ type: 'paragraph' }] },
   })
-
-  const [
-    { Editor },
-    { default: Document },
-    { default: Paragraph },
-    { default: Text },
-    { TagRef },
-    { BlockLink },
-    { BlockRef },
-    { AtTagPicker, atTagPickerPluginKey },
-    { BlockLinkPicker, blockLinkPickerPluginKey },
-    { BlockRefPicker, blockRefPickerPluginKey },
-  ] = await Promise.all([
-    import('@tiptap/core'),
-    import('@tiptap/extension-document'),
-    import('@tiptap/extension-paragraph'),
-    import('@tiptap/extension-text'),
-    import('@/editor/extensions/tag-ref'),
-    import('@/editor/extensions/block-link'),
-    import('@/editor/extensions/block-ref'),
-    import('@/editor/extensions/at-tag-picker'),
-    import('@/editor/extensions/block-link-picker'),
-    import('@/editor/extensions/block-ref-picker'),
-  ])
-
-  const build = (
-    items: (query: string) => PickerItem[],
-    onCreate?: (label: string) => Promise<string>,
-  ): EditorType =>
-    new Editor({
-      element: document.createElement('div'),
-      extensions: [
-        Document,
-        Paragraph,
-        Text,
-        TagRef.configure({ resolveName: (id: string) => `Tag:${id}` }),
-        BlockLink.configure({ resolveTitle: (id: string) => `Title:${id}` }),
-        BlockRef.configure({ resolveContent: (id: string) => `Ref:${id}` }),
-        AtTagPicker.configure({ items, ...(onCreate ? { onCreate } : {}) }),
-        BlockLinkPicker.configure({ items }),
-        BlockRefPicker.configure({ items }),
-      ],
-      content: { type: 'doc', content: [{ type: 'paragraph' }] },
-    }) as unknown as EditorType
-
-  return { build, atTagPickerPluginKey, blockLinkPickerPluginKey, blockRefPickerPluginKey }
 }
 
 /** Type raw text into the editor at the cursor, as a user keystroke would. */
-function type(ed: EditorType, text: string): void {
+function type(ed: Editor, text: string): void {
   ed.chain().focus().insertContent(text).run()
 }
 
@@ -125,17 +101,17 @@ interface PluginRange {
  * Select `item` from the picker keyed by `pluginKey` — the exact call the
  * suggestion popup makes on Enter, with the range the live plugin state holds.
  */
-function pick(ed: EditorType, pluginKey: PluginKey, item: PickerItem): void {
+function pick(ed: Editor, pluginKey: PluginKey, item: PickerItem): void {
   const state = pluginKey.getState(ed.state) as { active: boolean; range: PluginRange } | undefined
   const command = capturedCommands.get(pluginKey)
   expect(state?.active, 'picker must be open before an item can be picked').toBe(true)
   expect(command, 'the picker must have registered a suggestion command').toBeDefined()
   if (!state || !command) return
-  command({ editor: ed as never, range: state.range, props: item })
+  command({ editor: ed, range: state.range, props: item })
 }
 
 /** The paragraph's children as `type` / `type("text")` labels. */
-function children(ed: EditorType): string[] {
+function children(ed: Editor): string[] {
   const labels: string[] = []
   ed.state.doc.child(0).forEach((node) => {
     labels.push(node.isText ? `text(${JSON.stringify(node.text)})` : node.type.name)
@@ -149,7 +125,6 @@ const tagItem = (id: string, label: string): PickerItem => ({ id, label, isCreat
 
 describe('#4708 — no trailing space after a picked token', () => {
   it('tag picker: `@work` → pick → `,` yields the chip then a bare comma', async () => {
-    const { build, atTagPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((_query: string) => [tagItem('TAG_1', 'work')])
     editor = build(items)
     editor.commands.focus('end')
@@ -165,7 +140,6 @@ describe('#4708 — no trailing space after a picked token', () => {
   })
 
   it('page-link picker: `[[Page` → pick → `,` yields the chip then a bare comma', async () => {
-    const { build, blockLinkPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((_query: string) => [tagItem('PAGE_1', 'Page')])
     editor = build(items)
     editor.commands.focus('end')
@@ -181,7 +155,6 @@ describe('#4708 — no trailing space after a picked token', () => {
   })
 
   it('block-ref picker: `((Block` → pick → `,` yields the chip then a bare comma', async () => {
-    const { build, blockRefPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((_query: string) => [tagItem('BLK_1', 'Block')])
     editor = build(items)
     editor.commands.focus('end')
@@ -197,7 +170,6 @@ describe('#4708 — no trailing space after a picked token', () => {
   })
 
   it('create path: a newly created tag also lands without a trailing space', async () => {
-    const { build, atTagPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((_query: string) => [
       { id: 'PLACEHOLDER', label: 'brandnew', isCreate: true },
     ])
@@ -228,7 +200,6 @@ describe('#4708 — no trailing space after a picked token', () => {
 
 describe('#4708 — back-to-back inserts still open the second picker', () => {
   it('tag picker: `@a` → pick → `@b` → pick yields two adjacent chips', async () => {
-    const { build, atTagPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((query: string) =>
       query.startsWith('b') ? [tagItem('TAG_B', 'beta')] : [tagItem('TAG_A', 'alpha')],
     )
@@ -251,7 +222,6 @@ describe('#4708 — back-to-back inserts still open the second picker', () => {
   })
 
   it('page-link picker: `[[A` → pick → `[[B` → pick yields two adjacent chips', async () => {
-    const { build, blockLinkPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((query: string) =>
       query.startsWith('B') ? [tagItem('PAGE_B', 'Bravo')] : [tagItem('PAGE_A', 'Alpha')],
     )
@@ -277,7 +247,6 @@ describe('#4708 — back-to-back inserts still open the second picker', () => {
 
 describe('#4708 — caret after a picked token', () => {
   it('collapses at the end of the paragraph, and typing continues that paragraph', async () => {
-    const { build, blockLinkPickerPluginKey } = await loadEditorStack()
     const items = vi.fn((_query: string) => [tagItem('PAGE_1', 'Page')])
     editor = build(items)
     editor.commands.focus('end')
