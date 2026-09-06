@@ -97,12 +97,6 @@ async fn run(
             (r.ops, summary)
         }
     };
-    if ops.is_empty() {
-        // Nothing to commit and nothing to dispatch; release the write lock.
-        tx.commit_without_dispatch().await?;
-        return Ok(());
-    }
-
     let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();
     for op in ops {
         match op {

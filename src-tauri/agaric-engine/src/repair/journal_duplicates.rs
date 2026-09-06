@@ -121,7 +121,7 @@ async fn select_children(
         r#"SELECT c.id AS "id!: String" FROM blocks c
            WHERE c.deleted_at IS NULL
              AND c.parent_id IN (SELECT value FROM json_each(?1))
-           ORDER BY c.id"#,
+           ORDER BY c.parent_id, c.position, c.id"#,
         pages_json,
     )
     .fetch_all(&mut **tx)
@@ -157,7 +157,7 @@ async fn merge_group(
         }
         report
             .ops
-            .push(soft_delete(tx, state, device_id, page, "page").await?);
+            .push(soft_delete(tx, state, device_id, page).await?);
         report.pages_merged += 1;
     }
     report.dates_merged += 1;
@@ -174,9 +174,6 @@ pub async fn repair_journal_duplicates(
     device_id: &str,
 ) -> Result<JournalDuplicateRepair, AppError> {
     let groups = select_groups(tx).await?;
-    if groups.is_empty() {
-        return Ok(JournalDuplicateRepair::default());
-    }
     ACTOR
         .scope(housekeeping("journal-duplicates"), async {
             let mut report = JournalDuplicateRepair::default();
@@ -365,6 +362,71 @@ mod tests {
         for kid in &kids {
             assert_eq!(block(&pool, kid).await.deleted_at, None);
         }
+    }
+
+    // Guard: `position`, not `id`, is the sibling order of record. A user who
+    // dragged a block up on the losing page must find it in that place on
+    // the keeper, so the children are appended in position order — the same
+    // `(position, id)` every listing reads.
+    #[tokio::test]
+    async fn children_keep_their_position_order_not_their_creation_order() {
+        let (pool, _tmp) = pool_with_spaces().await;
+        let state = LoroState::new();
+        let (keeper, keeper_kids) =
+            page_with_children(&pool, "2026-05-09", SPACE_WORK_ULID, "keeper", 1).await;
+        // Three children created in order c1, c2, c3 and then rearranged by
+        // the user to sit at positions 3, 2, 1: the page reads c3, c2, c1.
+        let dup = next_id();
+        insert(
+            &pool,
+            Row {
+                id: &dup,
+                block_type: "page",
+                content: "2026-05-09",
+                parent_id: None,
+                page_id: Some(&dup),
+                space_id: Some(SPACE_WORK_ULID),
+                position: 1,
+            },
+        )
+        .await;
+        let mut created = Vec::new();
+        for (i, position) in [3_i64, 2, 1].into_iter().enumerate() {
+            let child = next_id();
+            let text = format!("d {i}");
+            insert(
+                &pool,
+                Row {
+                    id: &child,
+                    block_type: "content",
+                    content: &text,
+                    parent_id: Some(&dup),
+                    page_id: Some(&dup),
+                    space_id: Some(SPACE_WORK_ULID),
+                    position,
+                },
+            )
+            .await;
+            created.push(child);
+        }
+        assert_eq!(
+            children_in_order(&pool, &dup).await,
+            vec![created[2].clone(), created[1].clone(), created[0].clone()],
+            "fixture: the page reads c3, c2, c1"
+        );
+
+        run(&pool, &state).await;
+
+        assert_eq!(
+            children_in_order(&pool, &keeper).await,
+            vec![
+                keeper_kids[0].clone(),
+                created[2].clone(),
+                created[1].clone(),
+                created[0].clone(),
+            ],
+            "the keeper reads its own child, then c3, c2, c1 — the order the user left"
+        );
     }
 
     // Guard: the digit mask, not `LIKE '____-__-__'`. The title is exactly

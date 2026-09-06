@@ -31,15 +31,13 @@
 //! after boot cannot revert a repair. The ops still replay, sync, list in
 //! History and restore from Trash like any other.
 //!
-//! # Not boot-fatal, idempotent by construction
+//! # Idempotent by construction
 //!
-//! The app's `repair` module drives each repair in a `CommandTx` of its own
-//! and logs-and-swallows an error, so a repair can never keep the app from
-//! starting; a failed batch rolls back whole and the next boot retries.
-//! Neither needs a marker: a re-homed orphan has a `page_id` and a merged
-//! duplicate is tombstoned, so each selection query returns nothing the
-//! second time, and each is an indexed probe over a population that is small
-//! by construction.
+//! Neither repair needs a marker: a re-homed orphan has a `page_id` and a
+//! merged duplicate is tombstoned, so each selection query returns nothing
+//! the second time, and each is an indexed probe over a population that is
+//! small by construction. The app's `repair` module owns the transaction
+//! boundary and the never-boot-fatal contract.
 
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
@@ -273,7 +271,6 @@ async fn soft_delete(
     state: &LoroState,
     device_id: &str,
     block_id: &str,
-    block_type: &str,
 ) -> Result<RepairOp, AppError> {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(block_id),
@@ -282,7 +279,7 @@ async fn soft_delete(
     let effects = apply_op_projected(tx, &record, state, false).await?;
     Ok(RepairOp::Delete {
         record,
-        block_type: block_type.to_owned(),
+        block_type: "page".to_owned(),
         effects,
     })
 }

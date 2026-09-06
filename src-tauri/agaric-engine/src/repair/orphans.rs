@@ -24,13 +24,11 @@
 //! # Destination
 //!
 //! One `Unreachable` page per space that has orphans, found by title or
-//! created through `create_block_in_tx`, and stamped with `SetProperty(space)`
-//! after the moves either way — the two halves of `create_page_in_space_inner`,
-//! the stamp last so its subtree hydrate carries the moved blocks into the
-//! space's Loro doc. An orphan with `space_id IS NULL`
-//! (200 of the 225) goes to **Personal**, the same space the boot backfill
-//! assigns to every space-less page (see `destination_space` in the parent
-//! module).
+//! created through `create_block_in_tx`, then stamped with `SetProperty(space)`
+//! after the moves (why the order matters: `UnreachablePage::finish`). An
+//! orphan with `space_id IS NULL` (200 of the 225) goes to **Personal**, the
+//! same space the boot backfill assigns to every space-less page (see
+//! `destination_space` in the parent module).
 //! Orphans are appended in `id` order: ULIDs are creation-ordered, so this
 //! preserves the order they were written in.
 
@@ -108,10 +106,6 @@ pub async fn repair_orphans(
     device_id: &str,
 ) -> Result<OrphanRepair, AppError> {
     let orphans = select_orphans(tx).await?;
-    if orphans.is_empty() {
-        return Ok(OrphanRepair::default());
-    }
-
     ACTOR
         .scope(housekeeping("orphans"), async {
             let mut report = OrphanRepair::default();
