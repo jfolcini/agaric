@@ -104,12 +104,16 @@
 //! Steps whose sort key is fixture-controlled data (page title, …) set
 //! `ordered` and DO compare sequences.
 
+use super::common::QueryByPropertyRequest;
 use super::common::pages::list_pages_with_metadata_inner;
+use super::common::queries::query_by_property_inner;
+use super::common::tags::{query_by_tag_expr_inner, query_by_tags_inner};
 use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::BlockId;
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
+use agaric_store::tag_query::TagExpr;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -693,6 +697,82 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             )
             .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
+        }
+        // ── Boundary steps over the property and tag filters (#3827) ──
+        "query_by_property" => {
+            let QueryByPropertyRequest {
+                key,
+                value_text,
+                value_date,
+                operator,
+                cursor,
+                limit,
+                exclude_parent_id,
+                content_non_empty,
+                block_type,
+                value_text_in,
+                value_date_range,
+                exclude_todo_states,
+            } = arg_req(args, "request");
+            let scope: SpaceScope = arg_req(args, "scope");
+            let resp = query_by_property_inner(
+                pool,
+                key,
+                value_text,
+                value_date,
+                operator,
+                cursor,
+                limit,
+                &scope,
+                exclude_parent_id,
+                content_non_empty.unwrap_or(false),
+                block_type,
+                value_text_in,
+                value_date_range,
+                exclude_todo_states,
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
+        }
+        "query_by_tags" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let resp = query_by_tags_inner(
+                pool,
+                arg_or(args, "tagIds"),
+                arg_or(args, "prefixes"),
+                arg_req(args, "mode"),
+                opt_arg_as(args, "includeInherited"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                &scope,
+                opt_arg(args, "blockType").and_then(|v| v.as_str().map(str::to_owned)),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
+        }
+        "query_by_tag_expr" => {
+            let expr: TagExpr = arg_req(args, "expr");
+            let scope: SpaceScope = arg_req(args, "scope");
+            let resp = query_by_tag_expr_inner(
+                pool,
+                expr,
+                opt_arg_as(args, "includeInherited"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                &scope,
+                opt_arg(args, "blockType").and_then(|v| v.as_str().map(str::to_owned)),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
         }
         "list_pages_with_metadata" => {
             let resp = list_pages_with_metadata_inner(
