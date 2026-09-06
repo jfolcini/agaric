@@ -407,9 +407,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3872) that the waiver had been quietly covering for.
 
   // ── Legacy tag / property query surface ──
-  query_by_property: 'fixture candidate: superseded by filtered_blocks_query, still IPC-reachable',
-  query_by_tags: 'fixture candidate: superseded by filtered_blocks_query, still IPC-reachable',
-  query_by_tag_expr: 'fixture candidate: tag-expression surface with no query step yet',
+  // `query_by_property`, `query_by_tags` and `query_by_tag_expr` are NOT
+  // waived: their boundary steps are in `query_tag_and_property_boundaries.json`
+  // (#3827).
   list_all_tags_in_space: 'fixture candidate: tags_cache-backed listing with no query step yet',
   list_tags_by_prefix: 'fixture candidate: tags_cache prefix scan with no query step yet',
   list_property_keys: 'fixture candidate: distinct-key scan with no query step yet',

@@ -60,41 +60,43 @@ function setReservedColumnProperty(
 }
 
 export const propertiesHandlers = {
+  // Mirrors `pagination::query_by_property` (#3827). One `block_properties`
+  // (or native-column) row per block; the comparison operator applies to
+  // whichever of `valueText` / `valueDate` is given, `neq` also matches a
+  // NULL value, `valueDateRange` is `>= from AND < to`, `valueTextIn` is set
+  // membership, and the push-downs read the BLOCK: `parent_id IS NOT
+  // excludeParentId` (a NULL parent passes), `TRIM(content, space/tab/LF/CR)
+  // != ''`, `todo_state IS NULL OR todo_state NOT IN (excludeTodoStates)`.
+  // Ordered `b.id ASC`.
   query_by_property: (args) => {
     const a = args as Record<string, unknown>
-    // #2277 item 7 — every query_by_property param (key/value/operator,
-    // pagination, and the push-down filters) now nests under the single
-    // `request` DTO; `scope` stays a separate top-level arg.
+    // Accept either the `{ request, scope }` wire shape or a flat arg bag.
     const req = (a['request'] as Record<string, unknown>) ?? a
     const key = req['key'] as string
+    if (typeof key !== 'string' || key.trim() === '') {
+      throw validationRejection('property key must not be empty')
+    }
     const valueText = (req['valueText'] as string | null) ?? null
     const valueDate = (req['valueDate'] as string | null) ?? null
-    // Honour `scope: SpaceScope` (mirrors
-    // `query_by_property_inner`). Active scope drops rows whose owning
-    // page is not stamped with `space = ?spaceId`. Global passes through.
+    const operator = (req['operator'] as string | null) ?? 'eq'
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // Push-down filters, now flat fields of the `request` DTO. Mirror the
-    // backend semantics so FE tests can observe the filter going through.
-    //   - `excludeParentId` skips rows whose `parent_id` matches.
-    //   - `contentNonEmpty` drops null/empty/whitespace-only content.
-    //   - `blockType` restricts to a single block_type.
-    //   - `valueTextIn` is set-membership over value_text;
-    //     mutually exclusive with `valueText`.
-    //   - `valueDateRange` is half-open `[from, to)`.
-    const excludeParentId = ((req['excludeParentId'] as string | null) ?? null) as string | null
+    const excludeParentId = (req['excludeParentId'] as string | null) ?? null
     const contentNonEmpty = Boolean(req['contentNonEmpty'])
-    const blockType = ((req['blockType'] as string | null) ?? null) as string | null
-    const valueTextIn = ((req['valueTextIn'] as string[] | null) ?? null) as string[] | null
-    const valueDateRange = ((req['valueDateRange'] as [string, string] | null) ?? null) as
-      | [string, string]
-      | null
-    // Some well-known "properties" live on the block row itself in the seed
-    // data (todo_state, priority, due_date, scheduled_date, completed_at,
-    // created_at). The real backend exposes them through the properties
-    // system, so the frontend calls query_by_property with those keys. We
-    // fall back to reading the row-level field when the properties Map is
-    // Empty or doesn't carry that key.
+    const blockType = (req['blockType'] as string | null) ?? null
+    const valueTextIn = (req['valueTextIn'] as string[] | null) ?? []
+    const valueDateRange = (req['valueDateRange'] as [string, string] | null) ?? null
+    const excludeTodoStates = (req['excludeTodoStates'] as string[] | null) ?? []
+    if (valueText !== null && valueDate !== null) {
+      throw validationRejection(
+        'query_by_property: at most one of value_text / value_date may be supplied',
+      )
+    }
+    if (valueTextIn.length > 0 && valueText !== null) {
+      throw validationRejection(
+        'query_by_property: value_text_in and value_text are mutually exclusive',
+      )
+    }
     const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
       todo_state: 'text',
       priority: 'text',
@@ -102,61 +104,77 @@ export const propertiesHandlers = {
       scheduled_date: 'date',
     }
     const rowKind = ROW_FIELD_KEYS[key]
-    // The predicate below mirrors the SQL evaluation order from
-    // `pagination/properties.rs::query_by_property` so the mock's
-    // observable behaviour matches the backend across reserved-key /
-    // non-reserved / row-fallback branches plus the four pushed-down
-    // filters (excludeParentId, contentNonEmpty, blockType, value_text/
-    // valueTextIn, valueDate/valueDateRange). Splitting this into helpers
-    // would make the SQL→TS correspondence harder to audit and would
-    // duplicate the keep/drop signal across multiple closures.
-    // oxlint-disable-next-line eslint/complexity -- pre-existing
-    const items = [...blocks.values()].filter((b) => {
+    // SQL `a <op> b` on TEXT: NULL never compares true, except that the
+    // non-reserved `neq` predicate is written `IS NULL OR !=` (#384). Only
+    // the non-reserved path reaches this with a NULL: the reserved one
+    // returns on a NULL column first.
+    const compare = (actual: string | null, wanted: string | null): boolean => {
+      if (wanted === null) return true
+      if (actual === null) return operator === 'neq'
+      switch (operator) {
+        case 'neq': {
+          return actual !== wanted
+        }
+        case 'lt': {
+          return actual < wanted
+        }
+        case 'gt': {
+          return actual > wanted
+        }
+        case 'lte': {
+          return actual <= wanted
+        }
+        case 'gte': {
+          return actual >= wanted
+        }
+        default: {
+          return actual === wanted
+        }
+      }
+    }
+    const blockPredicates = (b: Record<string, unknown>): boolean => {
       if (b['deleted_at']) return false
-      // Active-space scoping: drop rows whose owning page
-      // doesn't carry the active space ref.
       if (spaceId !== null) {
         const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
         const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
         if (ownerSpace !== spaceId) return false
       }
-      // Push-down filters short-circuit before the property lookup so
-      // the mock matches the SQL evaluation order.
       if (excludeParentId !== null && b['parent_id'] === excludeParentId) return false
       if (contentNonEmpty) {
         const content = b['content'] as string | null | undefined
-        if (content == null || (content as string).trim() === '') return false
+        if (content == null || content.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, '') === '') return false
       }
       if (blockType !== null && b['block_type'] !== blockType) return false
-      const blockProps = properties.get(b['id'] as string)
-      const prop = blockProps?.get(key)
-      const matchesValueTextIn = (v: string | null | undefined): boolean =>
-        valueTextIn === null || valueTextIn.length === 0 || (v != null && valueTextIn.includes(v))
-      const matchesValueDateRange = (v: string | null | undefined): boolean => {
-        if (valueDateRange === null) return true
-        if (v == null) return false
-        const [from, to] = valueDateRange
-        // Half-open `[from, to)`: include `from`, exclude `to`.
-        return v >= from && v < to
+      if (excludeTodoStates.length > 0) {
+        const todo = (b['todo_state'] as string | null) ?? null
+        if (todo !== null && excludeTodoStates.includes(todo)) return false
       }
-      if (prop) {
-        if (!matchesValueTextIn(prop['value_text'] as string | null | undefined)) return false
-        if (!matchesValueDateRange(prop['value_date'] as string | null | undefined)) return false
-        if (valueText !== null) return prop['value_text'] === valueText
-        if (valueDate !== null) return prop['value_date'] === valueDate
-        return true
-      }
+      return true
+    }
+    const inSet = (v: string | null): boolean =>
+      valueTextIn.length === 0 || (v !== null && valueTextIn.includes(v))
+    const inRange = (v: string | null): boolean => {
+      if (valueDateRange === null) return true
+      if (v === null) return false
+      const [from, to] = valueDateRange
+      return v >= from && v < to
+    }
+    const items = [...blocks.values()].filter((b) => {
+      if (!blockPredicates(b)) return false
       if (rowKind !== undefined) {
-        const rowValue = b[key] as string | null | undefined
-        if (rowValue == null) return false
-        if (rowKind === 'text' && !matchesValueTextIn(rowValue)) return false
-        if (rowKind === 'date' && !matchesValueDateRange(rowValue)) return false
-        if (valueText !== null) return rowKind === 'text' && rowValue === valueText
-        if (valueDate !== null) return rowKind === 'date' && rowValue === valueDate
-        return true
+        // Reserved key: the native column, `WHERE b.<col> IS NOT NULL`.
+        const rowValue = (b[key] as string | null | undefined) ?? null
+        if (rowValue === null) return false
+        const wanted = rowKind === 'date' ? (valueDate ?? valueText) : (valueText ?? valueDate)
+        return compare(rowValue, wanted) && inSet(rowValue) && inRange(rowValue)
       }
-      return false
+      const prop = properties.get(b['id'] as string)?.get(key)
+      if (!prop) return false
+      const text = (prop['value_text'] as string | null | undefined) ?? null
+      const date = (prop['value_date'] as string | null | undefined) ?? null
+      return compare(text, valueText) && compare(date, valueDate) && inSet(text) && inRange(date)
     })
+    items.sort((x, y) => String(x['id']).localeCompare(String(y['id'])))
     return { items, next_cursor: null, has_more: false, total_count: null }
   },
 

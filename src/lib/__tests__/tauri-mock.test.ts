@@ -1210,6 +1210,7 @@ describe('query_by_tags', () => {
     // Only BLOCK_GS_1 has both tags
     const result = invoke('query_by_tags', {
       tagIds: [SEED_IDS.TAG_WORK, SEED_IDS.TAG_PERSONAL],
+      mode: 'and',
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.['id']).toBe(SEED_IDS.BLOCK_GS_1)
