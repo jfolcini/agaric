@@ -2680,20 +2680,16 @@ jobs:
   # ci/path-conditional-jobs: the per-PR `_validate.yml` lint job and the local
   # `scripts/verify-ci-equivalent.sh` Phase A now SKIP the prek hooks whose
   # category (frontend/backend/ci/docs) a given push did not touch — trading
-  # whole-tree coverage of the ABSENT categories for a faster gate. This job is
-  # the counterweight: on the weekly schedule (and on demand) it runs the FULL,
-  # UNSKIPPED prek suite (both pre-commit and pre-push stages) plus the FULL
-  # vitest / playwright / nextest / doc-test suites over the entire tree, so a
-  # latent breach in an untouched, unchanged-category file is caught here even
-  # when no PR re-linted it. Nothing is category-gated: every hook and every
-  # test runs. Not a required check — a maintainer triages any failure.
-  # ---------------------------------------------------------------------------
-  # ── full-suite ───────────────────────────────────────────────────────────
-  # The slow exhaustive lane: the full prek suite (both stages + manual), the
-  # four sqlx-prepare compile passes, full vitest, full playwright, full
-  # nextest + doc-tests, and the Node 22 floor run.
+  # whole-tree coverage of the ABSENT categories for a faster gate. The legs
+  # below are the counterweight: on the weekly schedule (and on demand) they
+  # run the FULL, UNSKIPPED prek suite (both pre-commit and pre-push stages)
+  # plus the FULL vitest / playwright / nextest / doc-test suites over the
+  # entire tree, so a latent breach in an untouched, unchanged-category file
+  # is caught here even when no PR re-linted it. Nothing is category-gated:
+  # every hook and every test runs. Not a required check — a maintainer
+  # triages any failure.
   #
-  # #4675: split into independent legs. As one job it grew 46 min (08-24) ->
+  # #4675: one job became independent legs. As one job it grew 46 min (08-24) ->
   # 48 (08-31) -> 69 (09-03) -> the 75-minute cap on run 33823056127, and a
   # cancelled job reports through #3394 as a failing lane with no artifact —
   # a worse failure than a slow pass. Its cost tracks test-suite growth, so
