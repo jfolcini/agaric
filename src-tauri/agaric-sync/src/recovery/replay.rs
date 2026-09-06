@@ -425,6 +425,30 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
     Ok(true)
 }
 
+/// The `blocks.block_type` a replayed LIFECYCLE op should narrow its fan-out
+/// with, or `None` when the conservative full set is right.
+///
+/// `None` for every non-lifecycle op (their arms ignore the hint) and for a
+/// lifecycle op whose row is gone — a purge, or a delete whose block was purged
+/// later in the same replayed range. Both keep `FULL_CACHE_REBUILD_TASKS`,
+/// which is what the live path also does when its own lookup comes back empty.
+async fn lifecycle_block_type(pool: &SqlitePool, record: &OpRecord) -> Option<String> {
+    if !matches!(
+        record.op_type.as_str(),
+        "delete_block" | "restore_block" | "purge_block"
+    ) {
+        return None;
+    }
+    let block_id = record.block_id.as_deref()?;
+    // dynamic-sql: static SQL, a single-column lookup off the replay path.
+    sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
 /// Re-enqueue the background fan-out for every op boot replay just applied,
 /// covering `from_seq < seq <= through_seq`. Returns how many ops it dispatched.
 ///
@@ -437,30 +461,24 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
 /// block again: text typed in the final seconds before an OOM kill is simply
 /// not findable (#3298).
 ///
-/// # Why a second walk rather than keeping the records
-///
+/// A second chunked walk rather than keeping the first walk's records:
 /// [`REPLAY_CHUNK_SIZE`] exists so a multi-thousand-op replay never holds the
-/// whole op log in memory; collecting every `Arc<OpRecord>` from the first walk
-/// to reuse here would defeat exactly that. `through_seq` bounds the range to
-/// the ops that pass replayed and excludes anything a concurrent writer added.
+/// whole op log in memory. Both bounds are about cost, not correctness — a
+/// fan-out for an op that never applied finds no `blocks` row and no-ops — so
+/// no test asserts on them.
 ///
-/// Both bounds are about COST, not correctness: a fan-out for an op that never
-/// applied finds no `blocks` row and every handler no-ops. They keep boot from
-/// re-dispatching the whole op log on every launch, which is why no test
-/// asserts on them.
+/// `dispatch_background_or_warn` because the ops are already durably applied:
+/// a saturated queue must not fail the boot, and a shed task persists itself to
+/// `materializer_retry_queue` (#423). NOT `enqueue_full_cache_rebuild`: the
+/// cursor never advances on the local path, so replay has ops on essentially
+/// every launch and that one-liner would run nine O(vault) rebuilds per start.
 ///
-/// # Why `dispatch_background_or_warn`
+/// # What this still does not close
 ///
-/// The ops are already durably applied and the cursor has moved, so a closed or
-/// saturated queue must not fail the boot. A shed task persists itself to
-/// `materializer_retry_queue` on its own (#423).
-///
-/// # Why not `enqueue_full_cache_rebuild`
-///
-/// Every local command applies with `advance_cursor = false`, so the cursor
-/// never advances during a session and replay has ops on essentially every
-/// launch. The one-line whole-cache version would therefore run an O(vault)
-/// nine-cache rebuild on every app start.
+/// The pass runs after the whole replay, while the apply cursor advances per
+/// op. A kill DURING replay leaves ops applied, the cursor past them, and no
+/// fan-out dispatched — the same permanent staleness, one replay narrower.
+/// Closing it means persisting the dispatch intent alongside the apply.
 async fn fan_out_replayed_ops(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -492,7 +510,30 @@ async fn fan_out_replayed_ops(
 
         for record in &rows {
             next = next.max(record.seq);
-            materializer.dispatch_background_or_warn(record);
+            // A lifecycle op needs the block's real type or its fan-out falls
+            // to `FULL_CACHE_REBUILD_TASKS` — nine O(vault) rebuilds where the
+            // live path (`command_tx` passes the type it already read) narrows
+            // a content block to `CONTENT_LIFECYCLE_REBUILD_TASKS`. Without
+            // this, deleting one content block makes the next launch strictly
+            // more expensive than the session that deleted it, which is the
+            // cost this whole design exists to avoid.
+            //
+            // A purge legitimately has no row left to read, so it keeps the
+            // conservative full set — the same answer the live purge path
+            // gives when its own lookup comes back empty.
+            match lifecycle_block_type(pool, record).await {
+                Some(block_type) => {
+                    if let Err(e) = materializer.dispatch_lifecycle_background(record, &block_type)
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            seq = record.seq,
+                            "replay: lifecycle fan-out failed — will retry on next boot"
+                        );
+                    }
+                }
+                None => materializer.dispatch_background_or_warn(record),
+            }
             dispatched += 1;
         }
     }
