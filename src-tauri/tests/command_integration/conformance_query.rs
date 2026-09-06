@@ -1765,11 +1765,15 @@ mod reader_delegation_tests {
     const HARNESS_RS: &str = include_str!("conformance_query.rs");
 
     /// The number of commands wired into `run_step` when the WRITE sweep below
-    /// was taken. A 20th arm reddens
+    /// was taken. One more arm reddens
     /// [`the_write_sweep_denominator_still_matches`], which is the only thing
     /// that makes the sweep's conclusion a claim about the CURRENT code.
     // #3264 retired `get_blocks`, a plain SELECT, from the 20 arms swept.
-    const SWEPT_ARM_COUNT: usize = 19;
+    // #3827 wired `query_by_property`, `query_by_tags` and
+    // `query_by_tag_expr`: each is a plain SELECT behind its `*_inner`
+    // (`pagination::query_by_property`, `tag_query::eval_tag_query`), so
+    // the writer set below is unchanged.
+    const SWEPT_ARM_COUNT: usize = 22;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
