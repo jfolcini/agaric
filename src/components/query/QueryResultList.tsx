@@ -33,11 +33,9 @@ export function QueryResultList({
   onItemSelect,
 }: QueryResultListProps): React.ReactElement {
   const { t } = useTranslation()
-  // #4719 — the accessible name substitutes inline references through the
-  // CHIP's resolver, not through the optional `resolveBlockTitle` prop:
+  // #4719 — the CHIP's resolver, not the optional `resolveBlockTitle` prop:
   // `AdvancedQueryView` / `GroupedResults` render this list without that prop
-  // while their rows still resolve chips, so a single resolver left those
-  // rows named after the raw ULID the chip no longer shows.
+  // while their rows still resolve chips. See `resolveBlockDisplay`.
   const resolveRefTitle = useRefTitleResolver()
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: results.length,
@@ -90,15 +88,10 @@ export function QueryResultList({
             data-testid="query-result-item"
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable result-row div of the custom listbox; native <option> can't host the rich row content + click navigation
             role="option"
-            // #4719 — the row body is now an element tree (chips + inline
-            // text), so the name is pinned to `resolveBlockDisplay`'s plain
-            // string rather than assembled from whatever the chips happen to
-            // contribute. That keeps it non-empty for content the inline
-            // renderer drops entirely (a lone `---`), and independent of how
-            // a chip abbreviates its label. It is NOT the old bracket-stripped
-            // string: `resolveInlineRefs` resolves the same references the
-            // chips do, so the name still contains the visible text
-            // (WCAG 2.5.3) instead of the raw ULID this issue is about.
+            // Composed rather than left to the contents: the body is an
+            // element tree now, and content the inline renderer drops
+            // entirely (a lone `---`) would leave the row unnamed. Why the
+            // string is safe to use as a name: see `resolveBlockDisplay`.
             aria-label={rowLabel}
             aria-selected={index === focusedIndex}
             tabIndex={-1}

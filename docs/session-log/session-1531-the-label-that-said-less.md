@@ -60,5 +60,5 @@ The existing axe test in that file passes `parent_id: null, page_id: null`. That
 accident of test data: with a parent page the row renders `PageLink` — a
 `<span role="link" tabIndex={0}>` — inside the `role="option"`, and axe reports
 `nested-interactive`. The fixture had been shaped around a real violation, which is how it stayed
-invisible. Filed separately; not this PR's to fix, since it turns on whether the page shortcut
+invisible. Filed as #4737; not this PR's to fix, since it turns on whether the page shortcut
 should be a widget at all.

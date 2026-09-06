@@ -54,10 +54,12 @@ function QueryResultRowContentInner({ content }: { content: string }): React.Rea
   return (
     <>
       {renderRichContent(content, {
-        // The row (list) / the cell's own <button> (table) is the click
-        // target and navigates to the block's page, so rendered links must
-        // stay inert rather than becoming competing — and, inside the
-        // table's <button>, focusable-nested — click targets.
+        // Keeps block/tag chips from taking focus inside the row (and,
+        // inside the table's <button>, from nesting a focusable in a
+        // control). NOTE this does not silence external markdown links:
+        // `renderExternalLink` sets `role="link"` and `onClick`
+        // unconditionally and gates only `tabIndex`, so `[docs](…)` in a row
+        // still opens its URL on click instead of navigating to the block.
         interactive: false,
         // Both bodies land in a clamping wrapper (`truncate`), so block-level
         // nodes must be downgraded to inline text: a heading/list/table box

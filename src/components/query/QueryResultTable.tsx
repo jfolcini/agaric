@@ -129,10 +129,8 @@ export function QueryResultTable({
                       <button
                         type="button"
                         className="text-left hover:underline truncate max-w-[300px] block"
-                        // #4719 — same reason as the list row's: the label is
-                        // now an element tree, so the button's name is pinned
-                        // to `resolveBlockDisplay`'s plain string, which
-                        // resolves the same references the chips do.
+                        // See `resolveBlockDisplay` for why this string is
+                        // safe as a name.
                         aria-label={title}
                         onClick={(e) => {
                           e.stopPropagation()
