@@ -7,7 +7,9 @@
 //! crash, or a peer on an older build.
 //!
 //! The sweep only ever SOFT-deletes, and only through a `DeleteBlock` op on
-//! the normal pipeline. `blocks` is a projection of the Loro doc + op log;
+//! the normal pipeline, stamped `origin = 'housekeeping'` (#4741) so the
+//! interactive positional undo never mistakes the batch for the user's own
+//! last edit. `blocks` is a projection of the Loro doc + op log;
 //! a raw `UPDATE blocks SET deleted_at` would be reverted on the next
 //! replay or conflict on sync. Soft rather than purge so a wrong call is a
 //! Trash entry, not data loss.
@@ -39,6 +41,7 @@ use agaric_core::ulid::BlockId;
 use agaric_store::db::{next_delete_ms, now_ms};
 use agaric_store::op::{DeleteBlockPayload, OpPayload};
 use agaric_store::op_log::{self, OpRecord};
+use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
 
 use crate::apply::kernel::ApplyEffects;
 use crate::loro::shared::LoroState;
@@ -188,10 +191,29 @@ pub async fn sweep_leaked_empty_blocks(
     hold_back_last_page_children(tx, &mut candidates).await?;
     let held_back = examined - candidates.len();
 
-    let mut swept = Vec::with_capacity(candidates.len());
-    for candidate in &candidates {
-        swept.push(soft_delete_through_pipeline(tx, state, device_id, &candidate.id).await?);
-    }
+    // #4741: every delete is appended as `Actor::Housekeeping`, so its
+    // `op_log.origin` is `'housekeeping'` rather than the default `'user'`.
+    // That tag is what keeps the batch out of the interactive positional
+    // undo (`commands::history::undo_page_group_inner` and its siblings):
+    // the frontend undo stack is empty at boot, the first Ctrl+Z falls
+    // through to the op log, and without the tag it would seed on the
+    // newest op — one of these — and resurrect the whole batch in one
+    // keypress. The scope is set HERE, not in the boot driver, so any
+    // caller of the sweep gets it.
+    let ctx = ActorContext {
+        actor: Actor::Housekeeping,
+        request_id: format!("empty-block-sweep:{}", now_ms()),
+    };
+    let swept = ACTOR
+        .scope(ctx, async {
+            let mut swept = Vec::with_capacity(candidates.len());
+            for candidate in &candidates {
+                swept
+                    .push(soft_delete_through_pipeline(tx, state, device_id, &candidate.id).await?);
+            }
+            Ok::<_, AppError>(swept)
+        })
+        .await?;
 
     // Written even when nothing was found: the point is to retire the range,
     // not to record that work happened.
@@ -532,6 +554,52 @@ mod tests {
         );
         assert_eq!(delete_ops_for(&pool, &leaked).await, 1);
         assert!(sweep.exhausted);
+    }
+
+    /// #4741: the sweep's ops carry `origin = 'housekeeping'` — the tag
+    /// `commands::history`'s positional undo excludes — and the scope ends
+    /// with the sweep, so the next ordinary append is `'user'` again.
+    #[tokio::test]
+    async fn sweep_ops_are_stamped_housekeeping_and_the_scope_ends_with_it() {
+        let (pool, _tmp) = fresh_pool().await;
+        let page = page_with_a_real_block(&pool).await;
+        let leaked = insert_old_empty(&pool, &page, 2).await;
+
+        let sweep = run_sweep(&pool).await;
+        assert_eq!(sweep.swept.len(), 1);
+
+        let origin: String = sqlx::query_scalar("SELECT origin FROM op_log WHERE block_id = ?")
+            .bind(&leaked)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            origin,
+            Actor::Housekeeping.origin_tag(),
+            "a swept block's delete must not read as a user op"
+        );
+
+        // A plain append after the sweep, outside any scope, is still the
+        // user's — the housekeeping actor did not leak past the sweep.
+        let after = {
+            let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::from_trusted(&page),
+            });
+            let rec = op_log::append_local_op_in_tx(&mut tx, DEV, payload, next_delete_ms())
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            rec
+        };
+        let origin: String =
+            sqlx::query_scalar("SELECT origin FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(&after.device_id)
+                .bind(after.seq)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(origin, "user", "the scope must end with the sweep");
     }
 
     #[tokio::test]

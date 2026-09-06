@@ -172,3 +172,21 @@ The frontend flag cannot reach this: it governs what gets pushed, and this path 
 nothing was pushed. Which is the generalisable part — suppressing an entry in the in-memory stack
 says nothing about a fallback that reconstructs intent from the log. Two mechanisms answer the
 same question, and only one of them was told about the change.
+
+## The fix, and why it is an allow-list
+
+`origin` already separated `user` from `agent:<name>`, and nothing in SQL read it, so a third value
+carried the distinction without a migration: the sweep scopes its deletes as
+`Actor::Housekeeping`, and the three positional-undo queries filter on
+`origin = 'user' OR origin LIKE 'agent:%'`.
+
+An allow-list rather than `<> 'housekeeping'`, which is the part worth keeping. A deny-list is
+correct only for the values that exist when it is written; the next non-user origin — an import, a
+migration — would silently join the undo universe. The allow-list makes that decision explicit
+instead: a new origin is excluded until someone adds it.
+
+Two corrections to my own issue, both from the agent that fixed it. "Up to the 1000-op ceiling"
+overstates it — the sweep caps at 500 per boot and successive boots are minutes apart against a
+500 ms grouping window, so the real bound is 500. And the reach is narrower: the document handler
+returns early when a block is focused, so it is "page just opened, nothing focused, Ctrl+Z" rather
+than any first press. The scenario still stands; the number was wrong.
