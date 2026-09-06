@@ -109,7 +109,7 @@ use super::common::pages::{
     list_all_pages_in_space_inner, list_pages_with_metadata_inner,
     list_template_page_ids_in_space_inner,
 };
-use super::common::queries::query_by_property_inner;
+use super::common::queries::{query_by_property_inner, search_blocks_partitioned_inner};
 use super::common::tags::{query_by_tag_expr_inner, query_by_tags_inner};
 use super::common::*;
 use super::conformance::seed_label_to_id;
@@ -799,6 +799,21 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
+        "search_blocks_partitioned" => {
+            let resp = search_blocks_partitioned_inner(
+                pool,
+                arg_req(args, "query"),
+                arg_req(args, "pageLimit"),
+                arg_req(args, "blockLimit"),
+                arg_or(args, "filter"),
+                None,
+            )
+            .await?;
+            partitioned_result(
+                &serde_json::to_value(&resp).expect("serialize PartitionedSearchResponse"),
+                &["pages", "blocks"],
+            )
+        }
         "list_unfinished_tasks" => {
             let resp = list_unfinished_tasks_inner(
                 pool,
@@ -1177,6 +1192,36 @@ fn page_result_with(v: &Value, token: &dyn Fn(&Value) -> String) -> RawResult {
             .get("next_cursor")
             .and_then(Value::as_str)
             .map(str::to_owned),
+    }
+}
+
+/// Project a response made of several `PageResponse<T>` partitions under
+/// `keys` (#3823 — `search_blocks_partitioned`'s `{ pages, blocks }`). Every
+/// row carries its partition as an attribute, and each partition closes with
+/// its own `<key>#has_more=<bool>` token, so two independently-capped
+/// envelopes become one comparable row list; the step-level `has_more` and
+/// `total_count` stay `None`. Mirror of `partitionRows` in the TS twin.
+fn partitioned_result(v: &Value, keys: &[&str]) -> RawResult {
+    let mut rows = Vec::new();
+    for key in keys {
+        let part = v.get(*key);
+        if let Some(items) = part.and_then(|p| p.get("items")).and_then(Value::as_array) {
+            rows.extend(
+                items
+                    .iter()
+                    .map(|r| format!("{}#partition={key}", row_token(r, "id", &[]))),
+            );
+        }
+        rows.push(format!(
+            "{key}#has_more={}",
+            attr_value("has_more", part.and_then(|p| p.get("has_more")))
+        ));
+    }
+    RawResult {
+        rows,
+        has_more: None,
+        total_count: None,
+        next_cursor: None,
     }
 }
 
@@ -1824,7 +1869,10 @@ mod reader_delegation_tests {
     // `list_template_page_ids_in_space`: each is a plain SELECT behind its
     // `*_inner` (`pagination::list_trash`, `commands/pages/listing.rs`), so
     // the writer set below is unchanged.
-    const SWEPT_ARM_COUNT: usize = 25;
+    // #3823 wired `search_blocks_partitioned`: the same FTS scan
+    // `search_blocks` runs, twice (`fts::search_with_toggles_partitioned`), a
+    // SELECT on both partitions. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 26;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

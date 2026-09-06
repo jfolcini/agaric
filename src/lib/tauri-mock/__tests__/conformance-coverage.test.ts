@@ -425,14 +425,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'block-id rows the query projection binds',
   list_backlinks_grouped: 'fixture candidate: grouped backlinks over already-pinned edges',
   list_unlinked_references: 'fixture candidate: content scan over already-pinned block content',
-  // The envelope IS the uncovered part — "same FTS scan" is an argument FOR
-  // covering it, not a waiver. The real blocker is the return shape: this
-  // command answers with TWO independently-capped page envelopes
-  // (`{ pages, blocks }`), while the query projection carries a single `rows`
-  // list and a single `has_more`/`total_count` pair.
-  search_blocks_partitioned:
-    'two-partition `{pages, blocks}` return shape; one projection row-list cannot ' +
-    'hold both partitions — needs a partition-qualified row token in both runners',
+  // `search_blocks_partitioned` is NOT waived: its two-partition envelope is
+  // bound by the `partitions` row location (#3823) and driven by
+  // `query_search_blocks_partitioned.json`.
 
   // ── Pages / journal / templates ──
   // `get_journal_page_by_date` / `list_journal_pages_in_range` are NOT waived:
@@ -563,7 +558,8 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
   'run_advanced_query::grouped':
     'the grouped path answers under `groups[].members` with `rows` left EMPTY, and ' +
     'the query projection binds exactly one `rows` list plus one has_more/total_count ' +
-    'pair — the same shape blocker `search_blocks_partitioned` is waived for, so a ' +
+    'pair — the shape blocker `search_blocks_partitioned` had before its `partitions` ' +
+    'projection (#3823), so a ' +
     'step needs a group-qualified row token in BOTH runners, not just a fixture. ' +
     'The mock compounds it: its grouped path SYNTHESISES a single bucket from the ' +
     'request shape rather than computing one (handlers/search.ts), so the step would ' +
