@@ -42,10 +42,6 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             // means no active sync command is listening, and there's
             // nothing for a side-channel `app.emit` to deliver to.
             SyncEvent::FileProgress { .. } => return,
-            // Snapshot-transfer progress, like FileProgress, was never on
-            // the legacy `app.emit` bus — the channel is the canonical
-            // source — so this sink drops it.
-            SyncEvent::SnapshotProgress { .. } => return,
         };
 
         // #2506: persist the mDNS status into managed state BEFORE emitting
@@ -112,7 +108,6 @@ pub struct ChannelEventSink {
 }
 
 impl SyncEventSink for ChannelEventSink {
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn on_sync_event(&self, event: SyncEvent) {
         // Phase 2 — Progress events go to the channel ONLY. The
         // inner sink's `sync:progress` `app.emit` from Phase 1 has no
@@ -134,9 +129,7 @@ impl SyncEventSink for ChannelEventSink {
         // progress, so there's no inner listener to feed.
         let channel_only = matches!(
             event,
-            SyncEvent::Progress { .. }
-                | SyncEvent::FileProgress { .. }
-                | SyncEvent::SnapshotProgress { .. }
+            SyncEvent::Progress { .. } | SyncEvent::FileProgress { .. }
         );
         if !channel_only {
             self.inner.on_sync_event(event.clone());
@@ -205,19 +198,6 @@ impl SyncEventSink for ChannelEventSink {
                     remote_device_id,
                     files_done,
                     files_total,
-                    bytes_done,
-                    bytes_total,
-                });
-            }
-            SyncEvent::SnapshotProgress {
-                phase,
-                remote_device_id,
-                bytes_done,
-                bytes_total,
-            } => {
-                let _ = self.channel.send(SyncProgressUpdate::Snapshot {
-                    phase,
-                    remote_device_id,
                     bytes_done,
                     bytes_total,
                 });
@@ -574,40 +554,6 @@ mod tests {
         assert_eq!(msgs[0]["files_total"], 3);
         assert_eq!(msgs[0]["bytes_done"], 5_000_000);
         assert_eq!(msgs[0]["bytes_total"], 15_000_000);
-    }
-
-    #[test]
-    fn channel_event_sink_snapshot_progress_forwards_to_channel_only() {
-        // SnapshotProgress is channel-only by construction, mirroring
-        // FileProgress: the legacy event bus never carried snapshot
-        // catch-up progress, so the inner sink stays silent and the
-        // channel receives a `SyncProgressUpdate::Snapshot` payload.
-        let inner = Arc::new(RecordingEventSink::new());
-        let (channel, captured) = capturing_channel();
-        let sink = ChannelEventSink {
-            inner: Arc::clone(&inner) as Arc<dyn SyncEventSink>,
-            channel,
-        };
-
-        sink.on_sync_event(SyncEvent::SnapshotProgress {
-            phase: "receiving".into(),
-            remote_device_id: "DEV_PEER".into(),
-            bytes_done: 5_000_000,
-            bytes_total: 20_000_000,
-        });
-
-        assert!(
-            inner.events().is_empty(),
-            "SnapshotProgress must NOT reach the inner sink (channel is canonical)"
-        );
-
-        let msgs = captured.lock().unwrap().clone();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0]["kind"], "snapshot");
-        assert_eq!(msgs[0]["phase"], "receiving");
-        assert_eq!(msgs[0]["remote_device_id"], "DEV_PEER");
-        assert_eq!(msgs[0]["bytes_done"], 5_000_000);
-        assert_eq!(msgs[0]["bytes_total"], 20_000_000);
     }
 
     #[test]
