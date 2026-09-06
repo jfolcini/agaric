@@ -13,6 +13,10 @@
  *  - Navigation on keyboard (Enter)
  *  - Does not navigate when parent_id is null
  *  - Renders due_date for each block
+ *  - Renders content as rich content, so a [[ULID]] page link is a titled
+ *    pill and never a raw ULID (#4705)
+ *  - Falls back to the empty-content marker for a blank block (#4705)
+ *  - Row content is memoized, so a parent re-render does not rebuild it (#4705)
  *  - a11y audit passes (axe) for both variants and empty state
  */
 
@@ -23,6 +27,28 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { AlertSection } from '@/components/agenda/AlertSection'
+import { renderRichContent } from '@/components/RichContentRenderer'
+
+const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+
+// Spy on the REAL renderer (not a stub) so the rendering assertions below still
+// exercise the actual chip markup while the memo test can count the calls.
+vi.mock('@/components/RichContentRenderer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/RichContentRenderer')>()
+  return { ...actual, renderRichContent: vi.fn(actual.renderRichContent) }
+})
+
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) =>
+      id === LINKED_PAGE_ID ? 'Quarterly Plan' : undefined,
+    ),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
+}))
 
 /** Shared factory + domain defaults for AlertSection tests. */
 const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
@@ -250,6 +276,102 @@ describe('AlertSection', () => {
     const dateSpan = screen.getByText('2025-01-15').parentElement
     expect(dateSpan).not.toBeNull()
     expect(dateSpan?.className).toContain('truncate')
+  })
+
+  // #4705 — the row used to render `block.content` through `truncateContent`,
+  // which only strips the brackets off a `[[ULID]]` page link, so the row read
+  // as a bare ULID. It renders rich content now, same as every other surface.
+  it('renders a [[ULID]] page link as a resolved pill, not a raw ULID', () => {
+    const { container } = render(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[makeBlock({ id: 'B1', content: `follow up on [[${LINKED_PAGE_ID}]]` })]}
+        pageTitles={defaultTitles}
+      />,
+    )
+
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip).toHaveTextContent('Quarterly Plan')
+    expect(container.textContent).not.toContain(LINKED_PAGE_ID)
+  })
+
+  // The row is itself the click target (`AlertListRow.onClick` navigates), so
+  // a rendered link must not become a competing one nested inside it.
+  it('renders the page-link pill inert (interactive: false)', () => {
+    render(
+      <AlertSection
+        variant="pending"
+        title="Upcoming"
+        blocks={[makeBlock({ id: 'B1', content: `see [[${LINKED_PAGE_ID}]]` })]}
+        pageTitles={defaultTitles}
+      />,
+    )
+
+    // `tabindex` is the discriminating attribute: `renderBlockLink` gives an
+    // `interactive` chip `tabIndex=0` even with no navigate handler, while
+    // `role="link"` needs a handler AlertSection never passes — so asserting on
+    // the role could not fail either way.
+    expect(screen.getByTestId('block-link-chip')).not.toHaveAttribute('tabindex')
+  })
+
+  // `truncateContent`'s third argument used to supply this; the explicit empty
+  // branch replaces it.
+  it('shows the empty-content marker for a block with no content', () => {
+    render(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[makeBlock({ id: 'B1', content: '' })]}
+        pageTitles={defaultTitles}
+      />,
+    )
+
+    expect(screen.getByText('(empty)')).toBeInTheDocument()
+  })
+
+  // #4705 — DuePanel owns the roving-focus `focusedIndex` and re-renders on
+  // every arrow keypress, with Overdue/Upcoming rendered inline (unmemoized,
+  // unvirtualized, up to a 200-row page). The row body must not rebuild its
+  // element tree on a parent re-render that changed nothing about the row.
+  it('does not rebuild row content when the parent re-renders unchanged', () => {
+    vi.mocked(renderRichContent).mockClear()
+    const first = makeBlock({ id: 'B1', content: 'first' })
+    const second = makeBlock({ id: 'B2', content: 'second' })
+    const { rerender } = render(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[first, second]}
+        pageTitles={defaultTitles}
+      />,
+    )
+    expect(renderRichContent).toHaveBeenCalledTimes(2)
+
+    // A FRESH element with equal props, not the same element object: React
+    // bails out of an identical element on its own, which would let this pass
+    // with no memo at all.
+    rerender(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[first, second]}
+        pageTitles={defaultTitles}
+      />,
+    )
+    expect(renderRichContent).toHaveBeenCalledTimes(2)
+
+    // A row whose content actually changed still re-renders.
+    rerender(
+      <AlertSection
+        variant="destructive"
+        title="Overdue"
+        blocks={[first, makeBlock({ id: 'B2', content: 'second (edited)' })]}
+        pageTitles={defaultTitles}
+      />,
+    )
+    expect(renderRichContent).toHaveBeenCalledTimes(3)
+    expect(screen.getByText('second (edited)')).toBeInTheDocument()
   })
 
   it('a11y: no violations with destructive variant', async () => {

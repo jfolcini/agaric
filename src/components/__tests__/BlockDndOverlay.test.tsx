@@ -9,6 +9,10 @@
  * Validates:
  *  - Renders the translucent ghost of the dragged row when activeBlock is provided (#923)
  *  - Ghost shows the dragged block's content text at the projected indent
+ *  - Ghost renders rich content, so a [[ULID]] page link is a titled pill and
+ *    never a raw ULID, and the chip stays inert inside the aria-hidden ghost
+ *    (#4706)
+ *  - Ghost stays non-collapsing for an empty block (#4706)
  *  - Subtree drag shows the count badge
  *  - Forwards a drop-settle animation to DragOverlay (not null) (#923)
  *  - Renders nothing inside DragOverlay when activeBlock is null
@@ -37,6 +41,20 @@ vi.mock('@dnd-kit/core', () => ({
   },
 }))
 
+const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
+
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
+  useRichContentCallbacks: vi.fn(() => ({
+    resolveBlockTitle: vi.fn((id: string) =>
+      id === LINKED_PAGE_ID ? 'Quarterly Plan' : undefined,
+    ),
+    resolveBlockStatus: vi.fn(() => 'active' as const),
+    resolveTagName: vi.fn(() => undefined),
+    resolveTagStatus: vi.fn(() => 'active' as const),
+  })),
+  useTagClickHandler: vi.fn(() => vi.fn()),
+}))
+
 import { BlockDndOverlay } from '@/components/block-tree/BlockDndOverlay'
 
 describe('BlockDndOverlay', () => {
@@ -62,6 +80,40 @@ describe('BlockDndOverlay', () => {
     )
 
     expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Hello world')
+  })
+
+  // #4706 — the ghost used to print `activeBlock.content` verbatim, so a block
+  // holding a page link dragged as a raw `[[ULID]]` token.
+  it('ghost renders a [[ULID]] page link as a resolved pill, not a raw ULID', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: `follow up on [[${LINKED_PAGE_ID}]]` }}
+        projected={{ depth: 0 }}
+        activeId="BLK001"
+      />,
+    )
+
+    const ghost = screen.getByTestId('sortable-block-overlay')
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip).toHaveTextContent('Quarterly Plan')
+    expect(ghost.textContent).not.toContain(LINKED_PAGE_ID)
+    // `interactive: false` — the ghost is `aria-hidden`, so a chip that took
+    // `tabIndex=0` would be a focusable node inside hidden content (axe
+    // `aria-hidden-focus`), on top of duplicating the row's own tab stop.
+    expect(chip).not.toHaveAttribute('tabindex')
+  })
+
+  it('ghost keeps a non-collapsing box for an empty block', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: '   ' }}
+        projected={{ depth: 0 }}
+        activeId="BLK001"
+      />,
+    )
+
+    // A non-breaking space, so the translucent box keeps its line height.
+    expect(screen.getByTestId('sortable-block-overlay').textContent).toBe('\u00A0')
   })
 
   it('ghost indents by the projected depth via --indent-width (#923)', () => {
