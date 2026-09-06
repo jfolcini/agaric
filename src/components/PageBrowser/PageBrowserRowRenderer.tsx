@@ -166,8 +166,18 @@ function TreePageRow({
     <div
       key={virtualRow.key}
       // Stable id so the grid container's `aria-activedescendant`
-      // can point at this row when keyboard nav lands on it.
-      id={`page-row-${node.fullPath}`}
+      // can point at this row when keyboard nav lands on it. #4709 —
+      // keyed off `nodeKey ?? fullPath`, since duplicate-title sibling
+      // nodes share a `fullPath` and two rows answering to one DOM id
+      // make `aria-activedescendant` ambiguous. `PageBrowser.tsx` builds
+      // the same string; keep the two in step.
+      //
+      // The `nodeKey` arm is a GUARD, not a live path: `tree-page` rows
+      // are top-level roots only, and `buildMultiPageBranch` turns a
+      // childless root with a `pageId` — which every duplicate sibling
+      // is — into a flat `page` row keyed by the page id instead. It
+      // becomes live the moment a duplicate node can carry children.
+      id={`page-row-${node.nodeKey ?? node.fullPath}`}
       data-index={virtualRow.index}
       ref={measureElement}
       data-page-tree-row
@@ -284,6 +294,7 @@ function DensityPageRow({
       hasTodo={hasTodo}
       hasScheduled={hasScheduled}
       hasDue={hasDue}
+      duplicateTitle={row.duplicateTitle ?? false}
       multiSelected={selectedIds.has(page.id)}
       onToggleMultiSelect={onToggleMultiSelect}
       onSelect={handleSelect}

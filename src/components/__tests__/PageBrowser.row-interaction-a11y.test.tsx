@@ -333,6 +333,47 @@ describe('PageBrowser', () => {
       // matches the row currently flagged as selected.
       expect(grid.getAttribute('aria-activedescendant')).toBe(focusedAfter?.id)
     })
+
+    it('tracks a duplicate-title row: every page gets a resolvable, unique row id (#4709)', async () => {
+      // Page titles are not unique. `buildPageTree` used to be
+      // last-writer-wins on `node.pageId`, so the FIRST `Agaric` had no
+      // row at all — arrow-key focus could never reach it and
+      // `aria-activedescendant` could never name it. Pin the whole
+      // chain: one row per page, ids unique, and the id the grid points
+      // at actually resolving to an element in the DOM.
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage({ id: 'P1', content: 'Agaric' }),
+          makePage({ id: 'P2', content: 'Agaric' }),
+          makePage({ id: 'P3', content: 'Solo' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<PageBrowser />)
+      await waitFor(() => expect(screen.getAllByText('Agaric')).toHaveLength(2))
+
+      const grid = screen.getByRole('grid')
+      const rowIds = [...document.querySelectorAll('[id^="page-row-"]')].map((el) => el.id)
+      expect(rowIds).toHaveLength(3)
+      expect(new Set(rowIds).size).toBe(3)
+
+      // Walk the three rows; at every step the referenced id must
+      // resolve to exactly one element that is really in the DOM.
+      const seen: string[] = []
+      for (let i = 0; i < 3; i++) {
+        const active = grid.getAttribute('aria-activedescendant')
+        expect(active).not.toBeNull()
+        expect(document.querySelectorAll(`[id="${active}"]`)).toHaveLength(1)
+        seen.push(active as string)
+        if (i < 2) await user.keyboard('{ArrowDown}')
+      }
+      expect(new Set(seen).size).toBe(3)
+      expect(seen).toEqual(expect.arrayContaining(['page-row-P1', 'page-row-P2']))
+    })
   })
   describe(' header outlet migration', () => {
     // The create-page form + search/sort bar used to live inside a

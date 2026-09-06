@@ -63,6 +63,22 @@ function blockRow(overrides: Partial<BlockRow> = {}): BlockRow {
   }
 }
 
+/**
+ * Encode a millisecond timestamp as a ULID's 10-char Crockford base32
+ * time prefix, so a fixture id decodes to a known creation date
+ * (#4709 disambiguation cue).
+ */
+function ulidPrefixForMs(ms: number): string {
+  const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  let out = ''
+  let rest = ms
+  for (let i = 0; i < 10; i++) {
+    out = (ALPHABET[rest % 32] as string) + out
+    rest = Math.floor(rest / 32)
+  }
+  return out
+}
+
 /** A leaf tree node (single segment, no children). */
 function treeNode(overrides: Partial<PageTreeNode> = {}): PageTreeNode {
   return {
@@ -228,6 +244,134 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
     const { container } = renderRow(baseProps(treeRow, { focusedIndex: 2 }))
     const wrapper = container.querySelector('[data-page-tree-row]')
     expect(wrapper?.className).toContain('ring-2')
+  })
+})
+
+describe('PageBrowserRowRenderer — duplicate titles (#4709)', () => {
+  it('renders duplicate children as separate rows without colliding React keys', () => {
+    // `PageTreeItem` keyed its children by `fullPath`; duplicate-title
+    // siblings share one, so React warns and the two rows are no longer
+    // independently identified.
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const namespaceNode: PageTreeNode = {
+        name: 'ns',
+        fullPath: 'ns',
+        children: [
+          {
+            name: 'dup',
+            fullPath: 'ns/dup',
+            pageId: 'P1',
+            duplicateTitle: true,
+            children: [],
+          },
+          {
+            name: 'dup',
+            fullPath: 'ns/dup',
+            pageId: 'P2',
+            nodeKey: 'ns/dup#P2',
+            duplicateTitle: true,
+            children: [],
+          },
+        ],
+      }
+      renderRow(
+        baseProps(
+          { kind: 'tree-page', node: namespaceNode, pageIndex: 0, depth: 0 },
+          { isFiltering: true },
+        ),
+      )
+      expect(screen.getAllByText('dup')).toHaveLength(2)
+      const keyWarnings = warn.mock.calls.filter((args) =>
+        args.some((a) => typeof a === 'string' && a.includes('same key')),
+      )
+      expect(keyWarnings).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('shows the creation date on a duplicate-title leaf row', () => {
+    // Disambiguation cue: the ULID-encoded creation timestamp, the one
+    // property that reliably differs between two identically-titled
+    // pages (the breadcrumb is identical by construction).
+    const dupLeaf: PageTreeNode = {
+      name: 'Agaric',
+      fullPath: 'Agaric',
+      // 2026-05-05T00:00:00.000Z encoded as a ULID time prefix.
+      pageId: `${ulidPrefixForMs(Date.UTC(2026, 4, 5, 12))}0123456789ABCDEF`,
+      duplicateTitle: true,
+      children: [],
+    }
+    const { container } = renderRow(
+      baseProps({ kind: 'tree-page', node: dupLeaf, pageIndex: 0, depth: 0 }),
+    )
+    const cue = container.querySelector('[data-duplicate-title-cue]')
+    // Asserted structurally, not as an absolute string: `formatTimestamp`
+    // renders in the runner's local zone, so a literal like '02:00 PM' passes
+    // in CEST and fails in CI's UTC. What matters is that the cue carries a
+    // TIME as well as a date — the same-day test below is what pins that the
+    // time actually discriminates.
+    expect(cue?.textContent).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
+  })
+
+  it('separates two duplicates created on the SAME DAY', () => {
+    // The reason the cue carries a time and not just a date. The vault this
+    // was built against holds 15 pages titled `2026-05-05`; a date-only cue
+    // gave at most a handful of distinct labels across all 15, which is a cue
+    // that looks like an answer and is not one. ULIDs are ms-precision, so
+    // two pages minted hours apart on one day are distinguishable.
+    const label = (ms: number): string | null | undefined => {
+      const node: PageTreeNode = {
+        name: 'Agaric',
+        fullPath: 'Agaric',
+        pageId: `${ulidPrefixForMs(ms)}0123456789ABCDEF`,
+        duplicateTitle: true,
+        children: [],
+      }
+      const { container } = renderRow(
+        baseProps({ kind: 'tree-page', node, pageIndex: 0, depth: 0 }),
+      )
+      return container.querySelector('[data-duplicate-title-cue]')?.textContent
+    }
+    const morning = label(Date.UTC(2026, 4, 5, 8))
+    const evening = label(Date.UTC(2026, 4, 5, 19))
+    expect(morning).toBeTruthy()
+    expect(evening).toBeTruthy()
+    expect(morning).not.toBe(evening)
+  })
+
+  it('leaves a unique-title leaf row without the cue', () => {
+    const soloLeaf = treeNode({
+      name: 'Solo',
+      fullPath: 'Solo',
+      pageId: `${ulidPrefixForMs(Date.UTC(2026, 4, 5, 12))}0123456789ABCDEF`,
+      children: [],
+    })
+    const { container } = renderRow(
+      baseProps({ kind: 'tree-page', node: soloLeaf, pageIndex: 0, depth: 0 }),
+    )
+    expect(container.querySelector('[data-duplicate-title-cue]')).toBeNull()
+  })
+
+  it('shows the creation date on a duplicate-title flat row at every density', () => {
+    const pageId = `${ulidPrefixForMs(Date.UTC(2026, 4, 5, 12))}0123456789ABCDEF`
+    for (const density of ['compact', 'regular', 'expanded'] as const) {
+      const { container, unmount } = renderRow(
+        baseProps(
+          {
+            kind: 'page',
+            page: blockRow({ id: pageId, content: 'Agaric' }),
+            pageIndex: 0,
+            duplicateTitle: true,
+          },
+          { density },
+        ),
+      )
+      const cue = container.querySelector('[data-duplicate-title-cue]')
+      expect(cue?.textContent, `density=${density}`).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
+      unmount()
+    }
   })
 })
 

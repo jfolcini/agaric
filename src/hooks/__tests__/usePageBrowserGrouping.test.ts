@@ -14,6 +14,7 @@ import {
   buildSinglePageBranch,
   usePageBrowserGrouping,
 } from '@/hooks/usePageBrowserGrouping'
+import type { PageTreeNode } from '@/lib/page-tree'
 import type { BlockRow } from '@/lib/tauri'
 
 // #1149 — recent-pages moved to the zustand store. The grouping comparator
@@ -221,6 +222,82 @@ describe('matchedPageCount (E7)', () => {
     // The grouped row array does NOT equal the distinct count (subtree
     // collapse + starred duplication skew it).
     expect(result.filteredPages.length).not.toBe(result.matchedPageCount)
+  })
+})
+
+describe('duplicate titles (#4709)', () => {
+  /** Every page id reachable from the grouped rows (flat rows + subtrees). */
+  function reachableIds(rows: ReturnType<typeof buildMultiPageBranch>['groupedRows']): string[] {
+    const ids: string[] = []
+    const visitNode = (node: PageTreeNode): void => {
+      if (node.pageId) ids.push(node.pageId)
+      for (const child of node.children) visitNode(child)
+    }
+    for (const row of rows) {
+      if (row.kind === 'page') ids.push(row.page.id)
+      else if (row.kind === 'tree-page') visitNode(row.node)
+    }
+    return ids
+  }
+
+  it('gives every duplicate-title page a row of its own', () => {
+    const pages = [
+      makePage({ id: 'P1', content: 'Agaric' }),
+      makePage({ id: 'P2', content: 'Agaric' }),
+      makePage({ id: 'P3', content: 'iadm' }),
+    ]
+    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    // Header + one row per page.
+    expect(result.groupedRows.filter((r) => r.kind === 'page')).toHaveLength(3)
+    expect(reachableIds(result.groupedRows).toSorted()).toEqual(['P1', 'P2', 'P3'])
+  })
+
+  it('keeps a nested duplicate reachable inside its subtree', () => {
+    const pages = [
+      makePage({ id: 'P1', content: 'DevEx/workstations/avature' }),
+      makePage({ id: 'P2', content: 'DevEx/workstations/avature' }),
+    ]
+    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    expect(reachableIds(result.groupedRows).toSorted()).toEqual(['P1', 'P2'])
+  })
+
+  it('matchedPageCount counts DISTINCT pages, and every one of them has a row', () => {
+    // The count chip and the SR result count are driven by
+    // `matchedPageCount`. It was already the honest distinct count — the
+    // defect was on the other side of the equation: the tree dropped
+    // duplicate-title pages, so the chip promised more matches than the
+    // list could show. Pin the two against each other rather than
+    // restating the implementation.
+    const pages = [
+      makePage({ id: 'P1', content: 'Agaric' }),
+      makePage({ id: 'P2', content: 'Agaric' }),
+      makePage({ id: 'P3', content: 'work/dup' }),
+      makePage({ id: 'P4', content: 'work/dup' }),
+      makePage({ id: 'P5', content: 'work/solo' }),
+    ]
+    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    expect(result.matchedPageCount).toBe(5)
+    const ids = reachableIds(result.groupedRows)
+    // Distinct — no page counted twice by the rows either.
+    expect(new Set(ids).size).toBe(result.matchedPageCount)
+    expect(ids).toHaveLength(result.matchedPageCount)
+  })
+
+  it('flags the duplicate flat rows so the row renderer can disambiguate them', () => {
+    const pages = [
+      makePage({ id: 'P1', content: 'Agaric' }),
+      makePage({ id: 'P2', content: 'Agaric' }),
+      makePage({ id: 'P3', content: 'iadm' }),
+    ]
+    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const flagFor = (id: string) =>
+      result.groupedRows.find((r) => r.kind === 'page' && r.page.id === id) as
+        | Extract<(typeof result.groupedRows)[number], { kind: 'page' }>
+        | undefined
+    expect(flagFor('P1')?.duplicateTitle).toBe(true)
+    expect(flagFor('P2')?.duplicateTitle).toBe(true)
+    // The unique title is NOT flagged — the cue stays off the common row.
+    expect(flagFor('P3')?.duplicateTitle).toBeUndefined()
   })
 })
 

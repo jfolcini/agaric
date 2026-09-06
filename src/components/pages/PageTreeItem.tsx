@@ -11,6 +11,7 @@ import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
@@ -56,6 +57,7 @@ export function PageTreeItem({
             <HighlightMatch text={node.name} filterText={filterText} />
           </span>
         </button>
+        {node.duplicateTitle && <DuplicateTitleCue pageId={leafId} />}
         {onDelete && (
           <Button
             variant="ghost"
@@ -105,7 +107,10 @@ export function PageTreeItem({
         {isExpanded &&
           node.children.map((child) => (
             <PageTreeItem
-              key={child.fullPath}
+              // #4709 — `fullPath` is shared by duplicate-title siblings,
+              // so it is not a usable React key; `nodeKey` is set on
+              // exactly those nodes.
+              key={child.nodeKey ?? child.fullPath}
               node={child}
               depth={depth + 1}
               onNavigate={onNavigate}
@@ -140,6 +145,7 @@ export function PageTreeItem({
         >
           <HighlightMatch text={node.name} filterText={filterText} />
         </button>
+        {node.duplicateTitle && <DuplicateTitleCue pageId={hybridId} />}
         <button
           type="button"
           className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
@@ -155,7 +161,9 @@ export function PageTreeItem({
       {isExpanded &&
         node.children.map((child) => (
           <PageTreeItem
-            key={child.fullPath}
+            // #4709 — same as the namespace branch above: `fullPath` is
+            // shared by duplicate-title siblings, `nodeKey` is not.
+            key={child.nodeKey ?? child.fullPath}
             node={child}
             depth={depth + 1}
             onNavigate={onNavigate}

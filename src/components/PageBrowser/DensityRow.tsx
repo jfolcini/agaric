@@ -27,6 +27,7 @@ import type React from 'react'
 import { memo, useCallback, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -72,6 +73,17 @@ export interface DensityRowProps {
   showAliasBadge: boolean
   /** When `true`, disables the delete button (parent is mid-delete). */
   deleting: boolean
+  /**
+   * #4709 — another page in this view carries the identical title. Page
+   * titles are not unique (pages are ULID-keyed), and the Pages tree now
+   * renders every colliding page instead of dropping all but the last,
+   * so two rows can read `Agaric`. Renders the page's creation date —
+   * decoded from the ULID, the one property that reliably differs —
+   * after the title so the rows can be told apart. Shown at EVERY
+   * density, including `compact`: this is identity, not metadata, and
+   * hiding it behind the tooltip would leave the compact list ambiguous.
+   */
+  duplicateTitle: boolean
 
   // ── Typed metadata primitives (Phase 1 IPC columns) ────────
   /** Epoch-ms from `last_modified_at` (#109 Phase 2). `null` renders "never". */
@@ -227,6 +239,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
     starred,
     showAliasBadge,
     deleting,
+    duplicateTitle,
     lastModifiedAt,
     inboundLinkCount,
     childBlockCount,
@@ -399,6 +412,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
               {showAliasBadge && (
                 <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
               )}
+              {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
             </span>
           </span>
           {/* Metadata row.
