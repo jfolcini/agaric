@@ -46,7 +46,19 @@ describe('serialize round-trip', () => {
     // parse strips the literal quotes again and the value mutates.
     'path:""a""',
     'prop:k=""a""',
+    // #3288 — multi-word tag names round-trip via "..." quoting.
+    'tag:#"my tag"',
+    'tag:#"my tag" tag:#urgent leftover',
   ]
+
+  it('#3288 — tag: strips one surrounding quote pair, before or after the #', () => {
+    for (const s of ['tag:#"my tag"', 'tag:"#my tag"', 'tag:"work"']) {
+      const chip = parse(s).filters[0]
+      expect(chip?.kind).toBe('tag')
+      expect(chip?.kind === 'tag' && chip.value).toBe(s.includes('work') ? 'work' : 'my tag')
+    }
+    expect(tokenSource({ kind: 'tag', value: 'my tag', span: [0, 0] })).toBe('tag:#"my tag"')
+  })
 
   for (const s of canonicalInputs) {
     it(`canonical: serialize(parse('${s}')) === ('${s}')`, () => {

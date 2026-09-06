@@ -45,7 +45,7 @@ export function quoteValueIfNeeded(v: string): string {
 export function tokenSource(t: FilterToken): string {
   switch (t.kind) {
     case 'tag': {
-      return `tag:#${t.value}`
+      return `tag:#${quoteValueIfNeeded(t.value)}`
     }
     case 'pathInclude': {
       return `path:${quoteValueIfNeeded(t.value)}`

@@ -266,7 +266,7 @@ function tokenEndForCaret(input: string, caret: number): number {
  * inserted in place of the token-relative value portion; a trailing
  * space is appended so the user can immediately type the next token.
  *
- * #718 — a `path:` / `not-path:` replacement is quoted via the
+ * #718 / #3288 — a `path:` / `not-path:` / `tag:` replacement is quoted via the
  * serialiser's shared `quoteValueIfNeeded` (whitespace, or an already
  * `"`-surrounded value), so picking a spaced glob from the path-history
  * popover yields a query that re-parses to one chip instead of
@@ -280,8 +280,9 @@ export function applyAutocompleteReplacement(
   replacement: string,
 ): { nextValue: string; nextCaret: number } {
   if (anchor == null) return { nextValue: input, nextCaret: caret }
-  const isPath = anchor.active === 'pathInclude' || anchor.active === 'pathExclude'
-  const value = isPath ? quoteValueIfNeeded(replacement) : replacement
+  const quoted =
+    anchor.active === 'tag' || anchor.active === 'pathInclude' || anchor.active === 'pathExclude'
+  const value = quoted ? quoteValueIfNeeded(replacement) : replacement
   const c = Math.max(0, Math.min(caret, input.length))
   const before = input.slice(0, anchor.anchor)
   // #2215 — extend the replaced region forward from the caret to the end of the
