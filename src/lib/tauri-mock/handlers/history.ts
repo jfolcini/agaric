@@ -33,6 +33,41 @@ import {
   pushOp,
 } from '@/lib/tauri-mock/seed'
 
+// Mirror `undo_page_group_inner`'s group sizing so browser-mode FE
+// tests observe the same group the real backend reverts. Walks the in-memory `opLog` newest-first,
+// filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
+// and counts consecutive same-device + within-window ops.
+function findUndoGroupSize(args: unknown): number {
+  const a = (args ?? {}) as Record<string, unknown>
+  const depth = (a['depth'] as number) ?? 0
+  const windowMs = (a['windowMs'] as number) ?? 0
+
+  // Newest-first ordering on (created_at DESC, seq DESC) — see
+  // `sortOpLogNewestFirst` (shared.ts).
+  const undoableOps = sortOpLogNewestFirst(
+    opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
+  )
+
+  if (depth < 0 || depth >= undoableOps.length) return 0
+
+  const seed = undoableOps[depth] as (typeof undoableOps)[number]
+  let count = 1
+  let prevTs = new Date(seed.created_at).getTime()
+  let prevDevice = seed.device_id
+
+  for (let i = depth + 1; i < undoableOps.length && count < 1000; i++) {
+    const op = undoableOps[i] as (typeof undoableOps)[number]
+    const ts = new Date(op.created_at).getTime()
+    if (op.device_id !== prevDevice) break
+    if (Math.abs(prevTs - ts) > windowMs) break
+    count += 1
+    prevTs = ts
+    prevDevice = op.device_id
+  }
+
+  return count
+}
+
 export const historyHandlers = {
   get_block_history: (_args) =>
     // The backend now accepts `opTypeFilter`. The
@@ -85,45 +120,9 @@ export const historyHandlers = {
     return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
-  // Mirror `find_undo_group_inner` semantics so
-  // browser-mode FE tests observe the same group sizing the real
-  // backend produces. Walks the in-memory `opLog` newest-first,
-  // filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
-  // and counts consecutive same-device + within-window ops.
-  find_undo_group: (args) => {
-    const a = (args ?? {}) as Record<string, unknown>
-    const depth = (a['depth'] as number) ?? 0
-    const windowMs = (a['windowMs'] as number) ?? 0
-
-    // Newest-first ordering on (created_at DESC, seq DESC) — see
-    // `sortOpLogNewestFirst` (shared.ts).
-    const undoableOps = sortOpLogNewestFirst(
-      opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
-    )
-
-    if (depth < 0 || depth >= undoableOps.length) return 0
-
-    const seed = undoableOps[depth] as (typeof undoableOps)[number]
-    let count = 1
-    let prevTs = new Date(seed.created_at).getTime()
-    let prevDevice = seed.device_id
-
-    for (let i = depth + 1; i < undoableOps.length && count < 1000; i++) {
-      const op = undoableOps[i] as (typeof undoableOps)[number]
-      const ts = new Date(op.created_at).getTime()
-      if (op.device_id !== prevDevice) break
-      if (Math.abs(prevTs - ts) > windowMs) break
-      count += 1
-      prevTs = ts
-      prevDevice = op.device_id
-    }
-
-    return count
-  },
-
   // #2190 — batched group-undo. Mirrors `undo_page_group_inner`: size the
-  // consecutive same-device, within-window group with the same walk as
-  // `find_undo_group`, then apply the per-op reverse newest-first, returning
+  // consecutive same-device, within-window group with `findUndoGroupSize`,
+  // then apply the per-op reverse newest-first, returning
   // one UndoResult per reverted op. Reuses the sibling handlers so the reverse
   // effects stay identical to the single-op path. Reverse ops carry an `undo_`
   // prefix and are filtered out of the undoable set, so `depth + i` walks the
@@ -132,18 +131,17 @@ export const historyHandlers = {
     const a = (args ?? {}) as Record<string, unknown>
     const depth = (a['depth'] as number) ?? 0
     const windowMs = (a['windowMs'] as number) ?? 0
-    const findGroup = historyHandlers['find_undo_group']
     const undoOp = historyHandlers['undo_page_op']
-    if (!findGroup || !undoOp) {
+    if (!undoOp) {
       // mock-internal invariant (#2463) — `historyHandlers` is malformed if
       // this fires; it has no real-backend counterpart, so it stays a bare
-      // Error. (Both siblings live in this same domain module post-#2931
+      // Error. (The sibling lives in this same domain module post-#2931
       // split, so this is a same-object forward reference — resolved at
       // call time, after `historyHandlers` is fully constructed — not a
       // cross-module lookup through the barrel's `HANDLERS`.)
       throw new Error('undo_page_group mock: missing sibling handler')
     }
-    const groupSize = findGroup({ pageId: a['pageId'], depth, windowMs }) as number
+    const groupSize = findUndoGroupSize({ pageId: a['pageId'], depth, windowMs })
     const results: unknown[] = []
     for (let i = 0; i < groupSize; i++) {
       results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))
@@ -509,7 +507,6 @@ export const historyHandlers = {
   TypedHandlers,
   | 'get_block_history'
   | 'list_page_history'
-  | 'find_undo_group'
   | 'undo_page_group'
   | 'revert_ops'
   | 'undo_page_op'

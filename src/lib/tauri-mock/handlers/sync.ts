@@ -127,10 +127,6 @@ export const syncHandlers = {
     }
     return Array.from(peerRefs.values())
   },
-  get_peer_ref: (args) => {
-    const a = args as Record<string, unknown>
-    return peerRefs.get(a['peerId'] as string) ?? null
-  },
   delete_peer_ref: (args) => {
     const a = args as Record<string, unknown>
     peerRefs.delete(a['peerId'] as string)
@@ -267,7 +263,6 @@ export const syncHandlers = {
 } satisfies Pick<
   TypedHandlers,
   | 'list_peer_refs'
-  | 'get_peer_ref'
   | 'delete_peer_ref'
   | 'get_device_id'
   | 'start_pairing'

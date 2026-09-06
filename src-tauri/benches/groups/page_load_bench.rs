@@ -1,26 +1,21 @@
 // Bench helpers cast small loop indices between usize/i64 freely.
 #![allow(clippy::cast_possible_wrap)]
 
-//! Criterion benchmarks for two hot, user-facing read commands on the
-//! editor/block path that previously had no bench coverage (#978):
+//! Criterion benchmark for `load_page_subtree_inner` — the single-SELECT
+//! page loader that replaced the FE-side recursive `listBlocks` walk (#978).
+//! Runs on every page open; latency here is the time-to-first-render of a
+//! page.
 //!
-//!   1. `load_page_subtree_inner` — the single-SELECT page loader that
-//!      replaced the FE-side recursive `listBlocks` walk. Runs on every
-//!      page open; latency here is the time-to-first-render of a page.
-//!   2. `get_blocks_inner` — the batch block fetch (`get_blocks(ids)`),
-//!      used by multi-select, backlink hydration, and any view that
-//!      resolves a known set of block ids in one IPC.
-//!
-//! Both are read-only and are exercised at realistic page sizes. The seed
-//! mirrors `export_bench`'s direct-SQL shape (fast bulk insert in one tx)
-//! but additionally sets `page_id` + `space_id` because both commands
-//! filter on those columns. IDs are real ULIDs (`BlockId::new()`) so the
-//! commands' `BlockId::from_string` validation passes.
+//! Read-only, exercised at realistic page sizes. The seed mirrors
+//! `export_bench`'s direct-SQL shape (fast bulk insert in one tx) but
+//! additionally sets `page_id` + `space_id` because the command filters on
+//! those columns. IDs are real ULIDs (`BlockId::new()`) so the command's
+//! `BlockId::from_string` validation passes.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_core::ulid::BlockId;
-use agaric_lib::commands::{get_blocks_inner, load_page_subtree_inner};
+use agaric_lib::commands::load_page_subtree_inner;
 use agaric_lib::db::init_pool;
 
 use sqlx::SqlitePool;
@@ -154,47 +149,7 @@ fn bench_load_page_subtree(c: &mut Criterion) {
 }
 
 // ===========================================================================
-// get_blocks — batch fetch by id set
-// ===========================================================================
-
-fn bench_get_blocks(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let mut group = c.benchmark_group("get_blocks");
-
-    // Seed once at a representative page size, then fetch batches of varying
-    // width (multi-select / backlink hydration sizes). The DB carries 2K
-    // rows so the `json_each` membership probe runs against a realistic
-    // index, not a toy table.
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "get_blocks"));
-    let (_page_id, child_ids) = rt.block_on(seed_page(&pool, 2_000));
-
-    // MAX_BATCH_BLOCK_IDS is 1000; 500 stays comfortably under the cap.
-    for batch in [10usize, 100, 500] {
-        let ids: Vec<BlockId> = child_ids
-            .iter()
-            .take(batch)
-            .map(|s| BlockId::from_string(s).unwrap())
-            .collect();
-
-        group.throughput(Throughput::Elements(batch as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{batch}_ids")),
-            &ids,
-            |b, ids| {
-                b.to_async(&rt).iter(|| {
-                    let pool = pool.clone();
-                    let ids = ids.clone();
-                    async move { get_blocks_inner(&pool, ids).await.unwrap() }
-                });
-            },
-        );
-    }
-    group.finish();
-}
-
-// ===========================================================================
 // Harness
 // ===========================================================================
 
-criterion_group!(page_load_benches, bench_load_page_subtree, bench_get_blocks,);
+criterion_group!(page_load_benches, bench_load_page_subtree);

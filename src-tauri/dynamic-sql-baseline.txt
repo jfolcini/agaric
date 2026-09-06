@@ -53,7 +53,7 @@
 1 src-tauri/src/commands/block_cleanup.rs
 5 src-tauri/src/commands/blocks/crud.rs
 4 src-tauri/src/commands/blocks/move_ops.rs
-2 src-tauri/src/commands/blocks/queries.rs
+1 src-tauri/src/commands/blocks/queries.rs
 3 src-tauri/src/commands/history.rs
 1 src-tauri/src/commands/pages/listing.rs
 2 src-tauri/src/commands/pages/metadata.rs

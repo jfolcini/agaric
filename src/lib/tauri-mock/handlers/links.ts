@@ -21,6 +21,63 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
+/**
+ * Narrow a backlink candidate set by `BacklinkFilter`s (mirrors the filter
+ * evaluation `eval_backlink_query_grouped` runs on the backend).
+ */
+function applyBacklinkFilters(
+  items: Record<string, unknown>[],
+  filterList: Array<Record<string, unknown>>,
+): Record<string, unknown>[] {
+  let backlinkItems = items
+  // Apply simple filter support
+  for (const filter of filterList) {
+    const type = filter['type'] as string
+    if (type === 'BlockType') {
+      const bt = filter['block_type'] as string
+      backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
+    } else if (type === 'Contains') {
+      const query = (filter['query'] as string) ?? ''
+      // #4022 — `BacklinkFilter::Contains` is `sanitize_fts_query` + `WHERE
+      // fts_blocks MATCH ?1` (`agaric-store/src/backlink/filters.rs:381-421`,
+      // SQL at :398-407). It is NOT a `LIKE` scan over `blocks.content`: it
+      // reads the SAME trigram index `search_blocks` does, so it matches
+      // `stripForFts`'s text through the index's case-only fold. This was
+      // `matchesSearchFolded` over raw content, which both over-matched
+      // (folding diacritics the tokenizer does not fold) and under-matched
+      // (blind to markup-hidden terms and to the names `#[ULID]` /
+      // `[[ULID]]` resolve to).
+      //
+      // One query-SIDE divergence is left standing, and is named rather than
+      // modelled: the backend early-returns an EMPTY result set when
+      // `query.trim().is_empty()` or the query sanitizes to empty
+      // (`src-tauri/agaric-store/src/backlink/filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
+      // every candidate for an empty needle. Note the backend TRIMS, so this
+      // covers two shapes — `''` (which `matchesFtsIndex` short-circuits to
+      // "match all") and whitespace-only such as `'   '` (which it runs as a
+      // three-space substring test). Both are the pre-#4022 behaviour here,
+      // unchanged by this seam, and both are reachable from this call site
+      // because it does not test blank-ness first.
+      backlinkItems = backlinkItems.filter((b) =>
+        matchesFtsIndex(stripForFts(b['content'] as string | null), query),
+      )
+    } else if (type === 'PropertyText') {
+      const key = filter['key'] as string
+      const value = filter['value'] as string
+      backlinkItems = backlinkItems.filter((b) => {
+        const blockProps = properties.get(b['id'] as string)
+        if (!blockProps) return false
+        const prop = blockProps.get(key)
+        if (!prop) return false
+        return (prop['value_text'] as string | null) === value
+      })
+    }
+    // Unsupported filter types are ignored (graceful degradation)
+  }
+
+  return backlinkItems
+}
+
 export const linksHandlers = {
   get_backlinks: (args) => {
     const a = args as Record<string, unknown>
@@ -40,79 +97,6 @@ export const linksHandlers = {
         contentLinksTo(b['content'] as string | null, targetId),
     )
     return { items: backlinkItems, next_cursor: null, has_more: false, total_count: null }
-  },
-
-  query_backlinks_filtered: (args) => {
-    const a = args as Record<string, unknown>
-    const targetId = a['blockId'] as string
-    const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
-    // Honour `scope: SpaceScope` (mirrors
-    // `query_backlinks_filtered_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-
-    // Scan all blocks for [[ULID]] tokens matching the target.
-    let backlinkItems = [...blocks.values()].filter(
-      (b) =>
-        !b['deleted_at'] &&
-        inSpaceScope(b, spaceId) &&
-        contentLinksTo(b['content'] as string | null, targetId),
-    )
-
-    // Apply simple filter support
-    for (const filter of filterList) {
-      const type = filter['type'] as string
-      if (type === 'BlockType') {
-        const bt = filter['block_type'] as string
-        backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
-      } else if (type === 'Contains') {
-        const query = (filter['query'] as string) ?? ''
-        // #4022 — `BacklinkFilter::Contains` is `sanitize_fts_query` + `WHERE
-        // fts_blocks MATCH ?1` (`agaric-store/src/backlink/filters.rs:381-421`,
-        // SQL at :398-407). It is NOT a `LIKE` scan over `blocks.content`: it
-        // reads the SAME trigram index `search_blocks` does, so it matches
-        // `stripForFts`'s text through the index's case-only fold. This was
-        // `matchesSearchFolded` over raw content, which both over-matched
-        // (folding diacritics the tokenizer does not fold) and under-matched
-        // (blind to markup-hidden terms and to the names `#[ULID]` /
-        // `[[ULID]]` resolve to).
-        //
-        // One query-SIDE divergence is left standing, and is named rather than
-        // modelled: the backend early-returns an EMPTY result set when
-        // `query.trim().is_empty()` or the query sanitizes to empty
-        // (`src-tauri/agaric-store/src/backlink/filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
-        // every candidate for an empty needle. Note the backend TRIMS, so this
-        // covers two shapes — `''` (which `matchesFtsIndex` short-circuits to
-        // "match all") and whitespace-only such as `'   '` (which it runs as a
-        // three-space substring test). Both are the pre-#4022 behaviour here,
-        // unchanged by this seam, and both are reachable from this call site
-        // because it does not test blank-ness first.
-        backlinkItems = backlinkItems.filter((b) =>
-          matchesFtsIndex(stripForFts(b['content'] as string | null), query),
-        )
-      } else if (type === 'PropertyText') {
-        const key = filter['key'] as string
-        const value = filter['value'] as string
-        backlinkItems = backlinkItems.filter((b) => {
-          const blockProps = properties.get(b['id'] as string)
-          if (!blockProps) return false
-          const prop = blockProps.get(key)
-          if (!prop) return false
-          return (prop['value_text'] as string | null) === value
-        })
-      }
-      // Unsupported filter types are ignored (graceful degradation)
-    }
-
-    const totalCount = backlinkItems.length
-    return {
-      items: backlinkItems,
-      next_cursor: null,
-      has_more: false,
-      total_count: totalCount,
-      filtered_count: totalCount,
-      truncated: false,
-    }
   },
 
   count_backlinks_batch: (args) => {
@@ -145,15 +129,19 @@ export const linksHandlers = {
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
+    const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
     // Honour `scope: SpaceScope` (mirrors
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const backlinkItems = [...blocks.values()].filter(
-      (b) =>
-        !b['deleted_at'] &&
-        inSpaceScope(b, spaceId) &&
-        contentLinksTo(b['content'] as string | null, targetId),
+    const backlinkItems = applyBacklinkFilters(
+      [...blocks.values()].filter(
+        (b) =>
+          !b['deleted_at'] &&
+          inSpaceScope(b, spaceId) &&
+          contentLinksTo(b['content'] as string | null, targetId),
+      ),
+      filterList,
     )
     // Group by parent_id (source page)
     const groupMap = new Map<string, Record<string, unknown>[]>()
@@ -407,7 +395,6 @@ export const linksHandlers = {
 } satisfies Pick<
   TypedHandlers,
   | 'get_backlinks'
-  | 'query_backlinks_filtered'
   | 'count_backlinks_batch'
   | 'list_backlinks_grouped'
   | 'list_unlinked_references'

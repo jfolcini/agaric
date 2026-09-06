@@ -154,7 +154,6 @@ Pairing + sync lifecycle:
 - `start_pairing` / `confirm_pairing` / `cancel_pairing` — passphrase exchange.
 - `start_sync` / `cancel_sync` — manual trigger / abort.
 - `update_peer_name` / `set_peer_address` — peer rename + manual address.
-- `get_peer_ref` — read a peer's state.
 
 These plus the standard `inner_*` testable bodies live in `sync_cmds.rs`. The exact list drifts; canonical source is `agaric_commands!` in `lib.rs`.
 

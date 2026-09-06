@@ -13,9 +13,7 @@ use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
 use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::backlink::{
-    self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
-};
+use agaric_store::backlink::{self, BacklinkFilter, BacklinkSort, GroupedBacklinkResponse};
 use agaric_store::fts;
 use agaric_store::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
 use agaric_store::space::SpaceScope;
@@ -375,45 +373,6 @@ pub async fn list_unfinished_tasks_inner(
         pool,
         &before_date,
         &todo_states,
-        &page,
-        scope.as_filter_param(),
-    )
-    .await
-}
-
-/// Query backlinks for a block with optional filters, sorting, and pagination.
-///
-/// When no filters are supplied, returns all backlinks (backward compatible).
-/// Filters use AND semantics at the top level; use `And`/`Or`/`Not` filter
-/// variants for compound boolean logic.
-///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to source blocks whose owning page carries `space = ?space_id`. The
-/// filter is applied at the base-set step so `total_count` and
-/// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
-///
-/// # Errors
-/// - [`AppError::Validation`] — `block_id` is empty
-#[instrument(skip(pool, filters, sort), err)]
-pub async fn query_backlinks_filtered_inner(
-    pool: &SqlitePool,
-    block_id: BlockId,
-    filters: Option<Vec<BacklinkFilter>>,
-    sort: Option<BacklinkSort>,
-    cursor: Option<String>,
-    limit: Option<i64>,
-    scope: &SpaceScope,
-) -> Result<BacklinkQueryResponse, AppError> {
-    if block_id.as_str().trim().is_empty() {
-        return Err(AppError::validation("block_id must not be empty".into()));
-    }
-    let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_backlink_query(
-        pool,
-        block_id.as_str(),
-        filters,
-        sort,
         &page,
         scope.as_filter_param(),
     )
@@ -1004,24 +963,6 @@ pub async fn list_unfinished_tasks(
     scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     list_unfinished_tasks_inner(&pool.0, before_date, todo_states, cursor, limit, &scope)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
-#[tauri::command]
-#[specta::specta]
-#[allow(clippy::too_many_arguments)]
-pub async fn query_backlinks_filtered(
-    read_pool: State<'_, ReadPool>,
-    block_id: BlockId,
-    filters: Option<Vec<BacklinkFilter>>,
-    sort: Option<BacklinkSort>,
-    cursor: Option<String>,
-    limit: Option<i64>,
-    scope: SpaceScope,
-) -> Result<BacklinkQueryResponse, AppError> {
-    query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

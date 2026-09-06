@@ -163,11 +163,6 @@ macro_rules! agaric_commands {
             $crate::commands::history::undo_op,
             $crate::commands::history::undo_ops,
             $crate::commands::history::redo_page_op,
-            // Single-IPC undo-group sizing: replaces
-            // the FE's growing-window `list_page_history` re-fetch loop
-            // after every Ctrl+Z with one recursive-CTE query that
-            // walks consecutive same-device + within-window ops.
-            $crate::commands::history::find_undo_group,
             // #2190: batched group-undo — reverts an entire
             // consecutive same-device, within-window undo group in one
             // IMMEDIATE tx, replacing the FE's find_undo_group +
@@ -175,7 +170,6 @@ macro_rules! agaric_commands {
             $crate::commands::history::undo_page_group,
             $crate::commands::history::compute_edit_diff,
             $crate::commands::history::compute_block_vs_current_diff,
-            $crate::commands::queries::query_backlinks_filtered,
             $crate::commands::queries::list_backlinks_grouped,
             $crate::commands::queries::list_unlinked_references,
             $crate::commands::properties::list_property_keys,
@@ -187,7 +181,6 @@ macro_rules! agaric_commands {
             $crate::commands::properties::delete_property_def,
             // Sync
             $crate::commands::sync_cmds::list_peer_refs,
-            $crate::commands::sync_cmds::get_peer_ref,
             $crate::commands::sync_cmds::delete_peer_ref,
             $crate::commands::sync_cmds::update_peer_name,
             $crate::commands::sync_cmds::set_peer_address,
@@ -213,7 +206,6 @@ macro_rules! agaric_commands {
             // block gets no event however early it subscribes.
             $crate::commands::sync_cmds::get_os_network_block_status,
             // Batch count commands (#604)
-            $crate::commands::agenda::count_agenda_batch,
             $crate::commands::agenda::count_agenda_batch_by_source,
             $crate::commands::queries::count_backlinks_batch,
             // Page aliases (#598)
@@ -275,9 +267,6 @@ macro_rules! agaric_commands {
             // First-child-per-parent batch — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
             $crate::commands::blocks::queries::first_child_for_blocks,
-            // Get_blocks batch endpoint
-            //   • get_blocks(ids) — full BlockRow batch.
-            $crate::commands::blocks::queries::get_blocks,
             // Link metadata
             $crate::commands::link_metadata::fetch_link_metadata,
             $crate::commands::link_metadata::get_link_metadata,
