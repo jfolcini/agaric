@@ -19,16 +19,16 @@
 //!
 //! 1. `block_type = 'content'` and `deleted_at IS NULL`
 //! 2. content is blank once JavaScript's `String.prototype.trim` whitespace
-//!    set is stripped ([`JS_TRIM_WHITESPACE`]; NULL counts as blank)
+//!    set is stripped (`JS_TRIM_WHITESPACE`; NULL counts as blank)
 //! 3. no live children
 //! 4. `todo_state`, `priority`, `due_date`, `scheduled_date` all NULL
 //! 5. no `block_properties` row
 //! 6. no `block_tags` row as `block_id`, no `block_tag_refs` row as `source_id`
 //! 7. not referenced by any live block's content — no `((id))`, no `[[id]]`
-//! 8. not the last live child of a PAGE (see [`hold_back_last_page_children`])
+//! 8. not the last live child of a PAGE (see `hold_back_last_page_children`)
 //!
-//! plus an age floor ([`SWEEP_MIN_AGE`]: created before it AND no op on the
-//! block since it) and a per-boot cap ([`SWEEP_BATCH_CAP`]). Guards 3–8 are
+//! plus an age floor (`SWEEP_MIN_AGE`: created before it AND no op on the
+//! block since it) and a per-boot cap (`SWEEP_BATCH_CAP`). Guards 3–8 are
 //! not exercised by the measured vault (all 508 pass them); the tests
 //! construct each case explicitly.
 
@@ -127,7 +127,7 @@ struct Candidate {
 }
 
 /// Soft-delete leaked empty blocks through the op pipeline, at most
-/// [`SWEEP_BATCH_CAP`] per call.
+/// `SWEEP_BATCH_CAP` per call.
 ///
 /// # Why a cursor and not a once-only marker
 ///
@@ -150,7 +150,7 @@ struct Candidate {
 /// empty — which is how they leak (Enter, then navigate away). A block that
 /// becomes empty LATER, or a peer's old block that syncs in after the cursor
 /// passed its id, is behind the cursor and is left for blur-drop; bumping
-/// [`SWEEP_CURSOR_KEY`]'s version re-walks the vault if that ever matters.
+/// `SWEEP_CURSOR_KEY`'s version re-walks the vault if that ever matters.
 pub async fn sweep_leaked_empty_blocks(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &LoroState,

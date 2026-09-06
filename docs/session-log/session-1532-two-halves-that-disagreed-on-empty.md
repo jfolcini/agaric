@@ -85,3 +85,49 @@ existing `idx_op_log_block_created`.
 
 Creation age and edit age are different questions, and only one of them is about whether someone
 is using the block right now.
+
+## The general guard existed, and using it would have been wrong
+
+e2e caught what unit tests could not: typing `{{` opens the query builder, the picker has already
+consumed the `{{`, so the block is empty when focus moves to the modal — the cleanup deletes it,
+and "Insert Query" then saves into a block that is gone.
+
+The obvious fix is a general "a modal owns focus" guard, and one already exists:
+`data-editor-portal` / `EDITOR_PORTAL_SELECTOR`, which `useEditorBlur` checks before firing at all.
+It is why the date picker, template picker, context menu, formatting toolbar and every suggestion
+popup were already immune without anyone thinking about it.
+
+Tagging the four dialogs would have been actively wrong. They opt out **deliberately**: a full
+modal owns the screen, so the editor must flush and unmount. Suppressing their blur leaves the
+editor mounted holding the stale empty doc, and its eventual blur overwrites the `{{query …}}` the
+modal just saved — a worse bug than the one being fixed, and one that would look like the modal
+silently not working.
+
+The other candidate — `if (queryBuilderOpen || emojiPickerOpen) return` inside the cleanup, using
+state the component already has — **fails open**. Those flags are committed inside
+`startTransition`; the blur that clears focus is urgent. The effect can run in a commit where the
+flag is still false. Same shape as the Enter lesson one section up: register at the point of
+intent, not at the point where a flag happens to have settled.
+
+So: per-affordance registration in `useBlockDialogs`, the one hook that owns all four dialogs,
+synchronously before `startTransition`. The sweep for siblings found three more instances of the
+same bug — the emoji picker, the property drawer reached by `/assignee` and friends, and the
+`/query` slash route — and ruled out fifteen others with a reason each.
+
+## A failure that looked like the same bug and was not
+
+`paste-task-over-content-1514.spec.ts` failed in the same CI run, and "paste over content" is
+exactly the shape that would empty a block. It is a flake, and the failure text says so:
+
+```
+Expected substring: "world"
+Received string:    "hello worl- [x] doned"
+```
+
+All eleven original characters are present. Nothing was deleted; the paste landed at offset 10
+instead of 5, because only one of the test's six blind `ArrowLeft` presses registered before it.
+A caret-placement race in the test, not a data-loss bug in the diff — and the contrast with the
+query failure (`element(s) not found` for the whole result) is what separates them.
+
+Worth keeping: two red e2e tests in one run, both plausibly the new feature's fault, and the
+distinguishing evidence was in the assertion text rather than in any reasoning about the code.

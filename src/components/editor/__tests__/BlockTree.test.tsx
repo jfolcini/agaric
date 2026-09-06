@@ -6215,6 +6215,141 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     )
   })
 
+  // ── Dialogs that empty the block and then write back into it (#4729) ──
+  // The `{{` picker / `/query` slash command DELETE the trigger text and then
+  // open a modal, so the block is blank at the moment the modal's focus trap
+  // blurs the editor. Deleting it there strands the modal's write-back — the
+  // e2e "typing {{ opens the visual builder and inserts a query on save"
+  // (#215) failed exactly this way. Same shape for the other block-targeting
+  // dialogs a slash command can open. `data-editor-portal` is what spares the
+  // date/template/context-menu overlays (their blur never fires); these four
+  // deliberately do NOT carry it, which is why they need the exemption.
+
+  it('keeps the block the visual query builder was opened for, and saves into it', async () => {
+    mockBareBackend({ edit_block: { op_refs: [] } })
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        // Blank because the picker consumed the `{{` the user typed.
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY' })
+    })
+    await waitFor(() => expect(capturedQueryOpen).toBe(true))
+
+    // The modal's focus trap blurs the editor, which clears the store focus.
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+
+    // … so "Insert Query" still has a block to write the expression into.
+    await act(async () => {
+      await (capturedQuerySave as unknown as (e: string) => Promise<void>)?.('todo')
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'TARGET', toText: '{{query todo}}' }),
+    )
+  })
+
+  it('keeps the block the emoji picker was opened for', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'emoji', label: 'EMOJI' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    // `insertEmojiIntoActiveEditor` targets the block's editor; a deleted
+    // block has none, and the picked emoji is silently dropped.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+  })
+
+  it('keeps the block the property drawer was opened for by /assignee', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    // #2656 — the bare `/assignee` collects its free-text value in the
+    // property drawer, which then writes the property back to this block.
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'assignee', label: 'ASSIGNEE' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+  })
+
+  it('still deletes a leaked empty block when NO dialog was opened for it', async () => {
+    // The negative half: the exemption is registered per open, not a blanket
+    // stand-down. Opening the builder for A must not spare a blank B.
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'anchor', position: 0 }),
+        makeBlock({ id: 'B', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'A' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY' })
+    })
+    await waitFor(() => expect(capturedQueryOpen).toBe(true))
+
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'B' })
+    })
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
+    })
+  })
+
   it('does not delete on a window blur (alt-tab / tab switch)', async () => {
     const spy = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
     try {

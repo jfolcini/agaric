@@ -474,10 +474,15 @@ export function BlockTree({
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
-  // #4729 — ids the empty-block cleanup below must skip exactly once. Written
-  // by `handleEnterSave` when a caret split deliberately leaves the SOURCE
-  // block empty (Enter at the start of a line moves the text down and keeps
-  // the blank line in place); consumed by the cleanup effect.
+  // #4729 — ids the empty-block cleanup below must skip exactly once. Two
+  // writers, both cases of "one step of an interaction deliberately leaves the
+  // block blank and a later step writes back into it":
+  //   - `handleEnterSave`, when a caret split leaves the SOURCE block empty
+  //     (Enter at the start of a line moves the text down and keeps the blank
+  //     line in place);
+  //   - `useBlockDialogs`, when a slash command / the `{{` picker consumed the
+  //     block's only text and then opened a modal that writes back into it.
+  // Consumed by the cleanup effect below — the single consumption point.
   const preserveEmptyBlockIds = useRef(new Set<string>())
 
   // ── Block-level dialog surfaces (#2930) ────────────────────────────
@@ -499,7 +504,7 @@ export function BlockTree({
     openEmojiPicker,
     handleEmojiSelect,
     handleQuerySave,
-  } = useBlockDialogs({ focusedBlockId, pageStore, load })
+  } = useBlockDialogs({ focusedBlockId, pageStore, load, preserveEmptyBlockIds })
 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
@@ -1116,11 +1121,12 @@ export function BlockTree({
     // window, which is what gates `handleEscapeCancel`'s own auto-delete.
     justCreatedBlockIds.current.delete(prevId)
 
-    // Enter pressed at the START of a block deliberately leaves the source
-    // block empty and moves its text into a new sibling below. That empty
-    // block is the user's blank line, not a leak: deleting it would make the
-    // keystroke a visible no-op. `handleEnterSave` registers the id; this is
-    // the single consumption point.
+    // A block deliberately left blank by one step of an interaction that is
+    // about to write back into it — the source of an Enter-at-line-start split
+    // (the user's blank line, not a leak: deleting it would make the keystroke
+    // a visible no-op), or a block whose only text was the `/query` · `/emoji`
+    // · `/assignee` trigger a dialog just consumed. `handleEnterSave` and
+    // `useBlockDialogs` register the ids; this is the single consumption point.
     if (preserveEmptyBlockIds.current.delete(prevId)) return
 
     void deleteBlockIfLeakedEmpty({
