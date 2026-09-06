@@ -177,6 +177,12 @@ function compareSortKeys(x: SortKey, y: SortKey): number {
   return 0
 }
 
+/** `ORDER BY deleted_at DESC, id ASC` — `list_trash` (`pagination::list_trash`). */
+function compareTrashKeys(x: SortKey, y: SortKey): number {
+  const lead = compareSortKeys(x.slice(0, 1), y.slice(0, 1))
+  return lead === 0 ? compareSortKeys(x.slice(1), y.slice(1)) : -lead
+}
+
 /** `ORDER BY COALESCE(position, ?sentinel) ASC, id ASC` — `list_children`. */
 function positionThenIdKey(row: Record<string, unknown>): SortKey {
   return [keysetPosition(row), (row['id'] as string) ?? '']
@@ -336,6 +342,9 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
  * OVERWRITES that with `Some(count_blocks_by_type(…))` to drive the PageBrowser
  * "X of Y" chip. Four of the five branches pass `null` here; the `blockType`
  * branch passes the count.
+ *
+ * `compare` is the branch's `ORDER BY`; every ascending keyset takes the
+ * default, `list_trash` passes {@link compareTrashKeys}.
  */
 function paginateKeyset(
   rows: Record<string, unknown>[],
@@ -344,16 +353,17 @@ function paginateKeyset(
   rawCursor: unknown,
   totalCount: number | null,
   lead: CursorLeadSlot,
+  compare: (x: SortKey, y: SortKey) => number = compareSortKeys,
 ): {
   items: Record<string, unknown>[]
   next_cursor: string | null
   has_more: boolean
   total_count: number | null
 } {
-  const ordered = rows.toSorted((x, y) => compareSortKeys(keyOf(x), keyOf(y)))
+  const ordered = rows.toSorted((x, y) => compare(keyOf(x), keyOf(y)))
   const cursorKey = decodeBlocksCursor(rawCursor, lead)
   const after =
-    cursorKey === null ? ordered : ordered.filter((b) => compareSortKeys(keyOf(b), cursorKey) > 0)
+    cursorKey === null ? ordered : ordered.filter((b) => compare(keyOf(b), cursorKey) > 0)
   const fetched = after.slice(0, limit + 1)
   const hasMore = fetched.length > limit
   const items = hasMore ? fetched.slice(0, limit) : fetched
@@ -520,30 +530,15 @@ export const blocksHandlers = {
       const parent = b['parent_id'] == null ? null : blocks.get(b['parent_id'] as string)
       return parent == null || parent['deleted_at'] !== b['deleted_at']
     })
-    // `deleted_at DESC, id ASC`: newest cohort first, ids ascending within it.
-    const after = (x: Record<string, unknown>, key: SortKey): boolean => {
-      const [del, id] = [String(x['deleted_at']), String(x['id'])]
-      return del < String(key[0]) || (del === String(key[0]) && id > String(key[1]))
-    }
-    roots.sort((x, y) => {
-      const d = String(y['deleted_at']).localeCompare(String(x['deleted_at']))
-      return d !== 0 ? d : String(x['id']).localeCompare(String(y['id']))
-    })
-    const cursorKey = decodeBlocksCursor(a['cursor'], 'deleted_at')
-    const candidates = cursorKey === null ? roots : roots.filter((b) => after(b, cursorKey))
-    const fetched = candidates.slice(0, limit + 1)
-    const hasMore = fetched.length > limit
-    const items = hasMore ? fetched.slice(0, limit) : fetched
-    const last = items.at(-1)
-    return {
-      items,
-      next_cursor:
-        hasMore && last
-          ? encodeBlocksCursor([String(last['deleted_at']), String(last['id'])], 'deleted_at')
-          : null,
-      has_more: hasMore,
-      total_count: null,
-    }
+    return paginateKeyset(
+      roots,
+      (b) => [String(b['deleted_at']), String(b['id'])],
+      limit,
+      a['cursor'],
+      null,
+      'deleted_at',
+      compareTrashKeys,
+    )
   },
 
   create_block: (args) => {
