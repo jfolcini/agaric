@@ -553,14 +553,12 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
   // `search_blank_query_unfiltered` and is a live branch rather than a waived
   // one.
   'run_advanced_query::grouped':
-    'the grouped path answers under `groups[].members` with `rows` left EMPTY, and ' +
-    'the query projection binds exactly one `rows` list plus one has_more/total_count ' +
-    'pair — the shape blocker `search_blocks_partitioned` had before its `partitions` ' +
-    'projection (#3823), so a ' +
-    'step needs a group-qualified row token in BOTH runners, not just a fixture. ' +
-    'The mock compounds it: its grouped path SYNTHESISES a single bucket from the ' +
-    'request shape rather than computing one (handlers/search.ts), so the step would ' +
-    'need that implemented too (#3927)',
+    'the grouped path answers under `groups[].members` with `rows` left EMPTY. Both ' +
+    'runners already project that (`groups: true` on `WIRE.run_advanced_query`, ' +
+    '`group_tokens` / `groupTokens`), so the projection is not the blocker; the ' +
+    "mock's grouped path is. It SYNTHESISES a single bucket from the request shape " +
+    'rather than computing one (handlers/search.ts), so a step needs that implemented ' +
+    'first (#3927)',
 }
 // NOTE for whoever lifts the remaining agenda-date waiver above (and for
 // `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
