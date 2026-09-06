@@ -791,7 +791,10 @@ export const blocksHandlers = {
     if (inputIds.length === 0) {
       throw validationRejection('block_ids list cannot be empty')
     }
-    const now = new Date().toISOString()
+    // The same monotonic marker `delete_block` mints: `list_trash` orders on
+    // it, and a bare ISO stamp sorts BELOW an earlier `ISO#seq` in the same
+    // millisecond.
+    const now = nextCohortMarker()
     // Resolve live roots (skip missing or already-deleted).
     const liveRoots = inputIds.filter((id) => {
       const b = blocks.get(id)

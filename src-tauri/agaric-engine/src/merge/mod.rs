@@ -95,7 +95,7 @@ pub fn engine_apply(
             let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
             // #400/#603/#4688: the same routing `apply_create_block_via_loro`
             // uses, so re-apply cannot converge sibling order toward ULID order.
-            crate::apply::loro_apply::route_create(engine, p, parent)
+            engine.apply_create_payload(p, parent)
         }
         agaric_store::op::OpPayload::EditBlock(p) => {
             engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)

@@ -34,9 +34,9 @@ use super::*;
 /// (the engine arm appends through the slot path, `apply_create_block_at(…,
 /// usize::MAX)`, and stamps no position at all — #4688). This changes the
 /// persisted byte from SQL NULL to `i64::MAX`, but is **behavior-preserving**:
-/// the pagination layer
-/// defines `NULL_POSITION_SENTINEL == i64::MAX` and substitutes NULL → i64::MAX
-/// for every keyset/order comparison, and the next-provisional-position scan
+/// the pagination layer defines `NULL_POSITION_SENTINEL == i64::MAX` and
+/// substitutes NULL → i64::MAX for every keyset/order comparison, and the
+/// next-provisional-position scan
 /// (`WHERE position < 9223372036854775807`) excludes both NULL and i64::MAX
 /// identically — so a NULL row and an i64::MAX row sort and aggregate the same.
 /// No production code discriminates `position IS NULL` from the sentinel. This
