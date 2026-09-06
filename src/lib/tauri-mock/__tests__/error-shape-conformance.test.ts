@@ -42,6 +42,7 @@ import {
 
 const PAGE = '00000000000000000000PAGEZZ'
 const CHILD = '00000000000000000000CHILDA'
+const TAG = '0000000000000000000000TAGZ'
 const SPACE = 'SPACE_PERSONAL'
 const MISSING_ID = '00000000000000000000MISSING'
 
@@ -73,6 +74,7 @@ function resetMockState(): void {
     ]),
   )
   blocks.set(CHILD, makeBlock(CHILD, 'content', 'hello', PAGE, 1))
+  blocks.set(TAG, makeBlock(TAG, 'tag', 'urgent', null, 2))
 }
 
 /** Run `dispatch(cmd, args)` and return what it throws — fails the test if it resolves instead. */
@@ -201,6 +203,23 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         name: 'load_page_subtree (foreign space)',
         cmd: 'load_page_subtree',
         args: { rootBlockId: PAGE, scope: { kind: 'active', space_id: 'SOME_OTHER_SPACE' } },
+      },
+      {
+        name: 'create_block (tag parent, #4725)',
+        cmd: 'create_block',
+        args: {
+          blockType: 'content',
+          content: '',
+          parentId: TAG,
+          index: null,
+          scope: { kind: 'global' },
+          blockId: null,
+        },
+      },
+      {
+        name: 'move_block (tag parent, #4725)',
+        cmd: 'move_block',
+        args: { blockId: CHILD, newParentId: TAG, newIndex: 0 },
       },
     ]
 

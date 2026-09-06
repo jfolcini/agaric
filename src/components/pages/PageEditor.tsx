@@ -16,12 +16,16 @@ import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
+import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { isDateFormattedPage } from '@/lib/date-utils'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { useBlockStore } from '@/stores/blocks'
@@ -191,6 +195,36 @@ function PageEditorInner({
     }
   }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
 
+  // #4725 — a tag holds the blocks tagged with it, never children of its own,
+  // so its page is read-only. `isTagPage` is null until `get_block` answers for
+  // THIS page, and every editing affordance below stays off while it is: the
+  // auto-create effect must not race ahead and seed a block the backend rejects.
+  const [pageBlockType, setPageBlockType] = useState<{ pageId: string; isTag: boolean } | null>(
+    null,
+  )
+  const isTagPage = pageBlockType?.pageId === pageId ? pageBlockType.isTag : null
+  useEffect(() => {
+    let active = true
+    const settle = (isTag: boolean): void => {
+      if (active) setPageBlockType({ pageId, isTag })
+    }
+    commands
+      .getBlock(pageId)
+      .then(unwrap)
+      .then(
+        (block) => {
+          settle(block.block_type === 'tag')
+        },
+        (err: unknown) => {
+          logger.warn('PageEditor', 'Failed to read page block type', { pageId }, err)
+          settle(false)
+        },
+      )
+    return () => {
+      active = false
+    }
+  }, [pageId])
+
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
     () => () => {
@@ -281,18 +315,26 @@ function PageEditorInner({
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
-      {/* Block tree — loads children of pageId */}
-      <BlockTree
-        parentId={pageId}
-        onNavigateToPage={onNavigateToPage}
-        onRevealSettled={handleRevealSettled}
-        revealNonce={revealNonce}
-      />
+      {/* Block tree — loads children of pageId. A tag mounts it only until the
+          verdict lands; that load is what fills the legacy rows below. */}
+      {isTagPage === true ? (
+        blocks.length > 0 && <EmbeddedBlockTree rows={blocks} baseAriaLevel={0} />
+      ) : (
+        <BlockTree
+          parentId={pageId}
+          autoCreateFirstBlock={isTagPage === false}
+          onNavigateToPage={onNavigateToPage}
+          onRevealSettled={handleRevealSettled}
+          revealNonce={revealNonce}
+        />
+      )}
 
-      {/* Add block button — always directly beneath the last block */}
-      <div>
-        <AddBlockButton onClick={handleAddBlock} />
-      </div>
+      {/* Add block button — directly beneath the last block */}
+      {isTagPage !== true && (
+        <div>
+          <AddBlockButton onClick={handleAddBlock} />
+        </div>
+      )}
 
       {/* Due/Done panels — shown on date-formatted pages (mirrors DaySection daily view) */}
       {isDateFormattedPage(title) && (
