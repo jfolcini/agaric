@@ -435,10 +435,10 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'hold both partitions — needs a partition-qualified row token in both runners',
 
   // ── Pages / journal / templates ──
-  list_all_pages_in_space: 'fixture candidate: unpaginated twin of list_pages_with_metadata',
-  list_template_page_ids_in_space: 'fixture candidate: template-property scan with no step yet',
   // `get_journal_page_by_date` / `list_journal_pages_in_range` are NOT waived:
-  // they are query steps in `query_journal_pages.json`.
+  // they are query steps in `query_journal_pages.json`; `list_all_pages_in_space`
+  // and `list_template_page_ids_in_space` are steps in
+  // `query_trash_and_page_listings.json` (#3829).
   //
   // Only `list_projected_agenda` is wall-clock dependent — its `_inner` takes
   // `chrono::Local::now().date_naive()` and threads it through the recurrence
@@ -455,7 +455,8 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 
   // ── Trash ──
   count_trash: 'returns a bare `i64`; the query projection has no row identity to bind it to',
-  list_trash: 'fixture candidate: tombstone listing over rows the #763 snapshot already diffs',
+  // `list_trash` is NOT waived: its multi-cohort roots are query steps in
+  // `query_trash_and_page_listings.json` (#3829).
   trash_descendant_counts:
     'returns `HashMap<root_id, count>` — a keyed count map, not the canonical ' +
     'block-id rows the query projection binds',

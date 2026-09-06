@@ -177,6 +177,12 @@ function compareSortKeys(x: SortKey, y: SortKey): number {
   return 0
 }
 
+/** `ORDER BY deleted_at DESC, id ASC` — `list_trash` (`pagination::list_trash`). */
+function compareTrashKeys(x: SortKey, y: SortKey): number {
+  const lead = compareSortKeys(x.slice(0, 1), y.slice(0, 1))
+  return lead === 0 ? compareSortKeys(x.slice(1), y.slice(1)) : -lead
+}
+
 /** `ORDER BY COALESCE(position, ?sentinel) ASC, id ASC` — `list_children`. */
 function positionThenIdKey(row: Record<string, unknown>): SortKey {
   return [keysetPosition(row), (row['id'] as string) ?? '']
@@ -276,7 +282,11 @@ function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
  * SENTINEL rather than reject the cursor, so the query pages from that
  * sentinel key instead of refusing the request. Rejecting a missing lead
  * slot here made the mock STRICTER than production in the opposite direction
- * from the one this harness exists to close (#3942 review note 3).
+ * from the one this harness exists to close (#3942 review note 3). The
+ * `deleted_at` lead is the exception: `pagination::list_trash` REFUSES a
+ * cursor without its slot (`cursor missing deleted_at for trash query`) where
+ * this decodes `['', id]` and serves an empty page. Neither stack mints such
+ * a cursor, so the gap is unreachable and left open.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
@@ -332,6 +342,9 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
  * OVERWRITES that with `Some(count_blocks_by_type(…))` to drive the PageBrowser
  * "X of Y" chip. Four of the five branches pass `null` here; the `blockType`
  * branch passes the count.
+ *
+ * `compare` is the branch's `ORDER BY`; every ascending keyset takes the
+ * default, `list_trash` passes {@link compareTrashKeys}.
  */
 function paginateKeyset(
   rows: Record<string, unknown>[],
@@ -340,16 +353,17 @@ function paginateKeyset(
   rawCursor: unknown,
   totalCount: number | null,
   lead: CursorLeadSlot,
+  compare: (x: SortKey, y: SortKey) => number = compareSortKeys,
 ): {
   items: Record<string, unknown>[]
   next_cursor: string | null
   has_more: boolean
   total_count: number | null
 } {
-  const ordered = rows.toSorted((x, y) => compareSortKeys(keyOf(x), keyOf(y)))
+  const ordered = rows.toSorted((x, y) => compare(keyOf(x), keyOf(y)))
   const cursorKey = decodeBlocksCursor(rawCursor, lead)
   const after =
-    cursorKey === null ? ordered : ordered.filter((b) => compareSortKeys(keyOf(b), cursorKey) > 0)
+    cursorKey === null ? ordered : ordered.filter((b) => compare(keyOf(b), cursorKey) > 0)
   const fetched = after.slice(0, limit + 1)
   const hasMore = fetched.length > limit
   const items = hasMore ? fetched.slice(0, limit) : fetched
@@ -496,12 +510,35 @@ export const blocksHandlers = {
     return paginateKeyset(items, positionThenIdKey, limit, cursor, null, 'position')
   },
 
-  // Paginate soft-deleted blocks, space-scoped. Mirrors backend
-  // `pagination::list_trash` (deleted_at DESC, id ASC).
-  list_trash: () => {
-    const items = [...blocks.values()].filter((b) => b['deleted_at'])
-    items.sort((x, y) => String(y['deleted_at'] ?? '').localeCompare(String(x['deleted_at'] ?? '')))
-    return { items, next_cursor: null, has_more: false, total_count: null }
+  // Paginate the trash ROOTS of one space. Mirrors `pagination::list_trash`:
+  // a tombstone is a root when it has no parent or its parent was deleted in a
+  // DIFFERENT cohort (`NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`),
+  // so a cascade lists once, under its root, while a child deleted on its own
+  // before its parent keeps its own row (#3818). Ordered `deleted_at DESC, id
+  // ASC` on a `{deleted_at, id}` keyset; `Global` is refused (#2248).
+  list_trash: (args) => {
+    const a = (args ?? {}) as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    if (scope?.kind !== 'active' || !scope.space_id) {
+      throw validationRejection('list_trash requires an active space scope')
+    }
+    const spaceId = scope.space_id
+    const limit = listBlocksLimit(a['limit'])
+    const roots = [...blocks.values()].filter((b) => {
+      if (!b['deleted_at']) return false
+      if (ownerSpaceOf(b) !== spaceId) return false
+      const parent = b['parent_id'] == null ? null : blocks.get(b['parent_id'] as string)
+      return parent == null || parent['deleted_at'] !== b['deleted_at']
+    })
+    return paginateKeyset(
+      roots,
+      (b) => [String(b['deleted_at']), String(b['id'])],
+      limit,
+      a['cursor'],
+      null,
+      'deleted_at',
+      compareTrashKeys,
+    )
   },
 
   create_block: (args) => {

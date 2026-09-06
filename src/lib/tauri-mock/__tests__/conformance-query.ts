@@ -364,6 +364,30 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     totalKey: null,
   },
 
+  // ── Trash roots and the unpaginated page listings (#3829) ──
+  //
+  // `list_trash` serves tombstones, so its tokens carry the block attributes:
+  // a root listed without its `deleted_at`, or a cascade child served as a
+  // root of its own, must not compare equal to the backend's answer.
+  list_trash: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  list_all_pages_in_space: {
+    rows: { kind: 'bare-array' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_template_page_ids_in_space: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
   // ── Point reads over blocks / properties / tags (#3826) ──
   //
   // The #763 snapshot already diffs the ROWS these serve; what it does not

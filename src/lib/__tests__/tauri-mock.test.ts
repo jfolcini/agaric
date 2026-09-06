@@ -1738,7 +1738,9 @@ describe('revert_ops', () => {
 describe('list_trash', () => {
   it('includes deleted blocks', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
-    const result = invoke('list_trash', {}) as {
+    const result = invoke('list_trash', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as {
       items: Record<string, unknown>[]
     }
     const ids = result.items.map((b) => b['id'])
@@ -1759,7 +1761,9 @@ describe('list_trash', () => {
   })
 
   it('returns empty when nothing is deleted', () => {
-    const result = invoke('list_trash', {}) as {
+    const result = invoke('list_trash', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(0)
