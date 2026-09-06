@@ -165,26 +165,10 @@ pub async fn bootstrap_spaces(
         )
     };
 
-    // Always run, even when the seeded-block fast-path
-    // skipped above. Naturally idempotent (only fires for pages
-    // WITHOUT a `space` property). Index `idx_block_properties_space`
-    // keeps the cost bounded.
-    let pages_to_migrate = pages_without_space(&mut tx).await?;
-    let migrated = pages_to_migrate.len();
-    // Batched migrator (chunked INSERT OR REPLACE + cached
-    // property_definitions lookup) replacing the previous per-page
-    // `set_property_in_tx` loop. For a 5000-page first-boot vault this
-    // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
-    // chunked block_properties UPSERTs.
-    migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate, &mut records)
-        .await?;
-
-    // Phase 1 — Path A tag-space bootstrap. Assign every
-    // orphan tag (no `space` property) to the space that most
-    // frequently references it, or Personal as fallback. Idempotent
-    // — the inner query filters to tags WITHOUT a `space` property,
-    // so steady-state boots see zero candidates.
-    let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
+    // Always run, even when the seeded-block fast-path skipped above; the
+    // same pass runs after every inbound sync (#4717, `place_space_less_blocks`).
+    let (migrated, tags_migrated) =
+        backfill_space_less_in_tx(&mut tx, state, device_id, &mut records).await?;
 
     // Repair pass — move any tag an earlier, buggy run of the migration
     // above parked in the WRONG space. That version decided placement by
@@ -208,37 +192,7 @@ pub async fn bootstrap_spaces(
     }
     tx.commit_and_dispatch(materializer).await?;
 
-    // Placing or moving a tag only makes its references ADMISSIBLE; nothing
-    // above re-derives them. `SetProperty` dispatch enqueues no tag-ref work
-    // (narrow by design — `invalidations_for_op`), the per-block
-    // `ReindexBlockTagRefs` is keyed on the SOURCE block (the untouched blocks
-    // that carry `#[ULID]`), and the boot backstop in `lib.rs` fires only when
-    // `block_tag_refs` is ENTIRELY empty — one surviving row (a tag created in
-    // the space that uses it) retires it for good. So without this the moved
-    // tag shows up in its new space's tag list while the Tag filter, the
-    // backlink projection and `tags_cache.usage_count` — all of which UNION
-    // `block_tag_refs` — keep returning nothing for it, and the marker means
-    // nothing ever re-runs. Refs first, then the tags cache: `usage_count`
-    // UNIONs the refs table (ordering note on `cache::rebuild_all_caches`).
-    // Both tasks are durable/retryable (`'__GLOBAL__'` retry-queue sentinel),
-    // and the enqueue is best-effort like every other boot-time rebuild.
-    if tags_migrated + tags_repaired > 0 {
-        for task in [
-            MaterializeTask::RebuildBlockTagRefsCache,
-            MaterializeTask::RebuildTagsCache,
-        ] {
-            let name = format!("{task:?}");
-            if let Err(e) = materializer.try_enqueue_background(task) {
-                tracing::warn!(
-                    error = %e,
-                    task = %name,
-                    tags_migrated,
-                    tags_repaired,
-                    "failed to enqueue tag-ref rebuild after tag space migration/repair",
-                );
-            }
-        }
-    }
+    enqueue_tag_ref_rebuilds(materializer, tags_migrated + tags_repaired);
 
     let spaces_created = i32::from(personal_created) + i32::from(work_created);
     let is_space_props_set = i32::from(personal_is_space_set) + i32::from(work_is_space_set);
@@ -254,6 +208,119 @@ pub async fn bootstrap_spaces(
         "spaces bootstrap complete"
     );
     Ok(())
+}
+
+/// The two backfills that give a space-less block a space: pages go to
+/// Personal, tags to the space that references them most (Personal when
+/// nothing does). Both are idempotent — each selects `space_id IS NULL`
+/// rows only, an indexed lookup that costs nothing when there are none.
+///
+/// Returns `(pages_placed, tags_placed)`.
+async fn backfill_space_less_in_tx(
+    tx: &mut CommandTx,
+    state: &std::sync::Arc<agaric_engine::loro::shared::LoroState>,
+    device_id: &str,
+    records: &mut Vec<OpRecord>,
+) -> Result<(usize, usize), AppError> {
+    let pages_to_migrate = pages_without_space(tx).await?;
+    let pages = pages_to_migrate.len();
+    // Batched migrator (chunked INSERT OR REPLACE + cached
+    // property_definitions lookup) replacing the previous per-page
+    // `set_property_in_tx` loop. For a 5000-page first-boot vault this
+    // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
+    // chunked block_properties UPSERTs.
+    migrate_pages_to_personal_space_batched(tx, device_id, &pages_to_migrate, records).await?;
+    let tags = migrate_orphan_tags_to_space(tx, state, device_id, records).await?;
+    Ok((pages, tags))
+}
+
+/// Placing or moving a tag only makes its references ADMISSIBLE; nothing
+/// re-derives them. `SetProperty` dispatch enqueues no tag-ref work (narrow
+/// by design — `invalidations_for_op`), the per-block `ReindexBlockTagRefs`
+/// is keyed on the SOURCE block (the untouched blocks that carry `#[ULID]`),
+/// and the boot backstop in `lib.rs` fires only when `block_tag_refs` is
+/// ENTIRELY empty — one surviving row (a tag created in the space that uses
+/// it) retires it for good. So without this the moved tag shows up in its
+/// new space's tag list while the Tag filter, the backlink projection and
+/// `tags_cache.usage_count` — all of which UNION `block_tag_refs` — keep
+/// returning nothing for it. Refs first, then the tags cache: `usage_count`
+/// UNIONs the refs table (ordering note on `cache::rebuild_all_caches`).
+/// Both tasks are durable/retryable (`'__GLOBAL__'` retry-queue sentinel),
+/// and the enqueue is best-effort like every other rebuild.
+fn enqueue_tag_ref_rebuilds(materializer: &Materializer, tags_placed: usize) {
+    if tags_placed == 0 {
+        return;
+    }
+    for task in [
+        MaterializeTask::RebuildBlockTagRefsCache,
+        MaterializeTask::RebuildTagsCache,
+    ] {
+        let name = format!("{task:?}");
+        if let Err(e) = materializer.try_enqueue_background(task) {
+            tracing::warn!(
+                error = %e,
+                task = %name,
+                tags_placed,
+                "failed to enqueue tag-ref rebuild after tag space placement",
+            );
+        }
+    }
+}
+
+/// #4717: place every space-less block NOW, in its own transaction.
+///
+/// The boot pass above catches a block that arrived without a space while
+/// the app was closed; a peer on an older build can deliver one mid-session,
+/// and until the next restart that tag is hidden from every space's tag
+/// list, refused by `reindex_block_tag_refs` as cross-space, and rendered as
+/// a raw `#[ULID]`. Running the same pass after an inbound sync closes that
+/// window. Returns `(pages_placed, tags_placed)`.
+///
+/// The steady state is "nothing to place", so an autocommit probe answers
+/// that before `BEGIN IMMEDIATE` takes the write lock for two SELECTs that
+/// find nothing.
+///
+/// # Errors
+///
+/// Any database error is propagated; the caller logs it and the boot pass
+/// remains the backstop.
+pub async fn place_space_less_blocks(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<(usize, usize), AppError> {
+    // Same predicate as the two selectors behind `backfill_space_less_in_tx`,
+    // served by `idx_blocks_space_type`; a space block itself carries no
+    // `space_id`, hence the `is_space` exclusion.
+    let any_space_less: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT 1 AS "one!: i64" FROM blocks b
+           WHERE b.space_id IS NULL
+             AND b.block_type IN ('page', 'tag')
+             AND b.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM block_properties
+                 WHERE block_id = b.id
+                   AND key = 'is_space'
+                   AND value_text = 'true'
+             )
+           LIMIT 1"#,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if any_space_less.is_none() {
+        return Ok((0, 0));
+    }
+    let state = materializer.loro_state();
+    let mut tx = CommandTx::begin_immediate(pool, "place_space_less_blocks").await?;
+    tx.arm_engine_rollback(state);
+    let mut records: Vec<OpRecord> = Vec::new();
+    let placed = backfill_space_less_in_tx(&mut tx, state, device_id, &mut records).await?;
+    for record in records {
+        tx.enqueue_background(record);
+    }
+    tx.commit_and_dispatch(materializer).await?;
+    enqueue_tag_ref_rebuilds(materializer, placed.1);
+    Ok(placed)
 }
 
 /// (#110) test helper: run [`bootstrap_spaces`] with a

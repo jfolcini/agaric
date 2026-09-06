@@ -49,7 +49,6 @@ export { unwrap } from '@/lib/app-error'
 // intentionally NOT re-exported (they were never public).
 // ---------------------------------------------------------------------------
 export * from '@/lib/tauri/blocks'
-export * from '@/lib/tauri/pages'
 export * from '@/lib/tauri/queries'
 export * from '@/lib/tauri/search'
 export * from '@/lib/tauri/history'

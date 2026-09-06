@@ -364,14 +364,12 @@ async fn reindex_one_block_links(
 /// rather than re-deriving it). Adding a fourth means enqueueing the task, not
 /// touching this function.
 ///
-/// All four are arms of `invalidations_for_op`, which is reached only from
-/// `CommandTx::commit_and_dispatch` — so this pass is bound to the LOCAL
-/// command path. An inbound-sync import maintains a changed block's OUTBOUND
-/// edges in-tx (`agaric-engine`'s `maintain_pages_cache_counts_after_op` calls
-/// `reindex_block_links_conn` directly, which records the unresolved debt) but
-/// fans out through `enqueue_inbound_sync_rebuilds`, which enqueues no
-/// per-block `ReindexBlockLinks` — so a target that becomes linkable by a
-/// REMOTE op does not reach this push half until something local touches it.
+/// All four are arms of `invalidations_for_op`, reached from
+/// `CommandTx::commit_and_dispatch`; an inbound-sync import reaches this same
+/// handler through `enqueue_inbound_sync_rebuilds`, which enqueues one
+/// `ReindexBlockLinks` per changed block (#4293). The Loro projection writes
+/// no `block_links` at all, so on that path this task is where a remote op's
+/// own edges and its push half both come from.
 ///
 /// # Why push and not pull
 ///
@@ -652,6 +650,19 @@ async fn handle_background_task_inner(
             // Then refresh the union of pre- and post-diff target
             // pages after the diff + rollup commit.
             run_reindex_block_links(pool, read_pool, block_id, metrics).await
+        }
+        MaterializeTask::ReindexBlockLinksBatch { block_ids } => {
+            // Every block gets its turn even when one fails: the batch is not
+            // persisted for retry, so an early `?` would drop the tail. The
+            // first error is still returned so the failure is counted.
+            let mut first_err = None;
+            for block_id in block_ids.iter() {
+                if let Err(e) = run_reindex_block_links(pool, read_pool, block_id, metrics).await {
+                    tracing::warn!(error = %e, block_id = %block_id, "ReindexBlockLinksBatch: one block failed — continuing");
+                    first_err.get_or_insert(e);
+                }
+            }
+            first_err.map_or(Ok(()), Err)
         }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
             // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND

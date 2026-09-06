@@ -186,6 +186,27 @@ export const MODULES = {
       'src/stores/__tests__/page-blocks-move.test.ts',
     ],
   },
+
+  // #4695 — the two importers #3350 measured as the strongest signal of
+  // anything tried (514 and 459 mutants; 150 and 93 survivors) and deferred
+  // for one reason only: the survivor filer's body clamp. #4686 gave each
+  // lane its own tracking parent, so the ~243 lines now land near 37k of the
+  // 60k budget. Foreign notes on their way into the user's database — the
+  // defect class this lane exists for.
+  'jex-import': {
+    src: 'src/lib/jex-import.ts',
+    tests: [
+      'src/lib/__tests__/jex-import.test.ts',
+      'src/lib/__tests__/jex-import.property.test.ts',
+    ],
+  },
+  'enex-import': {
+    src: 'src/lib/enex-import.ts',
+    tests: [
+      'src/lib/__tests__/enex-import.test.ts',
+      'src/lib/__tests__/enex-import.property.test.ts',
+    ],
+  },
 }
 
 /**
@@ -201,18 +222,6 @@ export const MODULES = {
  *   than the ENTIRE pre-#3350 lane and return the worst signal-per-second
  *   ratio measured. Both are `setup: true` shapes whose per-mutant test run
  *   is dominated by `src/test-setup.ts`.
- *
- * - `jex-import` (514 mutants, 150 survivors) and `enex-import` (459
- *   mutants, 93 survivors). These are the strongest *signal* of anything
- *   measured — a 71% covered score on `jex-import` is exactly the
- *   "line-covering, not invariant-pinning" finding #3350 is about — but
- *   enrolling both would add 243 survivors in a single week on top of this
- *   wave's ~222. `scripts/file-mutation-survivors.mjs` clamps the tracking
- *   issue body at MAX_BODY_CHARS (60_000) and THROWS when the
- *   machine-readable state block alone will not fit; at ~95 characters per
- *   survivor line that ceiling is ~630 survivors, and the throw wedges the
- *   weekly filer job red with no self-healing path. Enrol these once this
- *   wave has been triaged down, not before.
  *
  * - `jaro-winkler` (100 mutants, 32 survivors, 16s). Cheap, but it ranks
  *   fuzzy-search suggestions; a survivor means "results ordered slightly

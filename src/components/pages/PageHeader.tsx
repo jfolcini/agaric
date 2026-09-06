@@ -29,7 +29,8 @@ import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
-import { validationCode } from '@/lib/app-error'
+import { unwrap, validationCode } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { resolveAttachmentRefsForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -38,7 +39,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { editBlock, exportPageMarkdown, getBlock, setProperty } from '@/lib/tauri'
+import { editBlock, getBlock, setProperty } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
@@ -217,7 +218,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       // keystrokes — most notably via the Ctrl+Shift+E shortcut below, which
       // never blurs the editor — isn't silently missing from the export.
       await flushActiveDraft()
-      const rawMarkdown = await exportPageMarkdown(pageId)
+      const rawMarkdown = unwrap(await commands.exportPageMarkdown(pageId))
       const markdown = await resolveAttachmentRefsForCopy(rawMarkdown)
       await writeText(markdown)
       notify.success(t('pageHeader.exportCopied'))

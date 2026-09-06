@@ -259,6 +259,14 @@ describe('applyAutocompleteReplacement', () => {
     expect(nextValue).toContain('trailing')
   })
 
+  it('#3288 — a spaced tag replacement is quoted so it re-parses to one chip', () => {
+    const input = 'tag:#my'
+    const anchor = detectAutocompleteAnchor(input, input.length)
+    if (anchor === null) throw new Error('expected anchor')
+    const { nextValue } = applyAutocompleteReplacement(input, input.length, anchor, 'my tag')
+    expect(nextValue).toBe('tag:#"my tag" ')
+  })
+
   it('returns the input unchanged when there is no anchor', () => {
     const { nextValue, nextCaret } = applyAutocompleteReplacement('hello', 5, null, 'world')
     expect(nextValue).toBe('hello')

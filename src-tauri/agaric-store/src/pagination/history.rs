@@ -48,13 +48,9 @@ use agaric_core::ulid::BlockId;
 /// block for why both probes exist and for the divergence this scoping
 /// creates.
 ///
-/// Two of their filters come off here, for two different reasons: the inner
-/// `op_type = 'delete_attachment'` gate (#4336) because this query names the
-/// block it is asking about, and `src_add.is_replicated = 0` (#4620) because
-/// a replicated `add_attachment` carries `block_id` exactly as a local one
-/// does. `list_page_history`'s doc block has the asymmetry that leaves
-/// between the two sheets, and its #4627 paragraph has why the page side
-/// keeps `is_replicated` regardless.
+/// The inner `op_type = 'delete_attachment'` gate comes off here (#4336):
+/// this query names the block it is asking about, so its paired-add probe
+/// settles "is this MY attachment" where a page subtree cannot.
 ///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
@@ -163,38 +159,22 @@ pub async fn list_block_history(
 ///      `delete_attachment`'s owning block WITHOUT the row — the delete
 ///      hard-DELETEs it inside the transaction that appends the op.
 ///
-/// The idiom is deliberately identical, including the
-/// `ol.op_type = 'delete_attachment'` gate INSIDE the outer
-/// `op_type IN (...)` predicate and the `src_add.is_replicated = 0`
-/// filter. Both matter:
+/// The idiom keeps that family's `ol.op_type = 'delete_attachment'` gate
+/// INSIDE the outer `op_type IN (...)` predicate: it keeps an ORPHANED
+/// rename (`add → rename → delete`, row already gone) out — #4278 narrowed
+/// the probe for exactly that reason, and the rename's live-row probe is
+/// correct whenever the row exists, so the orphan self-heals the moment the
+/// delete is undone.
 ///
-///   * the inner gate keeps an ORPHANED rename (`add → rename → delete`,
-///     row already gone) out — #4278 narrowed the probe for exactly that
-///     reason and the same reasoning holds here: the rename's live-row
-///     probe is correct whenever the row exists, and the orphan self-heals
-///     the moment the delete is undone;
-///   * keeping the predicate byte-identical to the undo sites keeps the two
-///     admitted sets in step, which used to be load-bearing: before #4328,
-///     `undoDeleteOfImpl` (`src/stores/undo.ts`) fed an INDEX from THIS
-///     list straight into `undo_page_op`'s `undo_depth`, so any row one
-///     query admitted and the other did not shifted that positional
-///     mapping by one and made swipe-delete undo mis-target. That consumer
-///     is now ref-addressed — it reads `(device_id, seq)` off the
-///     `HistoryEntry` it picked and calls `undo_op` — so NO consumer maps
-///     a position in this list onto a position in an undo query today, and
-///     a divergence here is once again only about what the History view
-///     shows. Byte-identity is kept anyway: it is still the cheapest way
-///     to reason about these five predicates as one family, and nothing
-///     stops a future consumer from re-introducing a positional mapping
-///     (which is what #4247/#4277/#4328 each were). If you break it,
-///     break it deliberately and say so here.
+/// It drops that family's `src_add.is_replicated = 0` (#4627): a replicated
+/// `add_attachment` carries `block_id` exactly as a local one does
+/// (`ingest_remote_op_in_tx` fills the column from the payload), so the
+/// filter only hid the delete of a peer-added attachment. The three undo
+/// queries keep it: `delete_attachment` is non-reversible, so what this
+/// sheet lists never decides what Ctrl+Z offers.
 ///
-/// Broken deliberately in `list_block_history`, in the inner
-/// `op_type = 'delete_attachment'` gate here and in `src_add.is_replicated
-/// = 0` below, for two unrelated reasons.
-///
-/// It drops the gate (#4336) because
-/// that query names the block it is asking about, so its paired-add probe
+/// `list_block_history` drops the inner gate too (#4336), because that
+/// query names the block it is asking about, so its paired-add probe
 /// settles "is this MY attachment" where a page subtree cannot (#4278); an
 /// `add → rename → delete` sequence therefore leaves the rename listed on
 /// the owning block's sheet while this one still omits it.
@@ -209,25 +189,6 @@ pub async fn list_block_history(
 /// disappears from the list rather than being attributed to an arbitrary
 /// page, which is why the second probe resolves the owner instead of
 /// guessing one.
-///
-/// A second shape of the SAME caveat, and on a synced vault likely the
-/// COMMONER one: deleting, on this device, an attachment that was ADDED on
-/// a peer device. Nothing reclaimed the paired `add_attachment` — it is
-/// still sitting in `op_log` — but it got there via replication, so it
-/// carries `is_replicated = 1` here. `src_add.is_replicated = 0` in probe 2
-/// is then false for it, and probe 1 has no row to find either, because the
-/// local `delete_attachment` already removed it. Both probes false, row
-/// omitted, same degrade-to-invisible outcome — but reachable on the FIRST
-/// local delete of a peer-added attachment, with no `compact_op_log` sweep
-/// (a maintenance operation, not a routine one) required first.
-///
-/// Still open here, tracked as #4627, and the second of the two divergences
-/// above: `list_block_history` drops `src_add.is_replicated = 0` (#4620),
-/// this query keeps it. Not because the ownership argument differs — it
-/// does not — but because the predicate is one of five this query shares
-/// with the three undo queries, so removing it decides whether Ctrl+Z
-/// starts offering a peer-added attachment's delete. A design call, not a
-/// constraint this query can settle alone.
 ///
 /// Residual divergence NOT closed here, and no longer load-bearing
 /// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter
@@ -338,7 +299,6 @@ pub async fn list_page_history(
                                     SELECT 1 FROM op_log src_add \
                                     WHERE src_add.op_type = 'add_attachment' \
                                     AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                                    AND src_add.is_replicated = 0 \
                                     AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
                                 ) \
                             ) \
@@ -458,7 +418,6 @@ pub async fn list_page_history(
                              SELECT 1 FROM op_log src_add \
                              WHERE src_add.op_type = 'add_attachment' \
                              AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                             AND src_add.is_replicated = 0 \
                              AND src_add.block_id IN (SELECT id FROM page_blocks) \
                          ) \
                      ) \

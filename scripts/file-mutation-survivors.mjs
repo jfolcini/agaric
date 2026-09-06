@@ -1669,7 +1669,7 @@ export function buildIssueBody({
   // MAX_BODY_CHARS); the message carries the actual numbers so a maintainer
   // reading a red weekly job knows by how much, not just that.
   throw new Error(
-    `the survivor set outgrew a single issue body: ${all.length} finding(s) render to ${clampedHarder.length} chars, ${clampedHarder.length - MAX_BODY_CHARS} over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536; the measured ceiling is ~635 findings at ~90 chars each). The machine-readable state block cannot be truncated without corrupting the tracked set — every dropped line would be re-reported as new next run. Triage the tracking issue down, split the lanes into separate tracking issues, add a per-outcome cap or spill the lists to the child issues, or un-enrol the noisiest module from stryker.modules.mjs — the deferred list there records this ceiling as the reason some modules are not enrolled yet (#3350).`,
+    `the survivor set outgrew a single issue body: ${all.length} finding(s) render to ${clampedHarder.length} chars, ${clampedHarder.length - MAX_BODY_CHARS} over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536; the measured ceiling is ~635 findings at ~90 chars each). The machine-readable state block cannot be truncated without corrupting the tracked set — every dropped line would be re-reported as new next run. Triage the tracking issue down, split the lanes into separate tracking issues, add a per-outcome cap or spill the lists to the child issues, or un-enrol the noisiest module from stryker.modules.mjs (#3350).`,
   )
 }
 

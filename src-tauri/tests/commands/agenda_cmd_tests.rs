@@ -427,142 +427,6 @@ async fn list_blocks_date_range_with_source_filter() {
 }
 
 // ======================================================================
-// count_agenda_batch
-// ======================================================================
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_empty_dates_returns_empty() {
-    let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_inner(&pool, vec![], &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert!(
-        result.is_empty(),
-        "empty dates input should return empty map"
-    );
-}
-
-/// #2542 — `count_agenda_batch_inner` must share the
-/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
-/// rejects with Validation before the runaway `json_each(?1)` membership
-/// scan (checked before per-date format validation, so the cap dominates).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_rejects_oversize() {
-    let (pool, _dir) = test_pool().await;
-
-    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
-        .map(|i| format!("2025-06-{i:02}"))
-        .collect();
-    let big = count_agenda_batch_inner(&pool, oversize, &SpaceScope::Global).await;
-    assert!(
-        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
-        "oversize input must reject with Validation"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_returns_correct_counts() {
-    let (pool, _dir) = test_pool().await;
-
-    // Insert blocks that own the agenda entries
-    insert_block(&pool, "AG_BLK1", "content", "task 1", None, None).await;
-    insert_block(&pool, "AG_BLK2", "content", "task 2", None, None).await;
-    insert_block(&pool, "AG_BLK3", "content", "task 3", None, None).await;
-
-    // Insert agenda_cache entries: 2 items on 2025-06-01, 1 on 2025-06-02
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2025-06-01")
-        .bind("AG_BLK1")
-        .bind("property:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2025-06-01")
-        .bind("AG_BLK2")
-        .bind("property:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2025-06-02")
-        .bind("AG_BLK3")
-        .bind("property:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = count_agenda_batch_inner(
-        &pool,
-        vec![
-            "2025-06-01".into(),
-            "2025-06-02".into(),
-            "2025-06-03".into(),
-        ],
-        &SpaceScope::Global,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        result.get("2025-06-01"),
-        Some(&2),
-        "June 1 should have 2 entries"
-    );
-    assert_eq!(
-        result.get("2025-06-02"),
-        Some(&1),
-        "June 2 should have 1 entry"
-    );
-    assert_eq!(
-        result.get("2025-06-03"),
-        None,
-        "date with no entries should not appear in result"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_excludes_deleted_blocks() {
-    let (pool, _dir) = test_pool().await;
-
-    // Insert one live and one soft-deleted block
-    insert_block(&pool, "AG_LIVE", "content", "live", None, None).await;
-    insert_block(&pool, "AG_DEL", "content", "deleted", None, None).await;
-    // Soft-delete AG_DEL
-    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
-        .bind("AG_DEL")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // Both blocks have agenda entries on the same date
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2025-07-01")
-        .bind("AG_LIVE")
-        .bind("property:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2025-07-01")
-        .bind("AG_DEL")
-        .bind("property:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()], &SpaceScope::Global)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        result.get("2025-07-01"),
-        Some(&1),
-        "only the live block should be counted"
-    );
-}
-
-// ======================================================================
 // count_agenda_batch_by_source
 // ======================================================================
 
@@ -2972,203 +2836,6 @@ async fn list_projected_agenda_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// Space scoping for count_agenda_batch_inner
-// ======================================================================
-//
-// Seed agenda_cache rows for blocks in two distinct spaces. The
-// count map must reflect only the in-space blocks when scoped, and
-// both when unscoped.
-
-/// Seed an `agenda_cache` row for `block_id` on `date`.
-async fn insert_agenda_cache_row(pool: &sqlx::SqlitePool, date: &str, block_id: &str) {
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind(date)
-        .bind(block_id)
-        .bind("property:due_date")
-        .execute(pool)
-        .await
-        .unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_returns_only_current_space_blocks_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    // Two blocks on the same date, one per space.
-    seed_two_space_blocks(&pool, &["CAB_A1"], &["CAB_B1"], async |pool, id| {
-        insert_block(pool, id, "content", "x", None, None).await;
-        insert_agenda_cache_row(pool, "2025-08-01", id).await;
-    })
-    .await;
-
-    let result = count_agenda_batch_inner(
-        &pool,
-        vec!["2025-08-01".into()],
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        result.get("2025-08-01"),
-        Some(&1),
-        "space A scope must count exactly 1 block on 2025-08-01; got {result:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_with_none_space_id_returns_all_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(&pool, &["CAB_A1"], &["CAB_B1"], async |pool, id| {
-        insert_block(pool, id, "content", "x", None, None).await;
-        insert_agenda_cache_row(pool, "2025-08-01", id).await;
-    })
-    .await;
-
-    let result = count_agenda_batch_inner(&pool, vec!["2025-08-01".into()], &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert_eq!(
-        result.get("2025-08-01"),
-        Some(&2),
-        "None must count both blocks on 2025-08-01; got {result:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_with_nonexistent_space_id_returns_empty_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(&pool, &["CAB_A1"], &[], async |pool, id| {
-        insert_block(pool, id, "content", "x", None, None).await;
-        insert_agenda_cache_row(pool, "2025-08-01", id).await;
-    })
-    .await;
-
-    let result = count_agenda_batch_inner(
-        &pool,
-        vec!["2025-08-01".into()],
-        &SpaceScope::Active(SpaceId::from_trusted("01NONEXISTENT0000000000000")),
-    )
-    .await
-    .unwrap();
-    assert!(
-        result.is_empty(),
-        "nonexistent space must return empty map; got {result:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_disjointness_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(
-        &pool,
-        &["CAB_A1", "CAB_A2", "CAB_A3"],
-        &["CAB_B1", "CAB_B2"],
-        async |pool, id| {
-            insert_block(pool, id, "content", "x", None, None).await;
-            insert_agenda_cache_row(pool, "2025-08-02", id).await;
-        },
-    )
-    .await;
-
-    let dates = vec!["2025-08-02".into()];
-    let a = count_agenda_batch_inner(
-        &pool,
-        dates.clone(),
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-    )
-    .await
-    .unwrap();
-    let b = count_agenda_batch_inner(
-        &pool,
-        dates.clone(),
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
-    )
-    .await
-    .unwrap();
-    let unscoped = count_agenda_batch_inner(&pool, dates, &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert_eq!(a.get("2025-08-02"), Some(&3));
-    assert_eq!(b.get("2025-08-02"), Some(&2));
-    assert_eq!(unscoped.get("2025-08-02"), Some(&5));
-}
-
-// ======================================================================
-// Phase 2 — parity: SpaceScope::Global ≡ pre-migration None-shape
-// ======================================================================
-//
-// `count_agenda_batch_inner` migrated from `space_id: Option<String>` to
-// `scope: &SpaceScope` in Phase 2. The bind site uses
-// `scope.as_filter_param()` which returns `Option<&str>` — the same
-// shape the pre-migration code passed to the SQL `?N IS NULL OR ...`
-// idiom. This test pins that equivalence: with the count fn now
-// taking `&SpaceScope`, `Global` must include rows from BOTH spaces
-// (matching the old `None` semantics) while `Active(SpaceId)` returns
-// only the in-scope subset. If `Global` ever stops behaving like the
-// pre-migration `None`, this test fails — the contract for "delete
-// the old shape only when parity holds" (plan body, Phase 2 strategy).
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_inner_global_equals_pre_migration_none() {
-    let (pool, _dir) = test_pool().await;
-    // Seed two blocks on the same date, one per space.
-    seed_two_space_blocks(&pool, &["PAR_A1"], &["PAR_B1"], async |pool, id| {
-        insert_block(pool, id, "content", "x", None, None).await;
-        insert_agenda_cache_row(pool, "2025-10-15", id).await;
-    })
-    .await;
-
-    let dates = vec!["2025-10-15".into()];
-
-    // Global: must include both spaces (parity with pre-migration None).
-    let counts_global = count_agenda_batch_inner(&pool, dates.clone(), &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert_eq!(
-        counts_global.get("2025-10-15"),
-        Some(&2),
-        "Global must count both space-A and space-B blocks (parity with pre-migration `None`); got {counts_global:?}"
-    );
-
-    // Active(A): must include only space A.
-    let counts_a = count_agenda_batch_inner(
-        &pool,
-        dates.clone(),
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        counts_a.get("2025-10-15"),
-        Some(&1),
-        "Active(A) must count only space-A blocks; got {counts_a:?}"
-    );
-
-    // Active(B): must include only space B.
-    let counts_b = count_agenda_batch_inner(
-        &pool,
-        dates,
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        counts_b.get("2025-10-15"),
-        Some(&1),
-        "Active(B) must count only space-B blocks; got {counts_b:?}"
-    );
-
-    // The union of disjoint Active scopes equals the Global count —
-    // the algebraic identity that justifies dropping the old
-    // `Option<String>` shape.
-    assert_eq!(
-        counts_a.get("2025-10-15").copied().unwrap_or(0)
-            + counts_b.get("2025-10-15").copied().unwrap_or(0),
-        counts_global.get("2025-10-15").copied().unwrap_or(0),
-        "Active(A) + Active(B) must equal Global (disjoint-union identity)"
-    );
-}
-
-// ======================================================================
 // Space scoping for count_agenda_batch_by_source_inner
 // ======================================================================
 
@@ -3926,6 +3593,54 @@ async fn projected_agenda_empty_window_inside_horizon_does_not_expand() {
     assert!(page.next_cursor.is_none());
 }
 
+/// #3260 — a range that STRADDLES the rebuild's reference date. The upper
+/// bound is inside the horizon, so the old routing served it from the cache,
+/// which holds nothing before `today`: the past half went missing from a
+/// non-empty page with `has_more: false`, and the empty-window probe never
+/// fired. Reachable through the MCP `get_agenda` tool, which forwards its
+/// dates verbatim. Both ends of the guarantee now route the read.
+#[tokio::test]
+async fn projected_agenda_range_straddling_rebuild_today_keeps_the_past_half_3260() {
+    let (pool, _dir) = test_pool().await;
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3260A0000000000000000000", base, pinned_today).await;
+
+    // Three days before today, three after: seven daily occurrences.
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        "2050-04-03".to_owned(),
+        "2050-04-09".to_owned(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    let mut dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    dates.sort_unstable();
+    assert_eq!(
+        dates,
+        vec![
+            "2050-04-03",
+            "2050-04-04",
+            "2050-04-05",
+            "2050-04-06",
+            "2050-04-07",
+            "2050-04-08",
+            "2050-04-09",
+        ],
+        "the three occurrences before the rebuild's reference date must not be dropped"
+    );
+    assert!(!page.has_more);
+}
+
 /// The lower bound of the guarantee. The rebuild projects from its own
 /// `today` forward, so occurrences BEFORE that date were never materialized —
 /// an empty cache result there means "not covered", not "nothing to show",
@@ -4499,66 +4214,6 @@ async fn malformed_repeat_until_is_warned_and_skipped() {
         entries.is_empty(),
         "block with malformed repeat-until must be skipped; got {} entries",
         entries.len()
-    );
-}
-
-// ======================================================================
-// Phase 2 — SpaceScope parity test
-// ======================================================================
-//
-// Asserts that `count_agenda_batch_inner` honours the `&SpaceScope`
-// boundary correctly: `Global` returns the union across spaces, while
-// `Active(SpaceId)` returns only the named space's subset. Mirror of the
-// pre-migration `space_id: None` / `Some(...)` semantics — same SQL, the
-// type-system gate moved to the call site.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pend18_count_agenda_batch_scope_parity() {
-    let (pool, _dir) = test_pool().await;
-
-    // Two distinct spaces, one block each, both on the same date so the
-    // per-date count surfaces the cross-space union vs. one-space slice.
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
-    insert_block(&pool, "P18_AG_A", "content", "task A", None, None).await;
-    insert_block(&pool, "P18_AG_B", "content", "task B", None, None).await;
-    assign_to_space(&pool, "P18_AG_A", TEST_SPACE_ID).await;
-    assign_to_space(&pool, "P18_AG_B", TEST_SPACE_B_ID).await;
-
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2026-09-01")
-        .bind("P18_AG_A")
-        .bind("column:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
-        .bind("2026-09-01")
-        .bind("P18_AG_B")
-        .bind("column:due_date")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let global = count_agenda_batch_inner(&pool, vec!["2026-09-01".into()], &SpaceScope::Global)
-        .await
-        .unwrap();
-    assert_eq!(
-        global.get("2026-09-01"),
-        Some(&2),
-        "Global must return the union of both spaces"
-    );
-
-    let active_a = count_agenda_batch_inner(
-        &pool,
-        vec!["2026-09-01".into()],
-        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        active_a.get("2026-09-01"),
-        Some(&1),
-        "Active(TEST_SPACE_ID) must return only space A's subset"
     );
 }
 

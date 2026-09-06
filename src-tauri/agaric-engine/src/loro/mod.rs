@@ -17,10 +17,10 @@
 
 pub mod engine;
 
-// Persisted peer-id epoch (#792): bumped inside the snapshot-RESET
-// transaction so post-reset engines mint ops under a fresh PeerID
-// instead of forking the (peer, counter) space against pre-reset
-// history still held by peers.
+// Persisted peer-id epoch (#792): a vault that went through a snapshot
+// RESET before #4699 carries epoch >= 1, and its engines keep minting
+// under that PeerID so they never fork the (peer, counter) space against
+// the pre-reset history peers still hold. Nothing bumps it any more.
 pub mod peer_epoch;
 
 // Projection helpers that write SQL rows from post-apply Loro engine

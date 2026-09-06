@@ -37,9 +37,6 @@ function put(blockId: string, type: string, content: string, parent: string | nu
   return blockId
 }
 
-interface ItemsResponse {
-  items: Array<Record<string, unknown>>
-}
 interface GroupedResponse {
   groups: Array<{ blocks: Array<Record<string, unknown>> }>
   total_count: number
@@ -47,11 +44,11 @@ interface GroupedResponse {
 
 /** Every block id in a `Contains`-filtered backlink answer, sorted. */
 function containsIds(targetId: string, query: string): string[] {
-  const res = dispatch('query_backlinks_filtered', {
+  const res = dispatch('list_backlinks_grouped', {
     blockId: targetId,
     filters: [{ type: 'Contains', query }],
-  }) as ItemsResponse
-  return res.items.map((b) => b['id'] as string).toSorted()
+  }) as GroupedResponse
+  return res.groups.flatMap((g) => g.blocks.map((b) => b['id'] as string)).toSorted()
 }
 
 /** Every block id in an unlinked-references answer, sorted. */
@@ -61,10 +58,10 @@ function unlinkedIds(pageId: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// `query_backlinks_filtered` — the `Contains` leaf
+// `list_backlinks_grouped` — the `Contains` leaf
 // ---------------------------------------------------------------------------
 
-describe('query_backlinks_filtered — Contains matches fts_blocks.stripped (#4022)', () => {
+describe('list_backlinks_grouped — Contains matches fts_blocks.stripped (#4022)', () => {
   const HOST = id('BHOST')
   const TARGET = id('BTARGET')
   const OTHER = id('BOTHER')

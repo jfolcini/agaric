@@ -211,21 +211,6 @@ pub struct EngineReloadCtx<'a> {
     pub device_id: &'a str,
 }
 
-/// Result of an initiator-side snapshot catch-up attempt.
-///
-/// One variant: the catch-up either applied or returned `Err`. It used to
-/// carry a `Rejected` arm for an over-cap CBOR `SnapshotOffer`; #3487 deleted
-/// that message and #4699 the arm.
-#[derive(Debug, PartialEq)]
-pub enum CatchupOutcome {
-    /// Snapshot was received, decoded, applied, and the initiator's
-    /// frontier advanced to the snapshot's `up_to_hash`.
-    Applied {
-        bytes_received: u64,
-        up_to_hash: String,
-    },
-}
-
 /// Resolve the peer identity a catch-up should be attributed to, preferring
 /// the session-level id and falling back to the daemon-supplied one.
 ///
@@ -313,7 +298,7 @@ pub async fn try_receive_snapshot_catchup(
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
     engine_reload: Option<EngineReloadCtx<'_>>,
-) -> Result<CatchupOutcome, AppError> {
+) -> Result<(), AppError> {
     // #4097: settle the peer identity before anything is emitted, and shadow
     // the parameter with it so every event, log field and bookkeeping write
     // below is attributed to the peer we actually resolved instead of to `""`.
@@ -409,7 +394,7 @@ async fn receive_loro_snapshot_catchup(
     engine_reload: Option<EngineReloadCtx<'_>>,
     first_msg: LoroSyncMessage,
     first_is_last: bool,
-) -> Result<CatchupOutcome, AppError> {
+) -> Result<(), AppError> {
     let EngineReloadCtx {
         registry,
         device_id,
@@ -555,10 +540,7 @@ async fn receive_loro_snapshot_catchup(
         changed_blocks: None,
     });
 
-    Ok(CatchupOutcome::Applied {
-        bytes_received,
-        up_to_hash: last_hash,
-    })
+    Ok(())
 }
 
 /// #2696 — boot-time sweep of orphaned snapshot-receive temp files.

@@ -6,7 +6,7 @@ import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import { exportPageMarkdown, listAllPagesInSpace } from '@/lib/tauri'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /**
  * Characters that are illegal in a path SEGMENT on common filesystems
@@ -294,7 +294,7 @@ async function exportSpacePagesIntoZip(
   // `listAllPagesInSpace` returns every page in one query (no pagination, no
   // clamp) — bounded by the space's intrinsic page count, which is what the
   // export needs.
-  const pages = await listAllPagesInSpace(spaceId)
+  const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
 
   // Cache of emitted assets keyed by attachment id, so an image referenced from
   // multiple pages is written once and every page links to the same file.
@@ -312,7 +312,7 @@ async function exportSpacePagesIntoZip(
   for (const page of pages) {
     let md: string
     try {
-      md = await exportPageMarkdown(page.id)
+      md = unwrap(await commands.exportPageMarkdown(page.id))
     } catch (err) {
       logger.warn('export-graph', 'page export failed', { pageId: page.id }, err)
       skippedPageEntries.push({ title: `${pathPrefix}${page.content ?? page.id}` })

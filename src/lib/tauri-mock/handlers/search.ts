@@ -222,7 +222,7 @@ export function foldForFtsIndex(s: string): string {
  *
  * An empty needle admits every row. The `search_blocks` arms all test
  * blank-ness before calling in, but the `Contains` filter of
- * `query_backlinks_filtered` does NOT (`handlers/links.ts`), so that branch IS
+ * `list_backlinks_grouped` does NOT (`handlers/links.ts`), so that branch IS
  * reachable — and the backend
  * returns an EMPTY set there instead (`src-tauri/agaric-store/src/backlink/filters.rs:382`, `:957`, on
  * `query.trim().is_empty()`). Note `trim()`: a whitespace-only query is

@@ -1,14 +1,16 @@
 import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import type { BlockRow, CreateBlockSpec } from '@/lib/tauri'
 import {
   createBlocksBatch,
   firstChildForBlocks,
   getProperty,
-  loadPageSubtree,
   paginationLimit,
   queryByProperty,
 } from '@/lib/tauri'
@@ -349,7 +351,9 @@ export async function insertTemplateBlocks(
   // Templates are authored, small subtrees, so truncation is not expected
   // here; take the blocks array. (A pathological >10k-block template would
   // be capped by the backend, matching the prior bare-array behaviour.)
-  const descendants = (await loadPageSubtree(templatePageId, effectiveSpaceId)).blocks
+  const descendants = unwrap(
+    await commands.loadPageSubtree(templatePageId, requireActiveScope(effectiveSpaceId)),
+  ).blocks
   const childrenByParent = new Map<string, BlockRow[]>()
   for (const block of descendants) {
     const pid = block.parent_id

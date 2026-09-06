@@ -485,30 +485,6 @@ export const propertiesHandlers = {
   // Batch count commands
   // ---------------------------------------------------------------------------
 
-  count_agenda_batch: (args) => {
-    const a = args as Record<string, unknown>
-    const dates = a['dates'] as string[]
-    // Honour `scope: SpaceScope` (mirrors
-    // `count_agenda_batch_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const result: Record<string, number> = {}
-    for (const dateStr of dates) {
-      const count = [...blocks.values()].filter((b) => {
-        if (b['deleted_at'] as string | null) return false
-        if (b['due_date'] !== dateStr && b['scheduled_date'] !== dateStr) return false
-        if (spaceId !== null) {
-          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-          if (ownerSpace !== spaceId) return false
-        }
-        return true
-      }).length
-      result[dateStr] = count
-    }
-    return result
-  },
-
   count_agenda_batch_by_source: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
@@ -632,7 +608,6 @@ export const propertiesHandlers = {
   | 'set_priority'
   | 'set_due_date'
   | 'set_scheduled_date'
-  | 'count_agenda_batch'
   | 'count_agenda_batch_by_source'
   | 'create_property_def'
   | 'list_property_defs'

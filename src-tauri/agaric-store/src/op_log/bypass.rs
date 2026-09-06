@@ -4,7 +4,7 @@ use agaric_core::error::AppError;
 ///
 /// Inserts the sentinel row into `_op_log_mutation_allowed`. Shared by the
 /// transaction-scoped [`enable_op_log_mutation_bypass`] and the encapsulated
-/// wipe helpers [`truncate`] / [`prune`] so the bypass INSERT lives in exactly
+/// wipe helper [`prune`] so the bypass INSERT lives in exactly
 /// one place.
 async fn enable_op_log_mutation_bypass_conn(
     conn: &mut sqlx::SqliteConnection,
@@ -40,16 +40,16 @@ async fn disable_op_log_mutation_bypass_conn(
 /// — preventing it from ever becoming visible to other connections. On
 /// rollback the row is discarded automatically.
 ///
-/// # When to reach for [`truncate`] / [`prune`] instead
-/// A caller that only wants to wipe (RESET) or compaction-prune `op_log`
-/// should call [`truncate`] / [`prune`] — those encapsulate the
+/// # When to reach for [`prune`] instead
+/// A caller that only wants to compaction-prune `op_log`
+/// should call [`prune`] — it encapsulates the
 /// enable → delete → disable bracket so the bypass can never be left
 /// dangling. This raw pair remains for callers (and tests) that need to
 /// drive their own multi-statement bypass window.
 ///
 /// # A raw DELETE must ALSO capture the seq high-water (#3310 / #3998)
 /// The bracket is not the only obligation a wholesale `op_log` delete
-/// carries. [`truncate`] / [`prune`] additionally record the pre-delete
+/// carries. [`prune`] additionally records the pre-delete
 /// per-device `MAX(seq)` into `super::high_water` so the local-append
 /// allocator cannot restart at `seq = 1` over an emptied log and re-mint
 /// `(device_id, seq)` addresses a paired peer still holds. This raw pair
@@ -58,9 +58,8 @@ async fn disable_op_log_mutation_bypass_conn(
 /// swallowing this device's post-wipe history via `INSERT OR IGNORE`) is
 /// invisible locally. Every call site of this pair today is `#[cfg(test)]`;
 /// any future PRODUCTION site that deletes `op_log` rows through it must
-/// call `super::high_water::capture_device_frontier` /
-/// `super::high_water::capture_all_frontiers` first, in the same
-/// transaction — or, preferably, use [`truncate`] / [`prune`] instead.
+/// call `super::high_water::capture_device_frontier` first, in the same
+/// transaction — or, preferably, use [`prune`] instead.
 ///
 /// #4018: that obligation is no longer carried by this doc comment alone.
 /// `scripts/check-op-log-delete.py` (prek hook `check-op-log-delete`) fails
@@ -98,53 +97,6 @@ pub async fn disable_op_log_mutation_bypass(
     disable_op_log_mutation_bypass_conn(tx).await
 }
 
-/// Wholesale-wipe `op_log`, encapsulating the H-13 immutability-trigger
-/// bypass bracket (#2895 slice 4).
-///
-/// The BEFORE DELETE trigger on `op_log` (migration 0036) ABORTS a bare
-/// `DELETE FROM op_log` unless the `_op_log_mutation_allowed` sentinel is
-/// present. Callers that open-coded the wipe had to remember to bracket it
-/// with `enable_op_log_mutation_bypass` → delete → `disable_op_log_mutation_bypass`
-/// by hand; forgetting the bracket aborts the whole transaction, and
-/// forgetting the *disable* leaks a global bypass to every other connection.
-/// This helper owns that dance so the caller can't get it wrong: it runs
-/// enable → `DELETE FROM op_log` → disable on `conn`, leaving the bypass
-/// DISABLED on return.
-///
-/// Opens NO transaction: the high-water capture and the three bypass/delete
-/// statements run on the caller's connection/transaction in order, so the
-/// wipe, its high-water capture, and its bypass bracket are
-/// atomic with whatever surrounding write the caller commits (e.g. the
-/// snapshot RESET). On any error the caller's transaction rolls back, which
-/// discards the sentinel INSERT as well — the bypass never escapes.
-///
-/// This is the RESET-path counterpart to [`prune`] (compaction). Used by the
-/// snapshot RESET (`agaric-sync`'s `apply_snapshot`).
-///
-/// # Seq high-water (#3998)
-/// Before the DELETE this captures every device's `MAX(seq)` into the durable
-/// `super::high_water` marks, so the local-append allocator does not restart
-/// at `seq = 1` over the emptied log and re-issue `(device_id, seq)` addresses
-/// a paired peer still holds. See that module for why the mark lives in
-/// `app_settings` (the RESET does not wipe it) rather than in `op_log`.
-///
-/// # Errors
-/// Returns [`AppError`] if the high-water capture or any of the three
-/// bypass / delete statements fail.
-pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
-    // #3998: record every device's frontier BEFORE the wipe, so the local
-    // allocator does not restart at seq 1 and re-mint op addresses a paired
-    // peer still holds as audit rows. Deliberately inside the caller's
-    // transaction: the mark and the wipe commit — or roll back — together.
-    super::high_water::capture_all_frontiers(&mut *conn).await?;
-    enable_op_log_mutation_bypass_conn(&mut *conn).await?;
-    sqlx::query!("DELETE FROM op_log")
-        .execute(&mut *conn)
-        .await?;
-    disable_op_log_mutation_bypass_conn(&mut *conn).await?;
-    Ok(())
-}
-
 /// Compaction-prune the ops of a single device from `op_log`, encapsulating
 /// the H-13 immutability-trigger bypass bracket (#2895 slice 4).
 ///
@@ -167,7 +119,7 @@ pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError>
 /// mark, so the allocator keeps counting from the pre-compaction frontier
 /// instead of falling back to `seq = 1`.
 ///
-/// Like [`truncate`], this self-brackets the H-13 bypass (enable → delete →
+/// This self-brackets the H-13 bypass (enable → delete →
 /// disable) around its own DELETE, so a compaction loop that calls `prune`
 /// per device can't forget the bracket and each DELETE runs with the sentinel
 /// present. This is behaviourally identical to the previous "bracket once

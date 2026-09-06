@@ -22,11 +22,16 @@ import { useSearchHistoryStore } from '@/stores/search-history'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+const mockResolvePageByAlias = vi.hoisted(() => vi.fn().mockResolvedValue(null))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    resolvePageByAlias: vi.fn().mockResolvedValue(null),
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: (...args: unknown[]) =>
+        mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 

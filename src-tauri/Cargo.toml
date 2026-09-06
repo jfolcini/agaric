@@ -523,6 +523,14 @@ panic = "unwind"
 lto = false
 codegen-units = 16
 
+# #4696: the cargo-mutants lane's profile; `.cargo/mutants.toml` selects it
+# and carries the measurement. `[profile.dev.package."*"] debug = false`
+# below only covers dependencies; the workspace crates are what every mutant
+# recompiles, and a mutant's symbols are never read.
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
 # Dev-build link-time trim (PEND-37, local dev speed). The link step is the
 # long pole of incremental compiles on this graph (see docs/BUILD.md §"Speed
 # up Rust builds" — 200K LOC + the Tauri/sqlx/Loro/OTel/rustls/reqwest tree);

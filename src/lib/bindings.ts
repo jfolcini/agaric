@@ -395,12 +395,6 @@ export const commands = {
 	/**  Tauri command: redo page op. Delegates to [`redo_page_op_inner`]. */
 	redoPageOp: (undoDeviceId: string, undoSeq: number) => typedError<UndoResult, AppError>(__TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq })),
 	/**
-	 *  Tauri command: compute the size of the consecutive same-device,
-	 *  within-window undo group starting at the Nth-most-recent undoable op.
-	 *  Delegates to [`find_undo_group_inner`]..
-	 */
-	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppError>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
-	/**
 	 *  Tauri command: undo an entire consecutive same-device, within-window undo
 	 *  group in a single IMMEDIATE transaction. Delegates to
 	 *  [`undo_page_group_inner`]. #2190 — replaces the FE's `find_undo_group` +
@@ -425,8 +419,6 @@ export const commands = {
 	 *  upper bound across devices.
 	 */
 	computeBlockVsCurrentDiff: (blockId: BlockId, historicalCreatedAt: number, historicalSeq: number) => typedError<DiffSpan[], AppError>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalCreatedAt, historicalSeq })),
-	/**  Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`]. */
-	queryBacklinksFiltered: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<BacklinkQueryResponse, AppError>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, scope })),
 	/**  Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`]. */
 	listBacklinksGrouped: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope })),
 	/**  Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`]. */
@@ -461,137 +453,6 @@ export const commands = {
 	deletePropertyDef: (key: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_property_def", { key })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
-	/**  Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`]. */
-	getPeerRef: (peerId: string) => typedError<{
-	peer_id: string,
-	last_hash: string | null,
-	last_sent_hash: string | null,
-	/**
-	 *  Most recent successful sync, in milliseconds since the UNIX epoch
-	 *  (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
-	 * 
-	 *  This is the **puller's** clock: it advances only when WE pulled this
-	 *  peer's state into our store (#610 — a streamer that advanced it would
-	 *  make itself permanently not-overdue and starve the reverse direction).
-	 *  A device that only ever succeeds as responder therefore leaves it
-	 *  `None` forever; [`Self::streamed_at`] is the other half of the picture.
-	 */
-	synced_at: number | null,
-	/**
-	 *  Most recent session in which we STREAMED our state to this peer, in
-	 *  milliseconds since the UNIX epoch (UTC); `None` = never streamed
-	 *  (migration 0111, #4084).
-	 * 
-	 *  The counterpart to [`Self::synced_at`], recording the direction that
-	 *  column deliberately cannot. Together they answer "when did anything
-	 *  last move between us" — the device list renders
-	 *  `MAX(synced_at, streamed_at)` so a responder-only peer stops reading as
-	 *  "never synced".
-	 * 
-	 *  The scheduler (`peers_due_for_resync`) still reads `synced_at` **only**:
-	 *  treating a recent stream as "not due" would reintroduce exactly the
-	 *  #610 starvation this column exists to avoid.
-	 */
-	streamed_at: number | null,
-	reset_count: number,
-	/**
-	 *  Most recent protocol reset, in milliseconds since the UNIX epoch
-	 *  (UTC); `None` = never reset. #109 Phase 2: was an RFC 3339 string.
-	 */
-	last_reset_at: number | null,
-	/**
-	 *  SHA-256 hex of the peer's TLS certificate, observed during pairing.
-	 *  Used for certificate pinning on reconnection.
-	 */
-	cert_hash: string | null,
-	/**
-	 *  The USER'S name for this peer (e.g. "Javier's Phone") — a local display
-	 *  override, typed into the rename dialog on THIS device and authoritative
-	 *  nowhere else.
-	 * 
-	 *  Written only by the `update_peer_name` command
-	 *  ([`update_device_name`]). Nothing on the wire may touch it: a peer that
-	 *  could overwrite it would silently undo a rename the user performed,
-	 *  which is the one outcome a rename feature must never produce. The name
-	 *  the peer supplies lands in [`Self::remote_device_name`] instead.
-	 * 
-	 *  `None` means the user has not renamed this peer — NOT that the peer has
-	 *  no name. Read it through the display precedence
-	 *  (`device_name` → `remote_device_name` → truncated `peer_id`), never on
-	 *  its own.
-	 */
-	device_name: string | null,
-	/**
-	 *  The name the peer told us it is called, over the wire (migration 0114,
-	 *  #4298) — a CLAIM by an untrusted remote, not a fact about it.
-	 * 
-	 *  Carried in `HeadExchange` and refreshed on every session in which this
-	 *  device is the responder AND authenticated the peer as this row's id — a
-	 *  bound peer resolved through the key its handshake proved, or a joiner the
-	 *  TOFU bind just accepted. So a peer renamed on its own machine propagates
-	 *  that name here on its next dial, and a session keyed on a device id it
-	 *  merely *claimed* writes nothing here (see the responder's name block and
-	 *  #4230). It is stripped of control and bidi-format characters and clamped
-	 *  to 64 characters on send AND again on receive, and empty/whitespace-only
-	 *  is normalised to `None`; a peer can put anything in this field, so the
-	 *  receiving side re-applies every bound rather than trusting the sender to
-	 *  have applied it.
-	 * 
-	 *  Strictly lower precedence than [`Self::device_name`]: it is what the UI
-	 *  falls back to when the user has set no override, which is what makes
-	 *  clearing an override fall back to the peer's own name rather than to a
-	 *  truncated UUID.
-	 * 
-	 *  `None` is normal *as a starting state* — a peer on a build predating
-	 *  #4298 sends no name, and a device whose hostname could not be read sends
-	 *  none either. It is not a state a row goes back to: the responder
-	 *  short-circuits on a missing name rather than recording its absence (`if
-	 *  let Some(name) = offered_device_name`), so once a name has been recorded
-	 *  the row keeps it until the peer supplies a different one. That is the
-	 *  wanted behaviour — a peer that downgrades, or boots once without a
-	 *  readable hostname, must not blank a device list back to hex — and it
-	 *  means [`update_remote_device_name`]'s `None` arm has no production
-	 *  caller.
-	 */
-	remote_device_name: string | null,
-	/**
-	 *  Last known network address (host:port) for direct connection.
-	 *  Updated after each successful sync. Used when mDNS is unavailable.
-	 */
-	last_address: string | null,
-	/**
-	 *  The peer's iroh `EndpointId` — a 32-byte ed25519 public key — in its
-	 *  canonical 64-character lowercase-hex `Display` encoding (migration 0107,
-	 *  plan #3464).
-	 * 
-	 *  Unlike [`Self::cert_hash`], this is not a pin taken *against* an
-	 *  identity the peer claims: the key **is** the identity, authenticated by
-	 *  the QUIC/TLS 1.3 handshake before any application byte moves.
-	 * 
-	 *  `None` is a normal, expected state, not an error — every peer paired
-	 *  over the pre-iroh transport has no iroh identity, and nothing writes
-	 *  this column yet (the write path arrives with the transport cutover).
-	 */
-	endpoint_id: string | null,
-	/**
-	 *  When this peer first told us, on the wire, that it holds no pairing
-	 *  with this device — milliseconds since the UNIX epoch (UTC), or `None`
-	 *  when it has not (migration 0113, #4297).
-	 * 
-	 *  Set only for a peer we still hold a row for: the other device unpaired
-	 *  us and there is no wire message that says so, so the only evidence is
-	 *  its `Rejection::Unpaired` refusal of every dial we make. Non-`None`
-	 *  therefore means "this pairing is dead and only a re-pair will revive
-	 *  it", and the device list must stop rendering the row as healthy —
-	 *  in particular it must stop showing a `MAX(synced_at, streamed_at)`
-	 *  relative time that keeps counting from the last session that worked.
-	 * 
-	 *  It is the FIRST refusal of the streak, not the latest, and any session
-	 *  that actually moves data in either direction clears it (see
-	 *  [`mark_unpaired_by_peer`] and [`update_on_sync_in_tx`]).
-	 */
-	unpaired_by_peer_at_ms: number | null,
-} | null, AppError>(__TAURI_INVOKE("get_peer_ref", { peerId })),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
 	deletePeerRef: (peerId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
 	/**
@@ -678,8 +539,6 @@ export const commands = {
 	 *  nothing ever writes it.
 	 */
 	getOsNetworkBlockStatus: () => typedError<OsNetworkBlockStatus, AppError>(__TAURI_INVOKE("get_os_network_block_status")),
-	/**  Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`]. */
-	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
@@ -875,11 +734,6 @@ export const commands = {
 	 *  to [`first_child_for_blocks_inner`].
 	 */
 	firstChildForBlocks: (blockIds: BlockId[]) => typedError<{ [key in string]: BlockRow }, AppError>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
-	/**
-	 *  Tauri command: batch-fetch full block rows by id. Delegates to
-	 *  [`get_blocks_inner`].
-	 */
-	getBlocks: (ids: BlockId[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("get_blocks", { ids })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP
@@ -1713,22 +1567,6 @@ export type BacklinkGroup = {
 	 *  N" for this source page.
 	 */
 	truncated?: boolean,
-};
-
-/**
- *  Response for a filtered backlink query, including total count.
- * 
- *  `items` is `ActiveBlockRow`-typed because the backlink
- *  resolver filters deleted_at IS NULL` on every
- *  candidate source block (`backlink/query.rs::eval_backlink_query`,
- *  `eval_backlink_query_grouped`, `eval_unlinked_references`).
- */
-export type BacklinkQueryResponse = {
-	items: ActiveBlockRow[],
-	next_cursor: string | null,
-	has_more: boolean,
-	total_count: number,
-	filtered_count: number,
 };
 
 /**  Tagged union of sort modes for backlink queries. */
@@ -4345,24 +4183,6 @@ files_total: number;
  */
 bytes_done: number; 
 /**  Aggregate byte total advertised for the current `phase`. */
-bytes_total: number } | 
-/**
- *  Per-frame snapshot catch-up transfer progress. Emitted by
- *  `sync_daemon::snapshot_transfer` between 5 MB binary frames while
- *  the compressed snapshot blob streams over the wire, so the UI can
- *  render a real bytes-done bar for the catch-up blob the same way the
- *  `Files` variant does for attachments.
- */
-{ kind: "snapshot"; 
-/**
- *  `"sending"` (responder is shipping the snapshot blob),
- *  `"receiving"` (initiator is pulling it), or `"complete"`
- *  (the blob finished transferring for this session).
- */
-phase: string; remote_device_id: string; 
-/**  Bytes shipped/received so far in the current `phase`. */
-bytes_done: number; 
-/**  Total compressed snapshot size advertised for the transfer. */
 bytes_total: number };
 
 /**  Response payload returned by [`start_sync`]. */

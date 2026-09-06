@@ -1001,9 +1001,7 @@ export const blocksHandlers = {
    *
    * This handler served the tombstone until #3928, matching the conformance
    * harness — which was calling the permissive reader — rather than matching
-   * production. `get_blocks` (plural) is genuinely permissive and keeps its
-   * tombstones: `get_blocks_inner` has no `deleted_at` filter, so the two
-   * handlers disagreeing here is the backend's own split, not an oversight.
+   * production.
    */
   get_block: (args) => {
     const a = args as Record<string, unknown>
@@ -1308,29 +1306,6 @@ export const blocksHandlers = {
   },
 
   // ---------------------------------------------------------------------------
-  // Get_blocks batch endpoint
-  // ---------------------------------------------------------------------------
-
-  // get_blocks(ids: string[]) -> BlockRow[]
-  //
-  // Mirrors `commands/blocks/queries.rs::get_blocks_inner`: returns the
-  // full BlockRow for every id present in the seed (NOT filtered by
-  // soft-delete). Missing ids are silently omitted so callers map by id.
-  get_blocks: (args) => {
-    const a = args as Record<string, unknown>
-    const ids = (a['ids'] as string[]) ?? []
-    if (ids.length === 0) {
-      throw validationRejection('ids list cannot be empty')
-    }
-    const out: Record<string, unknown>[] = []
-    for (const id of ids) {
-      const row = blocks.get(id)
-      if (row) out.push(row)
-    }
-    return out
-  },
-
-  // ---------------------------------------------------------------------------
   // First-child-per-parent batch
   //
   // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
@@ -1449,7 +1424,6 @@ export const blocksHandlers = {
   | 'move_blocks_to_space'
   | 'count_trash'
   | 'trash_descendant_counts'
-  | 'get_blocks'
   | 'first_child_for_blocks'
   | 'quick_capture_block'
 >

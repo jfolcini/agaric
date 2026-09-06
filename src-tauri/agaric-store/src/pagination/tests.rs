@@ -4669,6 +4669,108 @@ async fn test_list_page_history_omits_orphaned_attachment_ops_4277() {
     );
 }
 
+/// #4627 on a synced vault: add an attachment on device A, sync, delete it on
+/// device B. On B the live `attachments` row goes in the delete's own
+/// transaction and the only paired `add_attachment` carries
+/// `is_replicated = 1`, so probe 2's old `src_add.is_replicated = 0` made both
+/// probes false and the delete vanished from both scopes this query serves —
+/// the page's own History sheet and the space-scoped History view (`__all__` +
+/// `space_id`, what `HistoryView.tsx` asks for).
+///
+/// Every other page-history fixture seeds its adds with `is_replicated = 0`,
+/// so without this one reinstating the filter goes unnoticed.
+#[tokio::test]
+async fn test_list_page_history_includes_a_peer_added_attachments_delete_4627() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_space_block(&pool, SPACE_A_ID, "Personal").await;
+    insert_block(&pool, "PH_REP_PG", "page", "peer page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_REP_CH",
+        "content",
+        "owner",
+        Some("PH_REP_PG"),
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "PH_REP_PG", SPACE_A_ID).await;
+
+    let create = r#"{"block_id":"PH_REP_CH","block_type":"content","content":"owner"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create,
+        "2025-02-01T00:00:00Z",
+    )
+    .await;
+
+    // Device A's add, arrived here by replication. `ingest_remote_op_in_tx`
+    // populates `block_id` from the payload for a replicated row exactly as
+    // the local path does, which is why it can still resolve the owner.
+    let add = r#"{"attachment_id":"PH_REP_AT","block_id":"PH_REP_CH","mime_type":"image/png","filename":"peer.png","size_bytes":1,"fs_path":"attachments/peer.png"}"#;
+    let add_created_at_ms = chrono::DateTime::parse_from_rfc3339("2025-02-02T00:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    sqlx::query(
+        "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id, is_replicated) \
+         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'), ?, 1)",
+    )
+    .bind("device-A")
+    .bind(2_i64)
+    .bind("test-hash-placeholder")
+    .bind("add_attachment")
+    .bind(add)
+    .bind(add_created_at_ms)
+    .bind(add)
+    .bind("PH_REP_AT")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The local delete. No live `attachments` row is ever inserted: on this
+    // device the attachment only ever existed as a replicated op.
+    let delete =
+        r#"{"attachment_id":"PH_REP_AT","fs_path":"attachments/peer.png","filename":"peer.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "delete_attachment",
+        delete,
+        "2025-02-03T00:00:00Z",
+        "PH_REP_AT",
+    )
+    .await;
+
+    // Seq 2 is the replicated add itself: it carries `block_id`, so the
+    // subtree predicate lists it whatever probe 2 does. Seq 3 is the one at
+    // stake.
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let per_page = list_page_history(&pool, "PH_REP_PG", None, None, &page)
+        .await
+        .unwrap();
+    let per_page_seqs: Vec<i64> = per_page.items.iter().map(|e| e.seq).collect();
+    assert_eq!(
+        per_page_seqs,
+        vec![3, 2, 1],
+        "the delete of a peer-added attachment must appear on the owning page's sheet"
+    );
+
+    let scoped = list_page_history(&pool, "__all__", None, Some(SPACE_A_ID), &page)
+        .await
+        .unwrap();
+    let scoped_seqs: Vec<i64> = scoped.items.iter().map(|e| e.seq).collect();
+    assert_eq!(
+        scoped_seqs,
+        vec![3, 2, 1],
+        "and on the space-scoped History view, which uses the other branch"
+    );
+}
+
 /// #4336 acceptance, the block-scoped sibling of
 /// `test_list_page_history_includes_attachment_ops_4277`: the per-block
 /// History sheet must list the `delete_attachment` and `rename_attachment`

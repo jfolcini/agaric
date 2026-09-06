@@ -38,7 +38,7 @@ on:
     # select nothing, so there was nothing to say.
     #
     # It is wrong now that the lane also reports what drew NO mutation signal.
-    # 21 modules are enrolled and they all live under `src/lib` and
+    # 23 modules are enrolled and they all live under `src/lib` and
     # `src/stores`, so a PR confined to `src/hooks` or `src/components` — the
     # shape #3691 is most about, and literally the shape of #3685's
     # `usePropertySave.ts` change — never started this workflow and therefore
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-24.04
     # A hard ceiling on the "informational lane eats the runner pool" failure
     # mode. `scripts/select-mutation-modules.mjs` already caps the selection at
-    # 4 modules, and the slowest enrolled module measured ~66s locally, so a
+    # 4 modules, and the slowest enrolled module measured ~87s locally, so a
     # worst case of ~4 capped modules lands well inside this. If this timeout
     # ever fires, lower `--max`, do not raise this.
     timeout-minutes: 20

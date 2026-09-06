@@ -47,21 +47,20 @@ import { t } from '@/lib/i18n'
 // (#4411, the links domain): `useUnlinkedReferences` now dispatches
 // `commands.listUnlinkedReferences`, so its spy resolves/rejects with the bare
 // `GroupedBacklinkResponse` and the shim adds the envelope.
-const { mockListPropertyKeys, mockListTagsByPrefix, mockListUnlinkedReferences } = vi.hoisted(
-  () => ({
-    mockListPropertyKeys: vi.fn(),
-    mockListTagsByPrefix: vi.fn(),
-    mockListUnlinkedReferences: vi.fn(),
-  }),
-)
+const {
+  mockGetPageAliases,
+  mockListPropertyKeys,
+  mockListTagsByPrefix,
+  mockListUnlinkedReferences,
+} = vi.hoisted(() => ({
+  mockListPropertyKeys: vi.fn(),
+  mockListTagsByPrefix: vi.fn(),
+  mockListUnlinkedReferences: vi.fn(),
+  mockGetPageAliases: vi.fn(),
+}))
 
 vi.mock('@/lib/tauri', () => ({
   editBlock: vi.fn(),
-  // `handleLinkIt` now reads aliases via `getPageAliases` so
-  // alias-only mentions can be rewritten. Default mock returns no
-  // aliases so the legacy title-only test paths stay unaffected;
-  // -specific cases override per-test.
-  getPageAliases: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -75,6 +74,8 @@ vi.mock('@/lib/bindings', async () => {
         mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getPageAliases: (...args: unknown[]) =>
+        mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -157,13 +158,13 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { editBlock, getPageAliases } from '@/lib/tauri'
+import { editBlock } from '@/lib/tauri'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = vi.mocked(editBlock)
 const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
-const mockedGetPageAliases = vi.mocked(getPageAliases)
+const mockedGetPageAliases = mockGetPageAliases
 
 function makeGroup(
   pageId: string,

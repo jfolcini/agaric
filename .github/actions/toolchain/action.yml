@@ -1,7 +1,7 @@
 name: Toolchain preamble
 description: >-
   The apt → mold → Rust → Node preamble shared by `_validate.yml`'s `lint`,
-  `scheduled-deep-checks.yml`'s `full-suite` and `ci.yml`'s `build`.
+  `scheduled-deep-checks.yml`'s `full-suite-prek` / `full-suite-nextest` and `ci.yml`'s `build`.
   Assumes the repository is already checked out.
 
 inputs:

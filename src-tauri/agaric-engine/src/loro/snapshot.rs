@@ -253,13 +253,16 @@ pub async fn rehydrate_registry(
     ok
 }
 
-/// In-process engine reload after a snapshot RESET (#607 / #779).
+/// In-process engine reload after a wholesale replace of the Loro sidecar
+/// state (#607 / #779).
 ///
-/// `snapshot::apply_snapshot` replaces every core SQL table and wipes the
-/// Loro sidecar state (`loro_doc_state`, `loro_sync_inbox`, the apply
-/// cursor) in one transaction — but it has no access to the live engine
-/// registry, so the in-memory engines still hold the pre-reset CRDT
-/// lineage when it returns. Left alone, the next `prepare_outgoing` would
+/// Written for the snapshot RESET, which replaced every core SQL table and
+/// wiped `loro_doc_state`, `loro_sync_inbox` and the apply cursor in one
+/// transaction without access to the live engine registry. #4699 deleted
+/// that caller; this is now reached only from its tests, which pin the
+/// reload contract for whatever brings a wholesale replace back. The
+/// in-memory engines still hold the pre-replace CRDT lineage when such a
+/// wipe returns. Left alone, the next `prepare_outgoing` would
 /// export that stale state to peers and the next periodic / exit-time
 /// `save_all_engines` would persist it straight back into the freshly
 /// wiped `loro_doc_state` (#779's restart scenario).
@@ -275,17 +278,15 @@ pub async fn rehydrate_registry(
 /// next sync session imports the peer's full CRDT state cleanly and
 /// re-converges engine and SQL.
 ///
-/// Must be called immediately after `apply_snapshot` returns, before any
-/// further engine access (the production caller is
-/// `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`).
-/// Returns the number of engines rehydrated (0 after a RESET).
+/// Must run immediately after the wipe commits, before any further engine
+/// access. Returns the number of engines rehydrated (0 after a wipe).
 pub async fn reload_registry_from_db(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
 ) -> Result<usize, AppError> {
     // #792: re-read the persisted peer-id epoch BEFORE dropping the
-    // engines. `apply_snapshot` bumps it inside the RESET transaction, so
+    // engines. The RESET bumped it inside its transaction, so
     // after a successful RESET this installs the NEW epoch and every
     // post-reset engine (lazy or rehydrated) mints ops under a fresh
     // PeerID — counters can restart at 0 without forking the
@@ -350,8 +351,8 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // reflects all ops <= (lock-time cursor - 1) >= this watermark.
     let applied_through_seq = snapshot_watermark(pool).await;
     // #607 review: capture the clear-generation BEFORE collecting doc
-    // handles. A snapshot RESET (`registry.clear()` +
-    // `apply_snapshot`'s `loro_doc_state` wipe) racing this pass would
+    // handles. A `registry.clear()` + `loro_doc_state` wipe (the #4699-deleted
+    // RESET's shape) racing this pass would
     // otherwise let us persist PRE-reset engine state into the freshly
     // wiped table — the exact #779 resurrection this save exists to
     // prevent. Re-checked before every write below.
@@ -948,15 +949,13 @@ mod tests {
             );
         }
 
-        // Simulate the RESET tx having bumped the persisted epoch
-        // (apply_snapshot does this atomically with the loro_doc_state
-        // wipe; here the table is already empty).
-        let mut tx = pool.begin().await.expect("begin");
-        let bumped = crate::loro::peer_epoch::bump_peer_epoch(&mut tx)
+        // A vault that went through the (#4699-deleted) RESET carries a
+        // bumped epoch row; seed the row the way that transaction left it.
+        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', 0)")
+            .bind(crate::loro::peer_epoch::PEER_EPOCH_KEY)
+            .execute(&pool)
             .await
-            .expect("bump");
-        tx.commit().await.expect("commit");
-        assert_eq!(bumped, 1);
+            .expect("seed epoch");
 
         let n = reload_registry_from_db(&pool, &registry, "device-792")
             .await

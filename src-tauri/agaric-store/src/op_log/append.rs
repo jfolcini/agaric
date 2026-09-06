@@ -221,14 +221,14 @@ async fn append_local_op_in_tx_with_provenance(
     let attachment_id: Option<&str> = op_payload.attachment_id();
 
     // #3310 / #3998: allocate from `MAX(surviving MAX(seq), durable
-    // high-water) + 1`, NOT from the surviving rows alone. Both wholesale
-    // op_log wipes — compaction's `prune` and the snapshot RESET's
-    // `truncate` — can empty this device's rows, and a `MAX(seq)`-only
-    // allocator then restarts the device at seq 1, re-minting op addresses
-    // the device has already issued and a paired peer still holds (their
-    // ingest is `INSERT OR IGNORE` on `(device_id, seq)`, so the re-minted
-    // op is silently swallowed). Both wipe helpers record the pre-wipe
-    // frontier in `app_settings` first; see `super::high_water`.
+    // high-water) + 1`, NOT from the surviving rows alone. A wholesale
+    // op_log wipe — compaction's `prune` — can empty this device's rows,
+    // and a `MAX(seq)`-only allocator then restarts the device at seq 1,
+    // re-minting op addresses the device has already issued and a paired
+    // peer still holds (their ingest is `INSERT OR IGNORE` on
+    // `(device_id, seq)`, so the re-minted op is silently swallowed). The
+    // wipe records the pre-wipe frontier in `app_settings` first; see
+    // `super::high_water`.
     let seq = super::high_water::next_seq_for_device(tx, device_id).await?;
 
     // Phase 1: linear chain — parent is the previous op from this device,

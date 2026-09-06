@@ -16,8 +16,20 @@ import type { ImportUnit } from '@/lib/vault-import'
 const mockImportMarkdown = vi.fn()
 vi.mock('@/lib/tauri', () => ({
   importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
-  resolvePageByAlias: vi.fn(),
 }))
+
+// Post-import navigation resolves the title through `commands.resolvePageByAlias`;
+// nothing matches here.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: async () => ({ status: 'ok', data: null }),
+    },
+  }
+})
 
 const mockLoggerError = vi.fn()
 vi.mock('@/lib/logger', () => ({

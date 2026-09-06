@@ -19,8 +19,11 @@
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { importMarkdown, resolvePageByAlias } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
+import { importMarkdown } from '@/lib/tauri'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -158,7 +161,7 @@ export function useImportRunner(): UseImportRunner {
   const goToImportedPage = useCallback(
     async (title: string, spaceId: string) => {
       try {
-        const hit = await resolvePageByAlias({ alias: title, spaceId })
+        const hit = unwrap(await commands.resolvePageByAlias(title, toSpaceScope(spaceId)))
         if (hit) {
           const [pageId, resolvedTitle] = hit
           navigateToPage(pageId, resolvedTitle ?? title)

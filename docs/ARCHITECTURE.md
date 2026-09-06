@@ -61,7 +61,7 @@ The Rust side is a Cargo workspace rooted at `src-tauri/`. Its members (see `[wo
 | --- | --- |
 | `.` — the app crate `agaric` (lib target `agaric_lib`) | Tauri commands, materializer, MCP server, deep links, spaces, recovery, the `agaric-mcp` sidecar binary |
 | `agaric-core` | Leaf primitives with no DB dependency — ULIDs, time, errors, text/tag normalisation, diffing |
-| `agaric-store` | SQLite access — op log (incl. the `op_log/bypass.rs` `truncate` / `prune` deletion carve-outs), caches, FTS, filters, queries, pagination |
+| `agaric-store` | SQLite access — op log (incl. the `op_log/bypass.rs` `prune` deletion carve-out), caches, FTS, filters, queries, pagination |
 | `agaric-engine` | Loro CRDT engine, op apply, merge, drafts, import, recurrence |
 | `agaric-sync` | Peer discovery (mDNS), pairing, the iroh QUIC transport, sync protocol + daemon — **plus op-log compaction** (`src-tauri/agaric-sync/src/snapshot/`) |
 | `agaric-observability` | Tracing / OTLP / metrics plumbing |

@@ -82,7 +82,8 @@ name: Scheduled deep checks
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
 #                    the Actions tab (the #3163 fuzz break survived five days
-#                    that way). It reads every other job's `needs.*.result`
+#                    that way). It reads every lane's `needs.*.result` (the `full-suite`
+#                    legs fold into one)
 #                    and keeps ONE rolling tracking issue that reopens on a
 #                    newly-failing lane and closes itself when all are green
 #                    (see `scripts/file-scheduled-failures.mjs`). Its own
@@ -1053,12 +1054,15 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          # ONE saver, not 46 (#3393): every shard restores the same target
-          # dir, and 46 concurrent saves of a multi-GB cache would churn the
+          # ONE saver, not 21 (#3393): every shard restores the same target
+          # dir, and 21 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
-          # for no gain. `agaric` shard 0 is the saver because `agaric` is the
-          # package whose build the other shards benefit most from.
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.package == 'agaric' && matrix.shard == 0 }}
+          # for no gain. `agaric-engine` shard 0 is the saver because its
+          # build is a superset of `agaric-store`'s, and it has to be a
+          # package the matrix holds: the saver named `agaric` after #4499
+          # dropped that package, so no shard matched and every shard
+          # cold-built its baseline weekly (#4696).
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.package == 'agaric-engine' && matrix.shard == 0 }}
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -2680,35 +2684,30 @@ jobs:
   # ci/path-conditional-jobs: the per-PR `_validate.yml` lint job and the local
   # `scripts/verify-ci-equivalent.sh` Phase A now SKIP the prek hooks whose
   # category (frontend/backend/ci/docs) a given push did not touch — trading
-  # whole-tree coverage of the ABSENT categories for a faster gate. This job is
-  # the counterweight: on the weekly schedule (and on demand) it runs the FULL,
-  # UNSKIPPED prek suite (both pre-commit and pre-push stages) plus the FULL
-  # vitest / playwright / nextest / doc-test suites over the entire tree, so a
-  # latent breach in an untouched, unchanged-category file is caught here even
-  # when no PR re-linted it. Nothing is category-gated: every hook and every
-  # test runs. Not a required check — a maintainer triages any failure.
-  # ---------------------------------------------------------------------------
-  full-suite:
+  # whole-tree coverage of the ABSENT categories for a faster gate. The legs
+  # below are the counterweight: on the weekly schedule (and on demand) they
+  # run the FULL, UNSKIPPED prek suite (both pre-commit and pre-push stages)
+  # plus the FULL vitest / playwright / nextest / doc-test suites over the
+  # entire tree, so a latent breach in an untouched, unchanged-category file
+  # is caught here even when no PR re-linted it. Nothing is category-gated:
+  # every hook and every test runs. Not a required check — a maintainer
+  # triages any failure.
+  #
+  # #4675: one job became independent legs. As one job it grew 46 min (08-24) ->
+  # 48 (08-31) -> 69 (09-03) -> the 75-minute cap on run 33823056127, and a
+  # cancelled job reports through #3394 as a failing lane with no artifact —
+  # a worse failure than a slow pass. Its cost tracks test-suite growth, so
+  # a cap raise only buys headroom once. The legs are the lane's natural
+  # cut lines (each is a different toolchain and a different critical path);
+  # `full-suite` at the end folds their results into the single pass/fail
+  # that `report-scheduled-failures` reads, so #3394 keeps one lane name.
+  full-suite-prek:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # The slow exhaustive lane: cold-ish compile + the full prek suite (both
-    # stages) + full vitest + full playwright + full nextest + doc-tests.
-    # 60 -> 75: the 4 sqlx-prepare compile passes and the Node 22 floor run,
-    # each previously a lane of its own, now sit inside this one budget.
-    # 75 -> 100: the lane hit the 75 cap and was cancelled on run 33823056127.
-    # Measured growth, not a regression: 46 min (08-24) -> 48 (08-31) -> 69
-    # (09-03) -> cap. The two 16-minute "failures" between the 69-min run and
-    # the timeout were #4647's broken intra-doc links killing the job early,
-    # which hid how little headroom was left. The suite really did grow —
-    # agaric-engine went 942 -> 965 tests and the pre-push `cargo doc` gained
-    # three rustdoc lints (#4665).
-    #
-    # This buys headroom ONCE. The lane's cost tracks test-suite growth, so the
-    # durable fix is to shard it the way `mutants` already is here: #4675.
-    # A cancelled job also reports through #3394 as a failing lane and produces
-    # no artifact, so the failure mode is worse than a slow pass.
-    timeout-minutes: 100
+    # Whole-tree prek in every stage (clippy, cargo doc with the #4665
+    # rustdoc lints, knip, lychee, …) plus the four sqlx offline checks.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -2719,9 +2718,9 @@ jobs:
           persist-credentials: false
 
       - name: Free disk space on runner
-        # The full test + coverage-free nextest tree plus the Playwright browser
-        # download are heavy; drop the unused preinstalled toolchains first
-        # (same rationale as the cargo-tests job in _validate.yml).
+        # The clippy hook's check tree plus the four sqlx-prepare passes are
+        # heavy; drop the unused preinstalled toolchains first (same
+        # rationale as the cargo-tests job in _validate.yml).
         run: |
           set -euo pipefail
           echo "Before:" && df -h /
@@ -2737,11 +2736,13 @@ jobs:
       - name: Toolchain (apt, mold, Rust, Node, npm ci)
         uses: ./.github/actions/toolchain
         with:
-          rust-shared-key: rust-full-suite
+          # One key per job class (#813): this leg's tree is the clippy /
+          # rustdoc check profile, the nextest legs' is the test profile.
+          rust-shared-key: rust-full-suite-prek
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation (clippy hook, nextest, doc-tests).
+        # invocation (clippy hook, sqlx prepare, cargo doc).
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install prek + non-Rust lint tools via prebuilt binaries
@@ -2760,11 +2761,12 @@ jobs:
           tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       - name: Install cargo plugins via prebuilt binaries
-        # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest
-        # backs both the cargo-test hook and the explicit nextest step below.
+        # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
+        # No cargo-nextest: the `cargo-test` hook is SKIPped below and is a
+        # system hook, so prek never resolves its binary.
         uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit,cargo-nextest
+          tool: cargo-deny,cargo-machete,cargo-audit
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
@@ -2831,52 +2833,6 @@ jobs:
           restore-keys: |
             lychee-${{ runner.os }}-
 
-      - name: Restore Playwright browser cache
-        id: playwright-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      - name: Install Playwright system deps
-        # #4115: deliberately UNBOUNDED, unlike the `apt-get update` sites in
-        # this file. A 300s cap was tried and reverted: `_validate.yml:1220`
-        # records `install-deps` taking 760s (12.7 min) on a slow-but-healthy
-        # Ubuntu mirror, and the 20 -> 30 minute job bump was paid specifically
-        # to absorb that. Any cap below the observed runtime converts a slow
-        # pass into a hard red, which is a worse failure than the one #4115 is
-        # about — and picking a number above it (900s?) would be inventing a
-        # bound from a single observation.
-        #
-        # Two further reasons a wrapper here is weaker than it looks: `timeout`
-        # runs as the runner user while `npx` shells out to `sudo apt-get`, so
-        # the SIGTERM cannot reach the root grandchild actually holding the
-        # mirror connection (prepare-apt's own comment records this); and this
-        # job, unlike _validate.yml's playwright job, has no
-        # `/var/cache/apt/archives/*.deb` cache, so it pays the full ~33 MB
-        # download every run.
-        #
-        # This note used to end by pointing at prepare-apt's Azure mirror
-        # rewrite as "the mitigation with evidence behind it". #4163 deleted
-        # that rewrite: its own self-check had been printing `apt sources now
-        # name azure 0` (jobs 95978698511 and 95996544264), because the
-        # ubuntu-24.04 image keeps its mirror hostnames in
-        # /etc/apt/apt-mirrors.txt and the sed only ever read
-        # /etc/apt/sources.list*. And the direction was inverted: in job
-        # 95996544264, azure.archive.ubuntu.com was `Ign`d 68 times while
-        # archive.ubuntu.com answered. So there is no mirror mitigation to
-        # credit here — what recovers a stall is the image's own `mirror+file`
-        # failover, and this step's real exposure is still the missing
-        # `/var/cache/apt/archives/*.deb` cache. Bounding it properly needs
-        # that cache first; tracked in #4115.
-        run: npx playwright install-deps chromium
-
-      - name: Install Playwright browser binaries (on cache miss)
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install chromium
-
       - name: Run the FULL prek suite — pre-commit stage (no SKIP, whole tree)
         # The whole-tree backstop for the per-PR category-gated Phase A: NO SKIP,
         # so every category's hooks run against every file.
@@ -2899,8 +2855,9 @@ jobs:
         #     NESTED inside this prek process (recursion / wasted wall-clock,
         #     and it fail-exits when the on-main push range is empty).
         #   * vitest / cargo-test — the range-scoped test hooks; the FULL
-        #     vitest + nextest suites run as their own explicit steps below, so
-        #     these would only re-read `--cached` (nothing staged) and add noise.
+        #     vitest + nextest suites run in the `full-suite-frontend` and
+        #     `full-suite-nextest` legs, so these would only re-read
+        #     `--cached` (nothing staged) and add noise.
         # Every REAL category hook still runs unskipped — the backstop holds.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2928,25 +2885,31 @@ jobs:
           [ "$passed" -eq "$expected" ] || { echo "$passed of $expected manual hooks reported Passed"; exit 1; }
           if grep -q 'Skipped' manual.log; then echo "a manual-stage hook was Skipped"; exit 1; fi
 
+  full-suite-frontend:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.full_suite == 'true'
+    runs-on: ubuntu-24.04
+    # Full vitest on Node 24, then the Node 22 floor run (typecheck + vitest
+    # again). No Rust: the vitest tree runs against the tauri mock.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
       - name: Vitest (full suite)
         run: npx vitest run
-
-      - name: Playwright E2E tests (full suite)
-        run: npx playwright test
-
-      - name: Cargo nextest (full suite) + doc-tests
-        working-directory: src-tauri
-        # nextest does NOT run doc-tests (they compile as their own per-example
-        # binaries), so run both to keep executable doc examples honest (#2555).
-        #
-        # `--workspace` (#3212): without it, both commands are package-scoped to
-        # `agaric` only — this "full suite" step was silently skipping every
-        # agaric-core/store/engine/sync/observability/diagnostics test (and their
-        # doc-tests), the same class of gap #2817/#2951 already fixed for the
-        # PR-gating `cargo-tests` job and the pre-push Phase D2 doc-test step.
-        run: |
-          cargo nextest run --workspace --profile ci
-          cargo test --doc --workspace
 
       - name: Install Node 22 (the `engines.node` floor)
         # The Node floor is checked weekly here, not per PR. Pinned to the
@@ -2969,50 +2932,129 @@ jobs:
           npm run typecheck
           npx vitest run
 
-  # ---------------------------------------------------------------------------
-  # report-scheduled-failures (#3359) — the notification path for THIS
-  # workflow. Every lane above is non-blocking triage signal, and #3365 spent
-  # its whole diff making three of them capable of going red at all. But a
-  # guard that goes red into the void is barely better than the swallowed
-  # `|| true` it replaced: until this job existed, a failed weekly lane was
-  # visible only to whoever happened to open the Actions tab. The #3163 fuzz
-  # compile break survived five days that way.
-  #
-  # This is the same push-based triage loop as `file-mutation-survivors` and
-  # `file-fuzz-findings`, one level up: those two triage a lane's CONTENT,
-  # this one triages lane HEALTH. It keeps ONE rolling tracking issue that
-  # reopens on a newly-failing lane and closes itself once every lane is green
-  # (rationale for rolling-vs-per-lane is in the script's header). State lives
-  # in that issue's body, so this job needs `issues: write` only.
-  #
-  # The failure path must not depend on the thing that broke, so:
-  #   * it reads ONLY the `needs` context — GitHub's own job results — never a
-  #     lane's artifacts. A lane that dies during `apt-get`, before it could
-  #     upload anything, still reports `result: failure`.
-  #   * `needs:` lists EVERY other job in this workflow, including the two
-  #     content filers, so a filer that throws (which #3364/#3365 make
-  #     possible on purpose) is itself reported here. The
-  #     `scheduled-failure-reporter-selftest` prek hook USED to fail if a job
-  #     in this file was missing from the list below; #4556 unwired it, so
-  #     that list is unenforced until #4556 Phase 2 restages the self-tests.
-  #   * `if: always()` so a failed/cancelled/skipped upstream lane cannot skip
-  #     the reporter — which is the entire point.
-  #   * the last step is a deliberately minimal bash fallback that fires when
-  #     the Node reporter ITSELF failed, using nothing but `gh`.
-  # Irreducible remainder: if this job never starts at all (invalid workflow,
-  # runner-pool outage, whole-run cancellation) nothing reports. That needs an
-  # out-of-band watchdog; `actionlint` in prek covers the invalid-workflow half.
-  #
-  # It writes for real whenever `CRON_EQUIVALENT` (workflow `env`) holds and
-  # dry-runs otherwise, like the two content filers. Writing on a dispatch is
-  # safe: the tracking issue is a SET, not an append-log (`decideAction` /
-  # `diffLanes` are idempotent), so a dispatch that finds nothing new no-ops
-  # exactly like an unchanged scheduled run (#3716). No lane is gated on the
-  # event any more, so a `skipped` lane is a real failure on every
-  # authoritative run — which the `lanes` input preserves rather than breaks:
-  # selecting a subset skips lanes, and selecting a subset is exactly what
-  # makes `CRON_EQUIVALENT` false, so such a run is never authoritative.
-  # ---------------------------------------------------------------------------
+  full-suite-playwright:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.full_suite == 'true'
+    runs-on: ubuntu-24.04
+    # Sharded three ways like `_validate.yml`'s playwright job (whose 35-minute
+    # budget this mirrors; most of it is the browser + apt install on a cold
+    # mirror). The composite action carries the `.deb` cache the old
+    # single-job lane lacked (#4115).
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Playwright setup (Node, npm ci, browser, system deps)
+        uses: ./.github/actions/playwright-setup
+
+      - name: Playwright E2E tests (shard ${{ matrix.shard }}/3)
+        run: npx playwright test --shard ${{ matrix.shard }}/3
+
+  full-suite-nextest:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.full_suite == 'true'
+    runs-on: ubuntu-24.04
+    # The dominant cost of the old lane, cut with nextest's stable hash
+    # partition exactly as `_validate.yml`'s `cargo-tests (1)/(2)` does.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space on runner
+        # The full coverage-free nextest tree is heavy; drop the unused
+        # preinstalled toolchains first (same rationale as the cargo-tests job
+        # in _validate.yml).
+        run: |
+          set -euo pipefail
+          echo "Before:" && df -h /
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/share/boost \
+                      /usr/local/share/powershell \
+                      /usr/share/swift \
+                      "$AGENT_TOOLSDIRECTORY"
+          echo "After:" && df -h /
+
+      - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        uses: ./.github/actions/toolchain
+        with:
+          # Both shards build the same test tree (the partition is applied at
+          # run time), so one key serves both; rust-cache keeps the first
+          # finisher's save and skips the second (#813).
+          rust-shared-key: rust-full-suite-nextest
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation (nextest, doc-tests).
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-nextest via prebuilt binary
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
+        with:
+          tool: cargo-nextest
+
+      - name: Cargo nextest (full suite, shard ${{ matrix.shard }}/2)
+        working-directory: src-tauri
+        # `--workspace` (#3212): without it the command is package-scoped to
+        # `agaric` only — this "full suite" step was silently skipping every
+        # agaric-core/store/engine/sync/observability/diagnostics test, the
+        # same class of gap #2817/#2951 already fixed for the PR-gating
+        # `cargo-tests` job and the pre-push Phase D2 doc-test step.
+        run: cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/2
+
+      - name: Cargo doc-tests (full suite)
+        # nextest does NOT run doc-tests (they compile as their own per-example
+        # binaries), so run them to keep executable doc examples honest
+        # (#2555). Unpartitionable; shard 2 carries them for the same reason
+        # `_validate.yml`'s `cargo-tests (2)` does: it is the shorter of the two.
+        if: matrix.shard == 2
+        working-directory: src-tauri
+        run: cargo test --doc --workspace
+
+  full-suite:
+    # The one job `report-scheduled-failures` needs for this lane (#3394): it
+    # folds the legs above into a single result under the lane's own name.
+    # `always()` so a red leg is folded rather than skipped past; the lane
+    # gate is repeated so a deselected lane still reads as `skipped`.
+    needs: [select-lanes, full-suite-prek, full-suite-frontend, full-suite-playwright, full-suite-nextest]
+    if: always() && needs.select-lanes.outputs.full_suite == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Fold the legs into one result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          not_green=$(jq -r 'to_entries[]
+            | select(.key != "select-lanes")
+            | select(.value.result != "success")
+            | "\(.key)=\(.value.result)"' <<<"$NEEDS_JSON")
+          if [ -n "$not_green" ]; then
+            echo "::error::full-suite leg(s) not green: $(printf '%s' "$not_green" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "full-suite: every leg green" >> "$GITHUB_STEP_SUMMARY"
+
   report-scheduled-failures:
     needs:
       # `select-lanes` included so the comment above stays true, and for a

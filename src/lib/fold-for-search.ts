@@ -232,11 +232,15 @@ export function findFoldedMatch(
   if (foldedIdx === -1) return null
   const foldedEnd = foldedIdx + foldedNeedle.length
   let originalCursor = 0
+  let prevCursor = 0
   let foldedSoFar = ''
   let start: number | null = null
   while (true) {
     if (start === null && foldedSoFar.length >= foldedIdx) {
-      start = originalCursor
+      // #3288 — a fold that overshot `foldedIdx` (ß → ss with the match
+      // starting on the second s) came from the previous code point, which
+      // supplied the matched prefix and belongs inside the span.
+      start = foldedSoFar.length > foldedIdx ? prevCursor : originalCursor
     }
     if (start !== null && foldedSoFar.length >= foldedEnd) {
       // Greedily absorb trailing code points that fold to nothing (e.g.
@@ -256,6 +260,7 @@ export function findFoldedMatch(
     // fold each lone half to itself, desyncing from the whole-string fold.
     const ch = String.fromCodePoint(haystack.codePointAt(originalCursor) as number)
     foldedSoFar += foldForSearch(ch)
+    prevCursor = originalCursor
     originalCursor += ch.length
   }
   // Defensive fallback: should not happen for well-formed input.

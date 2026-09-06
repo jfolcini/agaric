@@ -40,7 +40,6 @@ const mockResolvePageByAlias = vi.fn()
 vi.mock('@/lib/tauri', () => ({
   importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
   importBibliography: (...args: unknown[]) => mockImportBibliography(...args),
-  resolvePageByAlias: (...args: unknown[]) => mockResolvePageByAlias(...args),
 }))
 
 // #2927 — `BibliographySection` migrated off the `@/lib/tauri` wrapper to
@@ -57,6 +56,10 @@ vi.mock('@/lib/bindings', async () => {
       importBibliography: async (...args: unknown[]) => ({
         status: 'ok',
         data: await mockImportBibliography(...args),
+      }),
+      resolvePageByAlias: async (...args: unknown[]) => ({
+        status: 'ok',
+        data: await mockResolvePageByAlias(...args),
       }),
     },
   }
@@ -1230,9 +1233,9 @@ describe('DataTab', () => {
 
     await waitFor(() => {
       // Resolves the title (an alias) → id, scoped to the target space …
-      expect(mockResolvePageByAlias).toHaveBeenCalledWith({
-        alias: 'My Imported Page',
-        spaceId: DEFAULT_TEST_SPACE.id,
+      expect(mockResolvePageByAlias).toHaveBeenCalledWith('My Imported Page', {
+        kind: 'active',
+        space_id: DEFAULT_TEST_SPACE.id,
       })
       // … then reuses the app's navigation action.
       expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE_ULID', 'My Imported Page')

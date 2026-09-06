@@ -68,7 +68,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_inner,
+    PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_by_source_inner,
     count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
     get_properties_inner, list_blocks_inner, list_page_links_inner, list_projected_agenda_inner,
     revert_ops_inner,
@@ -114,7 +114,7 @@ const SLO_BASE_TS_MS: i64 = 1_736_942_400_000;
 
 /// Shape of the `seed_agenda_blocks` fixture: block `i` gets due date
 /// `AGENDA_SEED_BASE_YMD + (i % AGENDA_SEED_WINDOW_DAYS)` days. Both the seeder
-/// and `bench_count_agenda_batch`'s untimed probe read these, so the probe's
+/// and `bench_count_agenda_batch_by_source`'s untimed probe read these, so the probe's
 /// expected per-date count is *derived* from the distribution instead of
 /// restating a literal that only happens to match it (#3441).
 const AGENDA_SEED_WINDOW_DAYS: usize = 30;
@@ -279,7 +279,7 @@ fn agenda_seed_base_date() -> chrono::NaiveDate {
 /// `AGENDA_SEED_WINDOW_DAYS`-day window from `AGENDA_SEED_BASE_YMD`. Mirrors
 /// `agenda_bench.rs::seed_agenda_blocks` (which keeps the literals inline; the
 /// constants here exist so the SLO probe can derive its expectation — see
-/// `bench_count_agenda_batch`).
+/// `bench_count_agenda_batch_by_source`).
 async fn seed_agenda_blocks(pool: &SqlitePool, n: usize) {
     let base_date = agenda_seed_base_date();
     let mut tx = pool.begin().await.unwrap();
@@ -1314,9 +1314,10 @@ fn bench_batch_resolve(c: &mut Criterion) {
     assert_under_budget("batch_resolve @ 100K", &acc, BUDGET_MS);
 }
 
-/// `count_agenda_batch` — weekly badge counts over 100K agenda rows.
+/// `count_agenda_batch_by_source` — weekly badge counts over 100K agenda
+/// rows, the query the journal calendar and `useBatchCounts` issue.
 /// Budget: 30 ms.
-fn bench_count_agenda_batch(c: &mut Criterion) {
+fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
     const BUDGET_MS: f64 = 30.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -1333,17 +1334,20 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
         })
         .collect();
 
-    let observed = rt
-        .block_on(count_agenda_batch_inner(
+    let observed: std::collections::HashMap<String, usize> = rt
+        .block_on(count_agenda_batch_by_source_inner(
             &pool,
             dates.clone(),
             &SpaceScope::Global,
         ))
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|(date, by_source)| (date, by_source.values().sum()))
+        .collect();
     assert_eq!(
         observed.len(),
         dates.len(),
-        "count_agenda_batch @ 100K: untimed probe must return every requested date (#3304)"
+        "count_agenda_batch_by_source @ 100K: untimed probe must return every requested date (#3304)"
     );
     // Derive the per-date count from the seeding distribution rather than
     // hardcoding it. `seed_agenda_blocks` is round-robin over
@@ -1357,7 +1361,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
     // the seven dates, with nothing on the page explaining why (#3441).
     assert!(
         dates.len() <= AGENDA_SEED_WINDOW_DAYS,
-        "count_agenda_batch @ 100K: date index k maps to seeding bucket k only \
+        "count_agenda_batch_by_source @ 100K: date index k maps to seeding bucket k only \
          while the probed window ({}) fits inside the {AGENDA_SEED_WINDOW_DAYS}-day \
          seeding window",
         dates.len()
@@ -1368,7 +1372,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
         assert_eq!(
             observed.get(date),
             Some(&expected_per_date),
-            "count_agenda_batch @ 100K: wrong fixture count for {date} (#3304)"
+            "count_agenda_batch_by_source @ 100K: wrong fixture count for {date} (#3304)"
         );
     }
 
@@ -1377,7 +1381,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
     let acc = Acc::new();
     let acc_for_bench = acc.clone();
 
-    group.bench_function("count_agenda_batch_100k", move |b| {
+    group.bench_function("count_agenda_batch_by_source_100k", move |b| {
         let acc = acc_for_bench.clone();
         let pool = pool.clone();
         let dates = dates.clone();
@@ -1388,9 +1392,13 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ = count_agenda_batch_inner(&pool, dates.clone(), &SpaceScope::Global)
-                        .await
-                        .unwrap();
+                    let _ = count_agenda_batch_by_source_inner(
+                        &pool,
+                        dates.clone(),
+                        &SpaceScope::Global,
+                    )
+                    .await
+                    .unwrap();
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
@@ -1400,7 +1408,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget("count_agenda_batch @ 100K", &acc, BUDGET_MS);
+    assert_under_budget("count_agenda_batch_by_source @ 100K", &acc, BUDGET_MS);
 }
 
 /// `count_backlinks_batch` — 10 target pages, 100K source blocks.
@@ -2330,7 +2338,7 @@ criterion_group!(
     bench_get_properties,
     bench_list_blocks,
     bench_batch_resolve,
-    bench_count_agenda_batch,
+    bench_count_agenda_batch_by_source,
     bench_count_backlinks_batch,
     bench_export_page_markdown,
     bench_revert_ops_50op_at_100k,

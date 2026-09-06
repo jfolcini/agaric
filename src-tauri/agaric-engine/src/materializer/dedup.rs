@@ -76,9 +76,14 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
                     result.push(task);
                 }
             }
+            // #4293: `ReindexBlockLinksBatch` carries a disjoint id set per
+            // inbound frame or message and is not persisted for retry, so two
+            // in one drain must both survive — collapsing them by discriminant
+            // would drop a whole frame's link reindex with no self-heal.
             MaterializeTask::ApplyOp(_)
             | MaterializeTask::ReplayApplyOp(..)
             | MaterializeTask::BatchApplyOps(_)
+            | MaterializeTask::ReindexBlockLinksBatch { .. }
             | MaterializeTask::Barrier(_) => {
                 result.push(task);
             }
@@ -126,6 +131,23 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4293: two batches from two inbound frames carry different ids; the
+    /// task is not persisted for retry, so a discriminant collapse would lose
+    /// the second frame's links outright.
+    #[test]
+    fn link_batches_from_different_frames_both_survive_4293() {
+        let batch = |ids: &[&str]| MaterializeTask::ReindexBlockLinksBatch {
+            block_ids: ids.iter().map(|id| Arc::from(*id)).collect(),
+        };
+        let d = dedup_tasks(vec![batch(&["A"]), batch(&["B"])]);
+        assert_eq!(
+            d.iter()
+                .filter(|t| matches!(t, MaterializeTask::ReindexBlockLinksBatch { .. }))
+                .count(),
+            2
+        );
+    }
 
     /// #2911: dedup used to key per-id tasks on a 64-bit `FxHasher`
     /// fingerprint of the id rather than the id itself, so two

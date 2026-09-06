@@ -53,7 +53,7 @@
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
-//! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved_conn` (the snapshot-RESET arm, #4218) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
+//! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
 //! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
@@ -1217,8 +1217,8 @@ fn fold_block_space(by_id: &BTreeMap<&str, &BaseBlock>, block_id: &str) -> Optio
 ///
 /// It re-derives what the writers WOULD insert against the CURRENT state of
 /// `blocks`. It is not a claim that production ever recomputes this set: there
-/// is no vault-wide `rebuild_block_links` (`truncate_block_links`' sole caller
-/// is `agaric-sync`'s snapshot-restore wipe), and the per-block reindexer is a
+/// is no vault-wide `rebuild_block_links` (the one wholesale wipe of it went
+/// with the snapshot restore, #4699), and the per-block reindexer is a
 /// DIFF driven by content change alone. The gap between the two is real and is
 /// enumerated on [`reconcile_block_links`].
 pub async fn rebuild_block_links_from_content(
@@ -1343,7 +1343,7 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
      ReindexBlockLinks at all (only CreateBlock and EditBlock do) — plus \
      recovery::cache_refresh's draft-recovery path, which enqueues it \
      directly. There is still NO vault-wide rebuild_block_links: \
-     truncate_block_links' sole caller is agaric-sync's snapshot-restore WIPE, \
+     the one wholesale wipe of it went with the snapshot restore (#4699), \
      and every other link artefact (pages_cache.inbound_link_count, \
      page_link_cache) folds this table as ground truth, so a loss here is \
      consistent on both sides of their diffs and invisible to reconcile(). \
@@ -1658,9 +1658,9 @@ const BLOCK_LINKS_UNRESOLVED_OWNER: &str = "sync_unresolved_links (agaric-store'
      tail of BOTH reindex writers — reindex_block_links_conn and \
      reindex_block_links_split — so a source's whole owed set is recomputed \
      from its current content and its post-diff block_links rows on every \
-     reindex of it; plus rebuild_block_links_unresolved_conn, the vault-wide \
-     arm agaric-sync's snapshot RESET runs in-transaction after wiping the \
-     table (#4218). One level up: the arm of \
+     reindex of it; plus rebuild_block_links_unresolved, the vault-wide \
+     arm (#4218) nothing in production has called since #4699. One level up: \
+     the arm of \
      materializer::dispatch::invalidations_for_op that enqueues \
      ReindexBlockLinks at all (only CreateBlock and EditBlock do). A row lost \
      from here is a repair that silently never happens — the target's \
@@ -1877,8 +1877,9 @@ pub async fn assert_block_links_unresolved_reconciled(pool: &SqlitePool, context
     }
 }
 
-/// Bring `block_links_unresolved` in line with PRODUCTION's vault-wide arm —
-/// the same `rebuild_block_links_unresolved` the snapshot RESET runs (#4218).
+/// Bring `block_links_unresolved` in line with the vault-wide arm,
+/// `rebuild_block_links_unresolved` (#4218; its production caller, the
+/// snapshot RESET, went in #4699).
 ///
 /// The settle for a fixture that wrote `blocks.content` (and possibly
 /// `block_links`) directly, with no op behind it, so no `ReindexBlockLinks`

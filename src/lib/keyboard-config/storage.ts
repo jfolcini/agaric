@@ -297,50 +297,65 @@ const GLOBAL_LISTENER_CATEGORIES: ReadonlySet<string> = new Set([
   'keyboard.category.undoRedo',
 ])
 
+interface ChordBucket {
+  chord: string
+  bindings: ShortcutBinding[]
+}
+
 export function findConflicts(): Array<{ ids: string[]; keys: string; category: string }> {
   const current = getCurrentShortcuts()
   // Group by exact (keys, category, condition) triple. A missing condition is
   // treated as a wildcard sentinel — wildcards fire unconditionally and so
   // conflict with every other binding on the same (keys, category) pair.
-  const byTriple = new Map<string, ShortcutBinding[]>()
-  // Also index by (keys, category) so we can surface wildcard cross-conflicts
+  // #3288 — buckets are per CHORD, not per `keys` string, so a rebind onto
+  // one alternative of `'Ctrl + Y / Ctrl + Shift + Z'` co-buckets with it.
+  const byTriple = new Map<string, ChordBucket>()
+  // Also index by (chord, category) so we can surface wildcard cross-conflicts
   // (shortcuts with disjoint, defined conditions never fire together
   // and must not be flagged).
-  const byKeyCat = new Map<string, ShortcutBinding[]>()
+  const byKeyCat = new Map<string, ChordBucket>()
   for (const s of current) {
     const condition = s.condition ?? '__wildcard__'
-    const tripleKey = `${s.keys}|${s.category}|${condition}`
-    const tripleArr = byTriple.get(tripleKey) ?? []
-    tripleArr.push(s)
-    byTriple.set(tripleKey, tripleArr)
-    const kcKey = `${s.keys}|${s.category}`
-    const kcArr = byKeyCat.get(kcKey) ?? []
-    kcArr.push(s)
-    byKeyCat.set(kcKey, kcArr)
+    for (const chord of s.keys.split(' / ')) {
+      const triple = byTriple.get(`${chord}|${s.category}|${condition}`) ?? { chord, bindings: [] }
+      triple.bindings.push(s)
+      byTriple.set(`${chord}|${s.category}|${condition}`, triple)
+      const kc = byKeyCat.get(`${chord}|${s.category}`) ?? { chord, bindings: [] }
+      kc.bindings.push(s)
+      byKeyCat.set(`${chord}|${s.category}`, kc)
+    }
   }
   const conflicts: Array<{ ids: string[]; keys: string; category: string }> = []
-  // Pass 1: exact-triple duplicates. Two bindings sharing keys+category+condition
+  // Two bindings sharing several chords co-bucket once per chord; report them once.
+  const seen = new Set<string>()
+  const push = (ids: string[], keys: string, category: string): void => {
+    const key = ids.toSorted().join('|')
+    if (seen.has(key)) return
+    seen.add(key)
+    conflicts.push({ ids, keys, category })
+  }
+  // Pass 1: exact-triple duplicates. Two bindings sharing chord+category+condition
   // (or both lacking a condition — wildcard×wildcard) always conflict.
-  for (const arr of byTriple.values()) {
-    if (arr.length > 1) {
-      conflicts.push({
-        ids: arr.map((s) => s.id),
-        keys: arr[0]?.keys ?? '',
-        category: arr[0]?.category ?? '',
-      })
+  for (const { chord, bindings } of byTriple.values()) {
+    if (bindings.length > 1) {
+      push(
+        bindings.map((s) => s.id),
+        chord,
+        bindings[0]?.category ?? '',
+      )
     }
   }
   // Pass 2: wildcard×conditioned cross-conflicts. A wildcard binding fires
   // unconditionally, so it collides with every conditioned binding on the
-  // same (keys, category). Pair each wildcard with each conditioned binding;
+  // same (chord, category). Pair each wildcard with each conditioned binding;
   // wildcard×wildcard pairs are already covered by Pass 1.
-  for (const arr of byKeyCat.values()) {
-    const wildcards = arr.filter((s) => s.condition === undefined)
-    const conditioned = arr.filter((s) => s.condition !== undefined)
+  for (const { chord, bindings } of byKeyCat.values()) {
+    const wildcards = bindings.filter((s) => s.condition === undefined)
+    const conditioned = bindings.filter((s) => s.condition !== undefined)
     if (wildcards.length > 0 && conditioned.length > 0) {
       for (const w of wildcards) {
         for (const c of conditioned) {
-          conflicts.push({ ids: [w.id, c.id], keys: w.keys, category: w.category })
+          push([w.id, c.id], chord, w.category)
         }
       }
     }

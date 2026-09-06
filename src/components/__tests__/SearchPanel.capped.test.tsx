@@ -30,15 +30,18 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+const mockResolvePageByAlias = vi.hoisted(() => vi.fn().mockResolvedValue(null))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    resolvePageByAlias: vi.fn().mockResolvedValue(null),
+    commands: {
+      ...actual.commands,
+      resolvePageByAlias: (...args: unknown[]) =>
+        mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
-
-import { resolvePageByAlias } from '@/lib/tauri'
 
 // E2E-A4 — controlled `useSearchResults` so we drive `capped` directly. #2634 —
 // the panel migrated off `usePaginatedQuery` onto `useInfiniteQuery` inside
@@ -89,7 +92,7 @@ beforeEach(() => {
   localStorage.clear()
   cappedValue = false
   mockedItems = []
-  vi.mocked(resolvePageByAlias).mockResolvedValue(null)
+  mockResolvePageByAlias.mockResolvedValue(null)
   useNavigationStore.setState({
     currentView: 'search',
     selectedBlockId: null,

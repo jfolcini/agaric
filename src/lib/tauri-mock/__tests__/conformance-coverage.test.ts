@@ -395,7 +395,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Point reads over blocks / properties / tags ──
   //
   // #3826 CLOSED this group. Eleven commands (`batch_resolve`,
-  // `first_child_for_blocks`, `get_block`, `get_blocks`, `get_batch_properties`,
+  // `first_child_for_blocks`, `get_block`, `get_blocks` (gone since #3264), `get_batch_properties`,
   // `get_properties`, `get_property`, `list_blocks`, `list_tags_for_block`,
   // `list_inherited_tags_for_block`, `load_page_subtree`) were waived here as
   // "point reads over rows the #763 snapshot already diffs". True, and not a
@@ -420,7 +420,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // `list_page_links` query step); these commands' grouping, filtering and
   // counting on top of them are not.
   get_backlinks: 'fixture candidate: grouping/pagination over edges the snapshot already pins',
-  query_backlinks_filtered: 'fixture candidate: filtered backlinks over already-pinned edges',
   count_backlinks_batch:
     'returns `HashMap<page_id, count>` — a keyed count map, not the canonical ' +
     'block-id rows the query projection binds',
@@ -443,13 +442,10 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   //
   // Only `list_projected_agenda` is wall-clock dependent — its `_inner` takes
   // `chrono::Local::now().date_naive()` and threads it through the recurrence
-  // projection. The two `count_agenda_*` commands are plain `agenda_cache`
-  // lookups keyed by their EXPLICIT `dates` argument (agenda.rs
-  // `count_agenda_batch_inner`); no clock is involved, and the real blocker is
-  // the shape they answer with.
-  count_agenda_batch:
-    'returns `HashMap<date, count>` — a keyed count map with no row identity the ' +
-    'query projection can bind (NOT wall-clock: the `dates` arg is explicit)',
+  // projection. `count_agenda_batch_by_source` is a plain `agenda_cache`
+  // lookup keyed by its EXPLICIT `dates` argument (agenda.rs
+  // `count_agenda_batch_by_source_inner`); no clock is involved, and the real
+  // blocker is the shape it answers with.
   count_agenda_batch_by_source:
     'returns nested `HashMap<date, HashMap<source, count>>` — a keyed count map with ' +
     'no row identity the query projection can bind (NOT wall-clock: `dates` is explicit)',
@@ -471,7 +467,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // undo/redo waivers above.
   get_block_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
   list_page_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
-  find_undo_group: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
   get_compaction_status: 'op-log maintenance counters, not projected block state',
   // Not "pure text diffs": both SELECT their input by an op-log coordinate the
   // two stacks generate independently, so a fixture cannot name the same op on
@@ -499,7 +494,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   list_attachments_batch: 'attachments blob store outside the conformance snapshot scope',
   read_attachment_meta: 'attachments blob store outside the conformance snapshot scope',
   list_drafts: 'draft staging table outside the conformance snapshot scope',
-  get_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
   list_peer_refs: 'peer registry (device metadata) outside the conformance snapshot scope',
 
   // ── Process / environment / telemetry status (no domain state) ──
