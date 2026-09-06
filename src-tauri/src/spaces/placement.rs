@@ -7,12 +7,16 @@
 //! tag broken until a restart: hidden from every space's tag list, refused by
 //! `reindex_block_tag_refs` as cross-space, rendered as a raw `#[ULID]`.
 //!
-//! This sink wraps the daemon's event sink and, on a `Complete` that moved at
-//! least one block, runs the boot pass's placement half
-//! ([`place_space_less_blocks`]) off the session task. The pass selects
-//! `space_id IS NULL` rows through `idx_blocks_space_type`, so it is bounded
-//! by the orphans, not the vault, and a converged session costs one indexed
-//! lookup. The boot pass stays as the backstop for every other ingress.
+//! This sink wraps the daemon's event sink and, on every `Complete` except a
+//! converged `Some(0)`, runs the boot pass's placement half
+//! ([`place_space_less_blocks`]) off the session task. `None` is the
+//! whole-space snapshot catch-up (`sync_daemon::snapshot_transfer`), the
+//! ingress that moves entire spaces and so the one most likely to carry a
+//! space-less block; it is "changed, count unknown", never "nothing changed"
+//! (`SyncEvent::Complete::changed_blocks`). The pass probes for a space-less
+//! row on the read path before it takes the write lock, so a session that
+//! delivered nothing space-less costs one indexed lookup. The boot pass
+//! stays as the backstop for every other ingress.
 
 use std::sync::Arc;
 
@@ -55,11 +59,11 @@ impl SpacePlacementSink {
 impl SyncEventSink for SpacePlacementSink {
     fn on_sync_event(&self, event: SyncEvent) {
         if let SyncEvent::Complete {
-            changed_blocks: Some(changed),
+            changed_blocks,
             remote_device_id,
             ..
         } = &event
-            && *changed > 0
+            && *changed_blocks != Some(0)
         {
             let pool = self.pool.clone();
             let device_id = self.device_id.clone();
@@ -105,7 +109,9 @@ mod tests {
 
     use super::*;
     use crate::db::init_pool;
-    use crate::spaces::bootstrap::{SPACE_WORK_ULID, bootstrap_spaces_for_test};
+    use crate::spaces::bootstrap::{
+        SPACE_PERSONAL_ULID, SPACE_WORK_ULID, bootstrap_spaces_for_test,
+    };
 
     const DEV: &str = "test-device";
 
@@ -178,15 +184,14 @@ mod tests {
         (sink, recording)
     }
 
-    #[tokio::test]
-    async fn a_complete_that_moved_blocks_places_the_synced_in_tag_4717() {
+    async fn places_the_synced_in_tag_after(changed_blocks: Option<usize>) {
         let (pool, _dir) = seeded_pool().await;
         let tag_id = seed_synced_in_orphan_tag(&pool).await;
         assert_eq!(space_of(&pool, &tag_id).await, None);
         let materializer = Materializer::new(pool.clone());
         let (sink, recording) = sink(&pool, &materializer);
 
-        sink.on_sync_event(complete(Some(1)));
+        sink.on_sync_event(complete(changed_blocks));
         let task = sink
             .last_task
             .lock()
@@ -212,6 +217,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_complete_that_moved_blocks_places_the_synced_in_tag_4717() {
+        places_the_synced_in_tag_after(Some(1)).await;
+    }
+
+    /// The whole-space snapshot catch-up reports `None`: changed, count
+    /// unknown. It is the ingress that moves entire spaces, so it must place.
+    #[tokio::test]
+    async fn a_snapshot_catch_up_places_the_synced_in_tag_4717() {
+        places_the_synced_in_tag_after(None).await;
+    }
+
+    /// The pre-lock probe must see a space-less page as well as a tag.
+    #[tokio::test]
+    async fn the_pass_places_a_space_less_page_in_personal_4717() {
+        let (pool, _dir) = seeded_pool().await;
+        let page_id = BlockId::new().to_string();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'synced-in', NULL, 1, ?)",
+        )
+        .bind(&page_id)
+        .bind(&page_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let materializer = Materializer::new(pool.clone());
+
+        let placed = place_space_less_blocks(&pool, DEV, &materializer)
+            .await
+            .unwrap();
+
+        assert_eq!(placed, (1, 0));
+        assert_eq!(
+            space_of(&pool, &page_id).await,
+            Some(SPACE_PERSONAL_ULID.to_string())
+        );
+        materializer.shutdown();
+    }
+
+    #[tokio::test]
     async fn a_converged_session_spawns_nothing_4717() {
         let (pool, _dir) = seeded_pool().await;
         let tag_id = seed_synced_in_orphan_tag(&pool).await;
@@ -219,11 +264,10 @@ mod tests {
         let (sink, recording) = sink(&pool, &materializer);
 
         sink.on_sync_event(complete(Some(0)));
-        sink.on_sync_event(complete(None));
 
         assert!(sink.last_task.lock().unwrap().is_none());
         assert_eq!(space_of(&pool, &tag_id).await, None);
-        assert_eq!(recording.0.lock().unwrap().len(), 2);
+        assert_eq!(recording.0.lock().unwrap().len(), 1);
         materializer.shutdown();
     }
 }
