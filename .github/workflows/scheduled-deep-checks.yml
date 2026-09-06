@@ -82,7 +82,8 @@ name: Scheduled deep checks
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
 #                    the Actions tab (the #3163 fuzz break survived five days
-#                    that way). It reads every other job's `needs.*.result`
+#                    that way). It reads every lane's `needs.*.result` (the `full-suite`
+#                    legs fold into one)
 #                    and keeps ONE rolling tracking issue that reopens on a
 #                    newly-failing lane and closes itself when all are green
 #                    (see `scripts/file-scheduled-failures.mjs`). Its own
@@ -1053,8 +1054,8 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          # ONE saver, not 46 (#3393): every shard restores the same target
-          # dir, and 46 concurrent saves of a multi-GB cache would churn the
+          # ONE saver, not 21 (#3393): every shard restores the same target
+          # dir, and 21 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
           # for no gain. `agaric-engine` shard 0 is the saver because its
           # build is a superset of `agaric-store`'s, and it has to be a
@@ -2760,11 +2761,12 @@ jobs:
           tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       - name: Install cargo plugins via prebuilt binaries
-        # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest
-        # backs the cargo-test hook (SKIPped below, but resolved at hook load).
+        # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
+        # No cargo-nextest: the `cargo-test` hook is SKIPped below and is a
+        # system hook, so prek never resolves its binary.
         uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit,cargo-nextest
+          tool: cargo-deny,cargo-machete,cargo-audit
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
@@ -3020,8 +3022,9 @@ jobs:
       - name: Cargo doc-tests (full suite)
         # nextest does NOT run doc-tests (they compile as their own per-example
         # binaries), so run them to keep executable doc examples honest
-        # (#2555). Unpartitionable, so shard 1 carries them.
-        if: matrix.shard == 1
+        # (#2555). Unpartitionable; shard 2 carries them for the same reason
+        # `_validate.yml`'s `cargo-tests (2)` does: it is the shorter of the two.
+        if: matrix.shard == 2
         working-directory: src-tauri
         run: cargo test --doc --workspace
 

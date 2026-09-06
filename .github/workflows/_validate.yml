@@ -59,9 +59,9 @@ name: Validate (prek-equivalent)
 # NO `schedule:` HERE — ON PURPOSE. A weekly whole-tree re-validation of `main`
 # is genuinely wanted, but this is not the workflow that should carry it:
 #   * `scheduled-deep-checks.yml` already runs it weekly, and runs MORE. Its
-#     `full-suite` job is a strict superset of a scheduled run of this file —
+#     `full-suite` legs are a strict superset of a scheduled run of this file —
 #     the FULL prek suite in BOTH stages with NO category SKIPs, plus full
-#     vitest + full (unsharded) playwright + full nextest + doc-tests, and it
+#     vitest + full playwright (sharded like here) + full nextest + doc-tests, and it
 #     hard-fails on whole-tree pre-commit-stage drift. It exists precisely as
 #     the counterweight to the per-PR category gating `detect-changes` below
 #     performs. A weekly copy of THIS workflow would re-run the same work,
