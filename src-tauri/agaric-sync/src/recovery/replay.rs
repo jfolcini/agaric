@@ -425,6 +425,80 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
     Ok(true)
 }
 
+/// Re-enqueue the background fan-out for every op boot replay just applied,
+/// covering `from_seq < seq <= through_seq`. Returns how many ops it dispatched.
+///
+/// Applying an op writes `blocks`; it does NOT write `fts_blocks`,
+/// `block_links`, `block_tag_refs` or `blocks.page_id`. Live, those come from
+/// the background fan-out `commit_and_dispatch` fires after the commit — in
+/// memory, so a hard kill between the commit and the consumer's drain takes
+/// them with it. Replay re-applies the op and advances the cursor past it, so
+/// without this pass the block's index rows stay stale until someone edits that
+/// block again: text typed in the final seconds before an OOM kill is simply
+/// not findable (#3298).
+///
+/// # Why a second walk rather than keeping the records
+///
+/// [`REPLAY_CHUNK_SIZE`] exists so a multi-thousand-op replay never holds the
+/// whole op log in memory; collecting every `Arc<OpRecord>` from the first walk
+/// to reuse here would defeat exactly that. `through_seq` bounds the range to
+/// the ops that pass replayed and excludes anything a concurrent writer added.
+///
+/// Both bounds are about COST, not correctness: a fan-out for an op that never
+/// applied finds no `blocks` row and every handler no-ops. They keep boot from
+/// re-dispatching the whole op log on every launch, which is why no test
+/// asserts on them.
+///
+/// # Why `dispatch_background_or_warn`
+///
+/// The ops are already durably applied and the cursor has moved, so a closed or
+/// saturated queue must not fail the boot. A shed task persists itself to
+/// `materializer_retry_queue` on its own (#423).
+///
+/// # Why not `enqueue_full_cache_rebuild`
+///
+/// Every local command applies with `advance_cursor = false`, so the cursor
+/// never advances during a session and replay has ops on essentially every
+/// launch. The one-line whole-cache version would therefore run an O(vault)
+/// nine-cache rebuild on every app start.
+async fn fan_out_replayed_ops(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    from_seq: i64,
+    through_seq: i64,
+) -> Result<usize, AppError> {
+    let mut dispatched = 0usize;
+    let mut next = from_seq;
+    while next < through_seq {
+        // #2481: `is_replicated = 0`, matching the replay walk — a replicated
+        // audit row is never applied, so it has no derived state to re-derive.
+        let rows: Vec<OpRecord> = sqlx::query_as!(
+            OpRecord,
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
+             FROM op_log \
+             WHERE is_replicated = 0 AND seq > ? AND seq <= ? \
+             ORDER BY seq ASC, device_id ASC \
+             LIMIT ?",
+            next,
+            through_seq,
+            REPLAY_CHUNK_SIZE,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        for record in &rows {
+            next = next.max(record.seq);
+            materializer.dispatch_background_or_warn(record);
+            dispatched += 1;
+        }
+    }
+    Ok(dispatched)
+}
+
 /// Walk `op_log WHERE seq > cursor` and enqueue each row as an
 /// `ApplyOp` task on the materializer's foreground queue.
 ///
@@ -705,6 +779,16 @@ pub async fn replay_unmaterialized_ops(
     tracing::debug!(
         parents_reprojected,
         "replay: batched end-of-replay reproject complete (#2295)"
+    );
+
+    // #3298 — re-derive the per-block indexes the replayed ops invalidated.
+    // AFTER the barrier and the reproject: a background task must see committed
+    // `blocks` rows and final `position` ranks, the same ordering `dispatch_op`
+    // documents.
+    let fanned_out = fan_out_replayed_ops(pool, materializer, cursor, last_seen).await?;
+    tracing::debug!(
+        fanned_out,
+        "replay: re-derived per-block index tasks for the replayed ops (#3298)"
     );
 
     tracing::info!(

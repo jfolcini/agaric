@@ -3127,6 +3127,100 @@ async fn replay_walks_unmaterialized_ops_c2b() {
     mat.shutdown();
 }
 
+/// #3298 — boot replay re-derives the per-block indexes, not just `blocks`.
+///
+/// Applying an op writes `blocks`; the derived indexes come from the
+/// background fan-out `commit_and_dispatch` fires after the commit, in memory.
+/// A hard kill between the commit and the consumer's drain takes that fan-out
+/// with it, and replay used to re-apply the op and advance the cursor past it
+/// while enqueuing nothing — so the block's row stayed out of `fts_blocks`
+/// until someone edited it again. Concretely: text typed in the final seconds
+/// before an OOM kill was not findable.
+///
+/// The op log here is the post-kill state: ops committed, cursor behind, no
+/// index rows. `fts_blocks` is asserted EMPTY first so the post-replay
+/// assertion cannot pass on a row that was already there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_re_derives_per_block_indexes_3298() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let device_id = "dev-3298-replay";
+
+    for i in 1..=3 {
+        append_local_op(
+            &pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(&format!("IDX_BLK_{i:02}")),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(i),
+                index: None,
+                content: format!("findable-{i}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    // Cursor at 1, so seq 1 is behind it and only seqs 2..=3 replay. The
+    // assertions below then pin BOTH arms of "indexed iff applied": two blocks
+    // materialise and are searchable, and the third is neither.
+    //
+    // What that does NOT pin is the walk's `seq > from_seq` lower bound —
+    // widening it to `>=` leaves this green, and correctly so: a background
+    // task for an op that never applied finds no `blocks` row and no-ops. The
+    // bound is there to keep boot from re-dispatching the whole op log on every
+    // launch, which is a cost, not a correctness property, so no assertion here
+    // can express it.
+    set_cursor(&pool, 1).await;
+
+    // dynamic-sql: static SQL, test-only read-back (the compile-time macro form
+    // pushes this module's rustc expansion past its stack limit).
+    let indexed_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        indexed_before, 0,
+        "the fixture must start with an empty index or the assertion below is vacuous"
+    );
+
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(report.ops_replayed, 2, "seqs 2..=3 only");
+    assert!(
+        report.replay_errors.is_empty(),
+        "replay should have no errors: {:?}",
+        report.replay_errors,
+    );
+
+    // The fan-out is enqueued on the BACKGROUND queue, which
+    // `replay_unmaterialized_ops` deliberately does not drain — the boot path
+    // returns once the foreground is applied. Drain it here.
+    mat.flush_background().await.unwrap();
+
+    // dynamic-sql: static SQL, test-only read-back (see above).
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blocks, 2, "the ops themselves must have applied");
+
+    // dynamic-sql: static SQL, test-only read-back (see above).
+    let indexed: Vec<String> =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks ORDER BY stripped")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        indexed,
+        vec!["findable-2".to_owned(), "findable-3".to_owned()],
+        "every replayed block must be searchable by its content, and only those \
+         — seq 1 was behind the cursor, never applied, and must not be indexed"
+    );
+
+    mat.shutdown();
+}
+
 /// #2237 — the chunked cursor walk (`REPLAY_CHUNK_SIZE = 200`) was never
 /// exercised beyond a single chunk, so multi-chunk pagination and the
 /// classic chunk-boundary off-by-ones (an op at `seq == last_seen` skipped
