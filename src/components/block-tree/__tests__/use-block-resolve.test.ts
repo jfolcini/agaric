@@ -4495,6 +4495,33 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_1', 'P_NEW2'])
   })
 
+  // #4723 — `create_page_in_space` RESOLVES an existing title to that page, so
+  // "Create new page" on a title the space already holds returns an id the
+  // filled cache is carrying; appending it listed that page twice in `[[`.
+  it('a create that resolves to a page already cached does not duplicate the row', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_1', 'Alpha')])
+    mockedCreatePageInSpace.mockResolvedValueOnce('P_1')
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(result.current.pagesListRef.current).toHaveLength(1)
+
+    await act(async () => {
+      await result.current.onCreatePage('Alpha')
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_1', title: 'Alpha' }])
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_1'])
+  })
+
   it('a change to an entity this cache never saw leaves the cache intact', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_ONLY', 'Only Page')])
 

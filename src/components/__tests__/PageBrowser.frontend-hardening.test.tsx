@@ -207,6 +207,7 @@ describe('PageBrowser', () => {
       // prepend.
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
         if (cmd === 'create_page_in_space') return Promise.resolve('P_NEW')
         if (cmd === 'list_pages_with_metadata') {
           const filters =
@@ -267,6 +268,7 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
         if (cmd === 'create_page_in_space') return Promise.resolve('P_NEW')
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({

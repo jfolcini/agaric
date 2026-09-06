@@ -10,12 +10,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// #4338 — the palette's `create-new-page` command calls
-// `commands.createPageInSpace` from `@/lib/bindings` directly (its
-// `@/lib/tauri` wrapper was retired, #4411). Spread the real module so every
-// other importer still binds what it expects, and intercept just the create;
+// #4338 — the palette's `create-new-page` command creates through
+// `@/lib/untitled-page`, which calls `commands.createPageInSpace` from
+// `@/lib/bindings` directly (its `@/lib/tauri` wrapper was retired, #4411).
+// Spread the real module so every other importer still binds what it expects,
+// and intercept the create plus the #4723 page-list read that precedes it;
 // resolve the OK-envelope shape so the real `unwrap` at the call site runs.
 const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
+const mockedListPages = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -24,6 +26,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       createPageInSpace: (...args: unknown[]) =>
         mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListPages(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -79,6 +83,8 @@ describe('PALETTE_COMMANDS — keyboard-shortcuts entry (#922)', () => {
 describe('PALETTE_COMMANDS — create-new-page publishes to the name-change bus (#4338)', () => {
   beforeEach(() => {
     mockedCreatePageInSpace.mockReset()
+    mockedListPages.mockReset()
+    mockedListPages.mockResolvedValue([])
     useSpaceStore.setState({
       currentSpaceId: 'SPACE_TEST',
       availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
@@ -109,6 +115,19 @@ describe('PALETTE_COMMANDS — create-new-page publishes to the name-change bus 
     } finally {
       unsubscribe()
     }
+  })
+
+  // #4723 — the palette used to pass the literal 'Untitled', which
+  // `create_page_in_space` resolves to the page already carrying that title.
+  it('creates the first free Untitled title when the space already holds one', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }])
+    mockedCreatePageInSpace.mockResolvedValue('P_PALETTE_000000000000000')
+
+    getPaletteCommand('create-new-page')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
+
+    await vi.waitFor(() =>
+      expect(mockedCreatePageInSpace).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_TEST'),
+    )
   })
 
   it('publishes nothing when the space store is not ready — no page was created', () => {

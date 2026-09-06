@@ -44,8 +44,8 @@ import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands, type PeerRef } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { createUntitledPage } from '@/lib/untitled-page'
 import { cn } from '@/lib/utils'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -376,14 +376,9 @@ function App() {
       return
     }
     try {
-      const newId = unwrap(await commands.createPageInSpace(null, 'Untitled', currentSpaceId))
-      useResolveStore.getState().set(newId, 'Untitled', false)
-      // #4338 — tell every mounted picker cache the page exists. Without
-      // this a warm `pagesListRef` never learns about it, and because
-      // `applyPageNameChange`'s 'renamed' arm bails on an id it has never
-      // seen, the title the user is about to type here would be dropped too.
-      notifyPageAdded(newId, 'Untitled', currentSpaceId)
-      navigateToPage(newId, 'Untitled')
+      const { id, title } = await createUntitledPage(currentSpaceId)
+      useResolveStore.getState().set(id, title, false)
+      navigateToPage(id, title)
       announce(t('announce.newPageCreated'))
     } catch (err) {
       logger.error('App', 'Failed to create new page', undefined, err)

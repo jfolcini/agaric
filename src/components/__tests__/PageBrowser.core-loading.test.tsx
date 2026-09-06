@@ -90,6 +90,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+    if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
     return pageRowInvokeFallback(cmd)
   })
 })
@@ -337,7 +338,15 @@ describe('PageBrowser', () => {
       const p = new Promise((r) => {
         resolveCreate = r
       })
-      mockedInvoke.mockReturnValueOnce(p)
+      // Keyed on the command: the create form's page-list read (#4723) runs
+      // first and would otherwise consume a positional `Once` value.
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'create_page_in_space') return p
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
+        if (cmd === 'list_pages_with_metadata') return Promise.resolve(emptyPage)
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        return pageRowInvokeFallback(cmd)
+      })
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Test Page')
