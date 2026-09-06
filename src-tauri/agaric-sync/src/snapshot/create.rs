@@ -1,188 +1,13 @@
-use sqlx::{Executor, SqliteConnection, SqlitePool};
+use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;
 
-use super::codec::encode_snapshot;
-use super::types::*;
 use agaric_core::error::AppError;
-
-// ---------------------------------------------------------------------------
-// Snapshot-creation memory-pressure thresholds
-// ---------------------------------------------------------------------------
-//
-// `collect_tables` buffers the entire derived state (blocks,
-// block_tags, block_properties, …) into `SnapshotData.tables` before
-// the CBOR/zstd encode step runs. On a 1M-block vault that structure
-// can exceed the per-process heap budget on constrained platforms —
-// Android release APKs cap at ~24 MB, which is the tightest known
-// target for this app.
-//
-// #416 trimmed the encode-side peak: `encode_snapshot` now streams CBOR
-// straight into the zstd encoder, so the uncompressed CBOR buffer is no
-// longer materialised — at peak only the `SnapshotData` Vecs and the
-// compressed output are live (previously: Vecs + full CBOR buffer +
-// compressed output). The residual ceiling is the `SnapshotData` Vecs
-// themselves; eliminating *those* needs a row-batched streaming
-// snapshot *format* (a wire-format change gated by AGENTS.md
-// "Architectural Stability"), which stays deferred. The actionable
-// guard is therefore still a heads-up `warn!` at compaction time, well
-// before the wall.
-//
-// The op_log row count and total payload byte size are the cheapest
-// proxies we have for the size of the snapshot we are about to build:
-// every derived row exists because some op materialised it. They are
-// not exact (the snapshot also includes derived attachments rows etc.,
-// and zstd compresses well), so the thresholds are deliberately
-// conservative — chosen to fire long before the platform OOM ceiling
-// rather than as a tight bound.
-
-/// Emit a `warn!` when an op_log compaction would buffer this
-/// many rows in memory at once. 100k rows is roughly the size at which
-/// the encoded snapshot starts to approach single-digit-MB territory
-/// in compressed form (and considerably larger pre-compression), giving
-/// the user a clear heads-up before the 24 MB Android heap is at risk.
-pub const SNAPSHOT_WARN_ROW_COUNT: i64 = 100_000;
-
-/// Emit a `warn!` when the sum of `LENGTH(payload)` across the
-/// op_log exceeds 64 MiB. This is a payload-only ceiling — it does not
-/// include the derived rows in `SnapshotData.tables` or the encoded
-/// CBOR overhead — so the actual memory peak during snapshot creation
-/// will be larger. 64 MiB sits well below the per-process budget on
-/// desktop targets but is already 2.6× the Android release heap, which
-/// is exactly the regime where the user should be warned.
-pub const SNAPSHOT_WARN_PAYLOAD_BYTES: i64 = 64 * 1024 * 1024;
-
-/// #706 item 3 — pending-snapshot deletion grace window (defense in depth).
-///
-/// The retention DELETE's `status = 'pending'` arm purges crash-leftover
-/// Pending rows. That arm is only *unconditionally* safe because
-/// makes create's INSERT-pending → UPDATE-complete a single transaction:
-/// a cleanup running concurrently can never observe a legitimate, still
-/// in-flight pending row, because it is invisible until the same tx flips
-/// it to complete. If that invariant were ever split back into two
-/// transactions, an interleaved cleanup could delete a brand-new pending
-/// snapshot mid-write — silent data loss.
-///
-/// As cheap insurance we gate the pending arm on an age threshold: a
-/// pending row is only deleted once it is older than this window. A
-/// genuine crash leftover is always older than the grace period by the
-/// time the next compaction runs (compactions are minutes-to-days apart),
-/// so legitimate cleanup is unaffected; a freshly written pending row is
-/// spared even under a hypothetical split-tx interleave. Snapshot row ids
-/// are ULIDs (millisecond-timestamped, lexically time-sortable), so the
-/// age check is a pure `id < <cutoff-ulid>` comparison — no schema
-/// change, no extra column.
-///
-/// One hour is far larger than any plausible single-snapshot write
-/// (sub-second to low seconds even on large vaults) yet far smaller than
-/// the inter-compaction interval, so it never strands a real leftover.
-pub(crate) const PENDING_SNAPSHOT_DELETE_GRACE_MS: i64 = 60 * 60 * 1000;
-
-/// #706 item 3 — build the lexical lower-bound ULID for "older than
-/// `grace_ms` ago". A ULID with the cutoff timestamp and an all-zero
-/// random component sorts at-or-below every ULID minted at or after that
-/// instant, so `id < cutoff` selects exactly the snapshot rows created
-/// before the cutoff. Returned as the canonical uppercase string the
-/// `log_snapshots.id` column stores.
-fn pending_delete_cutoff_ulid(now_ms: i64, grace_ms: i64) -> String {
-    let cutoff_ms = now_ms.saturating_sub(grace_ms).max(0);
-    // i64 ms → u64 ms for the 48-bit ULID timestamp field; the .max(0)
-    // above guarantees non-negativity.
-    let ts = u64::try_from(cutoff_ms).unwrap_or(0);
-    ulid::Ulid::from_parts(ts, 0).to_string()
-}
-
-/// Probe the op_log for the row count and total payload-byte
-/// size that the upcoming snapshot creation will buffer in memory.
-///
-/// Returns `(row_count, payload_bytes)`. The caller decides whether to
-/// emit a `warn!`; extracted as a separate helper so tests can pin the
-/// COUNT/SUM SQL behaviour deterministically without depending on a
-/// `tracing` subscriber capture (this crate does not wire one up).
-pub async fn measure_op_log_size(conn: &mut SqliteConnection) -> Result<(i64, i64), AppError> {
-    let row = sqlx::query!(
-        r#"SELECT COUNT(*) AS "row_count!: i64",
-                  COALESCE(SUM(LENGTH(payload)), 0) AS "payload_bytes!: i64"
-           FROM op_log"#
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    Ok((row.row_count, row.payload_bytes))
-}
-
-// ---------------------------------------------------------------------------
-// DB collection helpers
-// ---------------------------------------------------------------------------
-
-/// Read all core table rows from the database.
-///
-/// Accepts a `&mut SqliteConnection` (typically from a read transaction) so
-/// that all SELECT queries see a consistent point-in-time view of the database.
-pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
-    let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
-        BlockSnapshot,
-        r#"SELECT id AS "id: agaric_core::ulid::BlockId", block_type, content, parent_id AS "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, space_id AS "space_id: agaric_core::ulid::BlockId" FROM blocks"#
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let block_tags: Vec<BlockTagSnapshot> =
-        sqlx::query_as!(BlockTagSnapshot, "SELECT block_id, tag_id FROM block_tags")
-            .fetch_all(&mut *conn)
-            .await?;
-
-    let block_properties: Vec<BlockPropertySnapshot> = sqlx::query_as!(
-        BlockPropertySnapshot,
-        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool FROM block_properties"
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let block_links: Vec<BlockLinkSnapshot> = sqlx::query_as!(
-        BlockLinkSnapshot,
-        "SELECT source_id, target_id FROM block_links"
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let attachments: Vec<AttachmentSnapshot> = sqlx::query_as!(
-        AttachmentSnapshot,
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at, content_hash FROM attachments"
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let property_definitions: Vec<PropertyDefinitionSnapshot> = sqlx::query_as!(
-        PropertyDefinitionSnapshot,
-        "SELECT key, value_type, options, created_at FROM property_definitions"
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let page_aliases: Vec<PageAliasSnapshot> =
-        sqlx::query_as!(PageAliasSnapshot, "SELECT page_id, alias FROM page_aliases")
-            .fetch_all(&mut *conn)
-            .await?;
-
-    Ok(SnapshotTables {
-        blocks,
-        block_tags,
-        block_properties,
-        block_links,
-        attachments,
-        property_definitions,
-        page_aliases,
-    })
-}
 
 /// Compute the op frontier: `device_id → max seq` and the hash of the latest op.
 ///
-/// I-Lifecycle-2: when the op_log is empty (e.g., a freshly initialised
-/// device with no ops yet), this returns `(BTreeMap::new(), String::new())`
-/// rather than erroring. An empty snapshot is the deterministic
-/// representation of "device has zero ops" and is a legitimate input to
-/// `apply_snapshot` on a fresh peer. Callers that require a non-empty
-/// op_log (e.g., `compact_op_log`) gate this function behind their own
-/// row-count check before invocation.
+/// Returns `(BTreeMap::new(), String::new())` on an empty op_log rather than
+/// erroring. [`compact_op_log`] gates the call behind its own row-count check,
+/// so that shape is only reachable from tests today.
 ///
 /// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor
 ///
@@ -191,61 +16,40 @@ pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTable
 /// (`agaric_store::op_log::BlockEditScan`, `commands::history`, `reverse::*`)
 /// onto `(created_at, seq, device_id)` and left none of the
 /// `device_id`-before-`seq` shape behind in those layers. This `ORDER BY` — in
-/// the snapshot layer, not one of them — keeps that shape deliberately, and
+/// the compaction layer, not one of them — keeps that shape deliberately, and
 /// the rest of this section says why: the value is opaque and never compared
-/// across devices, so it is not an LWW decision at all. Do not "fix" it to the
-/// canonical `(created_at, seq, device_id)` for consistency: that would change
-/// a wire-adjacent value for no gain.
+/// across devices, so it is not an LWW decision at all.
 ///
 /// This does NOT mean `(created_at, device_id, seq)` is extinct elsewhere:
 /// `db::recovery` replays in that order as its own LWW convention
-/// (`recover_blocks_from_op_log`, `recover_derived_state_from_op_log`, and —
-/// the pass #4455 is actually about — `recover_attachments_from_op_log`), and
-/// `ATTACHMENT_REPLAYABLE` there carries no `is_replicated` filter — it
-/// replays both provenances, so a same-millisecond cross-device
-/// `rename_attachment`/`delete_attachment` pair can resolve to a different
-/// winner there than in `commands::history` / `reverse::*`. That divergence
-/// is tracked as #4455, not fixed by this comment.
+/// (`recover_blocks_from_op_log`, `recover_derived_state_from_op_log` and
+/// `recover_attachments_from_op_log`).
 ///
 /// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
 /// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two
 /// devices' clocks can disagree by seconds (and the op log has no global
 /// monotonic clock), the hash returned depends on which device's wall clock
-/// happened to run ahead of the other. Two devices that took a snapshot at
-/// the same logical point — same `up_to_seqs` vector, same set of ops —
-/// can therefore produce different `up_to_hash` values purely from clock
-/// skew.
+/// happened to run ahead of the other.
 ///
-/// This is **deliberate, not a bug**: peers treat `up_to_hash` as opaque
-/// (it's never compared between devices for equality), and the **real
-/// causal anchor is `up_to_seqs`** — a per-device-id `MAX(seq)` map that
-/// behaves like a vector clock. It used to be what `try_offer_snapshot_catchup`
-/// consulted to decide whether a snapshot covered a remote's frontier; #3487
-/// deleted that, and `compact_op_log`'s retention floor is now its only reader.
+/// That is **deliberate, not a bug**: the value is written to
+/// `compaction_watermark.up_to_hash` as a record of what the purge reached and
+/// is read by nothing. The **real causal anchor is `up_to_seqs`** — a
+/// per-device-id `MAX(seq)` map that behaves like a vector clock, and the
+/// bound [`compact_op_log`]'s DELETE runs against.
 ///
-/// If you find yourself reaching for "let's make `up_to_hash` deterministic
-/// across devices" (e.g., hash the snapshot bytes themselves rather than
-/// the latest op), STOP — that is a wire-format change that requires
-/// explicit user approval per AGENTS.md "Architectural Stability". The
-/// current shape is correct for what `up_to_hash` is used for.
+/// # #2481 phase 1 — deliberately UNFILTERED on `is_replicated`
 ///
-/// # #2481 phase 1 — deliberately UNFILTERED on `is_replicated` (known future risk)
+/// Unlike boot replay / the apply cursor (`recovery::replay`), this query does
+/// NOT add `WHERE is_replicated = 0`. That is intentional for
+/// [`compact_op_log`]'s DELETE frontier: per the #2481 design (issue body,
+/// "Compaction: foreign-device ops age out under the same 90-day
+/// snapshot-frontier policy"), replicated foreign-device audit rows are meant
+/// to be purged by the same retention sweep as locally-authored ones.
 ///
-/// Unlike boot replay / the apply cursor / the compaction floor
-/// (`recovery::replay`), this query does NOT add `WHERE is_replicated = 0`.
-/// That is intentional for `compact_op_log`'s DELETE frontier: per the
-/// #2481 design (issue body, "Compaction: foreign-device ops age out under
-/// the same 90-day snapshot-frontier policy"), replicated foreign-device
-/// audit rows are meant to be purged by the same retention sweep as
-/// locally-authored ones, so `up_to_seqs` including them there is correct.
-///
-/// #3487 removed the only other consumer
-/// (`sync_daemon::snapshot_transfer::snapshot_covers_remote_heads`, which read
-/// `up_to_seqs[device]` as a proxy for "this snapshot's STATE reflects that
-/// device's edits"). The compaction purge is now the sole reader, and for it
-/// the unfiltered map is the correct one, so the #2481-phase-2 hazard that
-/// block described — a replicated audit seq passing a state-coverage check it
-/// says nothing about — is no longer reachable from here.
+/// #3487 removed the only consumer that read `up_to_seqs[device]` as a proxy
+/// for state coverage, so the #2481-phase-2 hazard that block described — a
+/// replicated audit seq passing a coverage check it says nothing about — is no
+/// longer reachable from here.
 pub async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {
@@ -253,8 +57,6 @@ pub async fn collect_frontier(
         .fetch_all(&mut *conn)
         .await?;
 
-    // I-Lifecycle-2: empty op_log → empty frontier, empty hash. Permits
-    // a fresh device to create + apply an empty snapshot deterministically.
     if rows.is_empty() {
         return Ok((BTreeMap::new(), String::new()));
     }
@@ -278,137 +80,107 @@ pub async fn collect_frontier(
     Ok((frontier, latest_hash))
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/// Create a snapshot of all core tables. Crash-safe: pending → write → complete.
-/// Returns the snapshot ULID on success.
-///
-/// Table and frontier collection is wrapped in a **read transaction** (F01) so
-/// that all SELECT queries see a consistent point-in-time view, even if
-/// concurrent writes occur.
-#[tracing::instrument(skip(pool, device_id), err)]
-pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<String, AppError> {
-    let snapshot_id = agaric_core::ulid::SnapshotId::new().into_string();
-
-    // F01: Read transaction for consistent snapshot collection.
-    // A DEFERRED tx is fine here — it only needs read isolation. SQLite
-    // promotes to a read-lock on the first SELECT and holds it until commit.
-    let mut read_tx = pool.begin().await?;
-    let tables = collect_tables(&mut read_tx).await?;
-    let (up_to_seqs, up_to_hash) = collect_frontier(&mut read_tx).await?;
-    read_tx.commit().await?;
-
-    let data = SnapshotData {
-        schema_version: SCHEMA_VERSION,
-        snapshot_device_id: device_id.to_string(),
-        up_to_seqs,
-        up_to_hash: up_to_hash.clone(),
-        tables,
-    };
-
-    // Offload the CPU-bound CBOR+zstd encode to a blocking thread so it
-    // never stalls the async runtime (#2200). `data` is moved in and handed
-    // back out alongside the encoded bytes because the write phase below
-    // still reads `data.up_to_seqs`; SnapshotData is owned/`Send`, so the
-    // round-trip is a cheap move (no clone of the derived-row Vecs).
-    let (encoded, data) = tokio::task::spawn_blocking(move || {
-        let encoded = encode_snapshot(&data);
-        (encoded, data)
-    })
-    .await
-    .map_err(|e| AppError::Snapshot(format!("snapshot encode task panicked: {e}")))?;
-    let encoded = encoded?;
-
-    // Fold the INSERT(pending) + UPDATE(complete) pair into a single
-    // `BEGIN IMMEDIATE` transaction so no other connection ever observes
-    // an orphan 'pending' row. Mirrors the write phase of `compact_op_log`
-    // below. `begin_immediate_logged` also surfaces slow acquires as
-    // `warn` logs (family) instead of being absorbed by the
-    // pool's busy_timeout.
-    let mut tx = agaric_store::db::begin_immediate_logged(pool, "snapshot_create").await?;
-
-    // Step 1: INSERT with status='pending'
-    let up_to_seqs_json = serde_json::to_string(&data.up_to_seqs)?;
-    sqlx::query!(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'pending', ?, ?, ?)",
-        snapshot_id,
-        up_to_hash,
-        up_to_seqs_json,
-        encoded,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // Step 2: UPDATE to 'complete'
-    // Inside the same tx — either both rows land (status='complete') or
-    // neither does. Boot cleanup is therefore only needed for crashes
-    // mid-transaction at the SQLite layer, not for our application logic.
-    sqlx::query!(
-        "UPDATE log_snapshots SET status = 'complete' WHERE id = ?",
-        snapshot_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    Ok(snapshot_id)
-}
-
 /// Default retention period for op log compaction (90 days).
 pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 
-/// Compact the op log: create a snapshot and purge ops older than `retention_days`.
-/// Returns `Some((snapshot_id, deleted_count))` if compaction occurred,
-/// `None` if no old ops exist.
+/// #3310 — clamp `materializer_apply_cursor` down to the surviving
+/// `MAX(seq) WHERE is_replicated = 0`. Runs inside [`compact_op_log`]'s purge
+/// transaction.
 ///
-/// The work is split into three phases to minimise the time the exclusive
-/// Write-lock is held:
+/// A cursor pointing past the end of the log is the H-4 impossible state.
+/// Compaction used to reset only the log: a vault whose newest op predates the
+/// retention window is purged to zero rows while the cursor still holds e.g.
+/// 50_000, and the next boot's `read_apply_cursor` (`recovery/replay.rs`) logs
+/// "impossible-state corruption" on a perfectly healthy vault. Clamping here
+/// makes that log line mean what it says again.
 ///
-/// 1. **Read phase** — a DEFERRED read transaction collects all table rows
-///    and the op frontier (`up_to_seqs`).  No write lock is acquired.
-/// 2. **Encode phase** — CBOR + zstd compression runs outside any
-///    transaction (pure computation).
-/// 3. **Write phase** — a brief `BEGIN IMMEDIATE` transaction inserts the
-///    snapshot row, deletes old ops, clamps the apply cursor down to the
-///    surviving frontier, and cleans up old snapshots.
+/// CLAMP TARGET — the surviving `MAX(seq) WHERE is_replicated = 0`,
+/// byte-for-byte the ceiling that `read_apply_cursor` and
+/// `heal_orphaned_apply_cursor` compare against. The `is_replicated = 0` scope
+/// is load-bearing (#2481): replicated audit rows are never applied and never
+/// advance the cursor, so they must not raise its legitimate ceiling either —
+/// clamping to an UNSCOPED `MAX(seq)` would leave the boot warn firing whenever
+/// a replicated row sat above the local frontier. `NULL` (log now empty)
+/// collapses to 0.
 ///
-/// **Cursor symmetry (#3310)**: the purge transaction also clamps
-/// `materializer_apply_cursor` down to the surviving
-/// `MAX(seq) WHERE is_replicated = 0`, mirroring what `apply_snapshot`
-/// already does for the RESET path. Without it, purging a vault whose newest
-/// op predates the retention window leaves `cursor >> MAX(seq)` — the H-4
-/// impossible state — and the next boot's `read_apply_cursor` logs
-/// "impossible-state corruption" on a perfectly healthy vault. See the inline
-/// comment at the clamp for why the target is the `is_replicated = 0`-scoped
-/// max and why lowering the cursor cannot lose work.
+/// ONLY EVER LOWERS. The `WHERE materialized_through_seq > ?1` guard makes a
+/// compaction that removed nothing above the cursor — the overwhelmingly common
+/// case, since the purge deletes the OLDEST rows and therefore normally moves
+/// `MIN(seq)`, not `MAX(seq)` — a strict no-op, and can never raise the cursor
+/// over ops that were not in fact materialised.
 ///
-/// **Stale-read safety**: between phases 1 and 3 new ops may arrive.  The
-/// DELETE in phase 3 is bounded by *both* `created_at < cutoff` *and*
-/// `seq <= up_to_seqs[device_id]`, so ops that were not yet visible during
-/// the read phase can never be deleted.
+/// LOWERING CANNOT LOSE WORK. The cursor means "everything at or below this seq
+/// is materialised", so a lower value can only cause RE-application, never
+/// skipping; and re-application on this path is idempotent
+/// (`advance_apply_cursor` is `MAX(materialized_through_seq, ?)`, the
+/// projections are `INSERT OR IGNORE` / `INSERT OR REPLACE` / keyed `UPDATE`,
+/// per `heal_orphaned_apply_cursor`'s documented contract). Here it cannot even
+/// cause re-application: the boot replay walk is
+/// `WHERE is_replicated = 0 AND seq > cursor` and we clamp to exactly the
+/// largest such seq, so the post-clamp walk selects zero rows.
+async fn clamp_apply_cursor_to_surviving_max(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    let surviving_max: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(&mut *conn)
+    .await?
+    .unwrap_or(0);
+    let cursor_clamped_at = agaric_store::db::now_ms();
+    let clamped_rows = sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = ?1, \
+             updated_at = ?2 \
+         WHERE id = 1 AND materialized_through_seq > ?1",
+        surviving_max,
+        cursor_clamped_at,
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if clamped_rows > 0 {
+        tracing::info!(
+            surviving_max_seq = surviving_max,
+            "compaction: clamped materializer_apply_cursor down to the surviving \
+             MAX(op_log.seq) (#3310); the purge removed every op the cursor \
+             pointed at, and a cursor past the end of the log is the H-4 \
+             impossible state the boot clamp exists to flag"
+        );
+    }
+    Ok(())
+}
+
+/// Purge `op_log` rows older than `retention_days` and record the frontier the
+/// purge ran to in `compaction_watermark`.
 ///
-/// Instrumented with a `compact_op_log` span that mirrors the
-/// `#[instrument]` wrapper on the Tauri command in `commands/compaction.rs`,
-/// so the `retention_days`, `eligible_ops`, `ops_deleted`, and timing log
-/// lines emitted from this function all share a common span prefix.
+/// Returns `Some(deleted_count)` if compaction occurred, `None` if no ops
+/// predate the cutoff.
 ///
-/// The second tuple element is the **actual** number of rows the
-/// per-device DELETE in phase 3 affected. The wrapper in
-/// `commands/compaction.rs` previously reported a stale "eligible at start"
-/// figure; surfacing the real `deleted_count` here lets the wrapper return
-/// it verbatim. The phase-3 frontier guard (`seq <= up_to_seqs[device]`)
-/// can legitimately make this number smaller than the pre-flight count.
+/// # Two phases
+///
+/// 1. **Read phase** — a DEFERRED read transaction counts eligible ops and
+///    collects the op frontier (`up_to_seqs`). No write lock is acquired.
+/// 2. **Write phase** — one `BEGIN IMMEDIATE` transaction upserts the
+///    watermark, deletes the old ops, and clamps the apply cursor down to the
+///    surviving frontier.
+///
+/// **Stale-read safety**: between the phases new ops may arrive. The DELETE is
+/// bounded by *both* `created_at < cutoff` *and* `seq <= up_to_seqs[device_id]`
+/// from phase 1, so ops that were not yet visible during the read phase can
+/// never be deleted.
+///
+/// **Cursor symmetry (#3310)**: the write transaction also runs
+/// `clamp_apply_cursor_to_surviving_max`, without which purging a vault whose
+/// newest op predates the retention window leaves `cursor >> MAX(seq)` — the
+/// H-4 impossible state.
+///
+/// The returned count is the **actual** number of rows the per-device DELETE
+/// affected, which the phase-2 frontier guard can legitimately make smaller
+/// than a pre-flight eligibility count.
 #[tracing::instrument(skip(pool), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compact_op_log(
     pool: &SqlitePool,
-    device_id: &str,
     retention_days: u64,
-) -> Result<Option<(String, u64)>, AppError> {
+) -> Result<Option<u64>, AppError> {
     tracing::info!(retention_days, "compaction starting");
     let start = std::time::Instant::now();
 
@@ -418,11 +190,8 @@ pub async fn compact_op_log(
     let cutoff_ms = cutoff.timestamp_millis();
 
     // ── Phase 1: Read (DEFERRED read transaction, no write lock) ─────
-    // A DEFERRED tx acquires a read-lock on the first SELECT and holds it
-    // until commit, giving us a consistent point-in-time view.
     let mut read_tx = pool.begin().await?;
 
-    // Check if any ops exist before the cutoff
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_ms
@@ -438,109 +207,42 @@ pub async fn compact_op_log(
         return Ok(None);
     }
 
-    // Heads-up warning when the op_log is large enough that
-    // `collect_tables` + `encode_snapshot` will buffer a snapshot
-    // approaching the platform heap ceiling (Android release APK is
-    // capped at ~24 MB). This is a non-blocking warn — the actual OOM
-    // ceiling is platform-dependent and the snapshot includes more than
-    // just op_log payloads, so the thresholds are conservative. A
-    // streaming snapshot format is the eventual fix and is deliberately
-    // Deferred recommendation.
-    let (op_log_rows, op_log_bytes) = measure_op_log_size(&mut read_tx).await?;
-    if op_log_rows > SNAPSHOT_WARN_ROW_COUNT || op_log_bytes > SNAPSHOT_WARN_PAYLOAD_BYTES {
-        tracing::warn!(
-            row_count = op_log_rows,
-            payload_bytes = op_log_bytes,
-            row_threshold = SNAPSHOT_WARN_ROW_COUNT,
-            byte_threshold = SNAPSHOT_WARN_PAYLOAD_BYTES,
-            "op_log size approaches snapshot memory ceiling; snapshot creation buffers all derived rows in memory and may OOM on constrained platforms (e.g., Android 24 MB heap)"
-        );
-    }
-
-    let snapshot_id = agaric_core::ulid::SnapshotId::new().into_string();
-
-    // Collect tables and frontier within this read transaction for consistency.
-    let tables = collect_tables(&mut read_tx).await?;
     let (up_to_seqs, up_to_hash) = collect_frontier(&mut read_tx).await?;
-
     read_tx.commit().await?;
 
-    // ── Phase 2: Encode (pure computation, no DB) ────────────────────
-    let data = SnapshotData {
-        schema_version: SCHEMA_VERSION,
-        snapshot_device_id: device_id.to_string(),
-        up_to_seqs,
-        up_to_hash: up_to_hash.clone(),
-        tables,
-    };
+    // ── Phase 2: Write (one BEGIN IMMEDIATE transaction) ─────────────
+    // `begin_immediate_logged` surfaces a stalled writer as a `warn`
+    // instead of letting it disappear into the 5 s busy_timeout.
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "compact_op_log_purge").await?;
 
-    // Phase 2 (cont.): offload the CPU-bound CBOR+zstd encode to a blocking
-    // thread so a large snapshot never stalls the async runtime (#2200).
-    // `data` is handed back out because Phase 3 still iterates
-    // `data.up_to_seqs` for the seq-bounded purge; the move is cheap
-    // (SnapshotData is owned/`Send`).
-    let (encoded, data) = tokio::task::spawn_blocking(move || {
-        let encoded = encode_snapshot(&data);
-        (encoded, data)
-    })
-    .await
-    .map_err(|e| AppError::Snapshot(format!("snapshot encode task panicked: {e}")))?;
-    let encoded = encoded?;
-
-    // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
-    // Only the INSERT, UPDATE, DELETE, and cleanup happen under the
-    // Exclusive write lock. route through `begin_immediate_logged`
-    // so a stalled writer surfaces as a `warn` instead of disappearing
-    // into the 5s busy_timeout (the wrapper command already uses the
-    // logged variant for the recount tx — this is the matching inner
-    // delete).
+    // Record the frontier this purge ran to. #4699: this replaced a
+    // zstd-CBOR dump of every derived table. Only the ROW'S EXISTENCE is
+    // read (by `agaric_engine::dag::find_lca`, to pick the
+    // compaction-aware wording for a broken edit chain); the columns are
+    // the durable record of how far the log was trimmed.
     //
-    // SQL-review the snapshot create (INSERT + UPDATE-to-complete) and
-    // the op_log purge run in SEPARATE transactions so a failure in the
-    // purge leaves the snapshot complete-and-usable instead of rolling
-    // back both. Previously both lived in one tx and any crash in the
-    // DELETE path threw away the snapshot, forcing the next boot to
-    // re-encode the same byte payload — retry-thrashing on transient
-    // disk errors. The seq bound (`up_to_seqs` from Phase 1) is captured
-    // before TX 1 commits, so concurrent writers between TX 1 and TX 2
-    // cannot cause the purge to delete new-after-snapshot ops.
-    let mut tx =
-        agaric_store::db::begin_immediate_logged(pool, "compact_op_log_phase3_snapshot").await?;
-
-    // Step 1: INSERT with status='pending'
-    let up_to_seqs_json = serde_json::to_string(&data.up_to_seqs)?;
+    // Written INSIDE the purge transaction: a watermark without the purge
+    // would claim a trim that did not happen, and a purge without the
+    // watermark makes `find_lca` report a purged op as a plain NotFound.
+    let up_to_seqs_json = serde_json::to_string(&up_to_seqs)
+        .map_err(|e| AppError::Internal(format!("serialising the compaction frontier: {e}")))?;
+    let compacted_at_ms = agaric_store::db::now_ms();
     sqlx::query!(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'pending', ?, ?, ?)",
-        snapshot_id,
-        up_to_hash,
+        "INSERT INTO compaction_watermark (id, up_to_seqs, up_to_hash, compacted_at_ms) \
+         VALUES (1, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET \
+           up_to_seqs = excluded.up_to_seqs, \
+           up_to_hash = excluded.up_to_hash, \
+           compacted_at_ms = excluded.compacted_at_ms",
         up_to_seqs_json,
-        encoded,
+        up_to_hash,
+        compacted_at_ms,
     )
     .execute(&mut *tx)
     .await?;
 
-    // Step 2: UPDATE to 'complete'
-    sqlx::query!(
-        "UPDATE log_snapshots SET status = 'complete' WHERE id = ?",
-        snapshot_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-    // Snapshot is durable on disk. From here on, a crash leaves the
-    // snapshot intact — the next compaction call will re-run the purge
-    // against the same `up_to_seqs` bound and the duplicate-DELETE is a
-    // no-op (already-deleted rows return 0 rows_affected).
-
-    let mut tx =
-        agaric_store::db::begin_immediate_logged(pool, "compact_op_log_phase3_purge").await?;
-
-    // Purge old ops: bounded by BOTH the time cutoff AND the snapshot
-    // frontier.  The seq guard ensures that ops written after the Phase 1
-    // read (which would have seq > up_to_seqs[device]) are never deleted,
-    // even if their created_at happens to be before the cutoff.
+    // Purge old ops: bounded by BOTH the time cutoff AND the phase-1
+    // frontier, so ops written after the read phase are never deleted.
     //
     // H-13: the BEFORE DELETE trigger on op_log (migration 0036) would ABORT
     // every per-device DELETE below without the mutation-bypass sentinel.
@@ -549,466 +251,19 @@ pub async fn compact_op_log(
     // runs with the sentinel present and the bypass is DISABLED again on
     // return (never escaping this tx / leaking to sibling connections).
     let mut deleted_count: u64 = 0;
-    for (dev_id, max_seq) in &data.up_to_seqs {
+    for (dev_id, max_seq) in &up_to_seqs {
         deleted_count += agaric_store::op_log::prune(&mut tx, cutoff_ms, dev_id, *max_seq).await?;
     }
 
-    // #3310 — restore the symmetry with the OTHER wholesale op_log wipe.
-    // `apply_snapshot` (the snapshot RESET, `restore.rs`) truncates op_log
-    // and zeroes `materializer_apply_cursor` in the SAME transaction,
-    // precisely because a cursor pointing past the end of the log is the
-    // H-4 impossible state. Compaction reset only the log: a vault whose
-    // newest op predates the retention window is purged to zero rows while
-    // the cursor still holds e.g. 50_000, and the next boot's
-    // `read_apply_cursor` (`recovery/replay.rs`) logs "impossible-state
-    // corruption" on a perfectly healthy vault. Clamping here in the purge
-    // tx makes that log line mean what it says again.
-    //
-    // CLAMP TARGET — the surviving `MAX(seq) WHERE is_replicated = 0`,
-    // byte-for-byte the ceiling that `read_apply_cursor` and
-    // `heal_orphaned_apply_cursor` compare against. The `is_replicated = 0`
-    // scope is load-bearing (#2481): replicated audit rows are never
-    // applied and never advance the cursor, so they must not raise its
-    // legitimate ceiling either — clamping to an UNSCOPED `MAX(seq)` would
-    // leave the boot warn firing whenever a replicated row sat above the
-    // local frontier. `NULL` (log now empty) collapses to 0, which is
-    // exactly what `apply_snapshot` writes over its own emptied log.
-    //
-    // ONLY EVER LOWERS. The `WHERE materialized_through_seq > ?1` guard
-    // makes a compaction that removed nothing above the cursor — the
-    // overwhelmingly common case, since prune deletes the OLDEST rows and
-    // therefore normally moves `MIN(seq)`, not `MAX(seq)` — a strict
-    // no-op, and can never raise the cursor over ops that were not in fact
-    // materialised.
-    //
-    // LOWERING CANNOT LOSE WORK. The cursor means "everything at or below
-    // this seq is materialised", so a lower value can only cause
-    // RE-application, never skipping; and re-application on this path is
-    // idempotent (`advance_apply_cursor` is
-    // `MAX(materialized_through_seq, ?)`, the projections are
-    // `INSERT OR IGNORE`/`INSERT OR REPLACE`/keyed `UPDATE`, per
-    // `heal_orphaned_apply_cursor`'s documented contract — that heal
-    // rewinds the same column much further, to `MIN(applied_through_seq)`
-    // or 0, on every boot that needs it). Here it cannot even cause
-    // re-application: the boot replay walk is
-    // `WHERE is_replicated = 0 AND seq > cursor` and we clamp to exactly
-    // the largest such seq, so the post-clamp walk selects zero rows.
-    let surviving_max: i64 = sqlx::query_scalar!(
-        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
-    )
-    .fetch_one(&mut *tx)
-    .await?
-    .unwrap_or(0);
-    let cursor_clamped_at = agaric_store::db::now_ms();
-    let clamped_rows = sqlx::query!(
-        "UPDATE materializer_apply_cursor \
-         SET materialized_through_seq = ?1, \
-             updated_at = ?2 \
-         WHERE id = 1 AND materialized_through_seq > ?1",
-        surviving_max,
-        cursor_clamped_at,
-    )
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    if clamped_rows > 0 {
-        tracing::info!(
-            surviving_max_seq = surviving_max,
-            "compaction: clamped materializer_apply_cursor down to the surviving \
-             MAX(op_log.seq) (#3310); the purge removed every op the cursor \
-             pointed at, and a cursor past the end of the log is the H-4 \
-             impossible state the boot clamp exists to flag"
-        );
-    }
-
-    // Cleanup old snapshots — kept in the same tx as the op_log purge so
-    // the two derived-state deletes commit together. If this tx fails the
-    // snapshot itself remains intact in `log_snapshots` from TX 1.
-    cleanup_snapshots_impl(&mut *tx, 3).await?;
+    clamp_apply_cursor_to_surviving_max(&mut tx).await?;
 
     tx.commit().await?;
 
     tracing::info!(
-        snapshot_id = %snapshot_id,
         ops_deleted = deleted_count,
-        snapshot_bytes = encoded.len(),
         duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
         "compaction completed"
     );
 
-    // Return the real deleted_count alongside the snapshot id so
-    // callers (the Tauri wrapper) can report a non-stale figure.
-    Ok(Some((snapshot_id, deleted_count)))
-}
-
-/// Fetch the most recent complete snapshot's compressed data.
-pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Vec<u8>)>, AppError> {
-    let row = sqlx::query!(
-        "SELECT id, data FROM log_snapshots WHERE status = 'complete' ORDER BY id DESC LIMIT 1"
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|r| (r.id, r.data)))
-}
-
-/// Like [`get_latest_snapshot`] but also returns the snapshot's op
-/// frontier (`up_to_seqs`) read directly from the `log_snapshots`
-/// column that [`create_snapshot`] persists.
-///
-/// #705: callers that only need the frontier (e.g. the responder's
-/// Covering check in `sync_daemon::snapshot_transfer`) previously
-/// ran a full zstd+CBOR `decode_snapshot` over the entire blob just to
-/// reach `up_to_seqs`. The column already stores that map as JSON, so
-/// reading it back avoids decoding every table.
-///
-/// Returns the parsed `up_to_seqs` (`BTreeMap<device_id, max_seq>`)
-/// alongside the snapshot id and compressed bytes. The column is
-/// `TEXT NOT NULL` and always holds the JSON map `create_snapshot`
-/// serialised; an unparsable value (corruption) maps to an empty
-/// frontier, which the covering check treats as "covers nothing" —
-/// Fail-safe for the responder's guard.
-pub async fn get_latest_snapshot_with_frontier(
-    pool: &SqlitePool,
-) -> Result<Option<(String, Vec<u8>, BTreeMap<String, i64>)>, AppError> {
-    let row = sqlx::query!(
-        "SELECT id, data, up_to_seqs FROM log_snapshots \
-         WHERE status = 'complete' ORDER BY id DESC LIMIT 1"
-    )
-    .fetch_optional(pool)
-    .await?;
-    let Some(r) = row else {
-        return Ok(None);
-    };
-    let up_to_seqs: BTreeMap<String, i64> = serde_json::from_str(&r.up_to_seqs).unwrap_or_default();
-    Ok(Some((r.id, r.data, up_to_seqs)))
-}
-
-/// Shared core of snapshot retention cleanup — accepts any sqlx executor so it
-/// works both inside a transaction (`compact_op_log` phase 3) and with a bare
-/// pool connection (`cleanup_old_snapshots`).
-///
-/// `keep == 0` is a no-op guard (see `cleanup_old_snapshots` doc).
-async fn cleanup_snapshots_impl<'e, E>(exec: E, keep: i64) -> Result<u64, AppError>
-where
-    E: Executor<'e, Database = sqlx::Sqlite>,
-{
-    if keep == 0 {
-        return Ok(0);
-    }
-    // #706 item 3: split the delete into two explicit, status-scoped arms
-    // so a *recent* pending row is spared by BOTH arms.
-    //
-    //   * pending arm — delete a pending row ONLY if it is older than the
-    //     grace window (`PENDING_SNAPSHOT_DELETE_GRACE_MS`). ULID ids are
-    //     lexically time-sortable, so `id < ?2` means "created before the
-    //     cutoff instant".
-    //   * complete arm — delete a complete row only if it is NOT among the
-    //     `keep` newest completes (unchanged retention behaviour).
-    //
-    // The previous single `OR id NOT IN (top-keep completes)` arm matched
-    // *any* row outside the kept completes — including every pending row —
-    // so it would have deleted a brand-new pending snapshot regardless of
-    // the age gate. Scoping each arm to its own status fixes that: a
-    // Recent pending row matches neither arm and survives. (when
-    // `keep == 0` we already returned above, so the complete arm's
-    // subquery is never empty here.)
-    let pending_cutoff =
-        pending_delete_cutoff_ulid(agaric_store::db::now_ms(), PENDING_SNAPSHOT_DELETE_GRACE_MS);
-    let result = sqlx::query(
-        "DELETE FROM log_snapshots \
-         WHERE (status = 'pending' AND id < ?2) \
-            OR (status = 'complete' AND id NOT IN \
-                (SELECT id FROM log_snapshots WHERE status = 'complete' \
-                 ORDER BY id DESC LIMIT ?1))",
-    )
-    .bind(keep)
-    .bind(&pending_cutoff)
-    .execute(exec)
-    .await?;
-    Ok(result.rows_affected())
-}
-
-/// Delete old complete snapshots, keeping only the `keep` most recent.
-/// Also deletes any lingering 'pending' snapshots (crash leftovers).
-/// Returns the number of deleted rows.
-///
-/// `keep == 0` is treated as a no-op (returns `Ok(0)` without
-/// touching the table). SQLite evaluates `x NOT IN (empty subquery)`
-/// as TRUE, so naively passing `LIMIT 0` to the subquery would delete
-/// every row, including completes — almost certainly not what any
-/// caller wants. Callers that genuinely need to clear all snapshots
-/// must do so explicitly.
-pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64, AppError> {
-    let keep_i64: i64 = i64::try_from(keep)
-        .expect("invariant: keep is a small configuration value (typically < 100) and fits in i64");
-    cleanup_snapshots_impl(pool, keep_i64).await
-}
-
-// ---------------------------------------------------------------------------
-// Atomic create_snapshot regression tests
-// ---------------------------------------------------------------------------
-//
-// These tests live inline (rather than in `snapshot/tests.rs`) because the
-// Item that motivated them is scoped to `create_snapshot` —
-// keeping them next to the production code makes the invariant ("INSERT +
-// UPDATE are one atomic transaction") easier to spot when this function is
-// edited again in the future.
-#[cfg(test)]
-mod tests_m69 {
-    use super::*;
-    use agaric_core::ulid::BlockId;
-    use agaric_store::op::{CreateBlockPayload, OpPayload};
-    use agaric_store::op_log::append_local_op_at;
-    use sqlx::SqlitePool;
-    use tempfile::TempDir;
-
-    /// Build an isolated migrated pool against a fresh temp DB. #2621 Sync-D:
-    /// `crate::db::init_pool` is app-side, so this delegates to the shared
-    /// `agaric_store::test_support::test_pool` fixture (same pattern the moved
-    /// agaric-engine loro tests use).
-    async fn test_pool() -> (SqlitePool, TempDir) {
-        agaric_store::test_support::test_pool().await
-    }
-
-    /// Insert a block directly so frontier collection has something to
-    /// reference. Bypasses the op log on purpose — we need exact control
-    /// over what's in the DB before calling `create_snapshot`.
-    async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'content', ?, 1)",
-        )
-        .bind(id)
-        .bind(content)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// Append a single op so `collect_frontier` has at least one row to
-    /// fold into `up_to_seqs` (it errors out otherwise).
-    async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: i64) {
-        let op = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::test_id(block_id),
-            block_type: "content".to_owned(),
-            parent_id: None,
-            position: Some(0),
-            index: None,
-            content: "test".to_owned(),
-        });
-        append_local_op_at(pool, device_id, op, ts).await.unwrap();
-    }
-
-    /// Happy-path atomicity: after a successful `create_snapshot`, the
-    /// row is in `'complete'` state with a non-empty payload, and no
-    /// orphan `'pending'` row is left behind. Calling it twice must
-    /// produce two `'complete'` rows and zero `'pending'` rows — the
-    /// strongest observable check we can make from a separate
-    /// connection without instrumenting the function itself.
-    #[tokio::test]
-    async fn create_snapshot_is_atomic_pending_to_complete() {
-        let (pool, _dir) = test_pool().await;
-        let device_id = "dev-1";
-
-        insert_block(&pool, "block-1", "first").await;
-        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
-
-        // First call ---------------------------------------------------
-        let snap1 = create_snapshot(&pool, device_id).await.unwrap();
-        assert!(!snap1.is_empty(), "first snapshot id should not be empty");
-
-        // Exactly one row, status='complete', payload non-empty. Both
-        // queries match shapes already in the committed `.sqlx/` cache
-        // (see `snapshot/tests.rs` line ~322 + ~372) so no prepare is
-        // needed for the new tests.
-        let status: String =
-            sqlx::query_scalar!("SELECT status FROM log_snapshots WHERE id = ?", snap1)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            status, "complete",
-            "snapshot must commit in 'complete' state, not 'pending'"
-        );
-
-        let payload = sqlx::query!(
-            "SELECT id, data FROM log_snapshots WHERE id = ? AND status = 'complete'",
-            snap1
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(
-            !payload.data.is_empty(),
-            "snapshot payload must be non-empty after commit"
-        );
-
-        let total_after_first: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            total_after_first, 1,
-            "exactly one snapshot row should exist after first create_snapshot"
-        );
-
-        let pending_after_first: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            pending_after_first, 0,
-            "no 'pending' rows should be visible after first create_snapshot"
-        );
-
-        // Second call --------------------------------------------------
-        // Append a fresh op so the frontier query still finds something
-        // (it does anyway — the original op is still in op_log — but
-        // a second op makes the test resilient to future cleanup).
-        insert_op_at(&pool, device_id, "block-1", 1_738_368_000_000).await;
-
-        let snap2 = create_snapshot(&pool, device_id).await.unwrap();
-        assert_ne!(
-            snap1, snap2,
-            "second create_snapshot must produce a fresh ULID"
-        );
-
-        let complete_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            complete_count, 2,
-            "second create_snapshot must add a second 'complete' row"
-        );
-
-        let pending_after_second: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            pending_after_second, 0,
-            "no 'pending' rows should remain after either create_snapshot call"
-        );
-
-        let total_rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            total_rows, 2,
-            "exactly two rows total — no leftover intermediate-state rows"
-        );
-    }
-
-    /// Belt-and-braces check: even when the second snapshot races the
-    /// first on a multi-threaded runtime, neither call may leave a
-    /// `'pending'` row visible. The serialisation guarantee comes from
-    /// `BEGIN IMMEDIATE` + SQLite's WAL writer lock; this test just
-    /// makes sure we don't regress the call site to two separate
-    /// `pool.execute()`s under load.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_snapshot_atomic_under_concurrent_calls() {
-        let (pool, _dir) = test_pool().await;
-        let device_id = "dev-1";
-
-        insert_block(&pool, "block-1", "first").await;
-        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
-
-        let pool_a = pool.clone();
-        let pool_b = pool.clone();
-        let dev_a = device_id.to_string();
-        let dev_b = device_id.to_string();
-
-        let h_a = tokio::spawn(async move { create_snapshot(&pool_a, &dev_a).await });
-        let h_b = tokio::spawn(async move { create_snapshot(&pool_b, &dev_b).await });
-
-        let id_a = h_a.await.unwrap().unwrap();
-        let id_b = h_b.await.unwrap().unwrap();
-        assert_ne!(id_a, id_b, "concurrent calls must produce distinct ULIDs");
-
-        let pending: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            pending, 0,
-            "no 'pending' rows should be visible after concurrent create_snapshot calls"
-        );
-
-        let complete: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            complete, 2,
-            "both concurrent create_snapshot calls must commit in 'complete' state"
-        );
-    }
-
-    /// #705: `get_latest_snapshot_with_frontier` must return the same
-    /// `up_to_seqs` map that `create_snapshot` persisted in the
-    /// `log_snapshots.up_to_seqs` column — read straight from the column,
-    /// without decoding the snapshot blob. It must also pick the latest
-    /// complete snapshot (highest id) and return its compressed data.
-    #[tokio::test]
-    async fn get_latest_snapshot_with_frontier_reads_persisted_column() {
-        let (pool, _dir) = test_pool().await;
-        let device_id = "dev-frontier";
-
-        insert_block(&pool, "block-1", "first").await;
-        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
-        let snap1 = create_snapshot(&pool, device_id).await.unwrap();
-
-        // A second op + snapshot so we can assert "latest" selection.
-        insert_op_at(&pool, device_id, "block-2", 1_735_689_600_001).await;
-        let snap2 = create_snapshot(&pool, device_id).await.unwrap();
-        assert!(
-            snap2 > snap1,
-            "ULIDs are monotonic; snap2 must sort after snap1"
-        );
-
-        let (id, data, up_to_seqs) = get_latest_snapshot_with_frontier(&pool)
-            .await
-            .unwrap()
-            .expect("a complete snapshot must exist");
-
-        assert_eq!(id, snap2, "must return the latest complete snapshot");
-        assert!(
-            !data.is_empty(),
-            "compressed snapshot bytes must be returned"
-        );
-
-        // The frontier read from the column must match the JSON the
-        // INSERT serialised — i.e. the same value `decode_snapshot` would
-        // have produced, but without decoding the blob.
-        let stored_json: String =
-            sqlx::query_scalar!("SELECT up_to_seqs FROM log_snapshots WHERE id = ?", snap2)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        let expected: BTreeMap<String, i64> = serde_json::from_str(&stored_json).unwrap();
-        assert_eq!(
-            up_to_seqs, expected,
-            "frontier must equal the persisted up_to_seqs column"
-        );
-        assert_eq!(
-            up_to_seqs.get(device_id).copied(),
-            Some(2),
-            "device frontier should reflect the second op's seq"
-        );
-    }
-
-    /// Empty `log_snapshots` → `None`, mirroring `get_latest_snapshot`.
-    #[tokio::test]
-    async fn get_latest_snapshot_with_frontier_none_when_empty() {
-        let (pool, _dir) = test_pool().await;
-        let out = get_latest_snapshot_with_frontier(&pool).await.unwrap();
-        assert!(out.is_none(), "no snapshots → None");
-    }
+    Ok(Some(deleted_count))
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM block_tags",
+  "query": "SELECT COUNT(*) FROM compaction_watermark",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "edc7d9084b0b7c4128349f637da7b65c6c9d2b0fb84dc332bc462aa7d328577f"
+  "hash": "58d024269a5fa187b0c6d9548e25cd778e2c13410688c930972dc83c44d7643e"
 }

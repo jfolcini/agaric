@@ -3216,7 +3216,10 @@ async fn attachment_send_empty_file_moves_no_bytes_and_keeps_framing_m51() {
     // The alignment probe. A stray byte written or consumed anywhere in
     // the zero-byte path shifts this frame's length prefix and the
     // receive fails to deserialise.
-    send_sync_message(&mut pair.server.send, &SyncMessage::SnapshotAccept)
+    let probe = SyncMessage::ResetRequired {
+        reason: "alignment probe".to_owned(),
+    };
+    send_sync_message(&mut pair.server.send, &probe)
         .await
         .expect("the responder can still frame a message after a zero-byte payload");
     let after = tokio::time::timeout(
@@ -3227,8 +3230,7 @@ async fn attachment_send_empty_file_moves_no_bytes_and_keeps_framing_m51() {
     .expect("the follow-on message arrives promptly")
     .expect("the stream is still aligned on a message boundary");
     assert_eq!(
-        after,
-        SyncMessage::SnapshotAccept,
+        after, probe,
         "a zero-byte attachment must leave the stream exactly where it found it"
     );
 }

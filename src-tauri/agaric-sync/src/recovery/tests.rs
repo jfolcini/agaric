@@ -195,92 +195,7 @@ async fn boot_attachment_backfill_runs_hash_then_blob_3312() {
     );
 }
 
-// === 1. Snapshot tests ===
-
-#[tokio::test]
-async fn pending_snapshot_gets_deleted() {
-    let (pool, _dir) = test_pool().await;
-
-    // Insert a pending snapshot row
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'pending', 'abc', '[]', X'00')",
-    )
-    .bind("snap-1")
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // Also insert a complete snapshot that should NOT be deleted
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'complete', 'def', '[]', X'01')",
-    )
-    .bind("snap-2")
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
-
-    assert_eq!(report.pending_snapshots_deleted, 1);
-
-    // Verify: pending row gone, complete row remains
-    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(remaining, 1);
-
-    let complete: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(complete, 1);
-}
-
-#[tokio::test]
-async fn pending_snapshots_deleted_only_counts_pending_not_complete() {
-    let (pool, _dir) = test_pool().await;
-
-    // Insert 2 pending + 3 complete snapshots
-    for i in 0..2 {
-        sqlx::query(
-            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES (?, 'pending', 'hash', '[]', X'00')",
-        )
-        .bind(format!("pending-{i}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    for i in 0..3 {
-        sqlx::query(
-            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES (?, 'complete', 'hash', '[]', X'00')",
-        )
-        .bind(format!("complete-{i}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-
-    let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
-
-    // Only the 2 pending rows should be counted as deleted
-    assert_eq!(report.pending_snapshots_deleted, 2);
-
-    // All 3 complete rows should remain
-    let remaining: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(remaining, 3);
-}
-
-// === 2. Single draft recovery ===
+// === 1. Single draft recovery ===
 
 #[tokio::test]
 async fn unflushed_draft_gets_recovered_as_synthetic_edit_block() {
@@ -897,7 +812,7 @@ async fn unflushed_draft_with_no_newer_seq_is_still_recovered_1256() {
     assert_eq!(content.as_deref(), Some("genuinely unflushed content"));
 }
 
-// === 3. Empty / no-op cases ===
+// === 2. Empty / no-op cases ===
 
 #[tokio::test]
 async fn recovery_with_no_drafts_returns_empty_report() {
@@ -905,7 +820,6 @@ async fn recovery_with_no_drafts_returns_empty_report() {
 
     let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
 
-    assert_eq!(report.pending_snapshots_deleted, 0);
     assert!(report.drafts_recovered.is_empty());
     assert_eq!(report.drafts_already_flushed, 0);
     assert!(report.draft_errors.is_empty());
@@ -920,7 +834,7 @@ async fn recovery_with_no_drafts_returns_empty_report() {
 // below — and the FK invariant itself is asserted by
 // `commands::drafts::tests_h12::cannot_save_draft_for_nonexistent_block_m93`.
 
-// === 4. prev_edit linkage ===
+// === 3. prev_edit linkage ===
 
 #[tokio::test]
 async fn recovered_draft_uses_prev_edit_from_existing_op() {
@@ -1036,7 +950,7 @@ async fn prev_edit_uses_latest_op_when_both_create_and_edit_exist() {
     assert_eq!(prev_edit[1].as_i64().unwrap(), edit_record.seq);
 }
 
-// === 5. Multiple drafts ===
+// === 4. Multiple drafts ===
 
 #[tokio::test]
 async fn recovery_with_multiple_unflushed_drafts() {
@@ -1115,22 +1029,12 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
     assert!(drafts.is_empty());
 }
 
-// === 6. Idempotency ===
+// === 5. Idempotency ===
 
 #[tokio::test]
 async fn recovery_idempotency_second_run_is_noop() {
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-1";
-
-    // Set up: 1 pending snapshot + 1 unflushed draft (with block row)
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-         VALUES (?, 'pending', 'abc', '[]', X'00')",
-    )
-    .bind("snap-1")
-    .execute(&pool)
-    .await
-    .unwrap();
 
     insert_test_block(&pool, "block-X", "old X").await;
     save_draft(&pool, device_id, "block-X", "unflushed")
@@ -1139,12 +1043,10 @@ async fn recovery_idempotency_second_run_is_noop() {
 
     // First recovery
     let r1 = recover_at_boot_test(&pool, device_id).await.unwrap();
-    assert_eq!(r1.pending_snapshots_deleted, 1);
     assert_eq!(r1.drafts_recovered.len(), 1);
 
     // Second recovery — everything was already cleaned up
     let r2 = recover_at_boot_test(&pool, device_id).await.unwrap();
-    assert_eq!(r2.pending_snapshots_deleted, 0);
     assert!(r2.drafts_recovered.is_empty());
     assert_eq!(r2.drafts_already_flushed, 0);
     assert!(r2.draft_errors.is_empty());
@@ -1194,24 +1096,12 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
     super::boot::reset_recovery_guard();
 }
 
-// === 7. Report accuracy ===
+// === 6. Report accuracy ===
 
 #[tokio::test]
 async fn recovery_report_counts_are_accurate() {
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-1";
-
-    // 2 pending snapshots
-    for i in 0..2 {
-        sqlx::query(
-            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES (?, 'pending', 'h', '[]', X'00')",
-        )
-        .bind(format!("snap-{i}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
 
     // 3 unflushed drafts (with block rows)
     for i in 0..3 {
@@ -1243,13 +1133,12 @@ async fn recovery_report_counts_are_accurate() {
 
     let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
-    assert_eq!(report.pending_snapshots_deleted, 2);
     assert_eq!(report.drafts_recovered.len(), 3);
     assert_eq!(report.drafts_already_flushed, 2);
     assert!(report.draft_errors.is_empty());
 }
 
-// === 8. find_prev_edit unit tests ===
+// === 7. find_prev_edit unit tests ===
 
 #[tokio::test]
 async fn find_prev_edit_returns_none_when_no_ops_exist() {
@@ -1368,7 +1257,7 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
     );
 }
 
-// === 9. blocks.content consistency after recovery (F06) ===
+// === 8. blocks.content consistency after recovery (F06) ===
 
 #[tokio::test]
 async fn recovery_updates_blocks_content_for_unflushed_draft() {
@@ -1477,7 +1366,7 @@ async fn recovery_leaves_blocks_content_unchanged_for_already_flushed_draft() {
     );
 }
 
-// === 10. Edge cases: soft-deleted and orphaned blocks (F07, F08, F12) ===
+// === 9. Edge cases: soft-deleted and orphaned blocks (F07, F08, F12) ===
 
 #[tokio::test]
 async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
@@ -1526,7 +1415,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
 // See note above `recovery_when_op_log_is_empty_draft_for_never_created_block`
 // (deleted at the same time) for the full rationale.
 
-// === 10b. Edge cases: parent chain validation (F08) ===
+// === 9b. Edge cases: parent chain validation (F08) ===
 
 #[tokio::test]
 async fn draft_with_deleted_parent_is_skipped() {
@@ -1645,7 +1534,7 @@ async fn draft_with_valid_parent_is_recovered() {
     );
 }
 
-// === 10c. #29 / #4638: block_id shape is validated in every build ===
+// === 9c. #29 / #4638: block_id shape is validated in every build ===
 
 #[tokio::test]
 async fn find_prev_edit_rejects_like_wildcard_block_id() {
@@ -1734,7 +1623,7 @@ async fn find_prev_edit_accepts_normal_ulid_block_id() {
     assert!(result.is_ok(), "normal ULID block_id should be accepted");
 }
 
-// === 11. find_prev_edit: DAG-based head resolution ===
+// === 10. find_prev_edit: DAG-based head resolution ===
 
 /// When `get_block_edit_heads` returns empty but a `create_block` exists,
 /// `find_prev_edit` falls back to the `create_block` as the edit chain root.

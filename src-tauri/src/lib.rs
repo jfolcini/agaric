@@ -404,8 +404,6 @@ mod materializer_app_tests;
 /// by its own attachment-lifecycle property test.
 #[cfg(test)]
 mod reconciliation_oracle;
-#[cfg(test)]
-mod sync_app_tests;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 // #4499 phase 0d: the command suites, the command-integration suites and the
@@ -1508,7 +1506,6 @@ fn spawn_background_tasks(
     let lifecycle_for_loro_pred = lifecycle.clone();
     let wal_write_pool = pools.write.clone();
     let compact_write_pool = pools.write.clone();
-    let compact_device_id = device_id.to_owned();
     let optimize_write_pool = pools.write.clone();
     let materializer_for_cleanup = materializer.clone();
     let materializer_for_fts = materializer.clone();
@@ -1556,8 +1553,7 @@ fn spawn_background_tasks(
             }),
             run: Box::new(move || {
                 let pool = compact_write_pool.clone();
-                let device_id = compact_device_id.clone();
-                Box::pin(async move { maintenance::op_log_compact(&pool, &device_id).await })
+                Box::pin(async move { maintenance::op_log_compact(&pool).await })
             }),
         },
         // Issue #157 sub-item G — periodic PRAGMA optimize.
@@ -2240,8 +2236,8 @@ fn show_fatal_error_dialog(title: &str, body: &str) {
 }
 
 // #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
-// `--cfg fuzzing` to reach the byte-level parsers (`agaric_sync::snapshot::decode_snapshot`,
-// `deeplink::parse_deep_link`). `run()` is the tauri app entry; its
+// `--cfg fuzzing` to reach the byte-level parsers
+// (`deeplink::parse_deep_link`). `run()` is the tauri app entry; its
 // `generate_context!` ACL codegen is both irrelevant to fuzzing pure parsers and
 // fragile under the nightly + sanitizer fuzz build, so exclude the whole GUI
 // builder from the fuzz build. Only `main.rs` (not compiled by the fuzz crate's

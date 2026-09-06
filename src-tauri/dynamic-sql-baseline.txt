@@ -44,9 +44,7 @@
 4 src-tauri/agaric-store/src/tag_inheritance/rebuild.rs
 1 src-tauri/agaric-store/src/tag_query/query.rs
 2 src-tauri/agaric-store/src/tag_query/resolve.rs
-2 src-tauri/agaric-sync/src/recovery/boot.rs
-1 src-tauri/agaric-sync/src/snapshot/create.rs
-4 src-tauri/agaric-sync/src/snapshot/restore.rs
+1 src-tauri/agaric-sync/src/recovery/boot.rs
 11 src-tauri/agaric-sync/src/sync_files.rs
 4 src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs
 2 src-tauri/agaric-sync/src/sync_protocol/operations.rs

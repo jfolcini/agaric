@@ -9,20 +9,26 @@
 //!
 //! # Recovery sequence
 //!
-//! 1. Deletes any `log_snapshots` rows with `status = 'pending'` (incomplete
-//!    snapshots from a prior crash).
-//! 2. **C-2b — boot-time op-log replay.** Walks
+//! 1. **C-2b — boot-time op-log replay.** Walks
 //!    `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`
 //!    and re-enqueues each row through the materializer foreground queue
 //!    so any ops dropped by a mid-flight crash or `fg_apply_dropped`
 //!    event get re-applied. Drains the foreground queue via a Barrier
-//!    before continuing so step 3 sees a fully-applied state.
-//! 3. Walks `block_drafts` and, for each row, checks whether a corresponding
+//!    before continuing so step 2 sees a fully-applied state.
+//! 2. Walks `block_drafts` and, for each row, checks whether a corresponding
 //!    `edit_block` or `create_block` op already exists in `op_log` after the
 //!    draft's `updated_at` timestamp. If not, the draft was never flushed and a
 //!    synthetic `edit_block` op is created to recover it.
-//! 4. All draft rows are deleted regardless of whether they were recovered or
+//! 3. All draft rows are deleted regardless of whether they were recovered or
 //!    already flushed.
+//!
+//! # No pending-snapshot cleanup (#4699)
+//!
+//! Step 1 used to be `DELETE FROM log_snapshots WHERE status = 'pending'`,
+//! sweeping the half-written blob of a crash mid-snapshot. #4699 deleted the
+//! blob: compaction now writes a single `compaction_watermark` row inside the
+//! purge transaction, so there is no two-phase write and no pending state to
+//! clean up.
 //!
 //! If recovery of an individual draft fails, the error is captured in
 //! [`RecoveryReport::draft_errors`] and processing continues with the remaining
@@ -64,8 +70,6 @@ pub use boot::reset_recovery_guard;
 /// Summary returned by [`recover_at_boot`] for observability / logging.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryReport {
-    /// Number of `log_snapshots` rows with `status = 'pending'` that were deleted.
-    pub pending_snapshots_deleted: u64,
     /// Block IDs whose drafts were recovered as synthetic `edit_block` ops.
     pub drafts_recovered: Vec<String>,
     /// Number of draft rows that already had a matching op and just needed deletion.
@@ -206,7 +210,6 @@ mod replay_signal_tests {
 
     fn report_with(errors: &[&str]) -> RecoveryReport {
         RecoveryReport {
-            pending_snapshots_deleted: 0,
             drafts_recovered: Vec::new(),
             drafts_already_flushed: 0,
             duration_ms: 0,

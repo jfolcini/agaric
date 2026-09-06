@@ -70,9 +70,7 @@ pub const LORO_INLINE_MAX_BYTES: usize = 2_400_000;
 // causing an unbounded allocation. Originally bounded
 // `LoroSyncChunkedHeader::size_bytes`; since #3464 it is
 // `transport::session::MAX_FRAME_SIZE`, the cap on a whole framed message,
-// which is the same job one layer out. Matches the snapshot sub-flow's
-// `MAX_SNAPSHOT_SIZE` (256 MB): a per-space Loro snapshot is the same order of
-// magnitude as the compressed DB snapshot blob.
+// which is the same job one layer out.
 pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------

@@ -2506,15 +2506,12 @@ pub async fn run_sync_session(
         )
         .await
         {
-            // #2538: only `Applied` is a real success. The sub-flow's other
-            // outcome, `Rejected`, means the offer was refused (over the
-            // local size cap): nothing was applied, no frontier advanced,
-            // no `peer_refs` bookkeeping ran. Collapsing it into `Ok(())`
-            // made the caller `record_success` (resetting backoff), emit
-            // `SyncEvent::Complete`, and persist last_address/TOFU state —
-            // so the 30 s scheduler re-selected the peer forever, with the
-            // responder re-hashing the full blob every round while the UI
-            // said "complete".
+            // #2538: `Applied` is the only success. The sub-flow's other
+            // outcome used to be `Rejected` — an over-cap CBOR
+            // `SnapshotOffer`, which #3487 deleted and #4699 removed the arm
+            // for. A failed catch-up now arrives as `Err` and is recorded as
+            // a session failure below, which is what keeps the scheduler from
+            // re-selecting the peer every 30 s while the UI says "complete".
             Ok(snapshot_transfer::CatchupOutcome::Applied { .. }) => {
                 tracing::info!(
                     peer_id = %peer_id,
@@ -2523,33 +2520,10 @@ pub async fn run_sync_session(
                 // The offering side writes last on the Loro catch-up (it ends with
                 // `LoroSync { is_last: true }` and we answer nothing), so it is a
                 // round trip ahead of us and nothing of ours is left in flight.
-                // (Pre-#3487 the same held via the peer's `SnapshotAccept`.)
                 if let Err(e) = finish_session(false, send, conn, SessionLimits::default()).await {
                     tracing::debug!(error = %e, "failed to close after snapshot catch-up");
                 }
                 return Ok(());
-            }
-            Ok(snapshot_transfer::CatchupOutcome::Rejected { size_bytes }) => {
-                // `spoke_last = true`: rejecting means *we* wrote the last frame
-                // (`SnapshotReject`), so we are a round trip ahead of the peer's read.
-                // Closing without waiting discards it — `Connection::close` lets the
-                // remote "drop any data it received but is as yet undelivered to the
-                // application" — and the offering peer then cannot tell "over your cap"
-                // from "the link died", so it re-offers the same blob on the next tick.
-                // That loop is exactly what #2538 exists to break.
-                if let Err(e) = finish_session(true, send, conn, SessionLimits::default()).await {
-                    tracing::debug!(error = %e, "failed to close after a rejected offer");
-                }
-                // Surface as a session failure so the caller records it
-                // (exponential backoff — the peer is NOT immediately re-due)
-                // and skips the success bookkeeping. The sub-flow already
-                // emitted the actionable size-cap `SyncEvent::Error`.
-                return Err(AppError::InvalidOperation(format!(
-                    "snapshot catch-up rejected: peer offered {size_bytes} bytes, over the \
-                     local {max} byte cap; delta sync cannot resume (ResetRequired) until the \
-                     peer's snapshot fits the cap",
-                    max = snapshot_transfer::MAX_SNAPSHOT_SIZE,
-                )));
             }
             Err(e) => {
                 // The catch-up sub-flow had its own error handling

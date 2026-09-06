@@ -571,9 +571,9 @@ crate-type = ["lib", "cdylib", "staticlib"]
 # is a hand-rolled `fn main()` harness (not criterion) that can't fold into a
 # `criterion_main!`.
 
-# engine / apply / history / undo-redo / op-log / snapshot / compaction:
-# engine_checkpoint_bench, undo_redo, history_bench, snapshot_bench,
-# compaction_bench, op_log_bench, soft_delete_bench.
+# engine / apply / history / undo-redo / op-log / compaction:
+# engine_checkpoint_bench, undo_redo, history_bench, compaction_bench,
+# op_log_bench, soft_delete_bench.
 [[bench]]
 name = "engine_bench"
 harness = false

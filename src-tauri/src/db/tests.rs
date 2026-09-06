@@ -6196,3 +6196,134 @@ async fn agenda_cache_0115_block_id_index_serves_block_id_lookup_3270() {
          0115 exists; plan was {plan:?}"
     );
 }
+
+// ----------------------------------------------------------------------
+// Migration 0116 — `log_snapshots` blob → `compaction_watermark` row (#4699)
+// ----------------------------------------------------------------------
+
+/// **The carry-forward.** An upgraded vault that has already compacted must
+/// keep the marker `agaric_engine::dag::find_lca` reads: without the row it
+/// reports an op the purge removed as a bare `NotFound` instead of naming
+/// compaction, on the one class of vault where compaction demonstrably ran.
+///
+/// Seeds `log_snapshots` at the pre-0116 schema with two `complete` rows and
+/// one `pending` leftover, migrates, and asserts the watermark carries the
+/// NEWEST complete row's frontier — `log_snapshots.id` is a ULID, so newest is
+/// `MAX(id)` lexically, and picking the wrong row would record a frontier the
+/// purge overshot.
+#[tokio::test]
+async fn compaction_watermark_0116_carries_the_newest_complete_snapshot_frontier_4699() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0115 is the last migration before `log_snapshots` is dropped.
+    apply_migrations_through(&pool, 0, 115).await;
+
+    // ULIDs, so `ORDER BY id DESC` is newest-first. `01J...` sorts above
+    // `01H...`, which is what makes the "newest" choice observable.
+    for (id, status, hash, seqs) in [
+        (
+            "01H0000000000000000000OLD1",
+            "complete",
+            "hash-old",
+            r#"{"dev-A":7}"#,
+        ),
+        (
+            "01J0000000000000000000NEW1",
+            "complete",
+            "hash-new",
+            r#"{"dev-A":9,"dev-B":4}"#,
+        ),
+        (
+            "01K0000000000000000PENDING",
+            "pending",
+            "hash-pend",
+            r#"{"dev-A":11}"#,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+             VALUES (?, ?, ?, ?, X'00')",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(hash)
+        .bind(seqs)
+        .execute(&pool)
+        .await
+        .expect("seed a pre-0116 log_snapshots row");
+    }
+
+    apply_migrations_to_head(&pool, 115).await;
+
+    let (up_to_seqs, up_to_hash, compacted_at_ms): (String, String, i64) =
+        sqlx::query_as("SELECT up_to_seqs, up_to_hash, compacted_at_ms FROM compaction_watermark")
+            .fetch_one(&pool)
+            .await
+            .expect(
+                "#4699: a vault that already compacted must carry its frontier forward — \
+                 with no row, find_lca stops naming compaction for chains the purge broke",
+            );
+    assert_eq!(
+        up_to_hash, "hash-new",
+        "the NEWEST complete snapshot's frontier is the one that survives"
+    );
+    assert_eq!(
+        up_to_seqs, r#"{"dev-A":9,"dev-B":4}"#,
+        "up_to_seqs must carry through verbatim — it is the record of how far the \
+         last purge reached"
+    );
+    assert!(
+        compacted_at_ms > 0,
+        "compacted_at_ms carries a CHECK for >= 0 and is backfilled from the clock, got {compacted_at_ms}"
+    );
+
+    // Exactly one row, and it is the id=1 singleton.
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM compaction_watermark")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids,
+        vec![1],
+        "the watermark is a single row keyed at id = 1, not one row per old snapshot"
+    );
+
+    // The blob is gone.
+    let leftover: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'log_snapshots'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(leftover, 0, "0116 must drop the log_snapshots table");
+}
+
+/// The other half: a vault that never compacted must come out of 0116 with NO
+/// watermark. A migration that unconditionally seeded a row — the obvious way
+/// to satisfy the `NOT NULL` columns — would make `find_lca` blame compaction
+/// on every vault, including one that has never run it.
+#[tokio::test]
+async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 115).await;
+
+    // A crash-leftover pending row is NOT evidence of a completed compaction:
+    // pre-0116 it meant a snapshot write that never reached 'complete'.
+    sqlx::query(
+        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+         VALUES ('01K0000000000000000PENDING', 'pending', 'h', '{\"dev-A\":3}', X'00')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations_to_head(&pool, 115).await;
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM compaction_watermark")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 0,
+        "#4699: with no COMPLETE snapshot there is no evidence the log was ever \
+         trimmed, so find_lca must keep reporting a missing op as NotFound"
+    );
+}

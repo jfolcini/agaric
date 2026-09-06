@@ -272,13 +272,16 @@ mod tests {
     async fn the_pair_carries_messages_from_the_server_too() {
         let mut pair = quic_pair().await;
 
-        send_sync_message(&mut pair.server.send, &SyncMessage::SnapshotAccept)
+        let sent = SyncMessage::ResetRequired {
+            reason: "fixture".to_owned(),
+        };
+        send_sync_message(&mut pair.server.send, &sent)
             .await
             .expect("the server sends");
         let got = recv_sync_message(&mut pair.client.recv)
             .await
             .expect("the client receives");
-        assert_eq!(got, SyncMessage::SnapshotAccept);
+        assert_eq!(got, sent);
     }
 
     /// The two endpoints must have distinct identities, or a fixture built on them

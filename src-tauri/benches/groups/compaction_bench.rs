@@ -3,7 +3,7 @@
 
 //! Criterion benchmarks for op log compaction (F-20):
 //!   1. `get_compaction_status` — query op log statistics at varying table sizes
-//!   2. `compact_op_log`        — full compaction (snapshot + purge) at varying sizes
+//!   2. `compact_op_log`        — the op-log purge at varying sizes
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
@@ -136,9 +136,7 @@ fn bench_compact_op_log(c: &mut Criterion) {
                         // seeded ops are dated 2020 (OLD_TIMESTAMP_MS), so a
                         // 7-day cutoff still leaves every seeded op eligible
                         // for compaction.
-                        compact_op_log_cmd_inner(&pool, BENCH_DEVICE, 7)
-                            .await
-                            .unwrap();
+                        compact_op_log_cmd_inner(&pool, 7).await.unwrap();
                         total += start.elapsed();
 
                         pool.close().await;

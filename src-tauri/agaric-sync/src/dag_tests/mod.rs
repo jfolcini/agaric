@@ -45,12 +45,12 @@ fn extract_prev_edit(
 
 /// Oracle: fetch the `prev_edit` pointer of `(device_id, seq)` via a fresh
 /// `get_op_by_seq`, wrapping `NotFound` into the compaction-aware error
-/// shape when snapshots exist.
+/// shape when a compaction has run.
 async fn fetch_prev_edit_oracle(
     pool: &SqlitePool,
     device_id: &str,
     seq: i64,
-    has_snapshots: bool,
+    has_compacted: bool,
 ) -> Result<Option<(String, i64)>, AppError> {
     // I-Core-8: wrap to typed read-pool — caller is in write context
     match agaric_store::op_log::get_op_by_seq(
@@ -61,7 +61,7 @@ async fn fetch_prev_edit_oracle(
     .await
     {
         Ok(record) => extract_prev_edit(&record),
-        Err(AppError::NotFound(_)) if has_snapshots => Err(AppError::InvalidOperation(format!(
+        Err(AppError::NotFound(_)) if has_compacted => Err(AppError::InvalidOperation(format!(
             "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
              LCA requires intact chains"
         ))),
@@ -78,7 +78,7 @@ async fn fetch_prev_edit_oracle(
 async fn walk_edit_chain_oracle<F>(
     pool: &SqlitePool,
     start: &(String, i64),
-    has_snapshots: bool,
+    has_compacted: bool,
     mut stop_at: F,
 ) -> Result<WalkOutcome, AppError>
 where
@@ -95,7 +95,7 @@ where
     visited.insert((start.0.clone(), start.1));
 
     let mut next: Option<(String, i64)> =
-        fetch_prev_edit_oracle(pool, &start.0, start.1, has_snapshots).await?;
+        fetch_prev_edit_oracle(pool, &start.0, start.1, has_compacted).await?;
     let mut steps: usize = 0;
     while let Some(key) = next.take() {
         if stop_at(&key.0, key.1) {
@@ -113,7 +113,7 @@ where
         visited.insert(key.clone());
         chain.push(key);
         let last = chain.last().unwrap();
-        next = fetch_prev_edit_oracle(pool, &last.0, last.1, has_snapshots).await?;
+        next = fetch_prev_edit_oracle(pool, &last.0, last.1, has_compacted).await?;
     }
     Ok(WalkOutcome::Completed(chain))
 }
@@ -132,13 +132,12 @@ pub async fn find_lca_oracle(
     op_a: &(String, i64),
     op_b: &(String, i64),
 ) -> Result<Option<(String, i64)>, AppError> {
-    let has_snapshots: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
-            .fetch_one(pool)
-            .await?;
-    let has_snapshots = has_snapshots > 0;
+    let has_compacted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM compaction_watermark")
+        .fetch_one(pool)
+        .await?;
+    let has_compacted = has_compacted > 0;
 
-    let chain_a = match walk_edit_chain_oracle(pool, op_a, has_snapshots, |_, _| false).await? {
+    let chain_a = match walk_edit_chain_oracle(pool, op_a, has_compacted, |_, _| false).await? {
         WalkOutcome::Completed(c) => c,
         WalkOutcome::Stopped(_) => unreachable!("chain A predicate never matches"),
     };
@@ -153,7 +152,7 @@ pub async fn find_lca_oracle(
         return Ok(Some(op_b.clone()));
     }
 
-    match walk_edit_chain_oracle(pool, op_b, has_snapshots, |dev, seq| {
+    match walk_edit_chain_oracle(pool, op_b, has_compacted, |dev, seq| {
         visited.contains(&(dev, seq))
     })
     .await?

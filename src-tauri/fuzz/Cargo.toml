@@ -1,8 +1,8 @@
 # cargo-fuzz crate (#650) — coverage-guided fuzzing for the byte-level
-# parsers that accept ARBITRARY input (peer snapshot bytes, OS-supplied
-# deep-link URLs). The structured proptest harnesses only generate VALID
-# shapes; libFuzzer's coverage-guided mutation is the right tool for the
-# raw-byte boundary.
+# parsers that accept ARBITRARY input (OS-supplied deep-link URLs, imported
+# documents, pagination cursors). The structured proptest harnesses only
+# generate VALID shapes; libFuzzer's coverage-guided mutation is the right
+# tool for the raw-byte boundary.
 #
 # This is its OWN workspace (the `[workspace]` table below) so cargo-fuzz's
 # nightly/sanitizer build never contaminates the pinned-stable main build
@@ -23,11 +23,11 @@ cargo-fuzz = true
 # false-reports every dependency here as unused. Every entry below is genuinely
 # used by at least one target — `agaric` by `deeplink_parse`, `agaric-store`
 # by `fts_strip` (#2945), `pagination_cursor_decode` and `html_parse`,
-# `agaric-sync` by `snapshot_decode`, `agaric-engine` by `import_parse` and
-# `bibliography_parse`, `agaric-core` by `attachment_path_parse` — and the
-# crate fails to build without them. Ignore the false positives.
+# `agaric-engine` by `import_parse` and `bibliography_parse`, `agaric-core` by
+# `attachment_path_parse` — and the crate fails to build without them. Ignore
+# the false positives.
 [package.metadata.cargo-machete]
-ignored = ["agaric", "agaric-store", "agaric-sync", "agaric-engine", "agaric-core"]
+ignored = ["agaric", "agaric-store", "agaric-engine", "agaric-core"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
@@ -40,15 +40,6 @@ path = ".."
 # mirrors the `agaric` dep above and the parent `src-tauri/Cargo.toml` entry.
 [dependencies.agaric-store]
 path = "../agaric-store"
-version = "0.1.0"
-
-# #2897 fallout — that refactor removed the app-side `snapshot` re-export shim
-# (`src/snapshot/mod.rs` is now `#[cfg(test)]`-only), so
-# `agaric_lib::snapshot::decode_snapshot` no longer resolves in a non-test
-# build and the `snapshot_decode` target stopped compiling. Production lives in
-# `agaric_sync::snapshot` (#2621 Sync-D), so depend on the real crate directly.
-[dependencies.agaric-sync]
-path = "../agaric-sync"
 version = "0.1.0"
 
 # #2897 fallout, same shape — `agaric_lib::import` no longer re-exports
@@ -78,13 +69,6 @@ debug = 1
 # / `doc = false` keep `cargo test`/`cargo doc` from trying to build the
 # libFuzzer harness (which needs the nightly `-Z sanitizer` flags injected
 # by `cargo fuzz`).
-[[bin]]
-name = "snapshot_decode"
-path = "fuzz_targets/snapshot_decode.rs"
-test = false
-doc = false
-bench = false
-
 [[bin]]
 name = "deeplink_parse"
 path = "fuzz_targets/deeplink_parse.rs"

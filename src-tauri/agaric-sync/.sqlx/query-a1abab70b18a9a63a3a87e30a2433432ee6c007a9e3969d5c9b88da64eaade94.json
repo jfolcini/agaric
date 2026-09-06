@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT up_to_seqs, up_to_hash, compacted_at_ms FROM compaction_watermark WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "up_to_seqs",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "compaction_watermark",
+            "name": "up_to_seqs"
+          }
+        }
+      },
+      {
+        "name": "up_to_hash",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "compaction_watermark",
+            "name": "up_to_hash"
+          }
+        }
+      },
+      {
+        "name": "compacted_at_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "compaction_watermark",
+            "name": "compacted_at_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a1abab70b18a9a63a3a87e30a2433432ee6c007a9e3969d5c9b88da64eaade94"
+}

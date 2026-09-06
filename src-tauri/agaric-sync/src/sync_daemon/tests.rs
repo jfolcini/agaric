@@ -5045,12 +5045,11 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
 ///    merge is a pull (`synced_at` set, `reset_count` NOT bumped).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn feat6_end_to_end_compact_then_snapshot_catchup() {
-    use crate::snapshot::create_snapshot;
     use agaric_core::ulid::BlockId;
     use agaric_store::op::{CreateBlockPayload, OpPayload};
     use agaric_store::op_log::append_local_op_at;
 
-    // ── Responder side: one materialized block + snapshot ────────────
+    // ── Responder side: one materialized block ───────────────────────
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_mat = Materializer::new(resp_pool.clone());
     let resp_scheduler = Arc::new(SyncScheduler::new());
@@ -5108,13 +5107,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // the op_log), so a responder NEVER holds rows for the initiator's
     // device — the old hand-seed here ("delivered via a prior sync
     // session", a flow that no longer exists) masked exactly the #602
-    // bug. The snapshot's `up_to_seqs` is therefore `{FEAT6_RESP: 1}`
-    // only — the shape a real responder produces.
-
-    // Create a snapshot BEFORE simulating compaction. The snapshot
-    // captures the current state of `blocks`, etc., and an
-    // `up_to_seqs` of `{FEAT6_RESP: 1}`.
-    create_snapshot(&resp_pool, "FEAT6_RESP").await.unwrap();
+    // bug.
 
     // Simulate compaction: wipe the responder's op_log so it cannot
     // satisfy any HeadExchange claim. In production this is what
@@ -9521,14 +9514,12 @@ async fn issue2140_partial_message_then_close_is_bounded_error() {
 ///
 /// Setup (mirroring feat6's mechanic):
 ///   * the responder seeds + materialises one block authored under its own
-///     device, `create_snapshot`s (frontier `{RESP: 1}`), then COMPACTS by
-///     wiping its op_log via the mutation-bypass dance;
+///     device, then COMPACTS by wiping its op_log via the mutation-bypass
+///     dance;
 ///   * the initiator's op_log holds ONLY a STALE row authored under the
 ///     responder's device id (seq 1) and NO own-device ops — so it
 ///     advertises `{RESP: 1}`, the responder's compacted log cannot satisfy
-///     `check_reset_required` for `(RESP, 1)`, and the snapshot's
-///     `up_to_seqs {RESP: 1}` covers the initiator's frontier so the offer
-///     proceeds.
+///     `check_reset_required` for `(RESP, 1)`, so the catch-up proceeds.
 ///
 /// `run_sync_session` drives the ResetRequired → `try_receive_snapshot_catchup`
 /// sub-flow internally and returns `Ok(())` with the orchestrator left in
@@ -9552,7 +9543,6 @@ async fn issue2140_partial_message_then_close_is_bounded_error() {
 /// `snapshot_transfer.rs`.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
-    use crate::snapshot::create_snapshot;
     use crate::sync_protocol::SyncState;
     use agaric_store::op::{CreateBlockPayload, OpPayload};
     use agaric_store::op_log::append_local_op_at;
@@ -9564,7 +9554,7 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     let devices = make_n_devices_2141(&[INIT_DEV, RESP_DEV]).await;
     let (init, resp) = (&devices[0], &devices[1]);
 
-    // ── Responder: seed + materialise one block, snapshot, then compact ─
+    // ── Responder: seed + materialise one block, then compact ──────────
     let record = append_local_op_at(
         &resp.pool,
         RESP_DEV,
@@ -9599,8 +9589,6 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
         &record.created_at.to_string(),
         &resp.state,
     );
-
-    create_snapshot(&resp.pool, RESP_DEV).await.unwrap();
 
     // Simulate compaction: wipe the responder's op_log (H-13 bypass dance).
     let mut tx = resp.pool.begin().await.unwrap();

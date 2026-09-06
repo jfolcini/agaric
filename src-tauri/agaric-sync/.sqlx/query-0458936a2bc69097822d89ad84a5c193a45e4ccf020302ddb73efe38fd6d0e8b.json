@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO compaction_watermark (id, up_to_seqs, up_to_hash, compacted_at_ms) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET up_to_seqs = excluded.up_to_seqs, up_to_hash = excluded.up_to_hash, compacted_at_ms = excluded.compacted_at_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "0458936a2bc69097822d89ad84a5c193a45e4ccf020302ddb73efe38fd6d0e8b"
+}

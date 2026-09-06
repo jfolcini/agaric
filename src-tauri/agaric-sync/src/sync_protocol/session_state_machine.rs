@@ -41,9 +41,6 @@
 //! * Snapshot catch-up — once the machine reaches
 //!   [`SyncState::ResetRequired`], the daemon layer drives the
 //!   snapshot sub-flow via [`crate::sync_daemon::snapshot_transfer`].
-//!   `handle_message` will *reject* a `SnapshotAccept` / `SnapshotReject`
-//!   if one ever arrives at the protocol layer (see the dispatch arm
-//!   below).
 //! * File transfer — once the machine reaches [`SyncState::Complete`],
 //!   the daemon layer hands the connection to
 //!   [`crate::sync_files::run_file_transfer_initiator`] /
@@ -702,8 +699,6 @@ impl SyncOrchestrator {
             // #3464 and never legitimately reaches the orchestrator. This arm
             // keeps the match exhaustive; the dispatch match rejects it loudly.
             (_, SyncMessage::OpLogBatchChunked { .. }) => {}
-            // Snapshot messages accepted in any non-terminal state
-            (_, SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject) => {}
             // File-transfer messages must never reach the protocol
             // orchestrator — they are read directly off the wire by
             // `sync_files::run_file_transfer_{initiator,responder}` after
@@ -1209,13 +1204,6 @@ impl SyncOrchestrator {
                  OpLogBatch now travels inline"
                     .into(),
             )),
-            SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => {
-                Err(AppError::InvalidOperation(
-                    "SnapshotAccept/SnapshotReject must be handled by snapshot_transfer, \
-                     not the orchestrator"
-                        .into(),
-                ))
-            }
 
             // ---- OpLogBatch (#2481 phase 1) ---------------------------------
             // Audit-only op-log replication: the streamer appends these after

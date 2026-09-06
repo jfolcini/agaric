@@ -2296,7 +2296,9 @@ mod cancel_poll_tests {
              nothing about dropped futures"
         );
 
-        let first = SyncMessage::SnapshotAccept;
+        let first = SyncMessage::ResetRequired {
+            reason: "fixture".to_owned(),
+        };
         let second = SyncMessage::FileReceived {
             attachment_id: "att-1".to_owned(),
         };

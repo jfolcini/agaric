@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'",
+  "query": "SELECT COUNT(*) FROM compaction_watermark",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "2989836373d7d2cc7535e9df9422a0d1e08614e7cd9f703848dd215b5968a374"
+  "hash": "58d024269a5fa187b0c6d9548e25cd778e2c13410688c930972dc83c44d7643e"
 }

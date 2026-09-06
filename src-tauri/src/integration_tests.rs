@@ -18,13 +18,11 @@
 //! 5. **Position handling** — ordering by position, position preservation on edit.
 //! 6. **Materializer dispatch** — background task processing verification.
 //! 7. **Edit sequences** — edit-then-delete content preservation.
-//! 8. **Snapshot round-trip** — rich data (tags, properties, links) survives
-//!    snapshot → wipe → apply cycle.
-//! 9. **FTS search after edit** — materializer → FTS pipeline: create, index,
+//! 8. **FTS search after edit** — materializer → FTS pipeline: create, index,
 //!    search, edit, re-search verifies old term gone and new term found.
-//! 10. **Tag query with prefix hierarchy** — prefix queries return only
-//!     hierarchically matching tags.
-//! 11. **Property lifecycle** — set, get, edit-preserves, delete, cascade on
+//! 9. **Tag query with prefix hierarchy** — prefix queries return only
+//!    hierarchically matching tags.
+//! 10. **Property lifecycle** — set, get, edit-preserves, delete, cascade on
 //!     block deletion.
 
 // Test helpers frequently cast small usize loop indices to i64 for SQL binds.
@@ -44,7 +42,6 @@ use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
 use agaric_store::space::{SpaceId, SpaceScope};
-use agaric_sync::snapshot;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -485,7 +482,6 @@ async fn recovery_on_empty_database_is_noop() {
     .await
     .unwrap();
 
-    assert_eq!(report.pending_snapshots_deleted, 0, "no pending snapshots");
     assert!(report.drafts_recovered.is_empty(), "no drafts to recover");
     assert_eq!(report.drafts_already_flushed, 0, "no flushed drafts");
     assert!(report.draft_errors.is_empty(), "no errors");
@@ -1513,258 +1509,7 @@ async fn edit_then_delete_preserves_edited_content_in_trash() {
 }
 
 // ======================================================================
-// Group 8: Snapshot round-trip with rich data
-// ======================================================================
-
-/// Create blocks with tags, properties, and links. Take a snapshot.
-/// Wipe and apply the snapshot. Verify all data survives the round-trip.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_round_trip_preserves_tags_properties_and_links() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // --- Set up rich data ---
-
-    // Create two content blocks and a page
-    let page = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        TYPE_PAGE.into(),
-        "My Page".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    settle_bg_tasks(&mat).await;
-
-    let block_a = create_content(
-        &pool,
-        &mat,
-        "block alpha",
-        Some(page.id.to_string()),
-        Some(1),
-    )
-    .await;
-    let block_b = create_content(&pool, &mat, "block beta", None, Some(2)).await;
-
-    // Create two tags
-    let tag1 = create_block_inner(&pool, DEV, &mat, TYPE_TAG.into(), "work".into(), None, None)
-        .await
-        .unwrap();
-    settle_bg_tasks(&mat).await;
-
-    let tag2 = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        TYPE_TAG.into(),
-        "urgent".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    settle_bg_tasks(&mat).await;
-
-    // Add tags to blocks
-    add_tag_inner(&pool, DEV, &mat, block_a.id.clone(), tag1.id.clone())
-        .await
-        .unwrap();
-    add_tag_inner(&pool, DEV, &mat, block_a.id.clone(), tag2.id.clone())
-        .await
-        .unwrap();
-    add_tag_inner(&pool, DEV, &mat, block_b.id.clone(), tag1.id.clone())
-        .await
-        .unwrap();
-
-    // Set properties
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        block_a.id.as_str().into(),
-        "importance".into(),
-        Some("high".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    settle_bg_tasks(&mat).await;
-
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        block_b.id.as_str().into(),
-        "deadline".into(),
-        None,
-        None,
-        Some("2025-06-15".into()),
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    settle_bg_tasks(&mat).await;
-
-    // Add a link between blocks
-    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-        .bind(&block_a.id)
-        .bind(&block_b.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // --- Take snapshot ---
-    let snapshot_id = snapshot::create_snapshot(&pool, DEV).await.unwrap();
-    assert!(!snapshot_id.is_empty(), "snapshot ID must not be empty");
-
-    // Retrieve snapshot data
-    let (_, compressed) = snapshot::get_latest_snapshot(&pool)
-        .await
-        .unwrap()
-        .expect("snapshot must exist");
-
-    // --- Wipe everything by applying the snapshot ---
-    // (apply_snapshot wipes all tables then inserts snapshot data)
-    let restored = snapshot::apply_snapshot(&pool, &mat, &compressed[..])
-        .await
-        .unwrap();
-
-    // --- Verify all data survived ---
-
-    // Blocks
-    assert_eq!(
-        restored.tables.blocks.len(),
-        5,
-        "snapshot must contain 5 blocks (page + 2 content + 2 tags)"
-    );
-
-    let page_after = get_block_inner(&pool, page.id.clone()).await.unwrap();
-    assert_eq!(
-        page_after.content,
-        Some("My Page".into()),
-        "page content must survive snapshot round-trip"
-    );
-    assert_eq!(
-        page_after.block_type, "page",
-        "page block_type must survive"
-    );
-
-    let a_after = get_block_inner(&pool, block_a.id.clone()).await.unwrap();
-    assert_eq!(
-        a_after.content,
-        Some("block alpha".into()),
-        "block_a content must survive"
-    );
-    assert_eq!(
-        a_after.parent_id,
-        Some(page.id.clone()),
-        "block_a parent_id must survive"
-    );
-
-    let b_after = get_block_inner(&pool, block_b.id.clone()).await.unwrap();
-    assert_eq!(
-        b_after.content,
-        Some("block beta".into()),
-        "block_b content must survive"
-    );
-
-    // Tags (block_tags associations)
-    let a_tags: Vec<String> = sqlx::query_scalar!(
-        "SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
-        block_a.id
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-    .into_iter()
-    .collect();
-    assert_eq!(
-        a_tags.len(),
-        2,
-        "block_a must have 2 tag associations after snapshot"
-    );
-    assert!(
-        a_tags.contains(&tag1.id.to_string()),
-        "block_a must still be tagged with tag1"
-    );
-    assert!(
-        a_tags.contains(&tag2.id.to_string()),
-        "block_a must still be tagged with tag2"
-    );
-
-    let b_tags: Vec<String> = sqlx::query_scalar!(
-        "SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id",
-        block_b.id
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-    .into_iter()
-    .collect();
-    assert_eq!(
-        b_tags.len(),
-        1,
-        "block_b must have 1 tag association after snapshot"
-    );
-    assert_eq!(b_tags[0], tag1.id, "block_b must still be tagged with tag1");
-
-    // Properties
-    let a_props = get_properties_inner(&pool, block_a.id.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        a_props.len(),
-        1,
-        "block_a must have 1 property after snapshot"
-    );
-    assert_eq!(a_props[0].key, "importance", "property key must survive");
-    assert_eq!(
-        a_props[0].value_text,
-        Some("high".into()),
-        "property value_text must survive"
-    );
-
-    let b_props = get_properties_inner(&pool, block_b.id.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        b_props.len(),
-        1,
-        "block_b must have 1 property after snapshot"
-    );
-    assert_eq!(b_props[0].key, "deadline", "property key must survive");
-    assert_eq!(
-        b_props[0].value_date,
-        Some("2025-06-15".into()),
-        "property value_date must survive"
-    );
-
-    // Links
-    let link_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM block_links WHERE source_id = ? AND target_id = ?",
-        block_a.id,
-        block_b.id
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        link_count, 1,
-        "block_links must survive snapshot round-trip"
-    );
-}
-
-// ======================================================================
-// Group 9: FTS search after edit
+// Group 8: FTS search after edit
 // ======================================================================
 
 /// Create a block, index it via materializer, search for it, edit content,
@@ -1869,7 +1614,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
 }
 
 // ======================================================================
-// Group 10: Tag query with prefix hierarchy
+// Group 9: Tag query with prefix hierarchy
 // ======================================================================
 
 /// Create tags "work", "work/meeting", "work/email". Tag blocks.
@@ -1993,7 +1738,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
 }
 
 // ======================================================================
-// Group 11: Property lifecycle
+// Group 10: Property lifecycle
 // ======================================================================
 
 /// Full property lifecycle: set → get → edit block (property preserved) →
@@ -2128,7 +1873,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
 }
 
 // ======================================================================
-// Group 12: page_id ↔ space drift audit
+// Group 11: page_id ↔ space drift audit
 // ======================================================================
 //
 // Three denormalised fields must stay in sync to prevent the space
