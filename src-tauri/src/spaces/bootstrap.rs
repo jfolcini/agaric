@@ -276,9 +276,9 @@ fn enqueue_tag_ref_rebuilds(materializer: &Materializer, tags_placed: usize) {
 /// a raw `#[ULID]`. Running the same pass after an inbound sync closes that
 /// window. Returns `(pages_placed, tags_placed)`.
 ///
-/// The steady state is "nothing to place", so an autocommit probe answers
-/// that before `BEGIN IMMEDIATE` takes the write lock for two SELECTs that
-/// find nothing.
+/// The steady state is "nothing to place", so a probe on the reader pool
+/// answers that before `BEGIN IMMEDIATE` takes the write lock for two SELECTs
+/// that find nothing.
 ///
 /// # Errors
 ///
@@ -286,26 +286,32 @@ fn enqueue_tag_ref_rebuilds(materializer: &Materializer, tags_placed: usize) {
 /// remains the backstop.
 pub async fn place_space_less_blocks(
     pool: &SqlitePool,
+    read_pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<(usize, usize), AppError> {
     // Same predicate as the two selectors behind `backfill_space_less_in_tx`,
-    // served by `idx_blocks_space_type`; a space block itself carries no
-    // `space_id`, hence the `is_space` exclusion.
+    // served by `idx_blocks_space_type`; a space block is a `page` that itself
+    // carries no `space_id`, hence the `is_space` exclusion on that arm only.
     let any_space_less: Option<i64> = sqlx::query_scalar!(
         r#"SELECT 1 AS "one!: i64" FROM blocks b
            WHERE b.space_id IS NULL
-             AND b.block_type IN ('page', 'tag')
              AND b.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM block_properties
-                 WHERE block_id = b.id
-                   AND key = 'is_space'
-                   AND value_text = 'true'
+             AND (
+                 b.block_type = 'tag'
+                 OR (
+                     b.block_type = 'page'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM block_properties
+                         WHERE block_id = b.id
+                           AND key = 'is_space'
+                           AND value_text = 'true'
+                     )
+                 )
              )
            LIMIT 1"#,
     )
-    .fetch_optional(pool)
+    .fetch_optional(read_pool)
     .await?;
     if any_space_less.is_none() {
         return Ok((0, 0));

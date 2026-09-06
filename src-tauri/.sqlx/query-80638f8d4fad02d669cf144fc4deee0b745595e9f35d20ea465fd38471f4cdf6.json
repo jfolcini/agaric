@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS \"one!: i64\" FROM blocks b\n           WHERE b.space_id IS NULL\n             AND b.deleted_at IS NULL\n             AND (\n                 b.block_type = 'tag'\n                 OR (\n                     b.block_type = 'page'\n                     AND NOT EXISTS (\n                         SELECT 1 FROM block_properties\n                         WHERE block_id = b.id\n                           AND key = 'is_space'\n                           AND value_text = 'true'\n                     )\n                 )\n             )\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "one!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80638f8d4fad02d669cf144fc4deee0b745595e9f35d20ea465fd38471f4cdf6"
+}
