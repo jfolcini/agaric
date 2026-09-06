@@ -74,11 +74,6 @@ vi.mock('@/lib/tauri', () => ({
   listBlocks: vi
     .fn()
     .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null }),
-  listPageHistory: vi
-    .fn()
-    .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null }),
-  undoPageOp: vi.fn(),
-  redoPageOp: vi.fn(),
 }))
 
 // #2927 phase 7 — the page-blocks store's `load()` moved to
@@ -92,6 +87,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     commands: {
       ...actual.commands,
       loadPageSubtree: async () => ({ status: 'ok', data: { blocks: [] } }),
+      listPageHistory: async () => ({
+        status: 'ok',
+        data: { items: [], next_cursor: null, has_more: false, total_count: null },
+      }),
     },
   }
 })
