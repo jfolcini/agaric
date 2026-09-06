@@ -804,12 +804,7 @@ impl Materializer {
         for task in inbound_sync_block_tag_refs_tasks(changed_blocks) {
             self.try_enqueue_background(task)?;
         }
-        // #4293: `block_links`, the pure selector [`inbound_sync_block_links_tasks`]
-        // (which carries the why). Per-block tasks take the non-blocking send
-        // like `ReindexBlockTagRefs` above — `RetryKind::from_task` maps them,
-        // so a shed at this size persists and the sweeper re-drives it. The
-        // batch takes the blocking send like `RebuildFtsIndex`: one slot, not
-        // persistable, so it must not be shed.
+        // #4293: `block_links`; [`inbound_sync_block_links_tasks`] carries the why.
         for task in inbound_sync_block_links_tasks(changed_blocks) {
             match task {
                 MaterializeTask::ReindexBlockLinksBatch { .. } => {

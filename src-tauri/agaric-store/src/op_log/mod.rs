@@ -12,8 +12,8 @@ mod record;
 
 pub use append::*;
 pub use bypass::*;
-// #3310 / #3998: the durable per-device seq high-water that survives BOTH
-// wholesale op_log wipes (compaction prune and the snapshot-RESET truncate).
+// #3310 / #3998: the durable per-device seq high-water that survives a
+// wholesale op_log wipe (compaction's `prune`).
 pub use high_water::*;
 // `payload` exports two `pub` production helpers (`serialize_inner_payload`,
 // `extract_indexed_ids_from_payload`) consumed cross-crate by the app's
