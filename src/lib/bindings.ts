@@ -622,11 +622,11 @@ export const commands = {
 	 *  Tauri command: confirm pairing with a remote device.
 	 *  Stores the peer ref in the database and clears the pairing session.
 	 */
-	confirmPairing: (passphrase: string, remoteDeviceId: string, scannedPeer: {
+	confirmPairing: (passphrase: string, scannedPeer: {
 	device_id: string,
 	endpoint_id: string,
 	addrs: string[],
-} | null) => typedError<null, AppError>(__TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId, scannedPeer })),
+} | null) => typedError<null, AppError>(__TAURI_INVOKE("confirm_pairing", { passphrase, scannedPeer })),
 	/**  Tauri command: cancel an in-progress pairing session. */
 	cancelPairing: () => typedError<null, AppError>(__TAURI_INVOKE("cancel_pairing")),
 	/**

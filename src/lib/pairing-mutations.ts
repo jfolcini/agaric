@@ -136,13 +136,9 @@ export const pairingMutations = {
    * it, so passing `null` is always correct behaviour, just slower on a LAN
    * where multicast does not work.
    */
-  confirm: (
-    passphrase: string,
-    remoteDeviceId: string,
-    scannedPeer: ScannedPeerCandidate | null,
-  ): Promise<void> =>
+  confirm: (passphrase: string, scannedPeer: ScannedPeerCandidate | null): Promise<void> =>
     runPairingMutation(() =>
-      commands.confirmPairing(passphrase, remoteDeviceId, scannedPeer).then((r) => {
+      commands.confirmPairing(passphrase, scannedPeer).then((r) => {
         unwrap(r)
       }),
     ),

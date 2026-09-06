@@ -590,9 +590,12 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  */
 /**
  * The `run:` block of the filer's own step — the only lines where a
- * `--dry-run` selected from an authority env counts. The sentinel also
- * appears in the job's prose comments, and a comment forty lines up is not
- * what keeps a dispatch from writing.
+ * `--dry-run` selected from an authority env counts. The job's `env:` block
+ * DECLARES `LANE_AUTHORITATIVE` above the run block, and the rust lane's
+ * short-merge fallback selects its own `--dry-run` further down; neither is
+ * the `if [ "$LANE_AUTHORITATIVE" != 'true' ]` test that ties the two
+ * together, and a job-wide search would be satisfied by them with that test
+ * deleted (#4648 review).
  */
 function filerRunLines(lines) {
   const start = lines.findIndex((l) => /^\s*run:\s*\|/.test(l))
@@ -1001,6 +1004,12 @@ function selfTestFilerPlumbing(ok, fail) {
   const job = ({ gate = '    if: always()', path = 'mutants-artifact', read, dryRun = true }) => [
     `  ${FILER_JOB_ID}:`,
     gate,
+    // The real job declares the authority env and selects a rust-only
+    // `--dry-run` OUTSIDE the run block. With the run-block test deleted, a
+    // job-wide search still sees both tokens; the scoped one does not.
+    '        env:',
+    '          LANE_AUTHORITATIVE: >-',
+    "            ${{ github.event_name == 'schedule' }}",
     '    steps:',
     '      - name: Download cargo-mutants survivor list',
     '        uses: actions/download-artifact@0000',
@@ -1014,6 +1023,7 @@ function selfTestFilerPlumbing(ok, fail) {
       ? ['          if [ "$LANE_AUTHORITATIVE" != \'true\' ]; then extra=(--dry-run); fi']
       : []),
     ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
+    '          if [ "$SHORT_MERGE" = \'true\' ]; then rust_extra=(--dry-run); fi',
   ]
 
   const clean = kinds(job({ read: 'mutants-artifact/missed.txt' }))
@@ -1053,16 +1063,6 @@ function selfTestFilerPlumbing(ok, fail) {
   if (writes.includes('filer-dispatch-writes'))
     ok('an ungated filer job that would write on a dispatch is flagged')
   else fail('dispatch-writing filer job is flagged', JSON.stringify(writes))
-
-  // The sentinel in a prose comment above the step, with the `elif` itself
-  // deleted, is the #4645 review's hole: only the run block counts.
-  const commentOnly = kinds([
-    '        # dry-runs unless `LANE_AUTHORITATIVE` holds; a --dry-run still reads.',
-    ...job({ read: 'mutants-artifact/missed.txt', dryRun: false }),
-  ])
-  if (commentOnly.includes('filer-dispatch-writes'))
-    ok('a sentinel that survives only in a comment above the run block is flagged')
-  else fail('comment-only sentinel is flagged', JSON.stringify(commentOnly))
 }
 
 function runSelfTest() {

@@ -471,7 +471,6 @@ describe('PairingDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
-        remoteDeviceId: '',
         scannedPeer: null,
       })
     })
@@ -993,7 +992,6 @@ describe('PairingDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
-        remoteDeviceId: '',
         scannedPeer: null,
       })
     })
@@ -3387,7 +3385,6 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
           passphrase: 'alpha bravo charlie delta',
-          remoteDeviceId: '',
           scannedPeer: {
             device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
             endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
@@ -3407,7 +3404,6 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
           passphrase: 'alpha bravo charlie delta',
-          remoteDeviceId: '',
           scannedPeer: null,
         })
       })
@@ -3433,7 +3429,6 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
           passphrase: 'alpha bravo charlie delta',
-          remoteDeviceId: '',
           scannedPeer: null,
         })
       })
@@ -3473,7 +3468,6 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
           passphrase: 'alpha bravo charlie delta',
-          remoteDeviceId: '',
           scannedPeer: host,
         })
       })
@@ -3518,7 +3512,6 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
           passphrase: 'echo foxtrot golf hotel',
-          remoteDeviceId: '',
           scannedPeer: null,
         })
       })
