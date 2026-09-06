@@ -212,3 +212,48 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
         "SQL ORDER BY position must match the engine's final order",
     );
 }
+
+/// #4688: a bare append (`index: None, position: None`, the payload every
+/// command-path create builds) lands after the current siblings, in creation
+/// order. Before the fix it was routed through the legacy `position` sort as
+/// `i64::MAX`, where every earlier bare append tied and the block-id tiebreak
+/// decided: ids are created here in DESCENDING order, so that path yields
+/// `[A, B, C]` while the user wrote `[C, B, A]`.
+#[tokio::test]
+async fn bare_appends_keep_creation_order_4688() {
+    let (pool, _dir) = fresh_pool().await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page(&pool, &state).await;
+
+    for id in [BLOCK_C, BLOCK_B, BLOCK_A] {
+        apply(
+            &pool,
+            &state,
+            OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+                position: None,
+                index: None,
+                content: "c".into(),
+            }),
+        )
+        .await;
+    }
+
+    let want = vec![
+        BLOCK_C.to_string(),
+        BLOCK_B.to_string(),
+        BLOCK_A.to_string(),
+    ];
+    assert_eq!(
+        engine_children(&state),
+        want,
+        "engine order must be creation order"
+    );
+    assert_eq!(
+        sql_children(&pool).await,
+        want,
+        "SQL order must be creation order"
+    );
+}
