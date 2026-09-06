@@ -48,6 +48,7 @@ export function CompactionCard(): React.ReactElement {
   }, [t])
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `get_compaction_status` IPC load; `fetchStatus` sets loading and status around that await, which no render-time derivation replaces; see #4407
     void fetchStatus()
   }, [fetchStatus])
 
@@ -55,6 +56,7 @@ export function CompactionCard(): React.ReactElement {
     if (autoExpandedRef.current) return
     if (status != null && status.eligible_ops > 0) {
       autoExpandedRef.current = true
+      // oxlint-disable-next-line react/set-state-in-effect -- auto-expands once, the first time the fetched status reports eligible ops; a plain derive would discard a later user collapse; see #4407
       setCollapsed(false)
     }
   }, [status])

@@ -115,6 +115,7 @@ export function StaticBlockAttachments({
     if (pdfViewerOpen) return
     if (!pdfViewerUrl.startsWith('blob:')) return
     URL.revokeObjectURL(pdfViewerUrl)
+    // oxlint-disable-next-line react/set-state-in-effect -- drops the reference after revoking the blob object URL on viewer close; the URL comes from the browser's object-URL registry, not render; see #4407
     setPdfViewerUrl('')
   }, [pdfViewerOpen, pdfViewerUrl])
 

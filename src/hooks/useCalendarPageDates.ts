@@ -222,6 +222,7 @@ export function useCalendarPageDates(
     mountedRef.current = true
     let cancelled = false
     const start = performance.now()
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the shared range fetch in flight when the space or date range changes; the flag tracks that IPC, not render input; see #4407
     setLoading(true)
     setPageMap(new Map())
     // b1 — `listJournalPagesInRange` is required-active: with no active

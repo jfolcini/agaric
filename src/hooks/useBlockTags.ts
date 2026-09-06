@@ -67,6 +67,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     let cancelled = false
     const capturedSpaceId = currentSpaceId
     if (!capturedSpaceId) {
+      // oxlint-disable-next-line react/set-state-in-effect -- empties the tag list when no space is active, since `listBlocks` cannot list tags cross-space; see #4407
       setAllTags([])
       return
     }
@@ -111,6 +112,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     // is tripped by the cleanup on every dep change / unmount, so any
     // in-flight response for the previous blockId is dropped.
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous block's tag sets before the two per-block IPCs for the new `blockId` resolve; see #4407
     setAppliedTagIds(new Set())
     setInheritedTagIds(new Set())
     setLoading(true)

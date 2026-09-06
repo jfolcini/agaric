@@ -173,6 +173,7 @@ export function DonePanel({
   // Re-expand the panel when the fetch identity changes (new day / space /
   // filter / block-property invalidation), matching the pre-refactor mount reset.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- re-expands the panel when the fetch identity changes; `toggleCollapsed` also writes it, so it is user state, not derived; see #4407
     setCollapsed(false)
   }, [date, invalidationKey, excludePageId, currentSpaceId])
 

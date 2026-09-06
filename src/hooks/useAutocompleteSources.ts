@@ -240,6 +240,7 @@ export function useAutocompleteSources(
         clearTimeout(tagDebounceTimerRef.current)
         tagDebounceTimerRef.current = null
       }
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the tag spinner when the active autocomplete kind switches away from `tag` and the debounced IPC is cancelled; see #4407
       setTagLoading(false)
       return
     }

@@ -5,7 +5,7 @@
 
 import { RotateCcw } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { useTranslation } from 'react-i18next'
 
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
@@ -109,12 +109,9 @@ export function CommandsModeBody({
 
   // Phase 2 — Recent commands strip. Only rendered when the
   // filter is empty (typed input hides it so the registry filter has
-  // the floor). Read once on mount; the list is small and the palette
+  // the floor). Read once at mount; the list is small and the palette
   // re-mounts every open.
-  const [recents, setRecents] = useState<ReturnType<typeof getRecentCommands>>([])
-  useEffect(() => {
-    setRecents(getRecentCommands())
-  }, [])
+  const [recents] = useState(() => getRecentCommands())
 
   // Build the visible recent rows by joining ids against the registry.
   // Recents whose command id no longer exists in the registry (stale
@@ -128,8 +125,8 @@ export function CommandsModeBody({
   }, [recents, commands, filter])
 
   // Wrap each `run` so the command id is recorded before the handler
-  // closes the palette. The store is module-level state, so a re-render
-  // inside `setRecents` from a closed palette is harmless.
+  // closes the palette. `addRecentCommand` writes localStorage, not
+  // component state, so recording from a closing palette is harmless.
   const runWithTracking = (c: (typeof commands)[number]) => () => {
     addRecentCommand(c.id)
     c.run()

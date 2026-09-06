@@ -255,6 +255,7 @@ export function useDuePanelData({
   // Fetch overdue blocks when showing today
   useEffect(() => {
     if (!isToday) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the overdue list when the panel leaves today; its rows only ever arrive from the `queryByProperty` IPC below; see #4407
       setOverdueBlocks([])
       return
     }
@@ -324,6 +325,7 @@ export function useDuePanelData({
   // Fetch upcoming blocks (deadline approaching within warningDays)
   useEffect(() => {
     if (!isToday || warningDays <= 0) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the deadline-warning list when the panel leaves today or the warning window is off; its rows only come from IPC; see #4407
       setUpcomingBlocks([])
       return
     }
@@ -463,6 +465,7 @@ export function useDuePanelData({
     // #1531 — invalidate any in-flight `fetchBlocks` (loadMore) so its result
     // can't repopulate the list we're about to clear with stale-date blocks.
     requestIdRef.current += 1
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the agenda refetch in flight as date, source filter or space changes, alongside the token bump that voids stale pages; see #4407
     setLoading(true)
     setBlocks([])
     setNextCursor(null)
@@ -561,6 +564,7 @@ export function useDuePanelData({
     const cached = projectedCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS) {
       const nonEmptyEntries = cached.entries.filter((e) => e.block.content?.trim())
+      // oxlint-disable-next-line react/set-state-in-effect -- publishes a hit from the module-level 30s projected-agenda cache, an external store this render has no other access to; see #4407
       setProjectedEntries(nonEmptyEntries)
       setProjectedLoading(false)
       void resolveProjectedTitles(nonEmptyEntries)

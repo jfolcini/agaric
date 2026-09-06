@@ -230,6 +230,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // filter), matching the pre-migration reset that lived in the load effect.
   // Kept SEPARATE from the hook so a cursor-page load-more doesn't reset it.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- collapses the expanded row when the fetch identity (`blockId`/filter) changes; the row is expanded by user clicks, so nothing derives it; see #4407
     setExpandedSeq(null)
   }, [blockId, opTypeFilter])
 

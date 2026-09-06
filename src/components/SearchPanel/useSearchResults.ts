@@ -499,6 +499,7 @@ export function useSearchResults({
   useEffect(() => {
     // Reset collapse state on each new query so the UX always starts
     // fully expanded.
+    // oxlint-disable-next-line react/set-state-in-effect -- resets per-group collapse state on each new debounced query; `handleToggleGroup` also writes it, so it is user state; see #4407
     setExpandedGroups({})
   }, [debouncedQuery])
 

@@ -10,6 +10,7 @@ import {
 } from '@/components/editor-toolbar/ImageResizeToolbar'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { formatSize } from '@/lib/attachment-utils'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
@@ -90,48 +91,6 @@ function triggerDownload(bytes: Uint8Array, mimeType: string, filename: string):
   // the fetch and can abort the download. A 0ms timeout lets the browser pick
   // up the URL before it is freed — the standard blob-download pattern.
   setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-/**
- * One-shot viewport gate (#758 item 5) — returns `true` once the referenced
- * element has entered the viewport (+ rootMargin buffer), then stays `true`.
- *
- * `loading="lazy"` on the `<img>` was decorative: the full attachment bytes
- * were fetched over IPC in the mount effect regardless of visibility, which
- * hurts mobile memory on long pages. Gate the IPC read on actual viewport
- * entry instead. Mirrors `DaySection`'s `useEnteredViewport` pattern.
- */
-function useEnteredViewport<T extends HTMLElement>(
-  rootMargin = '200px 0px',
-): [boolean, React.RefObject<T | null>] {
-  const [entered, setEntered] = useState(false)
-  const ref = useRef<T | null>(null)
-
-  useEffect(() => {
-    if (entered) return
-    const el = ref.current
-    if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      // Defensive: older runtimes — load eagerly.
-      setEntered(true)
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setEntered(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [entered, rootMargin])
-
-  return [entered, ref]
 }
 
 export interface LightboxImage {
@@ -374,6 +333,7 @@ function AttachmentImage({
 
     let cancelled = false
     let objectUrl: string | null = null
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous attachment's object URL before this effect's `readAttachment` IPC; the blob URL is created asynchronously, never derived; see #4407
     setUrl(null)
     setError(false)
 
@@ -650,6 +610,7 @@ function MarkdownAttachment({
   useEffect(() => {
     if (!inView) return
     let cancelled = false
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous preview before this effect's `readAttachment` IPC; the decoded markdown arrives asynchronously, never derived; see #4407
     setText(null)
     setError(false)
     readAttachment(att.id)

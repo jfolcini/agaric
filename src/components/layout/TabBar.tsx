@@ -102,6 +102,7 @@ export function TabBar(): React.ReactElement | null {
   // — the next open re-seeds.
   useEffect(() => {
     if (dropdownOpen) {
+      // oxlint-disable-next-line react/set-state-in-effect -- seeds the roving menu index on open; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
       setDropdownFocusedIndex(activeTabIndex * 2)
     }
   }, [dropdownOpen, activeTabIndex])

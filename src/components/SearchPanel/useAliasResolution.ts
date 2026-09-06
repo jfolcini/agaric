@@ -60,6 +60,7 @@ export function useAliasResolution(
   // derive below, so it no longer needs to be a resolution dependency.
   useEffect(() => {
     if (isEmpty) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears the previously resolved alias before this effect's `resolvePageByAlias` IPC; the match is backend-resolved, never derivable from `query`; see #4407
       setAliasMatch(null)
       setAliasQuery('')
       return

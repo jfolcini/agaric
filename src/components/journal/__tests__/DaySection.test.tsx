@@ -997,6 +997,20 @@ describe('DaySection', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
 
+    // #4407 — the no-`IntersectionObserver` fallback is a `useState`
+    // initializer, not an effect write. Reddens if the initializer stops
+    // opening the gate: with no observer nothing else can ever flip it, so
+    // the day stays on the placeholder and BlockTree never mounts.
+    it('mounts eagerly in a runtime without IntersectionObserver', () => {
+      vi.stubGlobal('IntersectionObserver', undefined)
+      const entry = makeDayEntry({ pageId: 'PAGE_1' })
+
+      render(<DaySection entry={entry} mode="weekly" lazyMount onAddBlock={noop} />)
+
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+      expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+    })
+
     // ── mounted/onVisible: externally-controlled path (StreamView, #2670) ─
     describe('mounted/onVisible (externally-controlled path, #2670)', () => {
       /** A controllable stand-in for the caller's mount-window plumbing. */

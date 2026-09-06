@@ -79,6 +79,7 @@ export function RenameDialog({
   // Reset when dialog opens with new name
   useEffect(() => {
     if (open) {
+      // oxlint-disable-next-line react/set-state-in-effect -- re-opening reseeds the input from the current name; a plain derive would discard the user's edits; the guarded adjust is out of scope; see #4407
       setName(currentName)
       setTouched(false)
     }

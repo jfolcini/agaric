@@ -152,12 +152,14 @@ export function ImageLightbox({
 
   // Re-clamp pan whenever the zoom changes (e.g. zooming back out recenters).
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- re-clamps pan against the rendered image's measured clientWidth/clientHeight after a zoom change; the bound comes from the DOM, not from props; see #4407
     setPan((p) => clampPan(p, zoom))
   }, [zoom, clampPan])
 
   // Reset zoom/pan (and the broken-image fallback) when the displayed image or
   // open state changes.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- resets zoom/pan when the displayed image or dialog open-state changes; both are user-driven afterwards via wheel, drag and keyboard, so neither derives; see #4407
     resetZoom()
     setImgError(false)
   }, [safeIndex, open, resetZoom])

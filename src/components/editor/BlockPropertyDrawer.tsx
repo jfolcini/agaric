@@ -76,6 +76,7 @@ export function BlockPropertyDrawer({
   // Load properties + definitions when blockId changes or drawer opens
   useEffect(() => {
     if (!blockId || !open) return
+    // oxlint-disable-next-line react/set-state-in-effect -- arms the spinner for the properties/definitions IPC this effect starts for the new `blockId`; loading tracks that request, not props; see #4407
     setLoading(true)
     // Drop any unsaved draft rows from a previous block/session so they can't
     // leak into this block's drawer (drafts are transient, never persisted).

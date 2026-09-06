@@ -365,6 +365,7 @@ export function PaletteBody({
       // Palette close needs no equivalent: `CommandPalette` unmounts
       // `PaletteBody` entirely (`if (!open) return null`).
       searchGen.next()
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the search spinner when the palette leaves search mode, cancelling the in-flight `searchBlocksPartitioned` round-trip alongside `searchGen.next()`; see #4407
       setLoading(false)
       return
     }
@@ -474,6 +475,7 @@ export function PaletteBody({
   // only: desktop search already has the find-in-files history surface.
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- reads the recent-terms list from localStorage when the viewport crosses the mobile breakpoint; `rememberSearch` also writes it; see #4407
     if (isMobile) setRecentSearches(getRecentSearches())
   }, [isMobile])
 

@@ -230,6 +230,7 @@ function PageEditorInner({
     // target is already the focused block), and BlockTree's reveal effect
     // only re-runs — and only then reports — when one of its deps changes.
     pendingRevealBlockIdRef.current = selectedBlockId
+    // oxlint-disable-next-line react/set-state-in-effect -- bumps a nonce so BlockTree's reveal effect re-runs and reports `onRevealSettled` for a row that is not mounted yet; see #4407
     setRevealNonce((n) => n + 1)
 
     return () => {
