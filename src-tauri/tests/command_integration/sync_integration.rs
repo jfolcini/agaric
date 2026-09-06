@@ -466,18 +466,30 @@ async fn cancel_sync_succeeds() {
     );
 }
 
+/// Two well-formed `EndpointId`s in the exact lowercase-hex `Display` form
+/// `bind_endpoint_id` stores and every lookup compares against. Both parse —
+/// `the_fixture_keys_are_real_endpoint_ids` in `agaric-store/src/peer_refs.rs` pins
+/// that, so these stay usable as "a key that binds" rather than merely
+/// well-shaped.
+const KEY_PHONE: &str = "aa11bb22cc33dd44ee55ff6607788990a1b2c3d4e5f60718293a4b5c6d7e8f90";
+const KEY_TABLET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 /// Multi-device peer_refs. #855 moved peer_ref creation off `confirm_pairing`
-/// (the deleted NULL-`cert_hash` else-branch) onto proof-verified TOFU on the
-/// first connection — so pinning two devices (as the responder does after each
-/// proves its passphrase) yields two separate peer_refs, each with its own cert.
+/// onto proof-verified TOFU on the first connection, so pinning two devices —
+/// what the responder does after each proves its passphrase — yields two
+/// separate peer_refs, each with its own key.
+///
+/// #3464 slice 3: the TOFU writer is `bind_endpoint_id`, not the retired
+/// `upsert_peer_ref_with_cert`. The property is unchanged; the mechanism it
+/// rides on is the one production actually uses.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tofu_pins_multiple_devices_as_separate_peer_refs() {
     let (pool, _dir) = test_pool().await;
 
-    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-phone", &"a".repeat(64))
+    peer_refs::bind_endpoint_id(&pool, "dev-phone", KEY_PHONE)
         .await
         .unwrap();
-    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-tablet", &"b".repeat(64))
+    peer_refs::bind_endpoint_id(&pool, "dev-tablet", KEY_TABLET)
         .await
         .unwrap();
 
@@ -495,18 +507,18 @@ async fn tofu_pins_multiple_devices_as_separate_peer_refs() {
 }
 
 /// Re-pairing the same device upserts (does not duplicate) its peer_ref and
-/// updates the pinned cert. #855: this is the TOFU path
-/// (`upsert_peer_ref_with_cert`), the responder's action after a re-pair's
-/// passphrase proof — not `confirm_pairing`, which now only arms the window.
+/// re-points the binding. #855: this is the TOFU path, the responder's action
+/// after a re-pair's passphrase proof — not `confirm_pairing`, which now only
+/// arms the window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tofu_re_pin_same_device_upserts_peer_ref() {
     let (pool, _dir) = test_pool().await;
 
-    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-remote", &"a".repeat(64))
+    peer_refs::bind_endpoint_id(&pool, "dev-remote", KEY_PHONE)
         .await
         .unwrap();
-    // Re-pair → new cert observed for the same device id.
-    peer_refs::upsert_peer_ref_with_cert(&pool, "dev-remote", &"b".repeat(64))
+    // Re-pair → a new key observed for the same device id.
+    peer_refs::bind_endpoint_id(&pool, "dev-remote", KEY_TABLET)
         .await
         .unwrap();
 
@@ -519,8 +531,8 @@ async fn tofu_re_pin_same_device_upserts_peer_ref() {
         "re-pairing the same device upserts, not duplicates"
     );
     assert_eq!(
-        peers[0].cert_hash.as_deref(),
-        Some("b".repeat(64).as_str()),
-        "the pinned cert is updated on re-pair"
+        peers[0].endpoint_id.as_deref(),
+        Some(KEY_TABLET),
+        "the pinned key is updated on re-pair"
     );
 }
