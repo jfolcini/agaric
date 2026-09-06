@@ -29,7 +29,9 @@ use sqlx::SqlitePool;
 use crate::db::CommandTx;
 use crate::materializer::{MaterializeTask, Materializer};
 use agaric_core::error::AppError;
+use agaric_engine::apply::loro_apply::hydrate_space_block_into_own_engine;
 use agaric_store::op_log::OpRecord;
+use agaric_store::space::SpaceId;
 
 // #2621 THE INVERSION: re-export the moved consts + the tag migrator at the
 // old `crate::spaces::bootstrap::…` paths so every existing external call
@@ -185,6 +187,8 @@ pub async fn bootstrap_spaces(
     // hydrate), not a hand-rolled column UPDATE.
     let tags_repaired = repair_misfiled_tag_spaces(&mut tx, state, device_id, &mut records).await?;
 
+    hydrate_user_space_blocks(&mut tx, state, device_id).await?;
+
     // (#110) — couple every emitted op record to a
     // post-commit cache rebuild. Mirrors `flush_all_drafts_inner`.
     for record in records {
@@ -207,6 +211,35 @@ pub async fn bootstrap_spaces(
         seeded_blocks_already_done,
         "spaces bootstrap complete"
     );
+    Ok(())
+}
+
+/// #4775: every user-created space's own block lives in the space's doc, which
+/// is how the space reaches peers. Spaces created before that held true have
+/// no such block in their doc; seed it. Idempotent (the engine skips a block
+/// it already holds), so a steady-state boot costs one SELECT plus one engine
+/// read per space. The seeded Personal / Work blocks are excluded: every
+/// device mints those under the same ULID, and two independently created
+/// tree nodes for one block id would duplicate on the first merge.
+async fn hydrate_user_space_blocks(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+) -> Result<(), AppError> {
+    let user_spaces = sqlx::query_scalar!(
+        r#"SELECT s.id AS "id!: String" FROM spaces s
+           JOIN blocks b ON b.id = s.id
+           WHERE b.deleted_at IS NULL AND s.id NOT IN (?, ?)
+           ORDER BY s.id"#,
+        SPACE_PERSONAL_ULID,
+        SPACE_WORK_ULID,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    for id in user_spaces {
+        hydrate_space_block_into_own_engine(tx, state, device_id, &SpaceId::from_trusted(&id))
+            .await?;
+    }
     Ok(())
 }
 

@@ -1062,3 +1062,340 @@ async fn count_set_property_ops_for_key(pool: &SqlitePool, key: &str) -> i64 {
     .await
     .unwrap()
 }
+
+/// #4775: a space created on device A reaches device B through the ordinary
+/// per-space snapshot catch-up. B registers it — the `spaces` row and the
+/// `is_space` / `accent_color` rows `list_spaces` reads — and a page A created
+/// in it lands in that space on B, where the boot backfill leaves it alone
+/// instead of stamping it Personal.
+///
+/// Counter-delta shape: none. Two `Materializer`s, each with its own
+/// `LoroState`; no process-global state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_created_on_one_device_reaches_its_peer_4775() {
+    use crate::commands::{
+        create_page_in_space_inner, create_space_inner, list_spaces_inner,
+        move_blocks_to_space_inner,
+    };
+    use crate::materializer::Materializer;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+
+    const DEV_A: &str = "device-A";
+    const DEV_B: &str = "device-B";
+
+    // Device A: a page that predates the space (moved into it below — its
+    // older ULID sorts it ahead of the space block in the import delta), the
+    // space, and a page created in it, all through the real commands.
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, DEV_A, &mat_a)
+        .await
+        .unwrap();
+    let older = create_page_in_space_inner(
+        &pool_a,
+        DEV_A,
+        &mat_a,
+        None,
+        "Older".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let space = create_space_inner(
+        &pool_a,
+        DEV_A,
+        &mat_a,
+        "Research".into(),
+        Some("accent-violet".into()),
+    )
+    .await
+    .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_a,
+        DEV_A,
+        &mat_a,
+        None,
+        "Paper".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    move_blocks_to_space_inner(
+        &pool_a,
+        DEV_A,
+        &mat_a,
+        vec![older.clone()],
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    // The catch-up export of the new space's doc, exactly as
+    // `snapshot_transfer::try_offer_loro_snapshot_catchup` builds it.
+    let space_id = SpaceId::from_trusted(space.as_str());
+    let msg = prepare_outgoing_for_pool(
+        &pool_a,
+        &mat_a.loro_state().registry,
+        &space_id,
+        DEV_A,
+        None,
+    )
+    .await
+    .unwrap()
+    .expect("#1257 freshness gate must not refuse a consistent engine");
+    mat_a.shutdown();
+
+    // Device B: a freshly bootstrapped vault that has never seen the space.
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, DEV_B, &mat_b)
+        .await
+        .unwrap();
+    apply_remote(&pool_b, &mat_b.loro_state().registry, DEV_B, msg)
+        .await
+        .unwrap();
+
+    // Registered on B, with the name and accent the picker renders.
+    let registered: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = ?")
+        .bind(space.as_str())
+        .fetch_one(&pool_b)
+        .await
+        .unwrap();
+    assert_eq!(registered, 1, "B must register the synced-in space");
+    let spaces = list_spaces_inner(&pool_b).await.unwrap();
+    let row = spaces
+        .iter()
+        .find(|s| s.id == space.as_str())
+        .unwrap_or_else(|| {
+            panic!("B's space picker must list the synced-in space; got {spaces:?}")
+        });
+    assert_eq!(row.name, "Research", "the space's name must travel with it");
+    assert_eq!(
+        row.accent_color.as_deref(),
+        Some("accent-violet"),
+        "the space's accent must travel with it"
+    );
+    // The space block is not a page OF its space: no `space_id`, on B as on A.
+    assert_eq!(
+        space_property(&pool_b, space.as_str()).await,
+        None,
+        "the space block itself must carry no space_id"
+    );
+    assert_eq!(
+        space_property(&pool_b, page.as_str()).await,
+        Some(space.as_str().to_owned()),
+        "the page must land in the synced-in space on B"
+    );
+    assert_eq!(
+        space_property(&pool_b, older.as_str()).await,
+        Some(space.as_str().to_owned()),
+        "the page moved into the space must land in it on B"
+    );
+
+    // The boot backfill (and the #4717 post-sync pass that shares its helper)
+    // finds nothing to place.
+    super::bootstrap::bootstrap_spaces(&pool_b, DEV_B, &mat_b)
+        .await
+        .unwrap();
+    mat_b.flush_background().await.unwrap();
+    for id in [&page, &older] {
+        assert_eq!(
+            space_property(&pool_b, id.as_str()).await,
+            Some(space.as_str().to_owned()),
+            "the boot backfill must not move the page to Personal"
+        );
+    }
+    mat_b.shutdown();
+}
+
+/// Ship `space`'s doc from A to B the way the catch-up does: one full
+/// snapshot, merged into B's engine and projected.
+async fn sync_space_a_to_b(
+    pool_a: &SqlitePool,
+    mat_a: &crate::materializer::Materializer,
+    space: &str,
+    pool_b: &SqlitePool,
+    mat_b: &crate::materializer::Materializer,
+) {
+    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+    let space_id = agaric_store::space::SpaceId::from_trusted(space);
+    let msg = prepare_outgoing_for_pool(
+        pool_a,
+        &mat_a.loro_state().registry,
+        &space_id,
+        "device-A",
+        None,
+    )
+    .await
+    .unwrap()
+    .expect("#1257 freshness gate must not refuse a consistent engine");
+    apply_remote(pool_b, &mat_b.loro_state().registry, "device-B", msg)
+        .await
+        .unwrap();
+}
+
+async fn deleted_at_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #4775: the space block's later ops route through the space's own doc, so
+/// a rename and a delete on A reach B. The re-projection of the renamed block
+/// must leave its `space_id` NULL (a space is not a page of itself), and the
+/// engine-side delete keeps A's engine and SQL agreeing, so the freshness
+/// gate keeps exporting the space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn renaming_and_deleting_a_space_reach_its_peer_4775() {
+    use crate::commands::{
+        create_page_in_space_inner, create_space_inner, delete_block_inner, edit_block_inner,
+        list_spaces_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let space = create_space_inner(&pool_a, "device-A", &mat_a, "Research".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        None,
+        "Paper".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+
+    // Rename on A, sync, and B's picker shows the new name.
+    edit_block_inner(&pool_a, "device-A", &mat_a, space.clone(), "Lab".into())
+        .await
+        .unwrap();
+    mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+    let names: Vec<String> = list_spaces_inner(&pool_b)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|s| s.id == space.as_str())
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, vec!["Lab".to_owned()], "the rename must reach B");
+    assert_eq!(
+        space_property(&pool_b, space.as_str()).await,
+        None,
+        "re-projecting the space block must not stamp it as a page of itself"
+    );
+
+    // Empty the space and delete it on A; B's picker drops it.
+    delete_block_inner(&pool_a, "device-A", &mat_a, page.clone())
+        .await
+        .unwrap();
+    delete_block_inner(&pool_a, "device-A", &mat_a, space.clone())
+        .await
+        .unwrap();
+    mat_a.flush_background().await.unwrap();
+    sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+    assert!(
+        deleted_at_of(&pool_b, space.as_str()).await.is_some(),
+        "the space's deletion must reach B"
+    );
+    assert!(
+        deleted_at_of(&pool_b, page.as_str()).await.is_some(),
+        "the page's deletion must reach B"
+    );
+    let listed = list_spaces_inner(&pool_b).await.unwrap();
+    assert!(
+        listed.iter().all(|s| s.id != space.as_str()),
+        "B's picker must drop the deleted space; got {listed:?}"
+    );
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+/// #4775: a space created before its block had a doc (the pre-fix shape: a
+/// registered `is_space` block in no engine, pages already in the space's
+/// doc) is seeded into its doc by the boot pass, and arrives on B with its
+/// pages in it — the space block is projected first even though it joined
+/// the doc last.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_space_created_before_it_had_a_doc_reaches_its_peer_4775() {
+    use crate::commands::create_page_in_space_inner;
+    use crate::materializer::Materializer;
+
+    const SPACE: &str = "01J4775PREFIXSPACE00000001";
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    // The pre-fix shape, by hand: the block and its registering flag, in no doc.
+    insert_page(&pool_a, SPACE, "Archive").await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'is_space', 'true')",
+    )
+    .bind(SPACE)
+    .execute(&pool_a)
+    .await
+    .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        None,
+        "Old paper".into(),
+        SPACE.to_owned(),
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    // The next boot seeds the space block into its doc.
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    sync_space_a_to_b(&pool_a, &mat_a, SPACE, &pool_b, &mat_b).await;
+
+    let registered: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = ?")
+        .bind(SPACE)
+        .fetch_one(&pool_b)
+        .await
+        .unwrap();
+    assert_eq!(registered, 1, "B must register the backfilled space");
+    assert_eq!(
+        space_property(&pool_b, page.as_str()).await,
+        Some(SPACE.to_owned()),
+        "the page must land in the backfilled space on B"
+    );
+    assert_eq!(
+        space_property(&pool_b, SPACE).await,
+        None,
+        "the space block itself must carry no space_id"
+    );
+    mat_a.shutdown();
+    mat_b.shutdown();
+}

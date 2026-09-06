@@ -4,6 +4,25 @@
 
 use super::*;
 
+/// The doc an op on `block_id` routes to: the block's space, or — for a
+/// registered space block, which carries no `space_id` of its own — the
+/// space's own doc, where the block travels to peers (#4775). A tombstoned
+/// space block still resolves, so its `RestoreBlock` reaches the doc too.
+async fn resolve_doc_space(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &agaric_core::ulid::BlockId,
+) -> Result<Option<agaric_store::space::SpaceId>, AppError> {
+    if let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, block_id).await? {
+        return Ok(Some(space));
+    }
+    let id = block_id.as_str();
+    let registered =
+        sqlx::query_scalar!(r#"SELECT id AS "id!: String" FROM spaces WHERE id = ?"#, id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(registered.map(|s| agaric_store::space::SpaceId::from_trusted(&s)))
+}
+
 /// Apply CreateBlock through the engine then project to SQL.
 ///
 /// 1. Resolves the block's space (parent_id-based for content blocks;
@@ -212,8 +231,7 @@ pub async fn apply_edit_block_via_loro(
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "edit_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -343,8 +361,7 @@ pub async fn apply_set_property_via_loro(
         return Ok(());
     }
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "set_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -392,6 +409,22 @@ pub async fn apply_set_property_via_loro(
 
     projection::project_set_property_to_sql(conn, p).await?;
     Ok(())
+}
+
+/// #4775: seed a space's own block — with its `is_space` / `accent_color`
+/// rows — into the space's own per-space engine, so the block travels to
+/// peers inside the doc it registers. Its `blocks.space_id` stays NULL: a
+/// space is not a page OF itself, and every space-scoped listing relies on
+/// that. Idempotent (a block already in the engine is skipped), so it doubles
+/// as the boot backfill for spaces created before the block had a doc.
+pub async fn hydrate_space_block_into_own_engine(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+) -> Result<(), AppError> {
+    let block_id = agaric_core::ulid::BlockId::from_trusted(space_id.as_str());
+    hydrate_page_subtree_into_engine(tx, state, device_id, &block_id, space_id).await
 }
 
 /// #2326: Hydrate a page's whole block subtree into its (now-resolved) space
@@ -609,8 +642,7 @@ pub async fn apply_delete_block_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "delete_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -931,9 +963,7 @@ pub async fn apply_restore_block_via_loro(
         Some(parent) => BlockId::from_trusted(&parent),
         None => p.block_id.clone(),
     };
-    let Some(space_id) =
-        agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &resolution_anchor).await? else {
         super::sql_only_fallback::record(
             "restore_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1351,8 +1381,7 @@ pub async fn apply_add_tag_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "add_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1394,8 +1423,7 @@ pub async fn apply_remove_tag_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "remove_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1434,8 +1462,7 @@ pub async fn apply_delete_property_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-    else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
         super::sql_only_fallback::record(
             "delete_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,

@@ -994,12 +994,13 @@ pub async fn project_block_full_to_sql(
         //
         // Stamp conditionally via a subquery so it can never violate the
         // `space_id REFERENCES spaces(id)` FK (#708, migration 0089): if
-        // the space isn't registered yet (cross-doc sync ordering — the
-        // space block and its `is_space` flag live outside this space's
-        // own doc), resolve to NULL rather than abort the inbound tx; a
-        // later import / rebuild reconciles once the space block (and
-        // its registering `is_space` property) arrives. `?6`/`?7` both
-        // bind the space id.
+        // the space isn't registered yet, resolve to NULL rather than abort
+        // the inbound tx. #4775: the space's own block travels in this doc
+        // and is what registers the space (its `is_space` row fires the 0089
+        // trigger), so the sync path projects it first; it is excluded from
+        // the stamp itself (`id <> block`) because a space is not a page OF
+        // itself and every space-scoped listing relies on its `space_id`
+        // staying NULL.
         let space_id_str = space_id.as_str();
         // #1324: a page block's `page_id` is `id` (the command path stamps
         // it inline; the deferred `SetBlockPageId` materialize task is
@@ -1027,13 +1028,13 @@ pub async fn project_block_full_to_sql(
         let result = sqlx::query!(
             "INSERT INTO blocks \
                  (id, block_type, content, parent_id, position, space_id, page_id) \
-             VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?), ?) \
+             VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ? AND id <> ?), ?) \
              ON CONFLICT(id) DO UPDATE SET \
                  block_type = excluded.block_type, \
                  content = excluded.content, \
                  parent_id = excluded.parent_id, \
                  position = excluded.position, \
-                 space_id = (SELECT id FROM spaces WHERE id = ?), \
+                 space_id = (SELECT id FROM spaces WHERE id = ? AND id <> ?), \
                  page_id = CASE WHEN excluded.block_type = 'page' \
                                 THEN excluded.id ELSE blocks.page_id END",
             snap.block_id,
@@ -1042,8 +1043,10 @@ pub async fn project_block_full_to_sql(
             parent_id,
             snap.position,
             space_id_str,
+            snap.block_id,
             page_id,
             space_id_str,
+            snap.block_id,
         )
         .execute(&mut *conn)
         .await;
