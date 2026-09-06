@@ -357,6 +357,9 @@ pub async fn migrate_pages_to_personal_space_batched(
             "UPDATE blocks SET space_id = ? \
              WHERE id IN ({placeholders}) OR page_id IN ({placeholders})"
         );
+        // dynamic-sql: the two `IN (...)` lists are built from the chunk
+        // length at runtime, so the placeholder count varies per statement —
+        // no fixed arity for the compile-checked macro to validate.
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         q = q.bind(SPACE_PERSONAL_ULID);
         // First `IN (...)` list — the page block ids themselves.
