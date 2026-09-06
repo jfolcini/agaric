@@ -30,13 +30,13 @@ use super::*;
 /// canonical create path `domain::block_ops::create_block_in_tx` takes
 /// `index: Option<i64>` and builds `CreateBlockPayload { position: None, index,
 /// .. }`, so a bare-append create (`index: None`) routed to this fallback on a
-/// space-unresolved / engine-uninit miss hits it. We map it to the engine's own
-/// append sentinel — `i64::MAX`, the exact value the engine arm feeds
-/// `apply_create_block` for this case (`loro_apply.rs`:
-/// `p.position.unwrap_or(i64::MAX)`). This changes the persisted byte from SQL
-/// NULL to `i64::MAX`, but is **behavior-preserving**: the pagination layer
-/// defines `NULL_POSITION_SENTINEL == i64::MAX` and substitutes NULL → i64::MAX
-/// for every keyset/order comparison, and the next-provisional-position scan
+/// space-unresolved / engine-uninit miss hits it. We map it to `i64::MAX`
+/// (the engine arm appends through the slot path, `apply_create_block_at(…,
+/// usize::MAX)`, and stamps no position at all — #4688). This changes the
+/// persisted byte from SQL NULL to `i64::MAX`, but is **behavior-preserving**:
+/// the pagination layer defines `NULL_POSITION_SENTINEL == i64::MAX` and
+/// substitutes NULL → i64::MAX for every keyset/order comparison, and the
+/// next-provisional-position scan
 /// (`WHERE position < 9223372036854775807`) excludes both NULL and i64::MAX
 /// identically — so a NULL row and an i64::MAX row sort and aggregate the same.
 /// No production code discriminates `position IS NULL` from the sentinel. This

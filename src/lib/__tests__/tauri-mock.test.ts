@@ -1762,6 +1762,17 @@ describe('list_trash', () => {
     expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
 
+  it('a batch delete after a single delete is the newer cohort', () => {
+    // Fake timers hold both deletes in one millisecond, so only the marker's
+    // sequence part can order them.
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    invoke('delete_blocks_by_ids', { blockIds: [SEED_IDS.BLOCK_GS_2] })
+    const result = invoke('list_trash', {
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items.map((b) => b['id'])).toEqual([SEED_IDS.BLOCK_GS_2, SEED_IDS.BLOCK_GS_1])
+  })
+
   it('returns empty when nothing is deleted', () => {
     const result = invoke('list_trash', {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },

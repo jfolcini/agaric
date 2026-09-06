@@ -87,10 +87,6 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     commands: {
       ...actual.commands,
       loadPageSubtree: async () => ({ status: 'ok', data: { blocks: [] } }),
-      listPageHistory: async () => ({
-        status: 'ok',
-        data: { items: [], next_cursor: null, has_more: false, total_count: null },
-      }),
     },
   }
 })

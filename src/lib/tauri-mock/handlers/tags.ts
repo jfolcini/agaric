@@ -325,7 +325,7 @@ export const tagsHandlers = {
     if (leaves.length === 0) {
       return { items: [], next_cursor: null, has_more: false, total_count: null }
     }
-    const mode = ((a['mode'] as string) ?? 'or').toLowerCase()
+    const mode = (a['mode'] as string) ?? 'or'
     const expr: TagExprNode =
       mode === 'and'
         ? { type: 'And', value: leaves }
