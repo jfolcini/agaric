@@ -22,6 +22,7 @@ import {
   renumberSiblings,
   restoreCohort,
   validationRejection,
+  ownerSpaceOf,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
   attachmentBytes,
@@ -493,12 +494,50 @@ export const blocksHandlers = {
     return paginateKeyset(items, positionThenIdKey, limit, cursor, null, 'position')
   },
 
-  // Paginate soft-deleted blocks, space-scoped. Mirrors backend
-  // `pagination::list_trash` (deleted_at DESC, id ASC).
-  list_trash: () => {
-    const items = [...blocks.values()].filter((b) => b['deleted_at'])
-    items.sort((x, y) => String(y['deleted_at'] ?? '').localeCompare(String(x['deleted_at'] ?? '')))
-    return { items, next_cursor: null, has_more: false, total_count: null }
+  // Paginate the trash ROOTS of one space. Mirrors `pagination::list_trash`:
+  // a tombstone is a root when it has no parent or its parent was deleted in a
+  // DIFFERENT cohort (`NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`),
+  // so a cascade lists once, under its root, while a child deleted on its own
+  // before its parent keeps its own row (#3818). Ordered `deleted_at DESC, id
+  // ASC` on a `{deleted_at, id}` keyset; `Global` is refused (#2248).
+  list_trash: (args) => {
+    const a = (args ?? {}) as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    if (scope?.kind !== 'active' || !scope.space_id) {
+      throw validationRejection('list_trash requires an active space scope')
+    }
+    const spaceId = scope.space_id
+    const limit = listBlocksLimit(a['limit'])
+    const roots = [...blocks.values()].filter((b) => {
+      if (!b['deleted_at']) return false
+      if (ownerSpaceOf(b) !== spaceId) return false
+      const parent = b['parent_id'] == null ? null : blocks.get(b['parent_id'] as string)
+      return parent == null || parent['deleted_at'] !== b['deleted_at']
+    })
+    // `deleted_at DESC, id ASC`: newest cohort first, ids ascending within it.
+    const after = (x: Record<string, unknown>, key: SortKey): boolean => {
+      const [del, id] = [String(x['deleted_at']), String(x['id'])]
+      return del < String(key[0]) || (del === String(key[0]) && id > String(key[1]))
+    }
+    roots.sort((x, y) => {
+      const d = String(y['deleted_at']).localeCompare(String(x['deleted_at']))
+      return d !== 0 ? d : String(x['id']).localeCompare(String(y['id']))
+    })
+    const cursorKey = decodeBlocksCursor(a['cursor'], 'deleted_at')
+    const candidates = cursorKey === null ? roots : roots.filter((b) => after(b, cursorKey))
+    const fetched = candidates.slice(0, limit + 1)
+    const hasMore = fetched.length > limit
+    const items = hasMore ? fetched.slice(0, limit) : fetched
+    const last = items.at(-1)
+    return {
+      items,
+      next_cursor:
+        hasMore && last
+          ? encodeBlocksCursor([String(last['deleted_at']), String(last['id'])], 'deleted_at')
+          : null,
+      has_more: hasMore,
+      total_count: null,
+    }
   },
 
   create_block: (args) => {

@@ -104,7 +104,10 @@
 //! Steps whose sort key is fixture-controlled data (page title, …) set
 //! `ordered` and DO compare sequences.
 
-use super::common::pages::list_pages_with_metadata_inner;
+use super::common::pages::{
+    list_all_pages_in_space_inner, list_pages_with_metadata_inner,
+    list_template_page_ids_in_space_inner,
+};
 use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
@@ -819,6 +822,50 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
             RawResult {
                 rows: v.as_array().map(|a| ids_in(a, "id")).unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        // ── Trash roots and the unpaginated page listings (#3829) ──
+        "list_trash" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?.as_str().to_owned();
+            let resp = list_trash_inner(
+                pool,
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                space_id,
+            )
+            .await?;
+            // Block attributes on every token: a root served without its
+            // tombstone, or under the wrong parent, must not compare equal.
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
+        }
+        "list_all_pages_in_space" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?;
+            let tag_ids: Option<Vec<String>> = opt_arg_as(args, "tagIds");
+            let rows =
+                list_all_pages_in_space_inner(pool, space_id.as_str(), tag_ids.as_deref()).await?;
+            // Bare `Vec<PageHeading>` — the response IS the row array.
+            let v = serde_json::to_value(&rows).expect("serialize Vec<PageHeading>");
+            RawResult {
+                rows: v.as_array().map(|a| ids_in(a, "id")).unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_template_page_ids_in_space" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?;
+            let rows = list_template_page_ids_in_space_inner(pool, space_id.as_str()).await?;
+            RawResult {
+                rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
