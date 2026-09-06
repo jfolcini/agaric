@@ -90,3 +90,34 @@ projection. `loro_doc_state` holds a CRDT snapshot per space with `applied_throu
 `blocks` is not a repair, it is a divergence — reverted by the next reprojection, or propagated as
 a conflict to the peer. The repair emits `SetProperty` ops through the normal pipeline for the
 same reason every other migration here does.
+
+## Every boot, or once?
+
+The repair pass was first written to run on every boot, copying its two neighbours.
+`pages_without_space` and `migrate_orphan_tags_to_space` do that deliberately, and their doc says
+why: their candidate — a block with no space — can still *arrive* later, synced in from a peer on
+an older build. Their check is also nearly free, an indexed `space_id IS NULL` test.
+
+Neither justification transfers. A *misfiled* tag is not something a peer can deliver: an old
+peer emits a space-**less** tag, which the cheap every-boot path catches, and a current peer emits
+a correctly-filed one. The population is closed — it is the damage this device's own earlier runs
+did. And the check is not free: a misfiled tag is indistinguishable from a correctly filed one
+until its references are counted, so there is no cheap precondition, and the pass costs a
+sequential scan of `blocks` plus a `LIKE` join against every tag. Paying that forever to find
+something that can only exist once is the wrong trade, so it is marker-gated in `app_settings`.
+
+The marker is written even when zero tags moved. Its job is to retire the **scan**, not to record
+that work happened; gating the write on `repaired > 0` would make every clean vault pay the scan
+on every boot forever.
+
+That gate then created a trap in the test that was already there. `misfiled_tag_moves_…` asserted
+that a second call returns 0, meaning "the tag now agrees with its references, so it is no longer
+a candidate". With a marker in front, that assertion passes for a second, unrelated reason — the
+short-circuit — and the property actually under test stops being tested while the test stays
+green. The fix is to delete the marker before the second call, so the scan really re-runs. Two
+further tests pin the gate itself: that the marker is written on a clean vault, and that a tag
+misfiled *after* it was set is deliberately left alone.
+
+Worth keeping: adding a short-circuit in front of an existing function silently weakens every
+test that asserted a zero/no-op result through it. The short-circuit is new evidence for the same
+assertion, and an assertion satisfied by two independent causes is testing neither.

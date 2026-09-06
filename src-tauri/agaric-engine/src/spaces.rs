@@ -605,6 +605,12 @@ pub async fn migrate_orphan_tags_to_space(
     Ok(migrated)
 }
 
+/// `app_settings` key recording that [`repair_misfiled_tag_spaces`] has run.
+///
+/// Versioned so a future correction to the repair can re-arm it by bumping
+/// the suffix rather than needing a way to clear the old key.
+const TAG_SPACE_REPAIR_MARKER: &str = "repair.tag_space_misfiled.v1";
+
 /// Repair pass — move a tag that is sitting in the WRONG space.
 ///
 /// [`migrate_orphan_tags_to_space`] only ever fires for a tag with NO space,
@@ -629,16 +635,32 @@ pub async fn migrate_orphan_tags_to_space(
 /// take a tag from a space where nothing references it to the one space
 /// where everything does.
 ///
-/// # Cost
+/// # Why this one is gated to run ONCE, unlike its neighbours
 ///
-/// Unlike the two migrations it runs beside, this one has no cheap
-/// precondition to test — a misfiled tag looks exactly like a correctly
-/// filed one until its references are counted — so it pays one sequential
-/// scan of `blocks` per boot to collect the rows containing a `#[` token at
-/// all. The quadratic part (`LIKE '%#[' || t.id || ']%'` against every tag)
-/// is then joined against that subset rather than the whole table, which is
-/// what keeps it bounded on a vault with many tags. Steady-state boots find
-/// zero candidates and emit nothing.
+/// `pages_without_space` and [`migrate_orphan_tags_to_space`] deliberately
+/// run on every boot, because their candidate — a block with NO space — can
+/// still ARRIVE later: a peer on an older build can sync one in long after
+/// this device stopped producing them. Their check is also nearly free,
+/// being an indexed `space_id IS NULL` test.
+///
+/// Neither is true here. A *misfiled* tag is not something a peer can
+/// deliver: an old peer emits a space-LESS tag (caught every boot by the
+/// cheap path above, which this commit also fixes), and a current peer emits
+/// a correctly-filed one. The population is therefore closed — it is the
+/// damage this device's own earlier runs did — so one pass over the vault
+/// settles it forever.
+///
+/// And the check is not free. A misfiled tag looks exactly like a correctly
+/// filed one until its references are counted, so there is no cheap
+/// precondition to test: the pass costs a sequential scan of `blocks` to
+/// collect rows containing a `#[` token, plus a `LIKE` join of those against
+/// every tag. Paying that on every boot forever, to find something that can
+/// only exist once, is the wrong trade — hence the marker.
+///
+/// The marker is written even when zero tags needed moving, so a clean vault
+/// pays the scan once and never again. It is per-device (it lives in
+/// `app_settings`, which is local state, not synced content), which is
+/// correct: the damage was per-device too.
 ///
 /// Returns the number of tags moved.
 pub async fn repair_misfiled_tag_spaces(
@@ -646,6 +668,16 @@ pub async fn repair_misfiled_tag_spaces(
     device_id: &str,
     records: &mut Vec<OpRecord>,
 ) -> Result<usize, AppError> {
+    // One indexed primary-key lookup — the whole cost of this function on
+    // every boot after the first.
+    let done: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
+        .bind(TAG_SPACE_REPAIR_MARKER)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if done.is_some() {
+        return Ok(0);
+    }
+
     // Runtime query (not macro) for the dynamic CTE + window-function shape.
     let misfiled: Vec<(String, String)> = sqlx::query_as(
         r"WITH tokened AS (
@@ -709,6 +741,17 @@ pub async fn repair_misfiled_tag_spaces(
 
         repaired += 1;
     }
+
+    // Written unconditionally, including on a vault that had nothing to
+    // repair: the point of the marker is to retire the SCAN, not to record
+    // that work happened.
+    let now = now_ms();
+    sqlx::query("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)")
+        .bind(TAG_SPACE_REPAIR_MARKER)
+        .bind(repaired.to_string())
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
 
     Ok(repaired)
 }
@@ -1114,14 +1157,86 @@ mod tests {
             .unwrap();
         assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
 
-        // Idempotent: the tag now agrees with its references, so a second
-        // boot finds no candidate and emits nothing.
+        // Idempotent ON ITS OWN TERMS. The marker would make a second call
+        // return 0 whatever the repair does, so asserting "second run is 0"
+        // without clearing it first would be an assertion that passes for two
+        // different reasons — and the one we care about (the tag now agrees
+        // with its references, so it is no longer a candidate) would be the
+        // one not being tested. Clear the marker to actually re-run the scan.
+        sqlx::query("DELETE FROM app_settings WHERE key = ?")
+            .bind(TAG_SPACE_REPAIR_MARKER)
+            .execute(&pool)
+            .await
+            .unwrap();
         let mut tx2 = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         let again = repair_misfiled_tag_spaces(&mut tx2, DEV, &mut Vec::new())
             .await
             .unwrap();
         tx2.commit().await.unwrap();
-        assert_eq!(again, 0, "second run must be a pure no-op");
+        assert_eq!(
+            again, 0,
+            "re-running the scan must find nothing: the tag now agrees with its references"
+        );
+    }
+
+    #[tokio::test]
+    async fn marker_retires_the_scan_even_when_nothing_was_repaired() {
+        // The marker exists to retire the SCAN, not to record that work
+        // happened, so a vault with nothing to fix must still write it —
+        // otherwise every clean vault pays a full `blocks` scan on every boot
+        // forever, looking for a condition that can no longer arise.
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let repaired = repair_misfiled_tag_spaces(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(repaired, 0);
+
+        let marker: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
+                .bind(TAG_SPACE_REPAIR_MARKER)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            marker.as_deref(),
+            Some("0"),
+            "marker must be written anyway"
+        );
+    }
+
+    #[tokio::test]
+    async fn marker_stops_a_second_pass_from_moving_anything() {
+        // A tag misfiled AFTER the marker was set is deliberately left alone:
+        // the population this repair addresses is closed (a peer can only
+        // deliver a space-LESS tag, which the every-boot path handles), so
+        // paying the scan forever is the wrong trade. This pins that the gate
+        // is what stops the second pass — if the marker check is ever dropped,
+        // this test starts failing rather than silently costing every boot.
+        let (pool, _tmp) = fresh_pool().await;
+        let mut tx0 = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        repair_misfiled_tag_spaces(&mut tx0, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx0.commit().await.unwrap();
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let tag_id =
+            seed_tag_referenced_from(&mut tx, "late", Some(SPACE_PERSONAL_ULID), SPACE_WORK_ULID)
+                .await;
+        let repaired = repair_misfiled_tag_spaces(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(repaired, 0, "the marker must short-circuit the scan");
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&tag_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space, Some(SPACE_PERSONAL_ULID.to_string()));
     }
 
     #[tokio::test]
