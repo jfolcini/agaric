@@ -227,6 +227,25 @@ describe('usePageCreation', () => {
     expect((content as string).length).toBeGreaterThan(0)
   })
 
+  // #4782 — the sidebar button, the chord and the palette all suffix through
+  // `untitledTitle`. The form's blank path passed the literal 'Untitled',
+  // which `create_page_in_space` RESOLVES to the Untitled page already there
+  // (#4723) instead of creating a second one, so submitting empty twice
+  // reopened the first one.
+  it('suffixes the blank-name create when an Untitled page already exists', async () => {
+    mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'Untitled' }])
+    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000003')
+    const h = makeHarness([])
+    const { result } = h.render()
+
+    await act(async () => {
+      await result.current.handleCreatePage()
+    })
+
+    expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_A')
+    expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000003', 'Untitled 2')
+  })
+
   it('guards against a not-yet-ready space and never calls the IPC', async () => {
     useSpaceStore.setState({ currentSpaceId: null })
     const h = makeHarness([])

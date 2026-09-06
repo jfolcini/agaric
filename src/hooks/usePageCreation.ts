@@ -34,6 +34,7 @@ import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindi
 import { commands } from '@/lib/bindings'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { untitledTitle } from '@/lib/untitled-page'
 import { useSpaceStore } from '@/stores/space'
 
 interface UsePageCreationParams {
@@ -88,7 +89,7 @@ export function usePageCreation({
 
   const handleCreatePage = useCallback(
     async function handleCreatePage() {
-      const name = newPageName.trim() || t('pageBrowser.untitled')
+      const trimmedName = newPageName.trim()
       // Phase 2 — a page must belong to a space. On the rare
       // first-boot path where `SpaceStore` has not yet hydrated we
       // refuse to create and surface a toast rather than silently
@@ -109,6 +110,11 @@ export function usePageCreation({
         const spacePages = unwrap(
           await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
         )
+        // A blank input means "New page", so it picks the first free
+        // `Untitled N` exactly as the sidebar button, the chord and the
+        // palette do — otherwise submitting the form empty twice reopens the
+        // first Untitled page instead of creating a second one (#4723).
+        const name = trimmedName || untitledTitle(spacePages.map((page) => page.content))
         const existing = spacePages.find((page) => page.content === name)
         if (existing) {
           setNewPageName('')

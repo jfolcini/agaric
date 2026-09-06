@@ -975,11 +975,10 @@ function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
  *    same microtask continuation, but the fill's resolution is not ordered
  *    against the backend write), so its response already contains the new
  *    row. Without this, that interleaving leaves a duplicate id in the cache.
- *  - `'append'` otherwise, at the END and unsorted — deliberately identical
- *    to `recordCreatedRow`. The 'renamed' arms re-sort because a row already
- *    in position had its SORT KEY changed under it; a create has no position
- *    to preserve, and matching the in-hook create path matters more than
- *    matching the backend's ORDER BY.
+ *  - `'append'` otherwise, at the END and unsorted. The 'renamed' arms
+ *    re-sort because a row already in position had its SORT KEY changed
+ *    under it; a create has no position to preserve, and matching the
+ *    in-hook create path matters more than matching the backend's ORDER BY.
  */
 function addedRowDisposition(isEmpty: boolean, alreadyPresent: boolean): 'skip' | 'append' {
   return isEmpty || alreadyPresent ? 'skip' : 'append'
@@ -1068,11 +1067,11 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
  * #4338 — the SAME pair, for a creation site that cannot reach this hook at
  * all, is `notifyPageAdded` / `notifyTagAdded`: the subscriber below bumps
  * the generation unconditionally before applying, and `applyPageNameChange`
- * / `applyTagNameChange`'s 'added' arms make the identical append-only-into-
- * a-filled-list decision (see `addedRowDisposition`). Nine of the ten page
- * creation sites in the app are outside this hook; `notifyPageAdded`'s
- * docblock carries the per-site enumeration and the reason the three in-hook
- * paths stay on `recordCreatedRow`.
+ * / `applyTagNameChange`'s 'added' arms share this function's decision
+ * through `addedRowDisposition`. Nine of the ten page creation sites in the
+ * app are outside this hook; `notifyPageAdded`'s docblock carries the
+ * per-site enumeration and the reason the three in-hook paths stay on
+ * `recordCreatedRow`.
  */
 function recordCreatedRow<Row, IdKey extends keyof Row>(
   listRef: React.RefObject<Row[]>,
@@ -1082,11 +1081,11 @@ function recordCreatedRow<Row, IdKey extends keyof Row>(
 ): void {
   generationRef.current += 1
   const list = listRef.current
-  if (list.length === 0) return
   // #4723 — `create_page_in_space` RESOLVES an existing title to that page
   // instead of creating one, so a "created" row can be a row the filled list
   // already holds, and the `[[` picker would offer that page twice.
-  if (list.some((existing) => existing[idKey] === row[idKey])) return
+  const alreadyPresent = list.some((existing) => existing[idKey] === row[idKey])
+  if (addedRowDisposition(list.length === 0, alreadyPresent) === 'skip') return
   listRef.current = [...list, row]
 }
 

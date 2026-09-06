@@ -16,7 +16,6 @@ import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
-import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
@@ -316,11 +315,8 @@ function PageEditorInner({
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
-      {/* Block tree — loads children of pageId. A tag mounts it only until the
-          verdict lands; that load is what fills the legacy rows below. */}
-      {isTagPage === true ? (
-        blocks.length > 0 && <EmbeddedBlockTree rows={blocks} baseAriaLevel={0} />
-      ) : (
+      {/* Block tree — loads children of pageId. */}
+      {isTagPage !== true && (
         <BlockTree
           parentId={pageId}
           autoCreateFirstBlock={isTagPage === false}

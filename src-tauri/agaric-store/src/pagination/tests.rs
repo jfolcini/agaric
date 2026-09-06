@@ -4353,6 +4353,40 @@ async fn insert_attachment_op_log_entry(
     .unwrap();
 }
 
+/// Insert a peer's `add_attachment` op as replication stores it
+/// (`is_replicated = 1`).
+///
+/// `ingest_remote_op_in_tx` populates `block_id` from the payload for a
+/// replicated row exactly as the local path does, which is why the owning
+/// block still resolves.
+async fn insert_replicated_add_attachment_op(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    payload: &str,
+    created_at: &str,
+    attachment_id: &str,
+) {
+    let created_at_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+        .unwrap()
+        .timestamp_millis();
+    sqlx::query(
+        "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id, is_replicated) \
+         VALUES (?, ?, ?, 'add_attachment', ?, ?, json_extract(?, '$.block_id'), ?, 1)",
+    )
+    .bind(device_id)
+    .bind(seq)
+    .bind("test-hash-placeholder")
+    .bind(payload)
+    .bind(created_at_ms)
+    .bind(payload)
+    .bind(attachment_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Insert a live `attachments` row (the probe `rename_attachment` relies on).
 async fn insert_attachment_row(pool: &SqlitePool, id: &str, block_id: &str, filename: &str) {
     sqlx::query(
@@ -4707,29 +4741,17 @@ async fn test_list_page_history_includes_a_peer_added_attachments_delete_4627() 
     )
     .await;
 
-    // Device A's add, arrived here by replication. `ingest_remote_op_in_tx`
-    // populates `block_id` from the payload for a replicated row exactly as
-    // the local path does, which is why it can still resolve the owner.
+    // Device A's add, arrived here by replication.
     let add = r#"{"attachment_id":"PH_REP_AT","block_id":"PH_REP_CH","mime_type":"image/png","filename":"peer.png","size_bytes":1,"fs_path":"attachments/peer.png"}"#;
-    let add_created_at_ms = chrono::DateTime::parse_from_rfc3339("2025-02-02T00:00:00Z")
-        .unwrap()
-        .timestamp_millis();
-    sqlx::query(
-        "INSERT INTO op_log \
-             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id, is_replicated) \
-         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'), ?, 1)",
+    insert_replicated_add_attachment_op(
+        &pool,
+        "device-A",
+        2,
+        add,
+        "2025-02-02T00:00:00Z",
+        "PH_REP_AT",
     )
-    .bind("device-A")
-    .bind(2_i64)
-    .bind("test-hash-placeholder")
-    .bind("add_attachment")
-    .bind(add)
-    .bind(add_created_at_ms)
-    .bind(add)
-    .bind("PH_REP_AT")
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
 
     // The local delete. No live `attachments` row is ever inserted: on this
     // device the attachment only ever existed as a replicated op.
@@ -5044,26 +5066,17 @@ async fn test_list_block_history_includes_a_peer_added_attachments_delete_4336()
     )
     .await;
 
-    // Device A's add, arrived here by replication. `ingest_remote_op_in_tx`
-    // populates `block_id` from the payload for a replicated row exactly as
-    // the local path does, which is why it can still resolve the owner.
+    // Device A's add, arrived here by replication.
     let add = r#"{"attachment_id":"BH_REP_AT","block_id":"BH_REP_CH","mime_type":"image/png","filename":"peer.png","size_bytes":1,"fs_path":"attachments/peer.png"}"#;
-    sqlx::query(
-        "INSERT INTO op_log \
-             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id, is_replicated) \
-         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'), ?, 1)",
+    insert_replicated_add_attachment_op(
+        &pool,
+        "device-A",
+        2,
+        add,
+        "2025-02-01T00:00:00Z",
+        "BH_REP_AT",
     )
-    .bind("device-A")
-    .bind(2_i64)
-    .bind("test-hash-placeholder")
-    .bind("add_attachment")
-    .bind(add)
-    .bind(1_738_368_000_000_i64)
-    .bind(add)
-    .bind("BH_REP_AT")
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
 
     // The local delete. No live `attachments` row is ever inserted: on this
     // device the attachment only ever existed as a replicated op.

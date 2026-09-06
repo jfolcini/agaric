@@ -51,18 +51,6 @@ vi.mock('@/components/editor/BlockTree', () => ({
   },
 }))
 
-// ── Mock EmbeddedBlockTree ──────────────────────────────────────────
-// The read-only renderer PageEditor uses for a tag page's legacy children.
-// Mocked for the same reason BlockTree is: it pulls in the whole
-// RichContentRenderer chain.
-let capturedEmbeddedRows: readonly { id: string }[] | undefined
-vi.mock('@/components/editor/embed/EmbeddedBlockTree', () => ({
-  EmbeddedBlockTree: (props: { rows: readonly { id: string }[] }) => {
-    capturedEmbeddedRows = props.rows
-    return <div data-testid="embedded-block-tree" data-row-count={props.rows.length} />
-  },
-}))
-
 // ── Mock PageHeader ─────────────────────────────────────────────────
 let capturedPageHeaderProps: { pageId: string; title: string; onBack?: () => void } | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
@@ -180,7 +168,6 @@ function stubInvoke(handlers: Readonly<Record<string, InvokeHandler>> = {}): voi
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
-  capturedEmbeddedRows = undefined
   capturedAutoCreateFirstBlock = undefined
   capturedOnRevealSettled = undefined
   capturedRevealNonce = undefined
@@ -665,24 +652,6 @@ describe('PageEditor tag page is read-only (#4725)', () => {
       expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
     })
     expect(screen.queryByRole('button', { name: /add block/i })).not.toBeInTheDocument()
-  })
-
-  it('renders legacy children read-only', async () => {
-    stubTagPage()
-
-    render(<PageEditor pageId="TAG_1" title="urgent" />)
-
-    act(() => {
-      getPageStore('TAG_1')?.setState({
-        blocks: [makeBlock({ id: 'LEGACY', content: 'stray', parent_id: 'TAG_1', position: 0 })],
-      })
-    })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('embedded-block-tree')).toBeInTheDocument()
-    })
-    expect(capturedEmbeddedRows?.map((r) => r.id)).toEqual(['LEGACY'])
-    expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
