@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT CAST(c.value AS TEXT) AS \"id!: String\"\n           FROM blocks r CROSS JOIN json_each(?1) c\n           WHERE r.deleted_at IS NULL\n             AND (r.content LIKE '%((%' OR r.content LIKE '%[[%')\n             AND (instr(r.content, '((' || c.value || '))') > 0\n                  OR instr(r.content, '[[' || c.value || ']]') > 0)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "52144bcce100fe19172de267f911acfbedbaf4747233fce07c244df2b6ed631d"
+}

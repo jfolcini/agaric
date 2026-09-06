@@ -50,8 +50,9 @@ export interface Tab {
    * `openInNewTab` whenever a page is opened from a non-`page-editor` view
    * (#4707 — including onto a stack left standing by an earlier view, and
    * including a re-open of the page already on top, which is what makes
-   * Journal → page → Back land back on the journal) and consumed (and
-   * cleared) by `goBack`.
+   * Journal → page → Back land back on the journal), by `switchTab` when a
+   * TabBar click enters a stack from a non-editor view (#4732), and consumed
+   * (and cleared) by `goBack`.
    *
    * Undefined means "unknown origin" — a tab persisted before this field
    * existed, or one opened while `page-editor` was already the current view
@@ -297,6 +298,27 @@ function setNavigationView(view: View): void {
  */
 function nextEnteredFrom(tab: Tab): View | undefined {
   return currentEntryView() ?? tab.enteredFrom
+}
+
+/**
+ * `tabs` with `tabs[index]`'s recorded origin set to `entered`, or the SAME
+ * array reference when that is already its origin (#4732).
+ *
+ * Returning the input array unchanged is what lets a caller skip its `set()`
+ * entirely on the no-change path: `selectPageStack` subscribers would
+ * otherwise be handed a fresh array reference and re-render for nothing. Same
+ * gate `navigateToPage`'s already-on-top branch uses.
+ */
+function withRecordedOrigin(
+  tabs: Tab[],
+  index: number,
+  tab: Tab,
+  entered: View | undefined,
+): Tab[] {
+  if (entered === tab.enteredFrom) return tabs
+  const next = [...tabs]
+  next[index] = { ...tab, enteredFrom: entered }
+  return next
 }
 
 /**
@@ -695,11 +717,28 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         if (tabIndex < 0 || tabIndex >= tabs.length) return
+        const target = tabs[tabIndex]
+        if (!target) return
         const inEditor = useNavigationStore.getState().currentView === 'page-editor'
         const sameTab = tabIndex === activeTabIndex
         if (sameTab && inEditor) return
+        // #4732 — a switch made from a non-editor view ENTERS this tab's page
+        // stack from a real route, exactly like `navigateToPage` does, so that
+        // route is the stack's new origin. Read BEFORE `setNavigationView`
+        // below overwrites `currentView`; without it `goBack` finds no
+        // `enteredFrom` and Journal → tab click → Back lands on `pages`.
+        // `nextEnteredFrom` yields the tab's existing origin unchanged when
+        // the switch is made from inside the editor, which is why the two
+        // `inEditor` paths need no write of their own.
+        const entered = nextEnteredFrom(target)
         if (sameTab) {
-          // Cross-view click on the already-active tab: just flip the view.
+          // Cross-view click on the already-active tab: flip the view, and
+          // record the origin. This branch had no `set()` at all; the
+          // `withRecordedOrigin` identity gate keeps it that way whenever the
+          // origin is unchanged, so the only added store write is one that
+          // genuinely changes state.
+          const withOrigin = withRecordedOrigin(tabs, tabIndex, target, entered)
+          if (withOrigin !== tabs) set(spliceTabs(state, withOrigin, tabIndex))
           setNavigationView('page-editor')
           return
         }
@@ -708,7 +747,7 @@ export const useTabsStore = create<TabsStore>()(
           setNavigationSelectedBlockId(null)
           return
         }
-        set(spliceTabs(state, tabs, tabIndex))
+        set(spliceTabs(state, withRecordedOrigin(tabs, tabIndex, target, entered), tabIndex))
         setNavigationView('page-editor')
         setNavigationSelectedBlockId(null)
       },

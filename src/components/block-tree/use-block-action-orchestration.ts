@@ -199,6 +199,25 @@ export interface UseBlockActionOrchestrationParams {
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
   justCreatedBlockIds: RefObject<Set<string>>
   /**
+   * #4729 — ids BlockTree's leaked-empty-block cleanup must skip exactly once.
+   *
+   * Enter pressed at the START of a block splits it into `before = ''` and
+   * `after = <the whole line>`: the source block keeps its slot and is left
+   * deliberately EMPTY, the text moves into a new sibling below, and focus
+   * follows the text. That empty source is the user's blank line, so the
+   * focus-leave cleanup must not treat it as a leak — otherwise Enter-at-line-
+   * start becomes a visible no-op. Registered here BEFORE the split's first
+   * await (a click elsewhere during the `edit`/`createBelow` round trip moves
+   * focus off the already-emptied source, and the cleanup must find the
+   * exemption in place by then), consumed (and cleared) by the cleanup effect
+   * on the next focus change, and withdrawn on the split's failure paths,
+   * which restore the source's full content.
+   *
+   * Optional: callers that never drive a caret split (isolated hook tests) may
+   * omit it.
+   */
+  preserveEmptyBlockIds?: RefObject<Set<string>>
+  /**
    * Discard any persisted draft for the given block. Called on Escape, and
    * (#2786) after a successful caret-split `edit()` to drop the departed
    * block's now-stale pre-split draft row.
@@ -241,6 +260,7 @@ export function useBlockActionOrchestration({
   moveDown,
   createBelow,
   justCreatedBlockIds,
+  preserveEmptyBlockIds,
   discardDraft,
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
@@ -796,12 +816,24 @@ export function useBlockActionOrchestration({
       const split = rovingEditorRef.current.splitAtCaret?.() ?? null
       if (split && split.after !== '') {
         rovingEditorRef.current.unmount()
+        // #4729 — Enter at the START of a line leaves the source block empty
+        // (`before` is ''), and that blank line is the point of the keystroke.
+        // Exempt it from the focus-leave empty-block cleanup NOW, before the
+        // first await: `edit()` below empties the block optimistically, and a
+        // click elsewhere during its round trip moves focus off the source —
+        // registering only after `createBelow` resolved would let the cleanup
+        // delete the source first, and `createBelow` then finds no anchor for
+        // the after-text. Withdrawn on the failure paths, which restore the
+        // full unsplit content.
+        const leavesSourceEmpty = split.before.trim() === ''
+        if (leavesSourceEmpty) preserveEmptyBlockIds?.current.add(focusedBlockId)
         // #730 family — edit() RESOLVES false on failure (the store rolled the
         // optimistic write back and toasted); it never rejects. Abort the
         // split BEFORE creating anything, restoring the full unsplit content,
         // so a failed before-caret save can't fork the block into stale text
         // plus an orphan after-text sibling (mirrors splitBlock's #730 guard).
         if (!(await edit(focusedBlockId, split.before))) {
+          if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
           rovingEditorRef.current.mount(focusedBlockId, savedContent)
           return
         }
@@ -824,12 +856,15 @@ export function useBlockActionOrchestration({
         const newBlockId = await createBelow(focusedBlockId, split.after)
         if (newBlockId) {
           // NOT added to justCreatedBlockIds: the new block carries real
-          // content, so Escape must not auto-delete it as an empty stub.
+          // content, so Escape must not auto-delete it as an empty stub. (The
+          // SOURCE's #4729 exemption was registered above, before the awaits;
+          // this `setFocused` is what consumes it.)
           setFocused(newBlockId)
           announce(t('announce.blockCreated'))
         } else {
           // Backend error — restore the original (unsplit) block so the user
           // isn't left with a truncated block and no place to type.
+          if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
           rovingEditorRef.current.mount(focusedBlockId, savedContent)
         }
         return
@@ -882,6 +917,7 @@ export function useBlockActionOrchestration({
     edit,
     setFocused,
     justCreatedBlockIds,
+    preserveEmptyBlockIds,
     discardDraft,
     t,
   ])
