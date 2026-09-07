@@ -1289,13 +1289,8 @@ jobs:
         run: prek run --all-files --hook-stage pre-push lychee
 
   # ---------------------------------------------------------------------------
-  # vitest — frontend unit + integration suite (PEND-86: single job).
-  # Previously a 3-shard matrix + a separate merge job; consolidated into one
-  # full-suite run. Three ~3-min shards in parallel cost three runner slots and
-  # still needed a 4th (merge) job, while the critical path was gated by the
-  # 16-min cargo-tests long pole anyway. One full run (~8-9 min with v8
-  # coverage) frees two runner slots, drops the merge job, and produces the
-  # coverage report directly — no cross-shard istanbul merge to maintain.
+  # vitest — frontend unit + integration suite, sharded 2 ways (#4818). Each
+  # cell emits a blob report; `vitest-coverage` below replays both.
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
@@ -1364,6 +1359,13 @@ jobs:
             --coverage.thresholds.statements=0
 
       - name: Upload shard blob report
+        # `!cancelled()`, not the default: a shard whose tests FAIL exits 1 but
+        # still writes its blob (measured), and uploading it is what lets
+        # `vitest-coverage` re-report the actual test failure rather than fail
+        # on a half-suite coverage number. Not `always()` — a cancelled shard
+        # (timeout) may have written nothing, and `if-no-files-found: error`
+        # would then turn that into a second, more confusing red.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vitest-blob-${{ matrix.shard }}
@@ -1373,10 +1375,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # vitest-coverage — replays both shard blobs into one report, and is where
-  # the #749 coverage thresholds actually gate. Unlike `cargo-coverage`, which
-  # is deliberately informational, this job IS in `validate-all`'s needs: it
-  # holds a gate that used to live inside `vitest`, so dropping it from the
-  # gate would silently retire the coverage floor.
+  # the #749 coverage thresholds gate. It is in `validate-all`'s needs (as
+  # `cargo-coverage` is): the threshold check moved OUT of `vitest` when that
+  # job was sharded, so leaving this one ungated would retire the coverage
+  # floor without anyone noticing.
   #
   # The production build + bundle-size gate live here rather than in a shard:
   # they are per-commit, not per-shard, and running them twice would buy
@@ -2071,10 +2073,9 @@ jobs:
           # absent from the diff.
           fe_skip_ok="false"; if [ "$frontend" != "true" ]; then fe_skip_ok="true"; fi
           check_job vitest "$fe_skip_ok"
-          # #4818 — vitest-coverage is NOT the informational sibling
-          # cargo-coverage is: the #749 coverage thresholds moved into it when
-          # vitest was sharded, so leaving it out of the gate would retire the
-          # coverage floor without anyone noticing.
+          # #4818 — the #749 coverage thresholds moved out of `vitest` and
+          # into this job when vitest was sharded, so it has to be gated for
+          # the coverage floor to keep existing.
           check_job vitest-coverage "$fe_skip_ok"
           check_job playwright "$fe_skip_ok"
 

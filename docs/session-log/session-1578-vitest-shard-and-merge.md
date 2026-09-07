@@ -1,4 +1,4 @@
-# Session 1575 — re-sharding the vitest lane (#4818)
+# Session 1578 — re-sharding the vitest lane (#4818)
 
 ## What happened
 
@@ -39,9 +39,11 @@ budget.
 - `vitest-coverage` downloads both blobs and replays them with
   `--mergeReports`, which runs no tests and reports the union. The production
   build and bundle-size gate move here too: they are per-commit, not per-shard.
-- It is in `validate-all`'s needs, unlike its `cargo-coverage` sibling, because
-  the #749 coverage thresholds moved into it. Leaving it out would have retired
-  the coverage floor silently.
+- It is in `validate-all`'s needs, because the #749 coverage thresholds moved
+  into it. Leaving it out would have retired the coverage floor silently.
+- A shard whose tests fail exits 1 but still writes its blob (measured), so the
+  upload is `if: !cancelled()` and the merge job re-reports the real failure
+  instead of failing on a half-suite coverage number.
 
 No merge script and no new dependency: vitest 4's blob reporter and
 `--mergeReports` are the supported path, and the one this repo previously hand-
@@ -70,3 +72,16 @@ Both caps are 25 minutes, and the comments say so. Half an 18-minute suite plus
 per-shard samples" note. Trim once the first runs land.
 
 The suite's growth itself is untouched; #4818 tracks that.
+
+## One thing I got wrong
+
+The first version of this change described `cargo-coverage` as "deliberately
+informational" and drew a contrast with the new job on that basis. It is not:
+#648 made it gating, and `check_job cargo-coverage` sits eleven lines from the
+comment that denied it. The claim came from PEND-86's commit message, which was
+true when written; I quoted it instead of reading the file it describes. The
+reviewer caught it in three places, including this log.
+
+The lesson is the one already in `AGENTS.md` about prose: a commit message is a
+dated observation, not a current fact, and citing one is not the same as
+checking.
