@@ -22,8 +22,9 @@
 //!
 //! The keeper is `MIN(id)`: ULIDs are creation-ordered, so it is the oldest
 //! page — the one the journal lookup returns today. Every other member's live
-//! children are appended to the keeper in `id` (creation) order, then the
-//! emptied member is soft-deleted.
+//! children are appended to the keeper in `(parent_id, position, id)` order, so
+//! each duplicate's children arrive as a block, in the order they were shown on
+//! that page; then the emptied member is soft-deleted.
 //!
 //! **Children move before the page is deleted.** `DeleteBlock` tombstones the
 //! page *and its live descendants* as one cohort; deleting first would trash
@@ -110,8 +111,8 @@ async fn select_duplicates(
     .await?)
 }
 
-/// The live children of every page in `pages`, in creation (id) order across
-/// all of them.
+/// The live children of every page in `pages`, grouped by page and in the
+/// sibling order each page displays (`id` only breaks position ties).
 async fn select_children(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     pages: &[String],

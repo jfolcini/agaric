@@ -62,28 +62,13 @@ pub async fn apply_op_projected_with_mode(
     advance_cursor: bool,
     mode: ApplyMode,
 ) -> Result<ApplyEffects, AppError> {
-    // #2200: pass `None` — single-op / LOCAL apply is a "chunk of one", so the
-    // derived maintenance passes (dense reproject, count recompute) run inline,
-    // exactly as before. Only the batch import path opts into deferral.
-    let effects = apply_op_tx_with_mode(tx, record, None, state, mode).await?;
-
     if advance_cursor {
-        // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
-        // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
-        //
-        // `advance_apply_cursor` below moves a SINGLE GLOBAL scalar cursor to
-        // `record.seq`, but `op_log.seq` is a PER-DEVICE counter (PK
-        // `(device_id, seq)`). Advancing the global cursor for an op from one
-        // device is only sound when the entire op_log belongs to that ONE
-        // device — otherwise the cursor jumps past another device's
-        // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
-        // silently drops them. Remove once the per-device watermark cursor
-        // ships.
-        //
-        // #4661 — a REPLICATED record (migration 0099 stamps every foreign
-        // op `is_replicated = 1`) may not advance the cursor: refuse it in every
-        // build with the batch arm's error class. A record with no `op_log` row
-        // is not refused; only op-log rows carry provenance, and the rowless
+        // #4661 — a REPLICATED record (migration 0099 stamps every foreign op
+        // `is_replicated = 1`) may not advance the cursor: refuse it in every
+        // build with the batch arm's error class. Checked BEFORE the apply
+        // below, so the refusal is a precondition rather than a mutation the
+        // caller has to roll back. A record with no `op_log` row is not
+        // refused; only op-log rows carry provenance, and the rowless
         // population is the projection tests' synthetic records.
         let locally_authored: Option<bool> = sqlx::query_scalar!(
             r#"SELECT is_replicated = 0 AS "local!: bool"
@@ -102,6 +87,26 @@ pub async fn apply_op_projected_with_mode(
                 record.device_id, record.seq,
             )));
         }
+    }
+
+    // #2200: pass `None` — single-op / LOCAL apply is a "chunk of one", so the
+    // derived maintenance passes (dense reproject, count recompute) run inline,
+    // exactly as before. Only the batch import path opts into deferral.
+    let effects = apply_op_tx_with_mode(tx, record, None, state, mode).await?;
+
+    if advance_cursor {
+        // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
+        // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
+        //
+        // `advance_apply_cursor` below moves a SINGLE GLOBAL scalar cursor to
+        // `record.seq`, but `op_log.seq` is a PER-DEVICE counter (PK
+        // `(device_id, seq)`). Advancing the global cursor for an op from one
+        // device is only sound when the entire op_log belongs to that ONE
+        // device — otherwise the cursor jumps past another device's
+        // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
+        // silently drops them. Remove once the per-device watermark cursor
+        // ships.
+        //
         // DEBUG only: the whole-log predicate below is a scan (~10 ms per
         // applied op at 100K rows against ~20 µs for the point lookup), the
         // AGENTS.md hot-check exemption; it also catches a foreign row the
