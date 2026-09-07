@@ -50,6 +50,7 @@ import { HtmlPaste } from '@/editor/extensions/html-paste'
 import { Image } from '@/editor/extensions/image'
 import {
   ListMarkerDecoration,
+  listMarkerOf,
   setListMarkerMeta,
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
@@ -615,6 +616,17 @@ export interface RovingEditorHandle {
    */
   updateListMarker: (style: ListMarkerState['style'], ordinal: number | undefined) => void
   /**
+   * #4552 slice 3 — the marker the focused editor is currently showing, i.e.
+   * the last value `updateListMarker` pushed (`'none'` when unmounted). The
+   * keyboard grain (Enter continuation, Backspace strip-then-merge) reads the
+   * focused block's list style through this handle rather than importing the
+   * plugin, so `BlockTree`'s eager import graph stays free of TipTap (#2939,
+   * pinned by `BlockTree.lazy-editor-import-graph.test.ts`). The ordinal rides
+   * along so a caller that clears the marker can put back exactly what it
+   * cleared when its write fails.
+   */
+  listMarker: () => ListMarkerState
+  /**
    * Unmount the editor. Serializes PM doc → markdown. Returns the new
    * markdown string if content changed, or null if unchanged.
    */
@@ -1119,6 +1131,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     [editor],
   )
 
+  // #4552 slice 3 — read back what the last push set, for the Enter / Backspace
+  // grain. `'none'` while unmounted: there is no focused block to style.
+  const listMarker = useCallback(
+    (): ListMarkerState =>
+      editor ? listMarkerOf(editor.state) : { style: 'none', ordinal: undefined },
+    [editor],
+  )
+
   const unmount = useCallback((): string | null => {
     if (!editor) return null
     const unmountBlockId = activeBlockIdRef.current
@@ -1249,6 +1269,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       editor,
       mount,
       updateListMarker,
+      listMarker,
       unmount,
       get activeBlockId() {
         return activeBlockIdRef.current
@@ -1265,6 +1286,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       editor,
       mount,
       updateListMarker,
+      listMarker,
       unmount,
       getMarkdown,
       splitAtCaret,

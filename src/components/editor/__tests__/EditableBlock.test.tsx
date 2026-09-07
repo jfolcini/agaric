@@ -206,6 +206,7 @@ function makeRovingEditor(
     editor: 'editor' in overrides ? overrides.editor : { fake: true, isEmpty: false },
     mount: overrides.mount ?? vi.fn(),
     updateListMarker: vi.fn(),
+    listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
     unmount: overrides.unmount ?? vi.fn(() => null),
     activeBlockId: overrides.activeBlockId ?? null,
     getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),

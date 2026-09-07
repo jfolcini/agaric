@@ -35,6 +35,18 @@ export function setListMarkerMeta(tr: Transaction, next: ListMarkerState): Trans
   return tr.setMeta(listMarkerPluginKey, next)
 }
 
+/**
+ * The marker the plugin is currently showing (`'none'` before any push).
+ * #4552 slice 3 — the Enter / Backspace handlers read the focused block's
+ * style from here: it is what `EditableBlock` pushed from `ListMarkerContext`,
+ * and those handlers sit above the property batch provider with no other
+ * synchronous source. The ordinal comes with it so a failed write can put back
+ * the exact marker it cleared, numbering included.
+ */
+export function listMarkerOf(state: EditorState): ListMarkerState {
+  return listMarkerPluginKey.getState(state) ?? EMPTY_STATE
+}
+
 /** Build the marker decoration set for the given state (exported for tests). */
 export function buildDecorations(state: EditorState): DecorationSet {
   const marker = listMarkerPluginKey.getState(state) ?? EMPTY_STATE

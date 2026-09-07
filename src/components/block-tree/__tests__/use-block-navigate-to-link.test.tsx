@@ -235,6 +235,7 @@ describe('useBlockNavigateToLink', () => {
           editor: null,
           mount,
           updateListMarker: vi.fn(),
+          listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
           unmount: vi.fn(() => null),
           activeBlockId: null,
           getMarkdown: () => null,

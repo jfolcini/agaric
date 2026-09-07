@@ -39,6 +39,7 @@ function makeLiveHandle(overrides: Partial<RovingEditorHandle> = {}): RovingEdit
     editor: {} as RovingEditorHandle['editor'], // non-null → "live"
     mount: vi.fn(),
     updateListMarker: vi.fn(),
+    listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
     unmount: vi.fn(() => null),
     activeBlockId: null,
     getMarkdown: vi.fn(() => null),
@@ -71,6 +72,11 @@ describe('useLazyRovingEditor (#2939)', () => {
     render(<Harness />)
     expect(latest?.rovingEditor.editor).toBeNull()
     expect(latest?.editorSurface).toBeNull()
+    // #4552 slice 3 — the Enter / Backspace grain reads the focused style off
+    // the handle. Before the editor loads there is no marker, so the stub must
+    // say `'none'`: anything else would strip a style the user never set, or
+    // swallow the merge.
+    expect(latest?.rovingEditor.listMarker()).toEqual({ style: 'none', ordinal: undefined })
   })
 
   it('mount() buffers the request, triggers the load, then adopts the live editor', async () => {

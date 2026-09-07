@@ -20,6 +20,7 @@ import type { StoreApi } from 'zustand'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
+import type { ListStyle } from '@/lib/list-style'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -85,6 +86,11 @@ const mockMount = vi.fn()
 const mockUnmount = vi.fn(() => mockUnmountReturn)
 const mockGetMarkdown = vi.fn(() => mockGetMarkdownReturn)
 const mockSplitAtCaret = vi.fn(() => mockSplitAtCaretReturn)
+/** #4552: the roving handle reports the focused block's list marker. */
+const mockListMarker = vi.fn((): { style: ListStyle; ordinal: number | undefined } => ({
+  style: 'none',
+  ordinal: undefined,
+}))
 
 // #2939 — BlockTree now consumes the roving editor via `useLazyRovingEditor`
 // (which lazily loads the real editor and returns a drop-in handle facade plus a
@@ -113,6 +119,7 @@ vi.mock('@/hooks/useLazyRovingEditor', () => ({
         unmount: mockUnmount,
         getMarkdown: mockGetMarkdown,
         splitAtCaret: mockSplitAtCaret,
+        listMarker: mockListMarker,
         activeBlockId: mockActiveBlockId,
       },
       editorHost: null,
