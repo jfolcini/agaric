@@ -3105,3 +3105,276 @@ async fn fts_coverage_counts_the_index_and_its_obligations_3345() {
     assert_eq!(tombstoned.fts_indexable_blocks, 3);
     assert_eq!(tombstoned.fts_tombstoned_blocks, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Artefact 8 — `block_tag_refs` (#3345)
+// ---------------------------------------------------------------------------
+
+const BTR_SPACE: &str = "01SPACE3345000000000000000";
+const BTR_OTHER_SPACE: &str = "01XSPACE334500000000000000";
+const BTR_SRC_PAGE: &str = "01SRCPAGE33450000000000000";
+const BTR_SRC: &str = "01SRCBLOCK3345000000000000";
+const BTR_TAG_PAGE: &str = "01TAGPAGE33450000000000000";
+const BTR_OTHER_PAGE: &str = "01XPAGE3345000000000000000";
+const BTR_TAG_SAME: &str = "01TAGSAME33450000000000000";
+const BTR_TAG_PENDING: &str = "01TAGPEND33450000000000000";
+const BTR_TAG_OTHER: &str = "01TAGXSPC33450000000000000";
+const BTR_TAG_DEAD: &str = "01TAGDEAD33450000000000000";
+const BTR_NOT_A_TAG: &str = "01NOTATAG33450000000000000";
+
+/// Seed a tag block. `space` is written to the RAW `blocks.space_id` column,
+/// which is the one production's INSERT subquery compares against — see
+/// `fold_block_tag_refs_from_content`.
+async fn btr_insert_tag(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    page: &str,
+    space: Option<&str>,
+    deleted_at: Option<i64>,
+) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id, \
+         deleted_at) VALUES (?, 'tag', ?, ?, 1, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(id)
+    .bind(page)
+    .bind(page)
+    .bind(space)
+    .bind(deleted_at)
+    .execute(pool)
+    .await
+    .expect("seed tag block");
+}
+
+/// Read the stored rows, so a test can assert on the TABLE and not only on the
+/// oracle's opinion of it.
+async fn btr_stored_tags(pool: &sqlx::SqlitePool, source: &str) -> Vec<String> {
+    // dynamic-sql: static SQL, test-only read-back.
+    let mut rows: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tag_refs WHERE source_id = ?")
+            .bind(source)
+            .fetch_all(pool)
+            .await
+            .expect("read block_tag_refs");
+    rows.sort();
+    rows
+}
+
+/// One source naming FIVE `#[ULID]` tokens, of which exactly ONE is an edge.
+/// Every filter production's INSERT applies is armed by a token that must fail
+/// it: a cross-space tag, a tag whose own `space_id` is NULL, a soft-deleted
+/// tag, and an id that is a content block rather than a tag.
+///
+/// Nothing is reindexed here: the vault starts in the state the oracle must be
+/// able to see through — content naming rows the table does not hold.
+async fn btr_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("block_tag_refs.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, BTR_SPACE, None).await;
+    bl_register_space(&pool, BTR_SPACE).await;
+    bl_insert_page(&pool, BTR_OTHER_SPACE, None).await;
+    bl_register_space(&pool, BTR_OTHER_SPACE).await;
+
+    bl_insert_page(&pool, BTR_SRC_PAGE, Some(BTR_SPACE)).await;
+    bl_insert_page(&pool, BTR_TAG_PAGE, Some(BTR_SPACE)).await;
+    bl_insert_page(&pool, BTR_OTHER_PAGE, Some(BTR_OTHER_SPACE)).await;
+
+    btr_insert_tag(&pool, BTR_TAG_SAME, BTR_TAG_PAGE, Some(BTR_SPACE), None).await;
+    // `space_id` NULL, under a page that IS in the space. This is the sharpest
+    // token here: production compares the source's RESOLVED space against the
+    // tag's RAW column, so this tag is NOT an edge — but an oracle that
+    // symmetrically resolved the tag through its owning page would call it one.
+    btr_insert_tag(&pool, BTR_TAG_PENDING, BTR_TAG_PAGE, None, None).await;
+    btr_insert_tag(
+        &pool,
+        BTR_TAG_OTHER,
+        BTR_OTHER_PAGE,
+        Some(BTR_OTHER_SPACE),
+        None,
+    )
+    .await;
+    btr_insert_tag(&pool, BTR_TAG_DEAD, BTR_TAG_PAGE, Some(BTR_SPACE), Some(1)).await;
+    // A live block in the right space that is simply not a tag.
+    bl_insert_content(&pool, BTR_NOT_A_TAG, BTR_TAG_PAGE, Some(BTR_SPACE), "plain").await;
+
+    bl_insert_content(
+        &pool,
+        BTR_SRC,
+        BTR_SRC_PAGE,
+        Some(BTR_SPACE),
+        &format!(
+            "see #[{BTR_TAG_SAME}] #[{BTR_TAG_PENDING}] #[{BTR_TAG_OTHER}] \
+             #[{BTR_TAG_DEAD}] #[{BTR_NOT_A_TAG}]"
+        ),
+    )
+    .await;
+
+    seed_fts_index(&pool).await;
+
+    (pool, dir)
+}
+
+/// **The acceptance criterion.** `block_tag_refs` is auditable against the one
+/// thing in the schema that says what its rows must be: `blocks.content`.
+#[tokio::test]
+async fn block_tag_refs_oracle_audits_the_base_table_against_content_3345() {
+    let (pool, _dir) = btr_fixture().await;
+
+    // NON-VACUITY by VALUE, not by size. Five tokens are parsed and exactly one
+    // survives every filter; asserting the identity is what stops a fold that
+    // dropped one filter and gained a different row from passing on a count.
+    assert_eq!(
+        fold_content_tag_targets(Some(&format!(
+            "see #[{BTR_TAG_SAME}] #[{BTR_TAG_PENDING}] #[{BTR_TAG_OTHER}] \
+                 #[{BTR_TAG_DEAD}] #[{BTR_NOT_A_TAG}]"
+        )))
+        .len(),
+        5,
+        "the fixture must arm every filter — five tokens parsed"
+    );
+    assert_eq!(
+        rebuild_block_tag_refs_from_content(&pool)
+            .await
+            .expect("from-content rebuild"),
+        [(BTR_SRC.to_owned(), BTR_TAG_SAME.to_owned())]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        "only the live, same-space TAG is an edge: not the cross-space tag, not the \
+         soft-deleted one, not the content block, and NOT the tag whose own space_id \
+         is NULL (production compares the raw column, with no owning-page fallback)"
+    );
+
+    // Direction 1 — MISSING. The token is in the content; no maintainer ran.
+    let missing = block_tag_refs_reconciliation_failure(&pool, "content written, no reindex ran")
+        .await
+        .expect("oracle must report the unmaintained row");
+    assert!(
+        missing.contains("block_tag_refs.row") && missing.contains("no row in block_tag_refs"),
+        "expected a missing-row divergence, got:\n{missing}"
+    );
+    assert!(
+        missing.contains("in 1 place(s)"),
+        "exactly one token is an edge; reporting more means a filter was dropped, \
+         got:\n{missing}"
+    );
+    // Asserted over the DIVERGENCE SET, not the rendered report: the report
+    // shows only `divergences.first()`, so a string check here would pass
+    // vacuously for any token that sorts after the first.
+    let divergences = reconcile_block_tag_refs(&pool)
+        .await
+        .expect("reconcile_block_tag_refs");
+    for excluded in [BTR_TAG_PENDING, BTR_TAG_OTHER, BTR_TAG_DEAD, BTR_NOT_A_TAG] {
+        assert!(
+            !divergences.iter().any(|d| d.key.contains(excluded)),
+            "{excluded} is correctly not an edge; reporting it would mean the oracle \
+             dropped the filter it is auditing, got:\n{divergences:#?}"
+        );
+    }
+
+    // Production's own writer settles it. This is the whole claim: a
+    // from-CONTENT rebuild and `reindex_block_tag_refs` agree.
+    agaric_store::cache::reindex_block_tag_refs(&pool, BTR_SRC)
+        .await
+        .expect("reindex_block_tag_refs");
+
+    // The TABLE, not just the oracle's opinion of it.
+    assert_eq!(
+        btr_stored_tags(&pool, BTR_SRC).await,
+        vec![BTR_TAG_SAME.to_owned()],
+        "production must have written exactly the one edge the fold predicted"
+    );
+    assert_block_tag_refs_reconciled(&pool, "after production's own reindex").await;
+}
+
+/// Direction 2 — EXTRA: the token goes, the row does not.
+#[tokio::test]
+async fn block_tag_refs_oracle_reports_a_row_the_content_no_longer_names_3345() {
+    let (pool, _dir) = btr_fixture().await;
+    agaric_store::cache::reindex_block_tag_refs(&pool, BTR_SRC)
+        .await
+        .expect("reindex_block_tag_refs");
+    assert_block_tag_refs_reconciled(&pool, "settled fixture").await;
+
+    // The apply landed and the reindex has not run yet.
+    bl_set_content(&pool, BTR_SRC, "the tag is gone now").await;
+
+    let extra = block_tag_refs_reconciliation_failure(&pool, "token removed, no reindex ran")
+        .await
+        .expect("oracle must report the stale row");
+    assert!(
+        extra.contains("a row in block_tag_refs") && extra.contains(BTR_TAG_SAME),
+        "expected an extra-row divergence naming the stale tag, got:\n{extra}"
+    );
+
+    agaric_store::cache::reindex_block_tag_refs(&pool, BTR_SRC)
+        .await
+        .expect("reindex_block_tag_refs");
+    assert_eq!(
+        btr_stored_tags(&pool, BTR_SRC).await,
+        Vec::<String>::new(),
+        "the reindexer's DELETE arm must have taken the row"
+    );
+    assert_block_tag_refs_reconciled(&pool, "after the reindex dropped the stale row").await;
+}
+
+/// The deliberate departure, pinned. A soft delete does not touch `content` and
+/// no delete arm enqueues `ReindexBlockTagRefs`, so a tombstoned source KEEPS
+/// its rows by design. Scope [`fold_content_tag_targets`] by liveness — i.e.
+/// transcribe production's read literally — and this test reddens, because the
+/// EXTRA arm then fires on every ordinary block deletion.
+#[tokio::test]
+async fn block_tag_refs_oracle_leaves_the_tombstoned_source_alone_3345() {
+    let (pool, _dir) = btr_fixture().await;
+    agaric_store::cache::reindex_block_tag_refs(&pool, BTR_SRC)
+        .await
+        .expect("reindex_block_tag_refs");
+    assert_block_tag_refs_reconciled(&pool, "settled fixture").await;
+
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(BTR_SRC)
+        .execute(&pool)
+        .await
+        .expect("soft-delete the source");
+
+    assert_eq!(
+        btr_stored_tags(&pool, BTR_SRC).await,
+        vec![BTR_TAG_SAME.to_owned()],
+        "the row survives the soft delete — that is the window, not a bug"
+    );
+    assert_block_tag_refs_reconciled(&pool, "tombstoned source, rows not reindexed away").await;
+}
+
+/// The two grammars are independent copies ON PURPOSE, so drift has to be a
+/// named failure rather than a wave of unexplained divergences.
+#[test]
+fn oracle_tag_grammar_matches_production_3345() {
+    let corpus = [
+        format!("plain #[{BTR_TAG_SAME}] token"),
+        format!("two #[{BTR_TAG_SAME}] and #[{BTR_TAG_OTHER}]"),
+        // Near-misses production rejects: lowercase, wrong length, the
+        // page-link and block-ref delimiters, and a bare `#` word.
+        "#[abcdefghijklmnopqrstuvwxyz]".to_owned(),
+        "#[0123456789]".to_owned(),
+        format!("[[{BTR_TAG_SAME}]]"),
+        format!("(({BTR_TAG_SAME}))"),
+        "#hashtag".to_owned(),
+        String::new(),
+    ];
+    for text in &corpus {
+        let ours = fold_content_tag_targets(Some(text));
+        let theirs: std::collections::BTreeSet<String> = agaric_store::cache::TAG_REF_RE
+            .captures_iter(text)
+            .map(|cap| cap[1].to_owned())
+            .collect();
+        assert_eq!(
+            ours, theirs,
+            "oracle and production tag grammars disagree on {text:?}"
+        );
+    }
+}
