@@ -24,13 +24,12 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makePage } from '@/__tests__/fixtures'
+import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
 import {
   type TypedInvokeHandlers,
   mockInvokeCommands,
   pageRowInvokeFallback,
 } from '@/__tests__/helpers/invoke'
-import { asPageWithMetadataRow } from '@/__tests__/helpers/rows'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'

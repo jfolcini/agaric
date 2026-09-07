@@ -104,3 +104,17 @@ remove. Restricting the walk to `*.test.ts(x)` drops those two by a positive
 rule about the population, taking the baseline 87 -> 85; the self-exclusion
 stays for this file, and is now load-bearing rather than dead — removing it
 reddens at 86.
+
+## Third round: one canonical row factory, not two
+
+The reviewer caught that this PR's own `src/__tests__/helpers/rows.ts` was a
+SECOND canonical location: `src/__tests__/fixtures/index.ts` already had
+`makePage`, a `BlockRow` factory keyed to the same generated type. The stated
+payoff — "a field added to the Rust struct fails typecheck in one place" — was
+therefore not what shipped; it would have failed in three, across two files.
+
+`rows.ts` is gone and its factories live in `fixtures/index.ts` beside their
+siblings, with `makePage` and `makeDailyPage` rebuilt on top of `makeBlockRow`
+so the `BlockRow` field list is written once. `withOps`' `opRefs` parameter had
+no caller and `makePageWithMetadataRow` had exactly one, in its own file — the
+first is deleted, the second is module-local.

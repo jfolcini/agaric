@@ -16,8 +16,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePageHeading } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { makePageHeading } from '@/__tests__/helpers/rows'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import {
   HasParentMatchingEditor,

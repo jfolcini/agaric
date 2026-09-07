@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { makeBlockRow } from '@/__tests__/helpers/rows'
 import {
   computeSourceModifiers,
   JournalCalendarDropdown,

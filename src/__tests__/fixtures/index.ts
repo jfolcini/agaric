@@ -5,7 +5,7 @@
  * sensible defaults, following the Partial<T> pattern.
  */
 
-import type { HistoryEntry } from '@/lib/bindings'
+import type { HistoryEntry, PageHeading, PageWithMetadataRow, WithOps } from '@/lib/bindings'
 import type { BlockRow } from '@/lib/tauri'
 import type { FlatBlock } from '@/lib/tree-utils'
 
@@ -30,44 +30,27 @@ export function makeBlock(overrides: Partial<FlatBlock> = {}): FlatBlock {
 
 /** Create a page-type BlockRow. */
 export function makePage(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
+  return makeBlockRow({
     id: 'PAGE001',
     block_type: 'page',
     content: 'Test page',
-    parent_id: null,
     position: null,
-    deleted_at: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
     ...overrides,
-  }
+  })
 }
 
 /** Create a daily journal page BlockRow. */
 export function makeDailyPage(overrides: Partial<BlockRow> = {}): BlockRow {
-  return {
+  return makeBlockRow({
     id: 'DAILY001',
     block_type: 'page',
     content: '2025-01-01',
-    parent_id: null,
     position: null,
-    deleted_at: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
     ...overrides,
-  }
+  })
 }
 
-/** Common empty paginated response. */
-/// `PageResponse` always carries `total_count` (#4668: the stub omitted it, so
-/// every suite using this fixture asserted against a shape the backend never
-/// sends).
+/** Common empty paginated response; `PageResponse` always carries `total_count`. */
 export const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /** Create a HistoryEntry (op_log row) with positional defaults. */
@@ -88,4 +71,108 @@ export function makeHistoryEntry(
     // #2481 phase 2: foreign audit rows carry is_replicated=1.
     is_replicated: isReplicated,
   }
+}
+
+/**
+ * A complete {@link BlockRow}, with the fields a test cares about overridden.
+ *
+ * Defaults are the "plain live content block" case: no TODO state, no
+ * priority, no dates, not deleted.
+ */
+export function makeBlockRow(overrides: Partial<BlockRow> & Pick<BlockRow, 'id'>): BlockRow {
+  return {
+    block_type: 'content',
+    content: null,
+    parent_id: null,
+    position: 1,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    page_id: null,
+    ...overrides,
+  }
+}
+
+/**
+ * A {@link BlockRow} wrapped in the `op_refs` envelope the mutating block
+ * commands return (`create_block`, `edit_block`, `delete_block`, …).
+ *
+ * Stubs routinely returned the bare row, which is a shape the backend never
+ * sends: `WithOps<T>` is `{ op_refs } & T`, and a component reading `op_refs`
+ * would have seen `undefined` in the test and a real array in production.
+ */
+export function withOps<T>(value: T): WithOps<T> {
+  return { op_refs: [], ...value }
+}
+
+/**
+ * A complete {@link PageWithMetadataRow}.
+ *
+ * Note the casing: specta renames this struct's fields to camelCase, while
+ * {@link BlockRow} stays snake_case. Stubs for `list_pages_with_metadata` were
+ * returning `BlockRow`-shaped objects — a different shape in both field names
+ * and content, which the suite could not notice because nothing typed the seam.
+ */
+function makePageWithMetadataRow(
+  overrides: Partial<PageWithMetadataRow> & Pick<PageWithMetadataRow, 'id'>,
+): PageWithMetadataRow {
+  return {
+    blockType: 'page',
+    content: null,
+    parentId: null,
+    position: 1,
+    deletedAt: null,
+    todoState: null,
+    priority: null,
+    dueDate: null,
+    scheduledDate: null,
+    pageId: null,
+    lastModifiedAt: null,
+    inboundLinkCount: 0,
+    childBlockCount: 0,
+    flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+    ...overrides,
+  }
+}
+
+/** A complete {@link PageHeading} (snake_case, unlike the metadata row). */
+export function makePageHeading(
+  overrides: Partial<PageHeading> & Pick<PageHeading, 'id'>,
+): PageHeading {
+  return {
+    content: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    ...overrides,
+  }
+}
+
+/**
+ * Re-shape a {@link BlockRow} into the {@link PageWithMetadataRow} that
+ * `list_pages_with_metadata` actually returns.
+ *
+ * The two differ in more than field names: specta renames this struct to
+ * camelCase, and it carries metadata columns (`lastModifiedAt`,
+ * `inboundLinkCount`, `childBlockCount`, `flags`) that no `BlockRow` has.
+ * Suites stubbed the command with `BlockRow`s for exactly as long as nothing
+ * typed the seam (#4668).
+ */
+export function asPageWithMetadataRow(row: BlockRow): PageWithMetadataRow {
+  return makePageWithMetadataRow({
+    id: row.id,
+    blockType: row.block_type,
+    content: row.content,
+    parentId: row.parent_id,
+    position: row.position,
+    deletedAt: row.deleted_at,
+    todoState: row.todo_state,
+    priority: row.priority,
+    dueDate: row.due_date,
+    scheduledDate: row.scheduled_date,
+    pageId: row.page_id,
+  })
 }

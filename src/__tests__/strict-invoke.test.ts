@@ -16,13 +16,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   mockInvokeCommands,
   pageRowInvokeFallback,
   strictInvokeFallback,
   takeUnstubbedInvokes,
 } from '@/__tests__/helpers/invoke'
-import { makeBlockRow, withOps } from '@/__tests__/helpers/rows'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 

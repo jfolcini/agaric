@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makePage } from '@/__tests__/fixtures'
+import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
@@ -59,7 +59,6 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
   return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
 })
 
-import { asPageWithMetadataRow } from '@/__tests__/helpers/rows'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
