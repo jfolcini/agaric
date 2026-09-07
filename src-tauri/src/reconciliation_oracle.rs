@@ -396,6 +396,12 @@ struct BaseBlock {
     /// whole reason `block_links`' cross-space filter needs the owning-page
     /// fallback (#3903), and therefore why this column is dumped at all.
     space_id: Option<String>,
+    /// The promoted `due_date` property (migration 0012), a `YYYY-MM-DD` TEXT
+    /// column. One of `agenda_cache`'s four upstreams.
+    due_date: Option<String>,
+    /// The promoted `scheduled_date` property (migration 0013). Same shape and
+    /// role as `due_date`, at a lower agenda precedence.
+    scheduled_date: Option<String>,
 }
 
 /// One `attachments` row, reduced to the columns the blob store depends on.
@@ -416,6 +422,8 @@ type BaseBlockRow = (
     Option<String>,
     Option<i64>,
     Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
@@ -427,14 +435,15 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     // a copy of the code it audits.
     // dynamic-sql: static SQL, test-only oracle base-table dump.
     let rows = sqlx::query_as::<_, BaseBlockRow>(
-        "SELECT id, parent_id, page_id, block_type, content, deleted_at, space_id FROM blocks",
+        "SELECT id, parent_id, page_id, block_type, content, deleted_at, space_id, due_date, \
+         scheduled_date FROM blocks",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(
-            |(id, parent_id, page_id, block_type, content, deleted_at, space_id)| BaseBlock {
+            |(
                 id,
                 parent_id,
                 page_id,
@@ -442,6 +451,18 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
                 content,
                 deleted_at,
                 space_id,
+                due_date,
+                scheduled_date,
+            )| BaseBlock {
+                id,
+                parent_id,
+                page_id,
+                block_type,
+                content,
+                deleted_at,
+                space_id,
+                due_date,
+                scheduled_date,
             },
         )
         .collect())
@@ -1976,8 +1997,11 @@ fn fold_tags_cache_from_base(
         usages.entry(tag_id).or_default().insert(source_id);
     }
 
-    // Survivors: smallest id per normalised name, among live named tags.
-    let mut winner_by_norm: BTreeMap<String, &BaseBlock> = BTreeMap::new();
+    // Survivors: smallest id per normalised name, among live named tags. The
+    // content travels WITH the winner: recovering it afterwards would need a
+    // fallback for the NULL the `else { continue }` above already excluded, and
+    // that fallback would assert `name: ""` instead of failing.
+    let mut winner_by_norm: BTreeMap<String, (&str, &str)> = BTreeMap::new();
     for tag in blocks
         .iter()
         .filter(|b| b.block_type == "tag" && b.deleted_at.is_none())
@@ -1989,23 +2013,23 @@ fn fold_tags_cache_from_base(
         winner_by_norm
             .entry(key)
             .and_modify(|held| {
-                if tag.id < held.id {
-                    *held = tag;
+                if tag.id.as_str() < held.0 {
+                    *held = (tag.id.as_str(), content);
                 }
             })
-            .or_insert(tag);
+            .or_insert((tag.id.as_str(), content));
     }
 
     winner_by_norm
         .into_values()
-        .map(|tag| {
-            let usage_count = usages.get(tag.id.as_str()).map_or(0, |sources| {
+        .map(|(id, content)| {
+            let usage_count = usages.get(id).map_or(0, |sources| {
                 i64::try_from(sources.len()).unwrap_or(i64::MAX)
             });
             (
-                tag.id.clone(),
+                id.to_owned(),
                 DerivedTagRow {
-                    name: tag.content.clone().unwrap_or_default(),
+                    name: content.to_owned(),
                     usage_count,
                 },
             )
@@ -2095,6 +2119,300 @@ pub async fn tags_cache_reconciliation_failure(pool: &SqlitePool, context: &str)
 /// Panic with the first `tags_cache` divergence unless it equals its rebuild.
 pub async fn assert_tags_cache_reconciled(pool: &SqlitePool, context: &str) {
     if let Some(report) = tags_cache_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 10 — `agenda_cache`, the date roll-up (#3345)
+// ---------------------------------------------------------------------------
+
+/// One `block_properties` row, reduced to the columns the agenda reads.
+#[derive(Debug, Clone)]
+struct BaseProperty {
+    block_id: String,
+    key: String,
+    /// The typed date sidecar. NON-NULL is what promotes a property to an
+    /// agenda source; the untyped `value` column is never consulted.
+    value_date: Option<String>,
+}
+
+async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, AppError> {
+    const SQL: &str = "SELECT block_id, key, value_date FROM block_properties";
+    // dynamic-sql: static SQL, test-only oracle base-table dump.
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(block_id, key, value_date)| BaseProperty {
+            block_id,
+            key,
+            value_date,
+        })
+        .collect())
+}
+
+/// Every `agenda_cache` row, keyed by its `(date, block_id)` primary key.
+async fn dump_agenda_cache(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<(String, String), String>, AppError> {
+    const SQL: &str = "SELECT date, block_id, source FROM agenda_cache";
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let rows = sqlx::query_as::<_, (String, String, String)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(date, block_id, source)| ((date, block_id), source))
+        .collect())
+}
+
+/// The date carried by a `date/YYYY-MM-DD` tag, or `None` if the content is not
+/// one.
+///
+/// Transcribed from the second arm's grammar in `DESIRED_AGENDA_SQL`. Two
+/// SQLite semantics a naive Rust reading gets wrong:
+///
+///   * `LIKE 'date/%'` is ASCII case-INSENSITIVE — `case_sensitive_like` is
+///     never set on these connections — so `DATE/2026-01-01` IS a date tag and
+///     does produce an agenda row;
+///   * `GLOB '[0-9]'` is ASCII-only, so the digit test is `is_ascii_digit`, not
+///     `char::is_numeric`, which also accepts `٣` and `３`.
+///
+/// `LENGTH()` counts characters rather than bytes, and this counts `chars()` to
+/// match, but the two readings cannot actually disagree on the ANSWER: the
+/// GLOBs pin all ten trailing positions to ASCII, so anything accepted is
+/// 15 bytes as well as 15 characters. The char count is here for faithfulness
+/// and to keep the index arithmetic below in range, not to change an outcome.
+///
+/// The grammar checks SHAPE, not validity: production accepts `date/2026-99-99`
+/// and so does this.
+fn date_tag_date(content: Option<&str>) -> Option<String> {
+    let chars: Vec<char> = content?.chars().collect();
+    if chars.len() != 15 {
+        return None;
+    }
+    let (prefix, date) = chars.split_at(5);
+    if !prefix
+        .iter()
+        .collect::<String>()
+        .eq_ignore_ascii_case("date/")
+    {
+        return None;
+    }
+    // Offsets 6-9, 11-12 and 14-15 in the 1-indexed SUBSTR calls, minus the
+    // five-character prefix.
+    let digits_at = [0, 1, 2, 3, 5, 6, 8, 9];
+    if !digits_at.iter().all(|&i| date[i].is_ascii_digit()) {
+        return None;
+    }
+    if date[4] != '-' || date[7] != '-' {
+        return None;
+    }
+    Some(date.iter().collect())
+}
+
+/// `agenda_cache` folded from base rows, as the SET of sources any correct
+/// rebuild may store per key.
+///
+/// Transcribed from `DESIRED_AGENDA_SQL` (`agaric-store/src/cache/agenda.rs`)
+/// and the dedup in `apply_sort_merge_rebuild`, folded in Rust rather than
+/// re-expressed as SQL so this is an independent recomputation:
+///
+///   * four upstreams, in precedence order — any `block_properties` row with a
+///     non-NULL `value_date` (`property:<key>`), a `date/YYYY-MM-DD` tag on the
+///     block (`tag:<tag_id>`), then the promoted `due_date` and
+///     `scheduled_date` columns;
+///   * every arm requires the SOURCE block live, and the tag arm additionally
+///     requires the TAG block live and `block_type = 'tag'`;
+///   * every arm repeats the same template exclusion: a block whose OWNING PAGE
+///     carries a `template` property contributes nothing, whatever the
+///     property's value;
+///   * the key is `(date, block_id)` and the merge keeps the lowest `prio`, so
+///     one block with both a `due_date` and a `date/` tag on the same day
+///     stores the tag.
+///
+/// The returned set is the honest expectation, not a convenience. Within one
+/// prio the winner is genuinely ambiguous: `ORDER BY date, block_id, prio`
+/// leaves two properties with the same `value_date` on one block — or two
+/// distinct date tags naming one day — in unspecified order, and the dedup
+/// keeps whichever SQLite emitted first. Pinning one of them would red a
+/// correct rebuild, so every source at the winning prio is accepted and only a
+/// source from a LOSING prio (or no row at all) is a divergence.
+///
+/// `page_id` is read as STORED, matching the `tp.block_id = b.page_id`
+/// production writes. Auditing ownership is the page-id artefact's job; here a
+/// stale `page_id` must be reported against the column that owns it rather than
+/// resurfacing as a phantom agenda row.
+pub async fn rebuild_agenda_cache_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<(String, String), BTreeSet<String>>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let properties = dump_block_properties(pool).await?;
+    let explicit = dump_block_tags(pool).await?;
+    Ok(fold_agenda_cache_from_base(&blocks, &properties, &explicit))
+}
+
+fn fold_agenda_cache_from_base(
+    blocks: &[BaseBlock],
+    properties: &[BaseProperty],
+    explicit: &[(String, String)],
+) -> BTreeMap<(String, String), BTreeSet<String>> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    // `NOT EXISTS (SELECT 1 FROM block_properties tp WHERE tp.block_id =
+    // b.page_id AND tp.key = 'template')` — the KEY's presence excludes,
+    // whatever its value.
+    let template_pages: BTreeSet<&str> = properties
+        .iter()
+        .filter(|p| p.key == "template")
+        .map(|p| p.block_id.as_str())
+        .collect();
+    let contributes = |b: &BaseBlock| {
+        b.deleted_at.is_none()
+            && !b
+                .page_id
+                .as_deref()
+                .is_some_and(|page| template_pages.contains(page))
+    };
+
+    // (date, block_id) -> prio -> sources at that prio.
+    let mut by_key: BTreeMap<(String, String), BTreeMap<u8, BTreeSet<String>>> = BTreeMap::new();
+    let mut push = |date: &str, block_id: &str, source: String, prio: u8| {
+        by_key
+            .entry((date.to_owned(), block_id.to_owned()))
+            .or_default()
+            .entry(prio)
+            .or_default()
+            .insert(source);
+    };
+
+    for property in properties {
+        let (Some(date), Some(block)) = (
+            property.value_date.as_deref(),
+            by_id.get(property.block_id.as_str()),
+        ) else {
+            continue;
+        };
+        if contributes(block) {
+            push(
+                date,
+                &property.block_id,
+                format!("property:{}", property.key),
+                0,
+            );
+        }
+    }
+
+    for (block_id, tag_id) in explicit {
+        let (Some(block), Some(tag)) = (by_id.get(block_id.as_str()), by_id.get(tag_id.as_str()))
+        else {
+            continue;
+        };
+        if tag.block_type != "tag" || tag.deleted_at.is_some() || !contributes(block) {
+            continue;
+        }
+        if let Some(date) = date_tag_date(tag.content.as_deref()) {
+            push(&date, block_id, format!("tag:{tag_id}"), 1);
+        }
+    }
+
+    for block in blocks.iter().filter(|b| contributes(b)) {
+        if let Some(date) = block.due_date.as_deref() {
+            push(date, &block.id, "column:due_date".to_owned(), 2);
+        }
+        if let Some(date) = block.scheduled_date.as_deref() {
+            push(date, &block.id, "column:scheduled_date".to_owned(), 3);
+        }
+    }
+
+    by_key
+        .into_iter()
+        .filter_map(|(key, by_prio)| {
+            // BTreeMap iterates prio ascending, so the first entry is the
+            // winning precedence.
+            by_prio.into_values().next().map(|sources| (key, sources))
+        })
+        .collect()
+}
+
+const AGENDA_CACHE_OWNER: &str = "rebuild_agenda_cache(_split) (the RebuildAgendaCache task) — \
+     and, one level up, the arms of materializer::dispatch::invalidations_for_op that enqueue it: \
+     the agenda and journal views read this table directly, so a missing row is a task that \
+     silently drops off the user's day and a stale one is a task shown on a date nothing schedules \
+     it for";
+
+/// `agenda_cache` against a from-base rebuild, in both directions.
+pub async fn reconcile_agenda_cache(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_agenda_cache_from_base(pool).await?;
+    let stored = dump_agenda_cache(pool).await?;
+
+    let mut out = Vec::new();
+
+    for (key, want) in &expected {
+        let (date, block_id) = key;
+        match stored.get(key) {
+            None => out.push(Divergence {
+                artefact: "agenda_cache.row",
+                key: format!("{date} / {block_id}"),
+                expected: format!("a row sourced from one of {want:?}"),
+                actual: "no row in agenda_cache — the block is absent from that day".to_owned(),
+                owner: AGENDA_CACHE_OWNER,
+            }),
+            Some(got) if !want.contains(got) => out.push(Divergence {
+                artefact: "agenda_cache.source",
+                key: format!("{date} / {block_id}"),
+                expected: format!("one of {want:?} (the highest-precedence upstream)"),
+                actual: format!("{got:?}"),
+                owner: AGENDA_CACHE_OWNER,
+            }),
+            Some(_) => {}
+        }
+    }
+
+    for (date, block_id) in stored.keys() {
+        if expected.contains_key(&(date.clone(), block_id.clone())) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "agenda_cache.row",
+            key: format!("{date} / {block_id}"),
+            expected: "no row (the block is deleted, lives under a template page, or no longer \
+                       carries that date)"
+                .to_owned(),
+            actual: "a row in agenda_cache".to_owned(),
+            owner: AGENDA_CACHE_OWNER,
+        });
+    }
+
+    Ok(out)
+}
+
+/// The formatted first `agenda_cache` divergence, or `None` when it reconciles.
+pub async fn agenda_cache_reconciliation_failure(
+    pool: &SqlitePool,
+    context: &str,
+) -> Option<String> {
+    let divergences = match reconcile_agenda_cache(pool).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "agenda_cache oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "AGENDA_CACHE RECONCILIATION FAILED at [{context}]\n  \
+         agenda_cache disagrees with a from-base rebuild in {} place(s); first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `agenda_cache` divergence unless it equals its rebuild.
+pub async fn assert_agenda_cache_reconciled(pool: &SqlitePool, context: &str) {
+    if let Some(report) = agenda_cache_reconciliation_failure(pool, context).await {
         panic!("{report}");
     }
 }
