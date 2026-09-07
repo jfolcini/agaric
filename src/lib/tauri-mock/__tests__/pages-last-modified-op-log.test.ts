@@ -93,7 +93,10 @@ function listPages(filters: Array<Record<string, unknown>> = [], sort = 'alphabe
   return dispatch('list_pages_with_metadata', {
     filter: { spaceId: SPACE, sort, filters },
     cursor: null,
-    limit: 200,
+    // 100, not 200: this command's cap is `MCP_PAGE_LIMIT_CAP` and the backend
+    // REJECTS anything above it. The mock used to clamp, so this asked for a
+    // page size the real backend refuses (#4805).
+    limit: 100,
   }) as MetaPage
 }
 

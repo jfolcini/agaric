@@ -85,6 +85,18 @@ export const SEARCH_BLOCKS_MAX = 100
  */
 export const PAGINATION_MAX = 200
 
+/**
+ * Backend cap for `list_pages_with_metadata_inner`. Like
+ * {@link SEARCH_BLOCKS_MAX}, this command routes through
+ * `PageRequest::new` (1..={@link PAGINATION_MAX}) but then rejects
+ * anything above `MCP_PAGE_LIMIT_CAP`, so the effective cap is 100.
+ *
+ * #4805: `paginationLimit(200)` is inside the brand's own range, so nothing
+ * caught a call the backend refused outright — the child-pages tree was dead
+ * for every user on every page. Use {@link LIST_PAGES_WITH_METADATA_LIMIT}.
+ */
+export const LIST_PAGES_WITH_METADATA_MAX = 100
+
 /** Backend cap for `list_projected_agenda_inner`. */
 export const LIST_PROJECTED_AGENDA_MAX = 500
 
@@ -183,3 +195,12 @@ export function paginationLimit(n: number): SafeLimit {
 export function listProjectedAgendaLimit(n: number): SafeLimit {
   return safeLimit(n, LIST_PROJECTED_AGENDA_MAX)
 }
+
+/**
+ * The page size the descendants tree pages with: `list_pages_with_metadata`'s
+ * own cap, not the wider {@link PAGINATION_MAX} (#4805).
+ */
+export const LIST_PAGES_WITH_METADATA_LIMIT: SafeLimit = safeLimit(
+  LIST_PAGES_WITH_METADATA_MAX,
+  LIST_PAGES_WITH_METADATA_MAX,
+)
