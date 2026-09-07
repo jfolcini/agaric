@@ -1102,6 +1102,15 @@ export const blocksHandlers = {
     // 0-based) which collided with the renumbered `new_position` of 1, so undo
     // re-inserted at slot 0 = unchanged. Ranking among live siblings makes
     // `old_position` the true 1-based slot the undo must restore to.
+    //
+    // #4669: LIVE-only, and not the tombstone-inclusive group the forward
+    // densification uses. `old_position` is consumed by the REVERSE path, which
+    // resolves it against `WHERE deleted_at IS NULL` and clamps it to that
+    // group's length (`apply_reverse_in_tx`, `src-tauri/src/commands/history.rs`).
+    // Recording an all-siblings rank here would overshoot by one for every
+    // tombstone ordered before the block, and the undo would restore it too
+    // late. See `renumberSiblingsIn` in `../revert.ts` for why the two paths
+    // rank differently on purpose.
     const oldSiblings = [...blocks.values()]
       .filter(
         (s) => ((s['parent_id'] as string | null) ?? null) === oldParentId && !s['deleted_at'],

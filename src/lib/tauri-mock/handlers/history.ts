@@ -13,11 +13,11 @@ import {
   type TypedHandlers,
   applyUndoForTarget,
   deleteCohort,
-  insertAtSlotAndRenumber,
+  insertAtLiveSlotAndRenumber,
   nextCohortMarker,
   notFoundRejection,
   refreshDescendantPageIds,
-  renumberSiblings,
+  renumberLiveSiblings,
   resolveUndoTarget,
   restoreCohort,
   sortOpLogNewestFirst,
@@ -236,10 +236,14 @@ export const historyHandlers = {
         // #957 — undoing a cross-parent move must also restore the subtree's
         // descendant `page_id`s to the (now-restored) page root.
         refreshDescendantPageIds(payload['block_id'] as string)
-        insertAtSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
+        // #4669 — the LIVE-only reverse pair, not the forward helpers. The
+        // backend's reverse-apply path excludes tombstones from both the slot
+        // and the densification; the forward one ranks them. Sharing the
+        // forward helper here renumbered a tombstone on every undo.
+        insertAtLiveSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
         // Collapse the vacated source group too (skip when same parent — the
         // insert already renumbered it).
-        if (curParentId !== oldParentId) renumberSiblings(curParentId)
+        if (curParentId !== oldParentId) renumberLiveSiblings(curParentId)
       }
       reverseOpType = 'move_block'
     } else if (target.op_type === 'restore_block') {
@@ -326,8 +330,15 @@ export const historyHandlers = {
         // #957 — re-applying a cross-parent move must also re-refresh the
         // subtree's descendant `page_id`s to the new page root.
         refreshDescendantPageIds(payload['block_id'] as string)
-        insertAtSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
-        if (curParentId !== newParentId) renumberSiblings(curParentId)
+        // #4669 — the LIVE-only reverse pair, like the undo arm above. A redo
+        // is NOT a re-apply of the forward path: `redo_page_op` builds a
+        // reverse payload and runs it through `apply_reverse_in_tx`
+        // (`src-tauri/src/commands/history.rs`), which takes its target group
+        // with `WHERE deleted_at IS NULL`, clamps the slot to that LIVE count,
+        // and densifies over the live list. With a tombstone in the group the
+        // forward helpers put the block one rank too high.
+        insertAtLiveSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
+        if (curParentId !== newParentId) renumberLiveSiblings(curParentId)
       }
       redoOpType = 'move_block'
     } else if (originalOp.op_type === 'restore_block') {

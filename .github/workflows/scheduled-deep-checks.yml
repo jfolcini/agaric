@@ -900,14 +900,22 @@ jobs:
         # pass.
         #
         # There are currently NO such oracles, so the list is deliberately
-        # empty and no `-E` is passed. It was last non-empty for the batch-vs-
+        # empty and no `-E` is passed. #4669's differential-fuzz lane
+        # (`conformance_fuzz::mock_matches_backend_on_generated_op_chains_4669`)
+        # is `#[ignore]`d and swept in here too, and it PASSES, so it needs no
+        # exclusion — but it is the first ignored test in the workspace that is
+        # neither a perf gate nor a measurement harness nor a codegen task, so
+        # the paragraph below no longer enumerates the whole set. It carries a
+        # `slow-timeout` override in `.config/nextest.toml` (measured 58.9s
+        # against the default 2x30s window). It was last non-empty for the batch-vs-
         # fold reproducers (#3818, #3819) and for a reverse-round-trip oracle;
         # all three were fixed or rewritten to pin the real behaviour, and lost
         # their `#[ignore]` and their exclusion together. (The reverse one had
         # been left behind here under its pre-rename name — the exact silent-
         # no-op this rule exists to prevent.) Every remaining `#[ignore]`d test
-        # in the workspace is a perf gate, a measurement harness, or a manual
-        # codegen task, and all of them are expected to PASS in this sweep.
+        # in the workspace is a perf gate, a measurement harness, a manual
+        # codegen task, or #4669's fuzz lane, and all of them are expected to
+        # PASS in this sweep.
         # `--workspace` (#3212): bare form is package-scoped to `agaric` only,
         # and since #4242 it is no longer a no-op — the three
         # `..._residency_at_*_blocks_4242` measurement tests live in

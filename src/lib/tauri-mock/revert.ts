@@ -21,13 +21,29 @@ type Properties = Map<string, Map<string, Record<string, unknown>>>
 type BlockTags = Map<string, Set<string>>
 
 /**
- * #958 — assign dense 1-based `position` to every live child of `parentId`,
- * in `position ASC, id ASC` order. Mirrors `renumberSiblings` in
- * `handlers.ts`: reverting a move must collapse the moved block AND the
- * sibling group it rejoins back to dense ranks, otherwise the restored raw
- * `old_position` collides with the sibling now occupying that slot and the
- * `position ASC, id ASC` load ordering breaks (order/depth fails to revert
- * in place — #958).
+ * #958 — assign dense 1-based `position` to every LIVE child of `parentId`, in
+ * `position ASC, id ASC` order: reverting a move must collapse the moved block
+ * AND the sibling group it rejoins back to dense ranks, otherwise the restored
+ * raw `old_position` collides with the sibling now occupying that slot and the
+ * `position ASC, id ASC` load ordering breaks (order/depth fails to revert in
+ * place — #958).
+ *
+ * #4669 — this looks like a twin of `renumberSiblings` in
+ * `handlers/shared.ts`, which ranks tombstones too, and it deliberately is not.
+ * They mirror two DIFFERENT backend paths, and the backend disagrees with
+ * itself here on purpose:
+ *
+ *   * forward apply (`handlers/shared.ts`) → `reproject_dense_positions`, which
+ *     ranks the whole ordered group, tombstone included (#419).
+ *   * reverse apply (here) → `apply_reverse_in_tx`'s MoveBlock arm, whose
+ *     target group is `WHERE parent_id IS ? AND deleted_at IS NULL`, densified
+ *     by `reproject_live_sibling_group` — "tombstoned siblings are excluded:
+ *     they are not part of the live order a user sees"
+ *     (`src-tauri/src/commands/history.rs`).
+ *
+ * So a tombstone keeps its stale position across an undo and a live sibling may
+ * legitimately share it. Aligning this with its apparent twin is a divergence,
+ * not a fix.
  */
 function renumberSiblingsIn(blocks: Blocks, parentId: string | null): void {
   const siblings = [...blocks.values()].filter(
@@ -42,6 +58,31 @@ function renumberSiblingsIn(blocks: Blocks, parentId: string | null): void {
   siblings.forEach((b, i) => {
     b['position'] = i + 1
   })
+}
+
+/**
+ * #957/#4669 — the `refreshDescendantPageIds` walk, over the caller-supplied
+ * `blocks` map. A moved subtree's descendants must carry the restored page
+ * root, exactly as on the forward path.
+ */
+function refreshDescendantPageIdsIn(blocks: Blocks, rootBlockId: string): void {
+  const root = blocks.get(rootBlockId)
+  if (!root) return
+  const newPageId = (root['page_id'] as string | null) ?? null
+  const queue = [rootBlockId]
+  const seen = new Set<string>([rootBlockId])
+  while (queue.length > 0) {
+    const parent = queue.shift()
+    if (parent == null) break
+    for (const child of blocks.values()) {
+      if (((child['parent_id'] as string | null) ?? null) !== parent) continue
+      const id = child['id'] as string
+      if (seen.has(id)) continue
+      seen.add(id)
+      child['page_id'] = newPageId
+      queue.push(id)
+    }
+  }
 }
 
 /**
@@ -60,6 +101,8 @@ function insertAtSlotIn(
 ): void {
   const moved = blocks.get(blockId)
   if (!moved) return
+  // #4669: live-only, for the reason on `renumberSiblingsIn` above — the
+  // reverse-apply path clamps the slot to the LIVE group's length.
   const others = [...blocks.values()].filter(
     (b) =>
       ((b['parent_id'] as string | null) ?? null) === parentId &&
@@ -282,6 +325,23 @@ export function applyRevertForOp(
       // `old_position` is a 1-based dense rank → 0-based slot is `- 1`.
       const oldSlot = ((payload['old_position'] as number) ?? 1) - 1
       b['parent_id'] = oldParentId
+      // #4669 — restore `page_id` from the restored parent, and re-stamp the
+      // subtree. The backend's reverse-apply MoveBlock arm calls
+      // `rederive_page_and_space_ids` for exactly this
+      // (`src-tauri/src/commands/history.rs`); `handlers/history.ts`'s
+      // `undo_page_op` arm already mirrored it, this twin did not. Without it a
+      // reverted cross-parent move leaves the block parented correctly but
+      // still carrying the OLD page's `page_id`, so `load_page_subtree` — which
+      // keys on `page_id` — cannot see it: the block vanishes from the page it
+      // was just restored to.
+      const oldParent = oldParentId == null ? undefined : blocks.get(oldParentId)
+      b['page_id'] =
+        oldParent == null
+          ? null
+          : oldParent['block_type'] === 'page'
+            ? (oldParent['id'] as string)
+            : ((oldParent['page_id'] as string | null) ?? null)
+      refreshDescendantPageIdsIn(blocks, blockId)
       insertAtSlotIn(blocks, oldParentId, blockId, oldSlot)
       if (curParentId !== oldParentId) renumberSiblingsIn(blocks, curParentId)
     }
