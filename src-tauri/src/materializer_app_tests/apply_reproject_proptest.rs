@@ -1004,21 +1004,6 @@ async fn page_link_cache_rows(pool: &SqlitePool) -> i64 {
         .expect("page_link_cache row count")
 }
 
-/// #4679: every block's `blocks.space_id`, keyed by id. B6 diffs this before
-/// and after each op (plus its settle) to count `space_id` CHANGES — the
-/// deferred `SetBlockPageId` stamp on a create, and the page-group write of a
-/// `SetProperty(space)` migration — so a green oracle over the column can be
-/// shown to have watched it move.
-async fn block_space_ids(pool: &SqlitePool) -> BTreeMap<String, Option<String>> {
-    // dynamic-sql: test-only harness read-back (not a production query path)
-    sqlx::query_as::<_, (String, Option<String>)>("SELECT id, space_id FROM blocks")
-        .fetch_all(pool)
-        .await
-        .expect("space_id read-back")
-        .into_iter()
-        .collect()
-}
-
 /// Does this op defer its `pages_cache` count maintenance to the background
 /// `RebuildPagesCacheCounts` task?
 ///
@@ -1173,7 +1158,6 @@ proptest! {
             let mut peak_tag_edges: i64 = 0;
             let mut peak_distinct_spaces: i64 = 0;
             let mut space_maintainers_run: usize = 0;
-            let mut space_id_changes: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
             for (index, payload) in payloads.into_iter().enumerate() {
@@ -1205,7 +1189,6 @@ proptest! {
                     Some(id) => block_page_id(&pool, id).await,
                     None => None,
                 };
-                let space_ids_before = block_space_ids(&pool).await;
                 let record = driver.drive(&pool, state, payload).await;
                 let move_same_page = match &moved_block {
                     Some(id) => {
@@ -1259,20 +1242,17 @@ proptest! {
                         .expect("fts_blocks fan-out");
 
                 // #4679: `blocks.space_id` on a created block has no
-                // synchronous arm either — the driver no longer stamps it, so
-                // the deferred `SetBlockPageId` task's space half is the only
-                // writer. Same rule: ask the dispatch table, run what it names.
+                // synchronous arm either — the driver no longer stamps it. Same
+                // rule: ask the dispatch table, run what it names. Only the
+                // fan-out is asserted on below; the column's VALUE is pinned by
+                // `peak_distinct_spaces` and by
+                // `set_block_space_id_from_parent_inherits_space_533`.
                 space_maintainers_run +=
                     crate::reconciliation_oracle::settle_block_space_ids_for_op(
                         &pool, &record, None,
                     )
                     .await
                     .expect("space_id fan-out");
-                let space_ids_after = block_space_ids(&pool).await;
-                space_id_changes += space_ids_after
-                    .iter()
-                    .filter(|(id, space)| space_ids_before.get(*id) != Some(*space))
-                    .count();
 
                 let context = format!("op #{index} ({op_type})");
                 if let Some(report) =
@@ -1493,12 +1473,6 @@ proptest! {
                 chain_creates == 0 || space_maintainers_run > 0,
                 "chain created {} blocks but production's fan-out table asked for ZERO \
                  SetBlockPageId tasks — nothing would ever fill blocks.space_id",
-                chain_creates
-            );
-            prop_assert!(
-                chain_creates == 0 || space_id_changes > 0,
-                "chain created {} blocks but blocks.space_id never changed on any row — the \
-                 deferred space stamp did not land and the column is unobservable",
                 chain_creates
             );
             Ok(())
