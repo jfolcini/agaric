@@ -12,6 +12,12 @@
  * → native checkbox item, nested `<table>` flattened inline without corrupting
  * the outer table, and `<en-crypt>` → a `> [!warning]` callout placeholder that
  * never leaks the ciphertext.
+ *
+ * Resource path derivation (#4815): extension inferred from an unknown mime,
+ * a file-name without one, file-name collisions across distinct resources, the
+ * missing-`<data>` / missing-`<mime>` fallbacks, one attachment per resource
+ * however many `<en-media>` reference it, and the empty/malformed-`<content>`
+ * degradations.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -240,6 +246,192 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     const note = at(parseEnex(xml))
     expect(note.attachments).toHaveLength(0)
     expect(note.markdown).toContain('tail')
+  })
+})
+
+describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#2513)', () => {
+  /**
+   * One-byte payloads, so each resource has distinct bytes (resources are
+   * deduped by MD5) and a hash an `<en-media>` can reference. Base64 and MD5
+   * are the real values for the single ASCII byte named by the key.
+   */
+  const BYTE = {
+    a: { b64: 'YQ==', md5: '0cc175b9c0f1b6a831c399e269772661' },
+    b: { b64: 'Yg==', md5: '92eb5ffee6ae2fec3ad71c777531578f' },
+    c: { b64: 'Yw==', md5: '4a8a08f09d37b73795649038408b5f33' },
+    d: { b64: 'ZA==', md5: '8277e0910d750195b448797616e091ad' },
+    e: { b64: 'ZQ==', md5: 'e1671797c52e15f763380b45e841ec32' },
+    f: { b64: 'Zg==', md5: '8fa14cdd754f91cc6554c9e71929cce7' },
+    g: { b64: 'Zw==', md5: 'b2f5ff47436671b6e533d8dc3614845d' },
+    h: { b64: 'aA==', md5: '2510c39011c5be704182423e3a695e91' },
+  } as const
+
+  /** A `<resource>` block with every child optional (missing `<data>`/`<mime>`). */
+  function res(parts: { b64?: string; mime?: string; fileName?: string }): string {
+    const data = parts.b64 === undefined ? '' : `<data encoding="base64">${parts.b64}</data>`
+    const mime = parts.mime === undefined ? '' : `<mime>${parts.mime}</mime>`
+    const name =
+      parts.fileName === undefined
+        ? ''
+        : `<resource-attributes><file-name>${parts.fileName}</file-name></resource-attributes>`
+    return `<resource>${data}${mime}${name}</resource>`
+  }
+
+  /** One `<en-media>` reference, in its own block. */
+  const ref = (md5: string): string => `<div><en-media hash="${md5}" type="x/y"/></div>`
+
+  /** A single-note ENEX: body `enml` plus the given `<resource>` blocks. */
+  function noteWith(enml: string, ...resources: string[]): string {
+    return enex(
+      `<note><title>T</title><content>${content(enml)}</content>${resources.join('')}</note>`,
+    )
+  }
+
+  it('derives an extension from an unknown mime, falling back to .bin', () => {
+    // None of these mimes is in the known-mime table, so the extension comes
+    // from the SUBTYPE: non-alphanumerics stripped, lowercased, and accepted
+    // only when it is 1..5 characters — otherwise `bin`.
+    //   image/HEIC  → `heic`  (uppercase subtype is lowercased)
+    //   image/x-icon→ `xicon` (the `-` is stripped; 5 chars is the max accepted)
+    //   application/vnd.oasis…→ `bin` (subtype too long once stripped)
+    //   notamime    → `bin`  (no `/` at all ⇒ no subtype)
+    const cases = [
+      { byte: BYTE.a, mime: 'image/HEIC', ext: 'heic' },
+      { byte: BYTE.b, mime: 'image/x-icon', ext: 'xicon' },
+      { byte: BYTE.c, mime: 'application/vnd.oasis.opendocument.text', ext: 'bin' },
+      { byte: BYTE.d, mime: 'notamime', ext: 'bin' },
+    ]
+    const xml = noteWith(
+      cases.map((c) => ref(c.byte.md5)).join(''),
+      ...cases.map((c) => res({ b64: c.byte.b64, mime: c.mime })),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(cases.map((c) => `${c.byte.md5}.${c.ext}`))
+    // The mime is passed through verbatim for the caller to ship.
+    expect(note.attachments.map((a) => a.mime)).toEqual(cases.map((c) => c.mime))
+  })
+
+  it('appends a mime-derived extension to a file-name that has none', () => {
+    // `photo` has no extension ⇒ one is appended from the mime; `already.png`
+    // already ends in an extension ⇒ it is left exactly as authored.
+    const xml = noteWith(
+      ref(BYTE.e.md5) + ref(BYTE.f.md5),
+      res({ b64: BYTE.e.b64, mime: 'image/png', fileName: 'photo' }),
+      res({ b64: BYTE.f.b64, mime: 'image/png', fileName: 'already.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(['photo.png', 'already.png'])
+    expect(note.markdown).toContain('![](photo.png)')
+    expect(note.markdown).toContain('![](already.png)')
+  })
+
+  it('disambiguates two distinct resources that share one file-name', () => {
+    // Both resources are called `a.png` but hold different bytes: the first
+    // keeps the name, the second gets a short-hash suffix on the STEM (before
+    // the extension) so both survive as distinct vault files. The one-character
+    // stem puts the dot at index 1, so a suffix spliced at the wrong offset —
+    // or computed from the wrong end of the name — moves the extension.
+    const xml = noteWith(
+      ref(BYTE.g.md5) + ref(BYTE.h.md5),
+      res({ b64: BYTE.g.b64, mime: 'image/png', fileName: 'a.png' }),
+      res({ b64: BYTE.h.b64, mime: 'image/png', fileName: 'a.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual([
+      'a.png',
+      `a-${BYTE.h.md5.slice(0, 8)}.png`,
+    ])
+  })
+
+  it('skips a resource with no <data> before it can claim a file-name', () => {
+    // The data-less resource comes FIRST and shares the file-name of the real
+    // one. It must be skipped outright — if it were indexed, it would take
+    // `x.png` and push the real attachment onto a disambiguated path.
+    const xml = noteWith(
+      ref(BYTE.a.md5),
+      res({ mime: 'image/png', fileName: 'x.png' }),
+      res({ b64: BYTE.a.b64, mime: 'image/png', fileName: 'x.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments).toHaveLength(1)
+    expect(note.attachments[0]?.path).toBe('x.png')
+  })
+
+  it('defaults a resource with no <mime> to application/octet-stream', () => {
+    const xml = noteWith(ref(BYTE.b.md5), res({ b64: BYTE.b.b64 }))
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments).toHaveLength(1)
+    expect(note.attachments[0]?.mime).toBe('application/octet-stream')
+    // `octetstream` is longer than the 5-char subtype cap ⇒ the `.bin` fallback.
+    expect(note.attachments[0]?.path).toBe(`${BYTE.b.md5}.bin`)
+  })
+
+  it('trims a pretty-printed <mime> before shipping it', () => {
+    // A pretty-printed .enex indents its elements, so `<mime>`'s text run
+    // carries newlines. The caller ships this value as the attachment's
+    // content type, so it must be the trimmed mime, not the raw run.
+    const xml = noteWith(ref(BYTE.f.md5), res({ b64: BYTE.f.b64, mime: '\n      image/png\n    ' }))
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments[0]?.mime).toBe('image/png')
+  })
+
+  it('ships one attachment for a resource referenced twice, embedding it twice', () => {
+    const xml = noteWith(
+      ref(BYTE.c.md5) + ref(BYTE.c.md5),
+      res({ b64: BYTE.c.b64, mime: 'image/png', fileName: 'twice.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    // Shipped once (the caller writes one vault file)…
+    expect(note.attachments.map((a) => a.path)).toEqual(['twice.png'])
+    // …but both references become embeds.
+    expect(note.markdown.split('![](twice.png)')).toHaveLength(3)
+  })
+
+  it('ships both attachments when two distinct resources are referenced', () => {
+    const xml = noteWith(
+      ref(BYTE.d.md5) + ref(BYTE.e.md5),
+      res({ b64: BYTE.d.b64, mime: 'image/png', fileName: 'one.png' }),
+      res({ b64: BYTE.e.b64, mime: 'image/png', fileName: 'two.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(['one.png', 'two.png'])
+  })
+})
+
+describe('parseEnex — notes whose <content> yields no body', () => {
+  it('imports a note with an empty or missing <content> as an empty body', () => {
+    const xml = enex(
+      `<note><title>Empty</title><content></content></note>`,
+      `<note><title>Missing</title></note>`,
+    )
+
+    const notes = parseEnex(xml)
+    expect(notes.map((n) => n.title)).toEqual(['Empty', 'Missing'])
+    expect(notes.map((n) => n.markdown)).toEqual(['', ''])
+  })
+
+  it('imports a note whose ENML is malformed, with an empty body', () => {
+    // The `<content>` payload is not well-formed XML (`<p>` never closes). The
+    // ENML is dropped, but the note itself — title, tags, timestamps — still
+    // imports rather than failing the whole file.
+    const xml = enex(
+      `<note><title>Broken</title>` +
+        `<content><![CDATA[<en-note><p>unclosed</en-note>]]></content>` +
+        `<tag>work</tag></note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.title).toBe('Broken')
+    expect(note.tags).toEqual(['work'])
+    expect(note.markdown).toBe('')
   })
 })
 
