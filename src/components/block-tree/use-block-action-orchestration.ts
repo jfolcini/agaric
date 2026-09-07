@@ -9,6 +9,8 @@ import { pmEndOfFirstBlock } from '@/editor/types'
 import type { DeleteBlockOpts } from '@/editor/use-block-keyboard'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { announce } from '@/lib/announcer'
+import type { ListStyle } from '@/lib/list-style'
+import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -178,7 +180,14 @@ export interface UseBlockActionOrchestrationParams {
   blocks: FlatBlock[]
   rovingEditor: Pick<
     RovingEditorHandle,
-    'editor' | 'activeBlockId' | 'mount' | 'unmount' | 'getMarkdown' | 'splitAtCaret'
+    | 'editor'
+    | 'activeBlockId'
+    | 'mount'
+    | 'updateListMarker'
+    | 'listMarker'
+    | 'unmount'
+    | 'getMarkdown'
+    | 'splitAtCaret'
   >
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
@@ -299,6 +308,105 @@ export function useBlockActionOrchestration({
   // honor this flag so no concurrent structural op races the merge.
   const mergeInProgress = useRef(false)
 
+  // #4552 slice 3 — the style `continueListStyle` just wrote to a freshly
+  // created sibling, held only until the marker catches up.
+  //
+  // The marker cannot answer for that block yet: `mount()` resets it to
+  // `'none'` (#3000) and the new `EditableBlock`'s effect re-pushes
+  // `ListMarkerContext`'s value, which stays empty until `set_property` →
+  // `block:properties-changed` → the 150 ms trailing debounce in
+  // `block-property-events.ts` → the batch refetch lands. Enter → Enter is the
+  // ordinary "leave the list" gesture and lands well inside that window, so
+  // without this the second Enter read `'none'`, took the plain `createBelow`
+  // path, and left a stray empty styled item with an unstyled block under it
+  // — which `empty-block-cleanup.ts` guard 5 then keeps forever.
+  const optimisticListStyle = useRef<{ blockId: string; style: ListStyle } | null>(null)
+
+  // #4552 slice 3 — the list style the focused editor is showing, read through
+  // the roving handle (what `EditableBlock` pushed from `ListMarkerContext`).
+  // This hook mounts above the property batch provider, so that is its only
+  // synchronous source; going through the handle keeps `BlockTree`'s eager
+  // import graph free of TipTap (#2939).
+  //
+  // Reading also EXPIRES a spent optimistic entry, which is what bounds it:
+  // once focus has left the block it was recorded for, or the marker shows any
+  // style at all, the marker is authoritative again. Without that expiry a
+  // later Turn-into (which clears `listStyle` through paths this hook never
+  // sees — `use-block-tree-event-listeners.ts`, `useSlashCommandStructural`)
+  // would leave the entry answering for a block that is no longer a list item.
+  // The one window it cannot cover is a style CLEARED before the marker ever
+  // showed it — under ~250 ms after the Enter that created the block, which no
+  // menu or slash command is reachable in.
+  const focusedListStyle = useCallback((): ListStyle => {
+    const shown = rovingEditorRef.current.listMarker().style
+    const optimistic = optimisticListStyle.current
+    if (!optimistic) return shown
+    if (optimistic.blockId !== rovingEditorRef.current.activeBlockId || shown !== 'none') {
+      optimisticListStyle.current = null
+      return shown
+    }
+    return optimistic.style
+  }, [])
+
+  // The "leave the list" half of the gesture: Backspace at line start and
+  // Enter on an empty styled block both clear the style and do nothing
+  // structural. The marker is cleared locally FIRST so the next keystroke
+  // reads a plain block and merges / deletes / splits, instead of clearing a
+  // second time while the property-event refetch is still in its debounce.
+  const clearFocusedListStyle = useCallback(
+    async (blockId: string): Promise<void> => {
+      const cleared = rovingEditorRef.current.listMarker()
+      const clearedOptimistic = optimisticListStyle.current
+      optimisticListStyle.current = null
+      rovingEditorRef.current.updateListMarker('none', undefined)
+      try {
+        await clearListStyle(blockId)
+      } catch (err) {
+        // Put back exactly what was cleared. The property row is still in
+        // SQLite, so `useListStyles` projects the same map as before and
+        // `EditableBlock`'s marker effect never re-fires — left alone the
+        // block would render AND behave as plain while it is still a list
+        // item, until some unrelated property change forced a refetch.
+        if (rovingEditorRef.current.activeBlockId === blockId) {
+          rovingEditorRef.current.updateListMarker(cleared.style, cleared.ordinal)
+          optimisticListStyle.current = clearedOptimistic
+        }
+        logger.error('useBlockActionOrchestration', 'clearListStyle failed', { blockId }, err)
+        notify.error(t('blockTree.clearListStyleFailed'))
+      }
+    },
+    [t],
+  )
+
+  // The "continue the list" half: the sibling Enter created carries the
+  // source block's style, so a numbered procedure keeps numbering without
+  // any inheritance from a parent.
+  const continueListStyle = useCallback(
+    async (newBlockId: string, style: ListStyle): Promise<void> => {
+      if (style === 'none') return
+      // Recorded BEFORE the write, not after: the gesture this exists for is a
+      // second Enter, which lands while the write is still in flight. Dropped
+      // on failure so a rejected write cannot leave the keyboard grain acting
+      // on a list the block never joined.
+      optimisticListStyle.current = { blockId: newBlockId, style }
+      try {
+        await setListStyle(newBlockId, style)
+      } catch (err) {
+        if (optimisticListStyle.current?.blockId === newBlockId) {
+          optimisticListStyle.current = null
+        }
+        logger.error(
+          'useBlockActionOrchestration',
+          'setListStyle (Enter continuation) failed',
+          { blockId: newBlockId, style },
+          err,
+        )
+        notify.error(t('blockTree.setListStyleFailed'))
+      }
+    },
+    [t],
+  )
+
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
@@ -329,6 +437,12 @@ export function useBlockActionOrchestration({
       // empty), so an autorepeat Backspace routes here for the very block the
       // merge is removing — bail instead of racing a second remove().
       if (mergeInProgress.current) return
+      // #4552 slice 3 — Backspace on an empty styled block leaves the list
+      // first; the next Backspace deletes the block.
+      if (focusedListStyle() !== 'none') {
+        void clearFocusedListStyle(focusedBlockId)
+        return
+      }
       if (collapsedVisible.length <= 1) {
         notify.error(t('blockTree.cannotDeleteLastBlock'))
         return
@@ -372,7 +486,15 @@ export function useBlockActionOrchestration({
         setFocused(null)
       }
     },
-    [focusedBlockId, collapsedVisible, remove, setFocused, t],
+    [
+      focusedBlockId,
+      collapsedVisible,
+      remove,
+      setFocused,
+      t,
+      focusedListStyle,
+      clearFocusedListStyle,
+    ],
   )
 
   const handleIndent = useCallback(() => {
@@ -635,6 +757,13 @@ export function useBlockActionOrchestration({
     // handleDeleteBlock and race a second remove() against the in-flight
     // merge (cascade-deleting the source subtree). Mirror deleteInProgress.
     if (mergeInProgress.current) return
+    // #4552 slice 3 — Backspace at the start of a styled block strips the
+    // style first; the next Backspace merges. Checked before the first-block
+    // guard so the first block of the page can leave a list too.
+    if (focusedListStyle() !== 'none') {
+      await clearFocusedListStyle(focusedBlockId)
+      return
+    }
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return
 
@@ -720,6 +849,8 @@ export function useBlockActionOrchestration({
     mergeBlocksAndHandle,
     setFocused,
     handleFlush,
+    focusedListStyle,
+    clearFocusedListStyle,
   ])
 
   const handleMergeById = useCallback(
@@ -807,6 +938,15 @@ export function useBlockActionOrchestration({
       // Capture content before flush so we can re-mount on failure
       const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
 
+      // #4552 slice 3 — Enter on an EMPTY styled block leaves the list (the
+      // exit gesture every editor shares) instead of adding another empty
+      // item; on a non-empty one the sibling created below carries the style.
+      const listStyle = focusedListStyle()
+      if (listStyle !== 'none' && savedContent.trim() === '') {
+        await clearFocusedListStyle(focusedBlockId)
+        return
+      }
+
       // #909 — split the block at the caret. When there is text AFTER the
       // caret, keep the before-text in the current block and move the
       // after-text into the new block (Logseq/Notion/ProseMirror splitBlock).
@@ -861,6 +1001,7 @@ export function useBlockActionOrchestration({
           // this `setFocused` is what consumes it.)
           setFocused(newBlockId)
           announce(t('announce.blockCreated'))
+          await continueListStyle(newBlockId, listStyle)
         } else {
           // Backend error — restore the original (unsplit) block so the user
           // isn't left with a truncated block and no place to type.
@@ -902,6 +1043,7 @@ export function useBlockActionOrchestration({
         justCreatedBlockIds.current.add(newBlockId)
         setFocused(newBlockId)
         announce(t('announce.blockCreated'))
+        await continueListStyle(newBlockId, listStyle)
       } else {
         // createBelow returned null (e.g. backend error) — re-mount editor
         // so the user isn't stuck with an unmounted block.
@@ -920,6 +1062,9 @@ export function useBlockActionOrchestration({
     preserveEmptyBlockIds,
     discardDraft,
     t,
+    focusedListStyle,
+    clearFocusedListStyle,
+    continueListStyle,
   ])
 
   const handleEscapeCancel = useCallback(() => {

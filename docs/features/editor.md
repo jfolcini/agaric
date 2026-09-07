@@ -47,8 +47,9 @@ Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_ital
 | Action | Trigger |
 | --- | --- |
 | Split block | `Enter` |
+| Continue a list | `Enter` on a bullet / numbered block creates the next block with the same list style; `Enter` on an *empty* styled block leaves the list instead |
 | Soft line break inside a block | `Shift+Enter` |
-| Merge into previous | `Backspace` at start of block |
+| Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
 | Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←` |
 | Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
 | Collapse / expand children | `Ctrl+.` (or click the chevron) |

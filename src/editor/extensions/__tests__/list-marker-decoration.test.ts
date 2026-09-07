@@ -12,6 +12,7 @@ import {
   buildDecorations,
   createListMarkerPlugin,
   listMarkerPluginKey,
+  listMarkerOf,
   setListMarkerMeta,
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
@@ -79,5 +80,22 @@ describe('ListMarkerDecoration decorations', () => {
     const hrDoc = { type: 'doc', content: [{ type: 'hr' }] }
     const state = withMarker(stateWith(hrDoc), { style: 'bullet', ordinal: undefined })
     expect(buildDecorations(state).find()).toHaveLength(0)
+  })
+})
+
+describe('listMarkerOf (#4552 slice 3)', () => {
+  it("reads 'none' before any marker was pushed", () => {
+    expect(listMarkerOf(stateWith(paraDoc))).toEqual({ style: 'none', ordinal: undefined })
+  })
+
+  it('reads the style AND ordinal the last push set', () => {
+    const ordered = withMarker(stateWith(paraDoc), { style: 'ordered', ordinal: 3 })
+    // The ordinal is what lets `clearFocusedListStyle` restore the exact
+    // marker it cleared when its write is rejected.
+    expect(listMarkerOf(ordered)).toEqual({ style: 'ordered', ordinal: 3 })
+    expect(listMarkerOf(withMarker(ordered, { style: 'none', ordinal: undefined }))).toEqual({
+      style: 'none',
+      ordinal: undefined,
+    })
   })
 })

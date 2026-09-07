@@ -1,12 +1,21 @@
 import { act, renderHook } from '@testing-library/react'
+import { Schema } from '@tiptap/pm/model'
+import { EditorState } from '@tiptap/pm/state'
 import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
+import {
+  createListMarkerPlugin,
+  listMarkerOf,
+  setListMarkerMeta,
+} from '@/editor/extensions/list-marker-decoration'
 import { parse } from '@/editor/markdown-serializer'
 import { announce } from '@/lib/announcer'
+import type { ListStyle } from '@/lib/list-style'
+import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
@@ -31,8 +40,22 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// #4552 slice 3 — the two property writers the keyboard grain reaches. Mocked
+// at the helper layer (mirrors `useListStyleSyntax.test.ts`); the durable
+// re-queried effect is pinned by `e2e/list-style-keyboard.spec.ts`.
+vi.mock('@/lib/list-style', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/list-style')>()
+  return {
+    ...actual,
+    setListStyle: vi.fn(async () => {}),
+    clearListStyle: vi.fn(async () => {}),
+  }
+})
+
 const mockedAnnounce = vi.mocked(announce)
 const mockedLoggerWarn = vi.mocked(logger.warn)
+const mockedSetListStyle = vi.mocked(setListStyle)
+const mockedClearListStyle = vi.mocked(clearListStyle)
 
 type OrchestrationParams = Parameters<typeof useBlockActionOrchestration>[0]
 
@@ -79,6 +102,8 @@ function makeDefaultParams(
       mount: vi.fn(function (this: { activeBlockId: string | null }, id: string) {
         this.activeBlockId = id
       }),
+      updateListMarker: vi.fn(),
+      listMarker: vi.fn(() => ({ style: 'none' as ListStyle, ordinal: undefined })),
       unmount: vi.fn(() => null as string | null),
       getMarkdown: vi.fn(() => null as string | null),
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
@@ -1859,5 +1884,322 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     })
 
     expect(params.discardDraft).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #4552 slice 3 — list continuation on Enter, strip-then-merge on Backspace
+// ---------------------------------------------------------------------------
+
+const markerSchema = new Schema({
+  nodes: {
+    doc: { content: 'block+' },
+    paragraph: { group: 'block', content: 'text*' },
+    text: {},
+  },
+})
+
+/**
+ * A roving-editor marker double backed by the REAL marker plugin, so
+ * `listMarker()` returns whatever `updateListMarker()` last pushed —
+ * exactly the handle contract `use-roving-editor` implements. A test can
+ * therefore press the SECOND Backspace / Enter and see what the hook reads.
+ */
+function markerHandle(style: ListStyle) {
+  const holder = {
+    state: EditorState.create({ schema: markerSchema, plugins: [createListMarkerPlugin()] }),
+  }
+  holder.state = holder.state.apply(setListMarkerMeta(holder.state.tr, { style, ordinal: 1 }))
+  return {
+    listMarker: vi.fn(() => listMarkerOf(holder.state)),
+    updateListMarker: vi.fn((next: ListStyle, ordinal: number | undefined) => {
+      holder.state = holder.state.apply(
+        setListMarkerMeta(holder.state.tr, { style: next, ordinal }),
+      )
+    }),
+  }
+}
+
+function styledParams(style: ListStyle, content: string) {
+  const params = makeDefaultParams()
+  const { listMarker, updateListMarker } = markerHandle(style)
+  params.rovingEditor.listMarker = listMarker
+  params.rovingEditor.updateListMarker = updateListMarker
+  params.rovingEditor.getMarkdown = vi.fn(() => content)
+  params.rovingEditor.unmount = vi.fn(() => content)
+  return params
+}
+
+describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', () => {
+  it('Enter on a styled non-empty block creates the sibling with the same listStyle', async () => {
+    const params = styledParams('ordered', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+    expect(mockedSetListStyle).toHaveBeenCalledTimes(1)
+    expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'ordered')
+    expect(mockedClearListStyle).not.toHaveBeenCalled()
+  })
+
+  it('the after-caret sibling of a caret split carries the style too', async () => {
+    const params = styledParams('bullet', 'Beta')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'Be', after: 'ta' }))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.edit).toHaveBeenCalledWith('B', 'Be')
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'ta')
+    expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'bullet')
+  })
+
+  it('Enter on a plain block writes no property', async () => {
+    const params = styledParams('none', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(mockedSetListStyle).not.toHaveBeenCalled()
+    expect(mockedClearListStyle).not.toHaveBeenCalled()
+  })
+
+  it('Enter on an EMPTY styled block clears the style and creates no sibling', async () => {
+    const params = styledParams('ordered', '')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
+    expect(mockedClearListStyle).toHaveBeenCalledWith('B')
+    expect(params.rovingEditor.updateListMarker).toHaveBeenCalledWith('none', undefined)
+    expect(params.createBelow).not.toHaveBeenCalled()
+    expect(params.handleFlush).not.toHaveBeenCalled()
+    // The block stays mounted and focused — the user keeps typing in it.
+    expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
+    expect(params.setFocused).not.toHaveBeenCalled()
+  })
+
+  it('after the clear, the next Enter on the still-empty block creates a plain sibling', async () => {
+    const params = styledParams('ordered', '')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
+    expect(params.createBelow).toHaveBeenCalledTimes(1)
+    expect(mockedSetListStyle).not.toHaveBeenCalled()
+  })
+
+  it('a second Enter inside the property-event window still LEAVES the list', async () => {
+    const params = styledParams('ordered', 'Beta')
+    const { result, rerender } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'ordered')
+
+    // What production does next, and the whole point of this case: the new
+    // block mounts, `mount()` resets its marker to 'none' (#3000), and its
+    // `EditableBlock` effect re-pushes `ListMarkerContext`'s value — still
+    // empty, because `set_property` → `block:properties-changed` → the 150 ms
+    // trailing debounce → the batch refetch has not landed yet. So the marker
+    // reads 'none' for a block this hook itself just made ordered.
+    params.rovingEditor.activeBlockId = 'NEW_1'
+    params.rovingEditor.updateListMarker('none', undefined)
+    params.focusedBlockId = 'NEW_1'
+    params.rovingEditor.getMarkdown = vi.fn(() => '')
+    params.rovingEditor.unmount = vi.fn(() => '')
+    rerender()
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // The ordinary "double Enter to leave the list" gesture. Reading 'none'
+    // here took the plain `createBelow` path instead, leaving a stray empty
+    // ordered item with an unstyled block under it — which
+    // `empty-block-cleanup.ts` guard 5 then keeps forever, because the stray
+    // carries a `listStyle` property.
+    expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
+    expect(mockedClearListStyle).toHaveBeenCalledWith('NEW_1')
+    expect(params.createBelow).toHaveBeenCalledTimes(1)
+  })
+
+  it('the optimistic style expires once focus leaves the block it was recorded for', async () => {
+    const params = styledParams('ordered', 'Beta')
+    const { result, rerender } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // Same stale-marker window as above, but the user clicked away to a plain
+    // block instead of pressing Enter again. The record is keyed by block id,
+    // so it must not answer for C.
+    params.rovingEditor.activeBlockId = 'C'
+    params.rovingEditor.updateListMarker('none', undefined)
+    params.focusedBlockId = 'C'
+    params.rovingEditor.getMarkdown = vi.fn(() => '')
+    params.rovingEditor.unmount = vi.fn(() => '')
+    rerender()
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // C is plain: Enter creates a sibling and clears nothing.
+    expect(mockedClearListStyle).not.toHaveBeenCalled()
+    expect(params.createBelow).toHaveBeenCalledTimes(2)
+    expect(mockedSetListStyle).toHaveBeenCalledTimes(1)
+  })
+
+  it('a rejected clear puts back the exact marker it cleared, ordinal included', async () => {
+    mockedClearListStyle.mockRejectedValueOnce(new Error('ipc failed'))
+    const params = styledParams('ordered', '')
+    // The editor is mounted on the block being cleared — the restore is
+    // guarded on that, so a user who clicked away mid-write does not get the
+    // old marker painted onto whatever block they landed on.
+    params.rovingEditor.activeBlockId = 'B'
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // The `listStyle` row is still in SQLite, so `useListStyles` projects the
+    // same map and `EditableBlock`'s marker effect never re-fires. Left
+    // cleared, the block would render AND behave as plain while it is still a
+    // list item. `markerHandle` seeds ordinal 1, so the restore has to carry
+    // it — a style-only restore would renumber the item.
+    expect(params.rovingEditor.updateListMarker).toHaveBeenNthCalledWith(1, 'none', undefined)
+    expect(params.rovingEditor.updateListMarker).toHaveBeenNthCalledWith(2, 'ordered', 1)
+  })
+
+  it('a failed continuation write logs, toasts, and leaves the new block focused', async () => {
+    const failure = new Error('ipc failed')
+    mockedSetListStyle.mockRejectedValueOnce(failure)
+    const params = styledParams('ordered', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'useBlockActionOrchestration',
+      'setListStyle (Enter continuation) failed',
+      { blockId: 'NEW_1', style: 'ordered' },
+      failure,
+    )
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.setListStyleFailed')
+  })
+})
+
+describe('useBlockActionOrchestration listStyle strip-then-merge (#4552 slice 3)', () => {
+  it('Backspace at the start of a styled block clears the style instead of merging', async () => {
+    const params = styledParams('ordered', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
+    expect(mockedClearListStyle).toHaveBeenCalledWith('B')
+    expect(params.rovingEditor.updateListMarker).toHaveBeenCalledWith('none', undefined)
+    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
+  })
+
+  it('the second Backspace merges into the previous block', async () => {
+    const params = styledParams('ordered', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledTimes(1)
+    expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
+    expect(params.remove).toHaveBeenCalledWith('B')
+    expect(params.setFocused).toHaveBeenCalledWith('A')
+  })
+
+  it('the first block of the page can leave a list too', async () => {
+    const params = styledParams('bullet', 'Alpha')
+    params.focusedBlockId = 'A'
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledWith('A')
+  })
+
+  it('Backspace on an EMPTY styled block clears the style instead of deleting it', async () => {
+    const params = styledParams('ordered', '')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      await Promise.resolve()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledWith('B')
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
+  })
+
+  it('an empty styled sole block leaves the list without the last-block toast', async () => {
+    const params = styledParams('bullet', '')
+    params.collapsedVisible = mountScoped([makeBlock({ id: 'B', depth: 0, content: '' })])
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      await Promise.resolve()
+    })
+
+    expect(mockedClearListStyle).toHaveBeenCalledWith('B')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('a failed clear logs and toasts', async () => {
+    const failure = new Error('ipc failed')
+    mockedClearListStyle.mockRejectedValueOnce(failure)
+    const params = styledParams('ordered', 'Beta')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'useBlockActionOrchestration',
+      'clearListStyle failed',
+      { blockId: 'B' },
+      failure,
+    )
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.clearListStyleFailed')
   })
 })

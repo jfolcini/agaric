@@ -133,6 +133,10 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
         // EditableBlock's marker effect re-fires (its `rovingEditor.editor` dep
         // flips) and pushes the marker into the real handle. No buffering here.
       },
+      listMarker() {
+        // No live editor, so nothing was ever pushed and nothing is shown.
+        return { style: 'none', ordinal: undefined }
+      },
       unmount() {
         // Nothing was ever live, so no content changed. Drop any buffered mount.
         pendingMountRef.current = null

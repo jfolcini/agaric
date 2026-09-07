@@ -67,6 +67,7 @@ function makeHandle(blockId: string, content: string): RovingEditorHandle {
     editor: null,
     mount: vi.fn(),
     updateListMarker: vi.fn(),
+    listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
     unmount: vi.fn(() => content),
     activeBlockId: blockId,
     getMarkdown: vi.fn(() => content),

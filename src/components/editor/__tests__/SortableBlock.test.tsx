@@ -361,6 +361,7 @@ function makeRovingEditor() {
     editor: null,
     mount: vi.fn(),
     updateListMarker: vi.fn(),
+    listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
     unmount: vi.fn(() => null),
     activeBlockId: null,
     getMarkdown: vi.fn(() => null),
