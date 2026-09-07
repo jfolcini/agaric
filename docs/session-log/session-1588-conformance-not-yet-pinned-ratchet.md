@@ -5,11 +5,11 @@
 `NO_FIXTURE_ALLOWLIST` (53 entries) and `READ_NO_QUERY_ALLOWLIST` (41) are now
 split into a permanent half and a shrink-only ratchet:
 
-- `NO_DOMAIN_STATE_MUTATING` (12) and `NO_DOMAIN_STATE_READ` (14) — commands
+- `NO_DOMAIN_STATE_MUTATING` (11) and `NO_DOMAIN_STATE_READ` (14) — commands
   carrying no domain state a snapshot could compare: transport sessions, the
   observability and MCP runtime toggles, and process/environment/status probes.
   No fixture will ever pin these, so they are not debt.
-- Everything else — **41 mutating + 27 read** — is debt with a number on it.
+- Everything else — **42 mutating + 27 read** — is debt with a number on it.
 
 ## The criterion is each command's own reason, not its section header
 
@@ -18,6 +18,14 @@ The first pass classified by section, which put five `app_settings` /
 marker (app_settings)"), the three peer-registry writers, and
 `set_reminder_settings` — while `list_peer_refs` sat in the debt set for a
 BYTE-IDENTICAL reason string. Reviewer-caught.
+
+A second round caught the same shape surviving in the other direction:
+`confirm_pairing` stayed permanent on a reason string that itself claimed "no
+durable domain state to snapshot", while `pairing.rs:630`/`:644` write an
+`app_settings` row and clear `peer_refs` flags — the comment four lines below
+the waiver already said so. Deferring to each command's own reason only works
+when that reason is true, so the check is the code, not the string. Moving it
+to the debt half took the mutating baseline to 42.
 
 The honest test is the reason itself: "no durable/persistent state" is
 permanent; "outside the conformance snapshot scope" is not, because that says
@@ -62,7 +70,7 @@ permanent list cannot be used to shrink the debt count without pinning anything.
 
 Three mutants, against a copy, restored and `cmp`-verified. All red:
 
-- remove a waiver, as if that command had just been pinned → 40 ≠ 41;
+- remove a waiver, as if that command had just been pinned → the count drops;
 - move a batch command into the principled set, mislabelling debt as permanent →
   the count drops and fails;
 - add a principled name that is not in any allowlist → the orphan test fires.

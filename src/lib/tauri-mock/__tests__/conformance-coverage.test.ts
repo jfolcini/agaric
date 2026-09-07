@@ -327,7 +327,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   start_sync: 'sync transport session; no durable domain state to snapshot',
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
   start_pairing: 'pairing transport session; no durable domain state to snapshot',
-  confirm_pairing: 'pairing transport session; no durable domain state to snapshot',
+  confirm_pairing:
+    'writes the pending-pairing marker (app_settings) and clears unpaired flags ' +
+    '(peer_refs); pairing-window plumbing, not projected block state',
   // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
   // row), so this is no longer "no durable state". It stays excluded for the
   // same reason `confirm_pairing` (which writes that row) is: the marker is
@@ -589,7 +591,6 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'start_sync',
   'cancel_sync',
   'start_pairing',
-  'confirm_pairing',
   // Observability / runtime toggles — no persistent domain state.
   'log_frontend',
   'ingest_otel_spans',
@@ -629,7 +630,7 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
  * it until the number goes up in a diff a reviewer can see. That is the whole
  * mechanism: the count is not documentation, it is the friction.
  */
-const NOT_YET_PINNED_MUTATING_BASELINE = 41
+const NOT_YET_PINNED_MUTATING_BASELINE = 42
 const NOT_YET_PINNED_READ_BASELINE = 27
 
 function notYetPinned(
@@ -2605,7 +2606,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   // domain state, no fixture will ever pin it) and an unwritten one read
   // identically. These two split them and put a number on the second half.
 
-  it('#4667 every waived command is either principled or counted as debt', () => {
+  it('#4667 a principled name must actually be waived', () => {
     // A principled entry must actually BE waived — otherwise it is a stale
     // name that silently shrinks the debt count without pinning anything.
     const orphanMutating = [...NO_DOMAIN_STATE_MUTATING].filter((c) => !(c in NO_FIXTURE_ALLOWLIST))
@@ -2617,10 +2618,6 @@ describe('#3083 conformance-coverage ratchet', () => {
     const mutating = notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING)
     const read = notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ)
 
-    // EQUALITY, not `<=`. Pinning one of these must fail here until the
-    // baseline comes down, or a stale number hides the win and lets the count
-    // drift back up unnoticed — the failure mode `tauri-import-baseline`
-    // exists to prevent.
     expect(
       { mutating: mutating.length, read: read.length },
       `not-yet-pinned changed. FIX: pin one and LOWER the baseline, or justify a ` +
