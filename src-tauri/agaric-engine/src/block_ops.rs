@@ -537,7 +537,7 @@ pub struct PropertyDeclaration {
 /// the key — type/options checks are skipped (custom keys without a
 /// declaration are permissive).
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-fn validate_property_value(
+pub(crate) fn validate_property_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
 ) -> Result<(), AppError> {

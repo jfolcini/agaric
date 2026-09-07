@@ -516,6 +516,9 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
         fts_blocks_rows: 0,
         fts_indexable_blocks: 0,
         fts_tombstoned_rows_tolerated: 0,
+        date_column_rows: 0,
+        block_tag_edges: 0,
+        distinct_block_spaces: 0,
     };
 
     for (step, action) in actions.iter().enumerate() {
