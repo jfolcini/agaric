@@ -55,12 +55,12 @@
 //! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
 //! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
 //! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
+//! | `blocks.space_id` on DERIVED rows (#3345) | `blocks` — `parent_id`, `block_type`, and the owning PAGE's own `space_id` | `maintain_pages_cache_counts_after_op`'s Create arm (in-tx, from the owning page) + `set_block_space_id_from_parent` (the post-commit re-stamp, the space half of the `SetBlockPageId` task) / `project_set_property_to_sql` + `project_delete_property_to_sql` (the in-tx page-group write of a `space` op) / `rederive_page_and_space_ids` (the in-tx move arm) / `rebuild_space_ids` (the vault-wide arm, second half of `RebuildPageIds`) — see [`rebuild_block_space_ids_from_base`] for what "derived" excludes |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
-//! cache, the projected-agenda cache, `block_tag_refs`,
-//! `tags_cache.usage_count`, and `blocks.space_id` re-derivation. All five are
-//! blocked on #4679: today's B6 generator cannot reach them, so an oracle over
-//! any of them would pass unconditionally.
+//! cache, the projected-agenda cache, `block_tag_refs` and
+//! `tags_cache.usage_count`. All four became reachable in #4679 and are the
+//! remaining #3345 artefacts, one PR each.
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -235,10 +235,22 @@ pub struct OracleCoverage {
     /// `tags_cache.usage_count`'s source. B6 dropped every tag op before
     /// #4679, so this was always 0 there.
     pub block_tag_edges: i64,
-    /// #4679: distinct non-NULL `blocks.space_id` values. A chain that
-    /// migrates its page group into the second registered space reads 2 here
-    /// (the link-target page and the tag stay in the first); one that never
-    /// leaves reads 1. Peak-tracked by B6 because a chain may migrate back.
+    /// Blocks the from-base space fold assigns a non-NULL DERIVED space —
+    /// non-page blocks with a page ancestor whose own `space_id` is set.
+    ///
+    /// The space artefact compares a map of this size against the column, so
+    /// a zero means the diff compared `{}` against `{}`. Folded, not counted
+    /// in SQL, for the same reason as `page_link_edges`.
+    pub derived_space_rows: i64,
+    /// #4679 / #3345: distinct non-NULL spaces the from-base fold assigns to
+    /// DERIVED rows — the SAME fold `derived_space_rows` comes from, so this
+    /// counts spaces the oracle actually audited a block in, not spaces some
+    /// authoritative row (a page, a top-level tag) happens to name.
+    ///
+    /// One page group migrates as a whole, so a chain with a single rooting
+    /// page reads at most 1 here at any ONE op; B6 unions the fold's values
+    /// across the chain instead, which is what "the derived rows were seen in
+    /// two spaces" means there.
     pub distinct_block_spaces: i64,
 }
 
@@ -290,16 +302,10 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     let block_tag_edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
         .fetch_one(pool)
         .await?;
-    // dynamic-sql: static SQL, test-only oracle read-back.
-    let distinct_block_spaces: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT space_id) FROM blocks WHERE space_id IS NOT NULL",
-    )
-    .fetch_one(pool)
-    .await?;
 
-    // Both page-shaped counters come from the SAME Rust folds the artefacts
-    // use, so "the fixture covers this" and "the oracle audited this" can
-    // never drift apart.
+    // The page-shaped and space-shaped counters come from the SAME Rust folds
+    // the artefacts use, so "the fixture covers this" and "the oracle audited
+    // this" can never drift apart.
     let blocks = dump_blocks(pool).await?;
     // The removal half's obligations, folded from the same dump — the
     // complement of `fts_indexable_blocks` within the blocks that have content.
@@ -308,6 +314,22 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
             .iter()
             .filter(|b| b.deleted_at.is_some() && b.content.is_some())
             .count(),
+    )
+    .unwrap_or(i64::MAX);
+    let derived_spaces = fold_block_space_ids(&blocks);
+    let derived_space_rows = i64::try_from(
+        derived_spaces
+            .values()
+            .filter(|d| d.space_id.is_some())
+            .count(),
+    )
+    .unwrap_or(i64::MAX);
+    let distinct_block_spaces = i64::try_from(
+        derived_spaces
+            .values()
+            .filter_map(|d| d.space_id.as_deref())
+            .collect::<BTreeSet<_>>()
+            .len(),
     )
     .unwrap_or(i64::MAX);
     let live_page_blocks = i64::try_from(fold_live_page_blocks(&blocks).len()).unwrap_or(i64::MAX);
@@ -334,6 +356,7 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         fts_tombstoned_blocks,
         date_column_rows,
         block_tag_edges,
+        derived_space_rows,
         distinct_block_spaces,
     })
 }
@@ -602,6 +625,107 @@ pub async fn rebuild_page_ownership_from_base(
 /// likely to be wrong, so callers run this only where production does.
 pub async fn settle_derived_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
     agaric_store::cache::rebuild_page_ids(pool).await
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 9 — `blocks.space_id` on DERIVED rows (#3345, reachable since #4679)
+// ---------------------------------------------------------------------------
+
+/// What the from-base fold says one derived block's `space_id` must be, and
+/// which page it derived it from — so a divergence can name the page whose
+/// authoritative value the block was supposed to inherit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedSpace {
+    /// The nearest page ancestor, by `parent_id` walk.
+    pub owning_page: String,
+    /// That page's own `space_id` column — `None` when the page carries none.
+    pub space_id: Option<String>,
+}
+
+/// Recompute `blocks.space_id` for every block whose value is DERIVED, from
+/// `parent_id`, `block_type` and the owning page's own column alone.
+///
+/// The rule is the one all four production writers share, transcribed from
+/// the column's semantics (#533 Phase 2) rather than from any of their SQL: a
+/// page's `space_id` is authoritative (only a `space` op writes it), and every
+/// non-page block under that page carries a COPY of it. The owning page is the
+/// nearest page ancestor by `parent_id` — [`fold_page_ownership`]'s walk, NOT
+/// the stored `page_id` column, so a `page_id` drift cannot make both sides of
+/// this diff agree on a wrong page; [`reconcile`] reports `blocks.page_id`
+/// first so such a drift is named once, at its root.
+///
+/// # What is OUT of scope, and why it is not a gap in the fold
+///
+/// * **Pages** — authoritative, not derived: no base table says what a page's
+///   space is except the column itself.
+/// * **Top-level tags and orphans** (no page ancestor) — `rebuild_space_ids`'s
+///   `page_id IS NOT NULL` guard leaves them untouched because a tag OWNS its
+///   value (nulling it was the #533 data-loss hazard) and orphan content
+///   "keeps its last value". The latter is history, not a function of base
+///   tables, so no from-base rebuild can express it; the fold omits the row
+///   rather than guess.
+///
+/// # Tombstones are IN scope
+///
+/// None of the writers filters on `deleted_at` — `rederive_page_and_space_ids`
+/// dropped its filter in #3919 precisely because ownership is structural — and
+/// the space-scoped trash list reads a soft-deleted row's `space_id` live. So a
+/// tombstoned block is expected to carry its page's space exactly as a live one
+/// is, and this fold walks tombstones like any other row.
+///
+/// # What the fold shares with production
+///
+/// The `parent_id` walk is [`fold_page_ownership`]'s, already the independent
+/// side of Artefact 4. Nothing else: no `COALESCE`, no correlated subquery, no
+/// `page_id` read. `set_block_space_id_from_parent` copies the PARENT's column
+/// rather than the page's; the two agree whenever the parent is itself settled,
+/// and the fold deliberately asks the page so a parent stamped wrong is
+/// reported at the child too rather than inherited silently.
+fn fold_block_space_ids(blocks: &[BaseBlock]) -> BTreeMap<String, DerivedSpace> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let mut out = BTreeMap::new();
+    for (block_id, owner) in fold_page_ownership(blocks) {
+        let Some(owning_page) = owner else {
+            continue;
+        };
+        // Both lookups are total: `fold_page_ownership` keys on every block in
+        // `blocks` and resolves each owner by walking `parent_id` THROUGH that
+        // same slice, and `by_id` is built from it. An absent key would mean
+        // the two disagreed about the dump, so say so rather than skipping the
+        // row — a silent `continue` there would shrink what the artefact
+        // audits without reporting anything.
+        let block = by_id[block_id.as_str()];
+        if block.block_type == PAGE_BLOCK_TYPE {
+            continue;
+        }
+        let page = by_id[owning_page.as_str()];
+        out.insert(
+            block_id,
+            DerivedSpace {
+                owning_page,
+                space_id: page.space_id.clone(),
+            },
+        );
+    }
+    out
+}
+
+/// Recompute the derived `blocks.space_id` values from base rows. Only the
+/// rows [`fold_block_space_ids`] scopes in are present; a caller diffing
+/// against the column must not read an absent key as "expected NULL".
+pub async fn rebuild_block_space_ids_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<String, DerivedSpace>, AppError> {
+    Ok(fold_block_space_ids(&dump_blocks(pool).await?))
+}
+
+/// Run production's vault-wide `space_id` propagation — the second half of the
+/// `RebuildPageIds` task handler (`task_handlers.rs`), and what the 0086
+/// backfill did. It re-derives every non-page block that has a `page_id` and
+/// leaves pages, tags and orphans alone, which is exactly the scope the fold
+/// audits. Production code, so breaking it turns the oracle red.
+pub async fn settle_block_space_ids_rebuild(pool: &SqlitePool) -> Result<(), AppError> {
+    agaric_store::cache::rebuild_space_ids(pool).await
 }
 
 // ---------------------------------------------------------------------------
@@ -2168,16 +2292,31 @@ pub async fn settle_fts_for_op(
 /// #4679: run the `blocks.space_id` maintainer PRODUCTION's dispatch table
 /// says this op needs — and only that.
 ///
-/// Same contract as [`settle_page_link_cache_for_op`]. A created block's
-/// `space_id` has no synchronous arm: the engine read-back leaves the column
-/// NULL and the deferred `SetBlockPageId` task fills it from the parent
+/// Same contract as [`settle_page_link_cache_for_op`]. Until #4679 the
+/// apply-path drivers stamped the column themselves after every create, so an
+/// oracle over it would have diffed the test's own write against a rebuild
+/// rooted in the same constant. This asks `invalidations_for_op` instead and
+/// runs the production function for each `SetBlockPageId` it names
 /// (`set_block_space_id_from_parent`, the second half of that task's handler
-/// in `task_handlers.rs`). Until #4679 the apply-path drivers stamped the
-/// column themselves after every create, so an oracle over it would have
-/// diffed the test's own write against a rebuild rooted in the same constant.
-/// This asks `invalidations_for_op` instead and runs the production function
-/// for each `SetBlockPageId` it names, so a create arm that forgets the task
-/// leaves the column NULL for the oracle to see.
+/// in `task_handlers.rs`).
+///
+/// # The post-commit stamp is a RE-stamp on the engine path — measured, #3345
+///
+/// A created block's column is NOT NULL between the apply and this settle:
+/// the apply kernel's `maintain_pages_cache_counts_after_op` stamps `page_id`
+/// AND `space_id` from the owning page inside the create's own transaction
+/// (`PreOpState::Create` in `apply/pages_cache.rs`, so the in-tx count
+/// recompute keys on a correct `page_id`), and B6 instrumented to read the
+/// column right after `drive` found it already set on every create. So on
+/// this path `set_block_space_id_from_parent` writes the value the row
+/// already holds, and skipping it leaves B6 GREEN — production's own
+/// redundancy, not a gap in the oracle: skipping the in-tx stamp alone leaves
+/// B6 green too, because this settle repairs it exactly as production's task
+/// would, and only skipping BOTH reddens B6 at the first create. The
+/// post-commit arm on its own is pinned by
+/// `block_space_ids_reconcile_and_report_a_missed_stamp_3345`, whose fixture
+/// holds the column NULL the way a row written by a path without the kernel
+/// arm (a SQL-only fallback, a sync import before its space registers) is.
 ///
 /// Only the SPACE half of the handler runs here. The drivers still stamp
 /// `page_id` themselves (the engine-path guard needs the NEXT op's
@@ -2322,6 +2461,50 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                         sync) — the denormalised owner disagrees with the parent_id \
                         tree it caches, so every page_id-keyed count, filter and \
                         backlink below it is computed for the wrong page",
+            });
+        }
+    }
+
+    // --- Artefact 9: blocks.space_id on DERIVED rows (#3345) -----------------
+    //
+    // Directly after ownership, because it is keyed on the same `parent_id`
+    // walk: a block whose owner drifted would otherwise report twice, and
+    // reporting it here keeps `first` naming the root cause.
+    const SPACE_OWNER: &str = "maintain_pages_cache_counts_after_op's PreOpState::Create arm (the in-tx \
+         stamp from the owning page, apply/pages_cache.rs) + set_block_space_id_from_parent \
+         (the post-commit re-stamp, the space half of the SetBlockPageId task) / \
+         project_set_property_to_sql + project_delete_property_to_sql \
+         (the in-tx page-group write of a SetProperty/DeleteProperty(space)) / \
+         agaric_store::block_descendants::rederive_page_and_space_ids (the in-tx move arm) / \
+         cache::rebuild_space_ids (the vault-wide arm the RebuildPageIds task runs second) — \
+         every space-scoped read (page lists, trash, the cross-space link filter) filters on \
+         this column, so a block whose value lags its page is invisible in its space or \
+         listed in the wrong one";
+    let expected_spaces = fold_block_space_ids(&blocks);
+    let stored_spaces: BTreeMap<&str, Option<&str>> = blocks
+        .iter()
+        .map(|b| (b.id.as_str(), b.space_id.as_deref()))
+        .collect();
+    for (block_id, derived) in &expected_spaces {
+        // Both sides come from the same `blocks` dump, so the key is always
+        // present; a `None` here would be an absent row, which is the same
+        // divergence as a NULL column and is reported as one.
+        let actual_space = stored_spaces.get(block_id.as_str()).copied().flatten();
+        if derived.space_id.as_deref() != actual_space {
+            out.push(Divergence {
+                artefact: "blocks.space_id",
+                key: block_id.clone(),
+                expected: match &derived.space_id {
+                    Some(space) => {
+                        format!("{space} (owning page {}'s space_id)", derived.owning_page)
+                    }
+                    None => format!(
+                        "NULL (owning page {} carries no space_id)",
+                        derived.owning_page
+                    ),
+                },
+                actual: actual_space.map_or_else(|| "NULL".to_owned(), str::to_owned),
+                owner: SPACE_OWNER,
             });
         }
     }
