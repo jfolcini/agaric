@@ -42,6 +42,7 @@ A few specifics for that environment:
 Nearly every hook in `prek.toml` is `language = "system"` — it shells out to a binary that must already be on PATH, or your first `git commit` aborts. `scripts/setup-hooks.sh` (run by `npm run setup` / `just install-hooks`) installs that toolchain, mirroring CI's install set in `.github/workflows/_validate.yml` so the local gate matches CI:
 
 - **Cargo tools** (via `cargo-binstall` when present — prebuilt, fast — else `cargo install --locked`): `prek`, `cargo-deny`, `cargo-machete`, `cargo-audit`, `sqruff`, `typos-cli`, `zizmor`, `taplo-cli`, `cargo-nextest`, `just`, `lychee`, and `sqlx-cli` (with `--no-default-features --features rustls,sqlite`).
+  - `zizmor` additionally falls back to its PyPI wheel (`uv tool install "zizmor==<pinned>"`, symlinked into `~/.cargo/bin`) when binstall's `api.github.com` lookup is blocked. On such a box *neither* cargo path can install it — binstall's source-build fallback needs a newer rustc than `rust-toolchain.toml` pins — so the script also installs a pinned `uv` from its verified release tarball.
 - **Platform package manager** (`brew` on macOS, `apt`/`dnf`/`pacman` on Linux): `shellcheck`, plus `go` and `python3` — prek *builds* three hooks from pinned upstream repos rather than calling a host binary (`gitleaks` and `actionlint` via its Go backend, `conventional-pre-commit` via its Python backend).
 - **npm devDependencies** (already installed by `npm ci`): `oxlint`, `oxfmt`, `knip`, `markdownlint-cli2`.
 
@@ -89,7 +90,7 @@ These local hooks are **optional**: if you cannot install them, open your PR any
 
 ### Optional: code-review navigation graph
 
-`.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when available). It is launched on demand by [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner, which fetches the package from PyPI on first run — so enabling it means installing `uv` and nothing else. It is a navigation aid for MCP-capable clients, not a build or test prerequisite; if `uvx` is absent the server simply does not start.
+`.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when available). It is launched on demand by [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner, which fetches the package from PyPI on first run — so enabling it means having `uv` (which `scripts/setup-hooks.sh` installs) and nothing else. It is a navigation aid for MCP-capable clients, not a build or test prerequisite; if `uvx` is absent the server simply does not start.
 
 That first-run PyPI fetch does not fit Claude Code's default 30 s MCP connect budget when it races a fresh sandbox's `npm ci` and apt install, so `.claude/settings.json` sets `MCP_TIMEOUT=120000`. A missing `uvx` still fails fast — the raised budget only covers a slow cold start.
 

@@ -25,7 +25,8 @@ rather than just Rust-side parity.
 
 ### Prerequisites
 
-- `uv` installed (<https://docs.astral.sh/uv/>). The script's shebang is
+- `uv` installed (<https://docs.astral.sh/uv/>); `scripts/setup-hooks.sh`
+  installs one. The script's shebang is
   `#!/usr/bin/env -S uv run --script` and declares its Python + PEP-723
   dependencies inline, so `uv` will install them into a cached
   environment on first run — nothing to `pip install` manually.
