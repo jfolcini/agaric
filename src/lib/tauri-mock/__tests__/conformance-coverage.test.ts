@@ -338,14 +338,14 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_peer_address: 'peer registry (device metadata) outside the conformance snapshot scope',
   update_peer_name: 'peer registry (device metadata) outside the conformance snapshot scope',
   delete_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
+  set_reminder_settings:
+    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
-  set_reminder_settings:
-    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_rw_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
@@ -599,11 +599,11 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
  * counted as debt for a byte-identical reason.
  *
  * Everything else in those allowlists is the OTHER half — a command that could
- * be pinned and is not yet. That half is a ratchet (see
- * `NOT_YET_PINNED_*_BASELINE` below): the guard that already existed fails on a
+ * be pinned and is not yet. That half is a ratchet (`NOT_YET_PINNED_MUTATING`
+ * / `NOT_YET_PINNED_READ` below): the guard that already existed fails on a
  * stale or now-covered entry, but nothing distinguished "cannot be pinned" from
  * "nobody has pinned it", so 76% of the surface read as a settled decision
- * rather than as debt with a number on it.
+ * rather than as debt with the commands named.
  */
 const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   // Transport sessions only — these hold no durable row anywhere.
