@@ -1687,6 +1687,198 @@ pub async fn assert_block_links_reconciled(pool: &SqlitePool, context: &str) {
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 8 — `block_tag_refs`, the INLINE tag index (#3345)
+// ---------------------------------------------------------------------------
+
+/// Transcribed from `agaric_store::cache::TAG_REF_RE` DELIBERATELY, on the same
+/// grounds as [`ORACLE_LINK_TOKEN_RE`]: an independent copy is what makes this
+/// artefact a recomputation rather than a tautology.
+/// `oracle_tag_grammar_matches_production_3345` pins the two against a corpus,
+/// so drift is a named failure and not a wave of unexplained divergences.
+///
+/// Unlike the link grammar there are no mixed delimiters to tolerate —
+/// production's regex is anchored on both sides.
+static ORACLE_TAG_TOKEN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid oracle tag-ref regex"));
+
+/// The distinct inline tag targets one block's content names.
+///
+/// # The same deliberate departure [`fold_content_link_targets`] makes
+///
+/// `reindex_block_tag_refs_in_tx` reads `SELECT content FROM blocks WHERE id = ?
+/// AND deleted_at IS NULL` and treats a missing row as empty content, so its
+/// rule for a TOMBSTONED source is "every row must go". This fold reads the raw
+/// `content` column with no liveness scope, for the identical reason:
+/// `ReindexBlockTagRefs` is enqueued by the `CreateBlock` and `EditBlock` arms
+/// of `invalidations_for_op` and by NOTHING else, so a soft-deleted block's
+/// rows survive by design. Transcribing production's live-scoped read would
+/// report every ordinary deletion as a pile of EXTRA rows, and an oracle that
+/// fires on every delete gets muted.
+fn fold_content_tag_targets(content: Option<&str>) -> BTreeSet<String> {
+    ORACLE_TAG_TOKEN_RE
+        .captures_iter(content.unwrap_or_default())
+        .map(|cap| cap[1].to_owned())
+        .collect()
+}
+
+/// `block_tag_refs` folded from `blocks.content` — the only thing in the schema
+/// that says what those rows must be.
+pub async fn rebuild_block_tag_refs_from_content(
+    pool: &SqlitePool,
+) -> Result<BTreeSet<(String, String)>, AppError> {
+    Ok(fold_block_tag_refs_from_content(&dump_blocks(pool).await?))
+}
+
+fn fold_block_tag_refs_from_content(blocks: &[BaseBlock]) -> BTreeSet<(String, String)> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    let mut out = BTreeSet::new();
+    for source in blocks {
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        let targets = fold_content_tag_targets(source.content.as_deref());
+        if targets.is_empty() {
+            continue;
+        }
+        let source_space = fold_block_space(&by_id, &source.id);
+        for tag_id in targets {
+            let Some(tag) = by_id.get(tag_id.as_str()) else {
+                continue;
+            };
+            // `WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ? AND
+            // block_type = 'tag' AND deleted_at IS NULL)`: a `#[ULID]` naming a
+            // page, a content block, or nothing at all is not an edge.
+            if tag.block_type != "tag" || tag.deleted_at.is_some() {
+                continue;
+            }
+            // ASYMMETRIC, and deliberately so. The INSERT resolves the SOURCE's
+            // space through `resolve_block_space` (own column, else the owning
+            // page's) and compares it against the TAG's RAW `blocks.space_id`,
+            // with no owning-page fallback on that side. Folding the fallback
+            // in symmetrically would make this oracle agree with a production
+            // that does not behave that way.
+            if let Some(space) = source_space.as_deref()
+                && tag.space_id.as_deref() != Some(space)
+            {
+                continue;
+            }
+            out.insert((source.id.clone(), tag_id));
+        }
+    }
+    out
+}
+
+async fn dump_block_tag_refs(pool: &SqlitePool) -> Result<Vec<(String, String)>, AppError> {
+    const SQL: &str = "SELECT source_id, tag_id FROM block_tag_refs";
+    // dynamic-sql: static SQL, test-only oracle base-table dump.
+    let rows = sqlx::query_as::<_, (String, String)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+const BLOCK_TAG_REFS_OWNER: &str = "reindex_block_tag_refs(_in_tx/_split/_split_in_tx) and the \
+     vault-wide rebuild_block_tag_refs_cache (the ReindexBlockTagRefs and \
+     RebuildBlockTagRefsCache tasks) — and, one level up, the arms of \
+     materializer::dispatch::invalidations_for_op that enqueue them, which are \
+     CreateBlock and EditBlock and nothing else: the tags view and the tag_query \
+     resolver UNION this table with block_tags, so a missing row is a tag whose \
+     inline usages the user cannot see";
+
+/// `block_tag_refs` against a from-CONTENT rebuild.
+///
+/// Same two arms, and the same window, as [`reconcile_block_links`]: the
+/// MISSING arm folds LIVE sources only, while the EXTRA arm re-reads the raw
+/// `content` column so a tombstoned source's surviving rows — which no delete
+/// arm reindexes away — are not reported. See [`fold_content_tag_targets`].
+///
+/// Divergences come back MISSING-first, each arm sorted by `(source, tag)`, so
+/// `first` is deterministic.
+pub async fn reconcile_block_tag_refs(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let expected = fold_block_tag_refs_from_content(&blocks);
+    let stored: BTreeSet<(String, String)> = dump_block_tag_refs(pool).await?.into_iter().collect();
+
+    let mut out = Vec::new();
+
+    // --- MISSING: content names the tag, the table has no row ---------------
+    for (source_id, tag_id) in expected.difference(&stored) {
+        let source_space = fold_block_space(&by_id, source_id);
+        out.push(Divergence {
+            artefact: "block_tag_refs.row",
+            key: format!("{source_id} -> {tag_id}"),
+            expected: format!(
+                "a block_tag_refs row (the source's content names `#[{tag_id}]`, that id is \
+                 a live tag block, and the source's resolved space is {source_space:?})"
+            ),
+            actual: "no row in block_tag_refs".to_owned(),
+            owner: BLOCK_TAG_REFS_OWNER,
+        });
+    }
+
+    // --- EXTRA: the table holds a row the source's content never named ------
+    for (source_id, tag_id) in &stored {
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            // Unstorable: `block_tag_refs.source_id` is `NOT NULL REFERENCES
+            // blocks(id) ON DELETE CASCADE` (migration 0034) with foreign keys
+            // ON, so a purge takes the row with it. Skipped for the same reason
+            // the block_links EXTRA arm skips an absent source.
+            continue;
+        };
+        // Deliberately UNSCOPED by liveness — see `fold_content_tag_targets`.
+        // A soft delete does not touch `content`, so a tombstoned source's
+        // tokens are still here and this `contains` skips its rows.
+        if fold_content_tag_targets(source.content.as_deref()).contains(tag_id) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "block_tag_refs.row",
+            key: format!("{source_id} -> {tag_id}"),
+            expected: "no block_tag_refs row (the source block's content column names no \
+                       such `#[ULID]` token, so the reindexer's DELETE arm — old_targets \
+                       MINUS parsed tokens — must have removed it)"
+                .to_owned(),
+            actual: "a row in block_tag_refs".to_owned(),
+            owner: BLOCK_TAG_REFS_OWNER,
+        });
+    }
+
+    Ok(out)
+}
+
+/// The formatted first `block_tag_refs` divergence, or `None` when the table
+/// agrees with a from-content rebuild.
+pub async fn block_tag_refs_reconciliation_failure(
+    pool: &SqlitePool,
+    context: &str,
+) -> Option<String> {
+    let divergences = match reconcile_block_tag_refs(pool).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "block_tag_refs oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "BLOCK_TAG_REFS RECONCILIATION FAILED at [{context}]\n  \
+         block_tag_refs disagrees with a from-CONTENT rebuild in {} place(s); first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `block_tag_refs` divergence unless the table equals its
+/// from-content rebuild.
+pub async fn assert_block_tag_refs_reconciled(pool: &SqlitePool, context: &str) {
+    if let Some(report) = block_tag_refs_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Artefact 7 — `block_links_unresolved`, the OBLIGATIONS index (#4229)
 // ---------------------------------------------------------------------------
 
