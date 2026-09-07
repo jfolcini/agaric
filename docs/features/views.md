@@ -50,7 +50,7 @@ Browse every tag and the blocks that carry them.
 A dedicated builder for queries too complex for the search box.
 
 - **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually.
-- **Controls bar**: full-text term, sort, group-by, aggregates.
+- **Controls bar**: full-text term, sort, group-by (tag, page, state, block type, priority, a property key, or a date bucket — due / scheduled / created / last edited, by day, week, or month), aggregates.
 - **Results pane**: flat with a global aggregate bar, or grouped with per-group headers, counts, and aggregate chips.
 - **Saved views** let you keep a query around.
 

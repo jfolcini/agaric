@@ -4,9 +4,10 @@ import type React from 'react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { axe } from '@/__tests__/helpers/axe'
 import type { QueryControlsBarProps } from '@/components/AdvancedQuery/QueryControlsBar'
 import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
-import type { AggregateSpec, SortKey } from '@/lib/tauri'
+import type { AggregateSpec, GroupSpec, SortKey } from '@/lib/bindings'
 
 const noop = (): void => {}
 
@@ -190,5 +191,134 @@ describe('QueryControlsBar — aggregate target Property (#4553 Phase 1)', () =>
 
     await user.selectOptions(targetSelect, 'Priority')
     expect(within(row).queryByLabelText('Property key to aggregate')).not.toBeInTheDocument()
+  })
+})
+
+// #4553 Phase 2 — `GroupKey::Property` and `GroupKey::DateBucket` in the
+// group-by picker. Both variants already existed on the wire; the picker just
+// never offered them.
+describe('QueryControlsBar — group by Property / DateBucket (#4553 Phase 2)', () => {
+  /** Controlled harness so a picked group key is reflected back into the
+   * rendered controls, mirroring the per-space store round-trip. */
+  function Harness({
+    initial = null,
+    onChange,
+  }: {
+    initial?: GroupSpec | null
+    onChange: (groupBy: GroupSpec | null) => void
+  }): React.ReactElement {
+    const [groupBy, setGroupBy] = useState<GroupSpec | null>(initial)
+    const handle = (next: GroupSpec | null): void => {
+      onChange(next)
+      setGroupBy(next)
+    }
+    return <QueryControlsBar {...baseProps} groupBy={groupBy} onGroupByChange={handle} />
+  }
+
+  const groupSelect = (): HTMLSelectElement =>
+    screen.getByLabelText('Group by') as HTMLSelectElement
+
+  it('offers Property and Date after the five simple keys; no secondary controls until picked', () => {
+    render(<Harness onChange={vi.fn()} />)
+    expect(Array.from(groupSelect().options).map((o) => o.value)).toEqual([
+      '__none__',
+      'Tag',
+      'Page',
+      'State',
+      'BlockType',
+      'Priority',
+      '__property__',
+      '__date__',
+    ])
+    expect(screen.queryByTestId('advanced-query-group-property-key')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('advanced-query-group-date')).not.toBeInTheDocument()
+  })
+
+  it('picking Property reveals a key input; typing emits { type: "Property", key }', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<Harness onChange={onChange} />)
+
+    await user.selectOptions(groupSelect(), 'Property')
+    expect(onChange).toHaveBeenLastCalledWith({ key: { type: 'Property', key: '' } })
+
+    const keyInput = screen.getByLabelText('Property key to group by')
+    await user.type(keyInput, 'status')
+    expect(onChange).toHaveBeenLastCalledWith({ key: { type: 'Property', key: 'status' } })
+    expect(keyInput).toHaveValue('status')
+    expect(groupSelect().value).toBe('__property__')
+  })
+
+  it('picking Date seeds due/week and reveals source + unit selects that emit the pair', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<Harness onChange={onChange} />)
+
+    await user.selectOptions(groupSelect(), 'Date')
+    expect(onChange).toHaveBeenLastCalledWith({
+      key: { type: 'DateBucket', source: 'due', unit: 'week' },
+    })
+    expect(groupSelect().value).toBe('__date__')
+
+    const dateRow = screen.getByTestId('advanced-query-group-date')
+    const source = within(dateRow).getByLabelText('Date to group by') as HTMLSelectElement
+    const unit = within(dateRow).getByLabelText('Bucket size') as HTMLSelectElement
+    expect(Array.from(source.options).map((o) => o.value)).toEqual([
+      'due',
+      'scheduled',
+      'created',
+      'lastEdited',
+    ])
+    expect(Array.from(unit.options).map((o) => o.value)).toEqual(['day', 'week', 'month'])
+
+    await user.selectOptions(source, 'Last edited')
+    expect(onChange).toHaveBeenLastCalledWith({
+      key: { type: 'DateBucket', source: 'lastEdited', unit: 'week' },
+    })
+    await user.selectOptions(unit, 'Month')
+    expect(onChange).toHaveBeenLastCalledWith({
+      key: { type: 'DateBucket', source: 'lastEdited', unit: 'month' },
+    })
+  })
+
+  it('a loaded Property / DateBucket grouping (e.g. a saved view) selects its option, not None', () => {
+    const { rerender } = render(
+      <Harness initial={{ key: { type: 'Property', key: 'estimate' } }} onChange={vi.fn()} />,
+    )
+    expect(groupSelect().value).toBe('__property__')
+    expect(screen.getByLabelText('Property key to group by')).toHaveValue('estimate')
+
+    rerender(
+      <QueryControlsBar
+        {...baseProps}
+        groupBy={{ key: { type: 'DateBucket', source: 'scheduled', unit: 'day' } }}
+      />,
+    )
+    expect(groupSelect().value).toBe('__date__')
+    expect(screen.getByLabelText('Date to group by')).toHaveValue('scheduled')
+    expect(screen.getByLabelText('Bucket size')).toHaveValue('day')
+  })
+
+  it('switching back to a simple key drops the secondary controls', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<Harness initial={{ key: { type: 'Property', key: 'estimate' } }} onChange={onChange} />)
+
+    await user.selectOptions(groupSelect(), 'Tag')
+    expect(onChange).toHaveBeenLastCalledWith({ key: { type: 'Tag' } })
+    expect(screen.queryByLabelText('Property key to group by')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('advanced-query-group-date')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations with the Date controls revealed', async () => {
+    const { container } = render(
+      <Harness
+        initial={{ key: { type: 'DateBucket', source: 'due', unit: 'week' } }}
+        onChange={vi.fn()}
+      />,
+    )
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })

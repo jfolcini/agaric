@@ -8,8 +8,9 @@
  *   - Multi-key sort → `AdvancedQueryRequest.sort` (each `SortKey` is a labelled
  *     `SortColumn`, or `Relevance` — only offered when a full-text term is set,
  *     since the engine rejects `Relevance` without `fulltext`).
- *   - Group-by → `AdvancedQueryRequest.groupBy` (None default, or one of the
- *     single-dimension `GroupKey`s).
+ *   - Group-by → `AdvancedQueryRequest.groupBy` (None default, one of the
+ *     single-dimension `GroupKey`s, a `Property` key, or a `DateBucket`
+ *     source × unit pair — #4553 Phase 2).
  *   - Aggregates → `AdvancedQueryRequest.aggregates` (op + optional column target).
  *
  * Controls are always-visible inline form rows (not behind a popover) so they
@@ -38,6 +39,8 @@ import type {
   AggOp,
   AggregateColumn,
   AggregateSpec,
+  DateBucketUnit,
+  DateField,
   GroupKey,
   GroupSpec,
   SortColumn,
@@ -58,6 +61,15 @@ const SORT_COLUMNS: readonly SortColumn[] = [
 const GROUP_KEYS = ['Tag', 'Page', 'State', 'BlockType', 'Priority'] as const
 type SimpleGroupKeyType = (typeof GROUP_KEYS)[number]
 
+/** The `DateField` sources offered for a `DateBucket` grouping, in display order. */
+const DATE_FIELDS: readonly DateField[] = ['due', 'scheduled', 'created', 'lastEdited']
+
+/** The `DateBucketUnit`s offered for a `DateBucket` grouping, in display order. */
+const DATE_UNITS: readonly DateBucketUnit[] = ['day', 'week', 'month']
+
+/** The `DateBucket` grouping seeded when the option is picked (the two Selects refine it). */
+const DEFAULT_DATE_BUCKET: GroupKey = { type: 'DateBucket', source: 'due', unit: 'week' }
+
 /** The aggregate operators offered in the op picker, in display order. */
 const AGG_OPS: readonly AggOp[] = ['count', 'sum', 'avg', 'min', 'max']
 
@@ -67,12 +79,14 @@ const AGG_COLUMNS: readonly AggregateColumn[] = ['priority', 'position']
 /** Sentinel option value for "no group-by / no target" (Select needs a string). */
 const NONE = '__none__'
 /**
- * #4553 Phase 1 — sentinel `AggregateTarget` value encoding the `Property`
- * variant in the target Select (mirrors `RELEVANCE` below for `SortSource`).
- * Selecting it reveals a property-key text input; the emitted target is
- * `{ type: 'Property', key }` once a key is typed.
+ * #4553 — sentinel value encoding the `Property` variant in the aggregate
+ * target Select and the group-by Select (mirrors `RELEVANCE` below for
+ * `SortSource`). Selecting it reveals a property-key text input; the emitted
+ * target / group key is `{ type: 'Property', key }` once a key is typed.
  */
 const PROPERTY = '__property__'
+/** Sentinel group-by value encoding the `DateBucket` variant (source + unit Selects). */
+const DATE_BUCKET = '__date__'
 /** Sentinel `SortSource` value encoding the Relevance variant in the Select. */
 const RELEVANCE = '__relevance__'
 
@@ -110,6 +124,7 @@ export function QueryControlsBar({
   const { t } = useTranslation()
   const fulltextId = useId()
   const groupId = useId()
+  const groupKey = groupBy?.key
 
   // Local mirror of the full-text input so typing is responsive while the
   // committed value is debounced into the store.
@@ -174,17 +189,29 @@ export function QueryControlsBar({
       onGroupByChange(null)
       return
     }
-    const key: GroupKey = { type: value as SimpleGroupKeyType }
+    const key: GroupKey =
+      value === PROPERTY
+        ? { type: 'Property', key: '' }
+        : value === DATE_BUCKET
+          ? DEFAULT_DATE_BUCKET
+          : { type: value as SimpleGroupKeyType }
     onGroupByChange({ key })
   }
+  const setGroupPropertyKey = (key: string): void => {
+    onGroupByChange({ key: { type: 'Property', key } })
+  }
+  const setGroupDate = (patch: { source?: DateField; unit?: DateBucketUnit }): void => {
+    if (groupKey?.type !== 'DateBucket') return
+    onGroupByChange({ key: { ...groupKey, ...patch } })
+  }
   const groupValue: string =
-    groupBy == null
+    groupKey == null
       ? NONE
-      : groupBy.key.type === 'Property' || groupBy.key.type === 'DateBucket'
-        ? // Property/DateBucket grouping isn't offered in this control yet; fall
-          // back to None so the Select stays in a valid, in-vocabulary state.
-          NONE
-        : groupBy.key.type
+      : groupKey.type === 'Property'
+        ? PROPERTY
+        : groupKey.type === 'DateBucket'
+          ? DATE_BUCKET
+          : groupKey.type
 
   // --- Aggregates -----------------------------------------------------------
   const addAggregate = (): void => {
@@ -318,8 +345,54 @@ export function QueryControlsBar({
                 {t(`advancedQuery.group.${key.charAt(0).toLowerCase()}${key.slice(1)}`)}
               </SelectItem>
             ))}
+            <SelectItem value={PROPERTY}>{t('advancedQuery.group.property')}</SelectItem>
+            <SelectItem value={DATE_BUCKET}>{t('advancedQuery.group.dateBucket')}</SelectItem>
           </SelectContent>
         </Select>
+        {groupKey?.type === 'Property' && (
+          <Input
+            className="h-8 w-40 text-xs"
+            value={groupKey.key}
+            onChange={(e) => setGroupPropertyKey(e.target.value)}
+            placeholder={t('advancedQuery.group.propertyKeyPlaceholder')}
+            aria-label={t('advancedQuery.group.propertyKeyLabel')}
+            data-testid="advanced-query-group-property-key"
+          />
+        )}
+        {groupKey?.type === 'DateBucket' && (
+          <div className="flex items-center gap-2" data-testid="advanced-query-group-date">
+            <Select
+              value={groupKey.source}
+              onValueChange={(v) => setGroupDate({ source: v as DateField })}
+            >
+              <SelectTrigger size="sm" aria-label={t('advancedQuery.group.dateSourceLabel')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DATE_FIELDS.map((field) => (
+                  <SelectItem key={field} value={field}>
+                    {t(`advancedQuery.group.dateSource.${field}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={groupKey.unit}
+              onValueChange={(v) => setGroupDate({ unit: v as DateBucketUnit })}
+            >
+              <SelectTrigger size="sm" aria-label={t('advancedQuery.group.dateUnitLabel')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DATE_UNITS.map((unit) => (
+                  <SelectItem key={unit} value={unit}>
+                    {t(`advancedQuery.group.dateUnit.${unit}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {/* Aggregates */}
