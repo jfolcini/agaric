@@ -13,10 +13,12 @@ import {
   type TypedHandlers,
   applyUndoForTarget,
   deleteCohort,
+  insertAtLiveSlotAndRenumber,
   insertAtSlotAndRenumber,
   nextCohortMarker,
   notFoundRejection,
   refreshDescendantPageIds,
+  renumberLiveSiblings,
   renumberSiblings,
   resolveUndoTarget,
   restoreCohort,
@@ -236,10 +238,14 @@ export const historyHandlers = {
         // #957 — undoing a cross-parent move must also restore the subtree's
         // descendant `page_id`s to the (now-restored) page root.
         refreshDescendantPageIds(payload['block_id'] as string)
-        insertAtSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
+        // #4669 — the LIVE-only reverse pair, not the forward helpers. The
+        // backend's reverse-apply path excludes tombstones from both the slot
+        // and the densification; the forward one ranks them. Sharing the
+        // forward helper here renumbered a tombstone on every undo.
+        insertAtLiveSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
         // Collapse the vacated source group too (skip when same parent — the
         // insert already renumbered it).
-        if (curParentId !== oldParentId) renumberSiblings(curParentId)
+        if (curParentId !== oldParentId) renumberLiveSiblings(curParentId)
       }
       reverseOpType = 'move_block'
     } else if (target.op_type === 'restore_block') {

@@ -400,6 +400,11 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     config.failure_persistence = None;
     let mut runner = TestRunner::new(config);
 
+    // One runtime for the whole run, not one per case: `runner.run` invokes this
+    // closure 256+ times and again for every shrink re-entry, and each
+    // `Runtime::new` spins up a fresh thread pool it then drops.
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+
     let result = runner.run(&op_chain_strategy(CHAIN_LEN), |sketches: Vec<OpKind>| {
         let fixture = chain_to_fixture(&resolve_chain(&sketches), "conformance_fuzz_generated");
         for op in fixture["ops"].as_array().expect("rendered ops") {
@@ -407,13 +412,11 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
             *reached.borrow_mut().entry(command.to_owned()).or_default() += 1;
         }
 
-        let backend = tokio::runtime::Runtime::new()
-            .expect("tokio runtime")
-            .block_on(async {
-                replay_fixture(&fixture, "conformance_fuzz_generated")
-                    .await
-                    .snapshot
-            });
+        let backend = runtime.block_on(async {
+            replay_fixture(&fixture, "conformance_fuzz_generated")
+                .await
+                .snapshot
+        });
         let mock = bridge.borrow_mut().snapshot(&fixture).map_err(|error| {
             let path = write_counterexample(&fixture, &backend);
             TestCaseError::fail(format!(

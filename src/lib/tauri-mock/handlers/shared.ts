@@ -1159,14 +1159,30 @@ export function insertAtSlotAndRenumber(
     if (px !== py) return px - py
     return (x['id'] as string).localeCompare(y['id'] as string)
   })
-  const clamped = Math.max(0, Math.min(slot, others.length))
+  // `slot` is a LIVE-sibling slot, and resolving it is a SEPARATE question from
+  // how the group is then densified. The backend's `LoroEngine::live_tree_slot`
+  // (#400) walks the whole ordered group — tombstones included — and stops at
+  // the tree index where this block becomes the `slot`-th LIVE child; only the
+  // densification below ranks tombstones. Resolving the slot against the
+  // tombstone-inclusive list instead places the block one slot early for every
+  // tombstone ordered before the drop point, which is both a `position`
+  // divergence and a wrong live ORDER.
+  let liveSeen = 0
+  let treeIndex = others.length
+  for (let i = 0; i < others.length; i += 1) {
+    if (liveSeen === slot) {
+      treeIndex = i
+      break
+    }
+    if (others[i]?.['deleted_at'] == null) liveSeen += 1
+  }
   // Pre-rank the OTHER siblings 1..N, then give the moved block a fractional
-  // key that sits just after the (clamped)-th other sibling. `renumberSiblings`
-  // then collapses everything back to dense integers in that order.
+  // key that sits just before the sibling now at `treeIndex`. `renumberSiblings`
+  // then collapses everything — tombstones included — back to dense integers.
   others.forEach((b, i) => {
     b['position'] = i + 1
   })
-  moved['position'] = clamped + 0.5
+  moved['position'] = treeIndex + 0.5
   renumberSiblings(parentId)
 }
 
@@ -1180,6 +1196,63 @@ export function insertAtSlotAndRenumber(
  * descendants keep a stale `page_id`, diverging from the backend (and breaking
  * `load_page_subtree`, which keys on `page_id`).
  */
+/**
+ * #4669 — the REVERSE-path pair of {@link renumberSiblings} /
+ * {@link insertAtSlotAndRenumber}, live-only on both counts.
+ *
+ * The backend ranks tombstones on the FORWARD apply path
+ * (`reproject_dense_positions`, #419) and excludes them on the REVERSE one:
+ * `apply_reverse_in_tx`'s MoveBlock arm takes its target group with
+ * `WHERE parent_id IS ? AND deleted_at IS NULL`, clamps the slot to that live
+ * count, and densifies through `reproject_live_sibling_group` — "tombstoned
+ * siblings are excluded: they are not part of the live order a user sees"
+ * (`src-tauri/src/commands/history.rs`).
+ *
+ * So an undo leaves a tombstone's stale rank alone, and a restored live block
+ * may legitimately land on the same number. Reusing the forward helpers here
+ * instead renumbers the tombstone, which is a `position` divergence on rows the
+ * conformance snapshot compares.
+ */
+export function renumberLiveSiblings(parentId: string | null): void {
+  const siblings = [...blocks.values()].filter(
+    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'],
+  )
+  siblings.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  siblings.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+}
+
+/** Reverse-path insert: live-only slot AND live-only densification. */
+export function insertAtLiveSlotAndRenumber(
+  parentId: string | null,
+  blockId: string,
+  slot: number,
+): void {
+  const moved = blocks.get(blockId)
+  if (!moved) return
+  const others = [...blocks.values()].filter(
+    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'] && b['id'] !== blockId,
+  )
+  others.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  const clamped = Math.max(0, Math.min(slot, others.length))
+  others.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+  moved['position'] = clamped + 0.5
+  renumberLiveSiblings(parentId)
+}
+
 export function refreshDescendantPageIds(rootBlockId: string): void {
   const root = blocks.get(rootBlockId)
   if (!root) return

@@ -104,60 +104,78 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(rowOf(A)['position']).not.toBe(rowOf(B)['position'])
   })
 
-  it('#4669 — undoing a move past a tombstone does not collide with it', () => {
-    // `revert.ts` carries its own copies of `renumberSiblings` /
-    // `insertAtSlotAndRenumber` (a circular import forced the duplication), so
-    // a divergence between the copies and the originals is a bug by
-    // construction. Both filtered soft-deleted siblings out, which is the same
-    // duplicate-position defect the differential-fuzz lane found on the
-    // forward path — but on the UNDO path, which that lane cannot reach: its
-    // renderer emits no undo command.
+  it("#4669 — undo restores into the LIVE group, leaving the tombstone's rank alone", () => {
+    // `revert.ts` carries near-copies of `renumberSiblings` /
+    // `insertAtSlotAndRenumber` (a circular import forced the duplication), and
+    // they rank DIFFERENTLY from the originals on purpose, because the backend
+    // does:
+    //
+    //   * forward apply → `reproject_dense_positions`, which ranks the whole
+    //     ordered group, tombstone included (#419).
+    //   * reverse apply → `apply_reverse_in_tx`'s MoveBlock arm, whose target
+    //     group is `WHERE parent_id IS ? AND deleted_at IS NULL`, densified by
+    //     `reproject_live_sibling_group` — "tombstoned siblings are excluded:
+    //     they are not part of the live order a user sees"
+    //     (`src-tauri/src/commands/history.rs`).
+    //
+    // So the tombstone KEEPS its stale rank across the undo and the restored
+    // live block legitimately lands on the same number. That shared position is
+    // the contract, not a collision bug — asserting the two must differ pins a
+    // divergence instead. The fuzz lane cannot reach this (its renderer emits
+    // no undo command), which is why it is pinned by hand.
     const A = '00000000000000000000TOMB_A'
     const B = '00000000000000000000TOMB_B'
     const OTHER = '000000000000000000OTHERPAGE'
     seedPage([A, B])
     blocks.set(OTHER, makeBlock(OTHER, 'page', 'Other', null, 2))
 
-    // A is tombstoned and KEEPS position 1 — the backend ranks the whole
-    // sibling group, tombstones included (`reproject_dense_positions`, #419).
+    // Forward path: A is tombstoned and KEEPS position 1.
     dispatch('delete_block', { blockId: A })
     expect(rowOf(A)['deleted_at']).not.toBeNull()
     expect(rowOf(A)['position']).toBe(1)
 
-    // Move B off the page, then undo it back.
     dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
     dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
 
     expect(rowOf(B)['parent_id']).toBe(PAGE)
-    // The whole point: B must not be handed the tombstone's slot. Filtering
-    // A out left `others` empty, so B was renumbered to 1 on top of it.
-    expect(rowOf(B)['position']).not.toBe(rowOf(A)['position'])
+    // The live target group was EMPTY (A is a tombstone), so the slot clamps to
+    // 0 and B densifies to 1 — on top of A's untouched stale 1.
     expect(rowOf(A)['position']).toBe(1)
-    expect(rowOf(B)['position']).toBe(2)
+    expect(rowOf(B)['position']).toBe(1)
+    // What actually matters to a reader: B is the only thing they can see.
+    expect(loadedRootOrder()).toEqual([B])
   })
 
-  it('#4669 — reverting a move past a tombstone via revert_ops does not collide', () => {
+  it('#4669 — revert_ops takes the same live-only reverse path as undo_page_op', () => {
     // `revert_ops` goes through `revert.ts`'s `applyRevertForOp`, which carries
-    // its OWN copies of the two position helpers (a circular import forced the
-    // duplication). `undo_page_op` above never reaches them, so without this
-    // the copies could drift back and nothing would say so.
-    const A = '0000000000000000000REVTOMB_A'
-    const B = '0000000000000000000REVTOMB_B'
-    const OTHER = '00000000000000000REVOTHERPG'
+    // its OWN copies of the two position helpers. `undo_page_op` above never
+    // reaches them, so without this the copies could drift and nothing would
+    // say so. Same expected shape, for the same reason.
+    const A = '000000000000000000REVTOMBA'
+    const B = '000000000000000000REVTOMBB'
+    const OTHER = '0000000000000000REVOTHERPG'
     seedPage([A, B])
     blocks.set(OTHER, makeBlock(OTHER, 'page', 'Other', null, 2))
+    // A child under B, so the revert's descendant `page_id` re-stamp is
+    // exercised and not merely present (#957 — a moved subtree's descendants
+    // must carry the new page root; the backend's reverse arm re-derives the
+    // whole subtree via `rederive_page_and_space_ids`).
+    const KID = (dispatch('create_block', { parentId: B, content: 'kid' }) as { id: string }).id
 
     dispatch('delete_block', { blockId: A })
     dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
+    expect(rowOf(KID)['page_id']).toBe(OTHER)
 
     const moveOp = opLog.findLast((o) => o.op_type === 'move_block')
     if (!moveOp) throw new Error('no move_block op to revert')
     dispatch('revert_ops', { ops: [{ device_id: moveOp.device_id, seq: moveOp.seq }] })
 
     expect(rowOf(B)['parent_id']).toBe(PAGE)
-    expect(rowOf(B)['position']).not.toBe(rowOf(A)['position'])
     expect(rowOf(A)['position']).toBe(1)
-    expect(rowOf(B)['position']).toBe(2)
+    expect(rowOf(B)['position']).toBe(1)
+    expect(loadedRootOrder()).toEqual([B])
+    // The subtree came back with it.
+    expect(rowOf(KID)['page_id']).toBe(PAGE)
   })
 
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {
