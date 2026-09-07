@@ -15,12 +15,14 @@
  *  - axe a11y audit
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { SettingsView } from '@/components/pages/SettingsView'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -134,6 +136,11 @@ beforeEach(() => {
   mockUseIsMobile.mockReset()
   mockUseIsMobile.mockReturnValue(false)
   localStorage.removeItem('agaric:quickCaptureShortcut')
+  // The Notifications tab renders the real NotificationsTab, which loads its
+  // preferences on mount (#4554).
+  vi.mocked(invoke).mockImplementation(
+    mockInvokeCommands({ get_reminder_settings: () => ({ enabled: false, time: '09:00' }) }),
+  )
 })
 
 describe('SettingsView', () => {

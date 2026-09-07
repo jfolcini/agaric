@@ -342,6 +342,8 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
+  set_reminder_settings:
+    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_rw_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
@@ -495,6 +497,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_device_id: 'no domain state — this install’s device identity',
   get_status: 'no domain state — sync transport status',
   get_recovery_status: 'no domain state — boot recovery status',
+  get_reminder_settings: 'no domain state — device-local reminder preferences',
   get_mdns_status: 'no domain state — mDNS discovery status',
   get_bind_exposure_status: 'no domain state — sync endpoint bind exposure',
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
