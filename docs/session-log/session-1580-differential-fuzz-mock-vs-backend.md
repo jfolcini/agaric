@@ -1,4 +1,4 @@
-# Session 1574 — differential-fuzz the mock against the real backend (#4669)
+# Session 1580 — differential-fuzz the mock against the real backend (#4669)
 
 Closes #4669. The committed `conformance/fixtures/*.json` corpus is a good
 *specification* and a poor *regression net*: every divergence it has caught was
