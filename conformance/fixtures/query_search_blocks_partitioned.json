@@ -196,7 +196,7 @@
       "error": null,
       "has_more": null,
       "name": "partitioned_zero_caps",
-      "rows": ["blocks#has_more=false", "pages#has_more=false"],
+      "rows": ["pages#has_more=false", "blocks#has_more=false"],
       "total_count": null
     },
     {
@@ -212,7 +212,7 @@
       "error": null,
       "has_more": null,
       "name": "partitioned_blank_query_unfiltered",
-      "rows": ["blocks#has_more=false", "pages#has_more=false"],
+      "rows": ["pages#has_more=false", "blocks#has_more=false"],
       "total_count": null
     },
     {
@@ -304,8 +304,7 @@
       },
       "command": "search_blocks_partitioned",
       "comment": "Two scans of one match set: `pages` holds the `block_type = 'page'` hits, `blocks` every hit (pages included), each `ORDER BY rank, id`; under wide caps neither has more.",
-      "name": "partitioned_wide_caps",
-      "ordered": true
+      "name": "partitioned_wide_caps"
     },
     {
       "args": {
@@ -321,8 +320,7 @@
       },
       "command": "search_blocks_partitioned",
       "comment": "`page_limit` caps the page partition alone: one page row, `pages` has_more, `blocks` untouched at ten.",
-      "name": "partitioned_page_cap_holds_back",
-      "ordered": true
+      "name": "partitioned_page_cap_holds_back"
     },
     {
       "args": {
@@ -338,8 +336,7 @@
       },
       "command": "search_blocks_partitioned",
       "comment": "…and `block_limit` the block partition alone.",
-      "name": "partitioned_block_cap_holds_back",
-      "ordered": true
+      "name": "partitioned_block_cap_holds_back"
     },
     {
       "args": {
@@ -405,8 +402,7 @@
       },
       "command": "search_blocks_partitioned",
       "comment": "A blank query WITH a structural filter lists the filtered partitions recency-ordered: no page is a child of S1, and the blocks partition is S1's three children newest first.",
-      "name": "partitioned_blank_query_parent_filter",
-      "ordered": true
+      "name": "partitioned_blank_query_parent_filter"
     }
   ],
   "seed": {

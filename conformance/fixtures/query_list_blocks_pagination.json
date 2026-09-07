@@ -145,8 +145,7 @@
       },
       "command": "list_blocks",
       "comment": "First page of two rows out of five, so `has_more` is true and a `next_cursor` exists to chain from.",
-      "name": "children_page_1",
-      "ordered": true
+      "name": "children_page_1"
     },
     {
       "args": {
@@ -162,8 +161,7 @@
       "command": "list_blocks",
       "comment": "The middle page — the one that only exists if the cursor was both emitted and honoured. Its rows are the pin: a limit the command ignores returns all five here, and a keyset that resumes from the wrong side of the boundary returns an overlapping or skipped pair.",
       "cursor_from": "children_page_1",
-      "name": "children_page_2",
-      "ordered": true
+      "name": "children_page_2"
     },
     {
       "args": {
@@ -179,8 +177,7 @@
       "command": "list_blocks",
       "comment": "The short final page: one row, `has_more` false. Pins the end-of-results signal the FE stops on.",
       "cursor_from": "children_page_2",
-      "name": "children_page_3",
-      "ordered": true
+      "name": "children_page_3"
     },
     {
       "args": {
@@ -194,8 +191,7 @@
       },
       "command": "list_blocks",
       "comment": "A NULL `parentId` is not 'no parent filter' — `list_children` binds `WHERE parent_id IS ?1`, so it selects the ROOT blocks and nothing else. This step is the discriminator: the seed has ONE root (the page) above five children, so an implementation that reads null as 'unfiltered' answers all six rows here instead of one. It is also why the default page size is not a safe fallback for that reading: with `limit` omitted the wrong answer is not merely a superset but the first 50 of one.",
-      "name": "roots_only_for_null_parent",
-      "ordered": true
+      "name": "roots_only_for_null_parent"
     }
   ],
   "seed": {

@@ -937,9 +937,10 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
   // `SortKeyset`: the sort-key EXPRESSION, the keyset WHERE that resumes a
   // cursor page, and the cursor slot the anchor is stashed in. Unlike
   // `filtered_blocks_query`'s arms (which differ in WHICH rows come back),
-  // these differ in WHAT ORDER — so a step that credits one of them without
-  // `"ordered": true` is credit for nothing, and all five steps in
-  // `query_pages_metadata_sorts.json` are ordered.
+  // these differ in WHAT ORDER — so a step that credits one of them while
+  // opting out of the ordered comparison is credit for nothing. Since #4670
+  // ordered is the default, and none of the five steps in
+  // `query_pages_metadata_sorts.json` opts out.
   //
   // The default branch is `sort-alphabetical` because `sort` is
   // `#[serde(default)]` over a `#[default] Alphabetical` enum: an OMITTED sort

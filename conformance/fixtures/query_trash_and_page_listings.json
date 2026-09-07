@@ -299,8 +299,7 @@
       },
       "command": "list_trash",
       "comment": "Four roots, newest cohort first: S3, S6, S4, S5. S7 is absent because it shares S6's cohort; S5 is present because its parent S4 was deleted LATER, in a different cohort — the #3818 precondition. Every token carries `deleted_at`, so a served live row or a root reported without its tombstone fails too.",
-      "name": "trash_roots_newest_first",
-      "ordered": true
+      "name": "trash_roots_newest_first"
     },
     {
       "args": {
@@ -312,8 +311,7 @@
       },
       "command": "list_trash",
       "comment": "First page of the same listing: `has_more` and a `{deleted_at,id}` cursor.",
-      "name": "trash_page_1",
-      "ordered": true
+      "name": "trash_page_1"
     },
     {
       "args": {
@@ -326,8 +324,7 @@
       "command": "list_trash",
       "comment": "Resumes on the `(deleted_at, id)` keyset: the remaining two roots, no overlap, no skip, and the listing ends here.",
       "cursor_from": "trash_page_1",
-      "name": "trash_page_2",
-      "ordered": true
+      "name": "trash_page_2"
     },
     {
       "args": {
@@ -350,8 +347,7 @@
       },
       "command": "list_all_pages_in_space",
       "comment": "Every LIVE page in the space in case-insensitive content order (Home, proj, Template Alpha); the deleted S3 is out.",
-      "name": "pages_all_in_space",
-      "ordered": true
+      "name": "pages_all_in_space"
     },
     {
       "args": {
@@ -363,8 +359,7 @@
       },
       "command": "list_all_pages_in_space",
       "comment": "Only S2 carries the direct tag S8.",
-      "name": "pages_tag_filter_keeps_tagged_only",
-      "ordered": true
+      "name": "pages_tag_filter_keeps_tagged_only"
     },
     {
       "args": {
@@ -376,8 +371,7 @@
       },
       "command": "list_all_pages_in_space",
       "comment": "An empty `tagIds` is the same as none on both stacks (`filter(|t| !t.is_empty())` / `length > 0`), not an always-empty match.",
-      "name": "pages_empty_tag_filter_is_unfiltered",
-      "ordered": true
+      "name": "pages_empty_tag_filter_is_unfiltered"
     },
     {
       "args": {

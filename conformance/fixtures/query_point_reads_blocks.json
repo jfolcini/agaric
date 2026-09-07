@@ -189,7 +189,8 @@
       },
       "command": "batch_resolve",
       "comment": "The chip resolver keeps a tombstoned target and marks it `deleted: true` (the FE renders a broken chip from that flag) rather than dropping it; the unknown id IS dropped. `title` is the renamed `content` column — an id-only token could not see either projection.",
-      "name": "batch_resolve_flags_tombstone"
+      "name": "batch_resolve_flags_tombstone",
+      "unordered": "`batch_resolve_inner` has no ORDER BY (`FROM blocks b WHERE b.id IN (SELECT value FROM json_each(?1))`), so the backend answers in index-scan order while the mock answers in REQUEST order. The command promises neither, so the sequence is not comparable; the ROWS still are."
     },
     {
       "args": {
@@ -201,8 +202,7 @@
       },
       "command": "load_page_subtree",
       "comment": "`load_page_subtree_inner` selects on `page_id = root`, so the GRANDCHILD S4 is in the result even though its parent is S3 — a mock that listed direct children would drop it. The root itself and the tombstone are excluded. `ordered` because the sort key is `(position, id)` over seed blocks whose ids are byte-identical on both stacks. #3977 — S5 (page Beta) and its child S6 are the NEGATIVE CONTROL and the reason this step can fail at all: both are ACTIVE, both are in the same space, and both have `page_id != S1`, so the `page_id` predicate is the only thing that excludes them. Before they were seeded every active non-root block already had `page_id == S1`, and deleting the walk predicate from the mock changed nothing (measured: green across the whole frontend suite). S6 also sits at position 1, so a dropped predicate reorders the head of this `ordered` list, not just its tail.",
-      "name": "load_page_subtree_walks_page_id",
-      "ordered": true
+      "name": "load_page_subtree_walks_page_id"
     }
   ],
   "seed": {

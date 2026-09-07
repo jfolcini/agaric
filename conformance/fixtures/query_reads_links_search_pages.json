@@ -254,8 +254,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "#3833 item 6 — `ordered` because the sort key is page TITLE, which the fixture controls. Three pages so the title order is DIFFERENT from the id order: id order is Alpha(B1), Beta(B2), Aardvark(B5) (B5 is the newest-seeded id), but alphabetically Aardvark sorts first — [B5, B1, B2]. With only Alpha/Beta present, alphabetical and id order coincided and the step could not tell `sort: alphabetical` from the mock ignoring the sort key entirely.",
-      "name": "pages_metadata_alphabetical",
-      "ordered": true
+      "name": "pages_metadata_alphabetical"
     }
   ],
   "seed": {

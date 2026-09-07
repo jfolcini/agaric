@@ -269,8 +269,7 @@
       },
       "command": "list_tags_for_block",
       "comment": "The only block that keeps TWO tags, applied in DESCENDING id order — so it is the one step whose SEQUENCE distinguishes the backend's `ORDER BY tag_id` from the insertion order the mock used to return (#3873). It is `ordered` now that the mock sorts too: the recorded rows are ascending by tag id while the ops applied them descending, so an implementation that returns application order fails here. It also still pins that BOTH tags survive on a block that lost none.",
-      "name": "tags_two_surviving_in_id_order",
-      "ordered": true
+      "name": "tags_two_surviving_in_id_order"
     }
   ],
   "seed": {

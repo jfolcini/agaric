@@ -156,7 +156,7 @@
       "error": null,
       "has_more": false,
       "name": "search_fts_widget",
-      "rows": ["B2", "B3", "B4", "B6"],
+      "rows": ["B6", "B2", "B3", "B4"],
       "total_count": null
     },
     {
@@ -188,7 +188,7 @@
       "error": null,
       "has_more": false,
       "name": "search_case_sensitive_widget",
-      "rows": ["B2", "B6"],
+      "rows": ["B6", "B2"],
       "total_count": null
     },
     {
@@ -204,7 +204,7 @@
       "error": null,
       "has_more": false,
       "name": "advanced_fulltext_widget",
-      "rows": ["B2", "B3", "B4", "B6"],
+      "rows": ["B6", "B3", "B2", "B4"],
       "total_count": 4
     },
     {
@@ -322,8 +322,7 @@
       },
       "command": "search_blocks",
       "comment": "Arm 2 — a BLANK query with at least one structural filter is NOT the empty early return: it degrades to `fts_fetch_filter_only_page`, a `FROM blocks b` scan with no FTS5 at all, ordered `b.id DESC`. `ordered` because that recency order is the arm's whole point and the ids are seed ids (byte-identical on both stacks). Pins three things at once: that a blank query with a filter returns rows, that `parentId` restricts to S1's three children (S6 hangs off the other page, S1/S5 are pages), and the DESC direction.",
-      "name": "search_blank_query_parent_filter",
-      "ordered": true
+      "name": "search_blank_query_parent_filter"
     },
     {
       "args": {
@@ -355,8 +354,7 @@
       },
       "command": "search_blocks",
       "comment": "Arm 3 — `isRegex` BYPASSES FTS5 entirely and runs the compiled pattern against RAW `blocks.content` over a recency-ordered pre-filtered scan (`ORDER BY b.id DESC`, `next_cursor` always None). The `^` anchor is what makes this un-fakeable by a substring matcher: S4 contains `widget` mid-string and must NOT match, while a literal-substring search for the string `^widget` matches nothing at all. The default `case_sensitive: false` composes an `(?i)` prefix, so the lowercase pattern must still match `Widget`.",
-      "name": "search_regex_anchored_widget",
-      "ordered": true
+      "name": "search_regex_anchored_widget"
     },
     {
       "args": {
@@ -430,8 +428,7 @@
       },
       "command": "search_blocks",
       "comment": "#3943 — page 1 of a PAGED FTS search. S8 and S9 carry byte-identical content, so they rank identically on both stacks (bm25 depends on term frequency and document length, both equal) and `ORDER BY fts.rank, b.id` is decided by the id tiebreak alone — the one shape in which an FTS page is comparable across stacks at all, since the rank VALUES are not. `ordered` for that reason. Records `has_more: true` WITH a `v1:{id,rank}` cursor: the mock used to answer `has_more: true` with `next_cursor: null` here, which no backend produces and no client can act on.",
-      "name": "search_fts_paged_page1",
-      "ordered": true
+      "name": "search_fts_paged_page1"
     },
     {
       "args": {
@@ -447,8 +444,7 @@
       "command": "search_blocks",
       "comment": "#3943 — page 2, resumed from page 1's `(rank, id)` cursor. This is the step a `next_cursor: null` regression reddens: the mock would re-deliver B8 forever. Each stack feeds itself its OWN cursor bytes, so what is compared is the ROW the resumed page holds.",
       "cursor_from": "search_fts_paged_page1",
-      "name": "search_fts_paged_page2",
-      "ordered": true
+      "name": "search_fts_paged_page2"
     },
     {
       "args": {

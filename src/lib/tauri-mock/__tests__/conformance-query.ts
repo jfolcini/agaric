@@ -59,26 +59,22 @@ export interface QueryStep {
   command: string
   args?: Record<string, unknown>
   /**
-   * Compare `rows` in the order the command returned them. Default: canonical
-   * sort, i.e. a SET comparison that cannot see an ordering divergence — see
-   * the "Ordering" section of the Rust twin's module docs for what that
-   * currently costs. A step whose whole point is a SORT arm must therefore set
-   * this: crediting an ordering branch from a set comparison is no evidence at
-   * all (#3927, which is why the five `query_pages_metadata_sorts` steps and
-   * the three `query_advanced_filters` ones are all `ordered`).
+   * #4670 — opt OUT of comparing `rows` in the order the command returned
+   * them, NAMING why the two stacks' orders are not comparable. Ordered is the
+   * default; a bare `true` is rejected here and by the Rust twin, because an
+   * escape hatch nobody has to justify is one every step takes.
    *
-   * Two live mock ordering bugs used to be invisible to an unordered step and
-   * both are fixed: #3821 (`run_advanced_query` ordered `b.id ASC`, the engine
-   * `b.id DESC`) and #3873 (`list_tags_for_block` returning insertion order).
-   * The steps that pin them — `query_advanced_filters`' three, and
-   * `query_point_reads_tags`'s `tags_two_surviving_in_id_order` — are
-   * `ordered` now. #3821 only ever covered the DEFAULT keyset: the
-   * `advanced_position_page_*` steps (#3893) name an EXPLICIT `position` sort,
-   * are `ordered`, and pass, tiebreak included, so they were never exposed to
-   * it in the first place.
-
+   * Two benign reasons, and no others. The command has NO `ORDER BY`, so its
+   * sequence is the query plan's rather than a contract — the three current
+   * opt-outs, all point reads. Or its terminal sort key is the RAW block id
+   * over rows the fixture created through ops, which are a random ULID on the
+   * backend and a mock-local id in the mock. Two stacks that both sort and
+   * disagree is a divergence to fix: #3821 (`run_advanced_query` ordered
+   * `b.id ASC`, the engine `b.id DESC`) and #3873 (`list_tags_for_block` in
+   * insertion order) both hid behind the old set comparison and were found
+   * head-on, not by it.
    */
-  ordered?: boolean
+  unordered?: string
   /**
    * Take this step's page cursor from the `next_cursor` an EARLIER step of the
    * same fixture returned — the only honest way to spell "the second page",
@@ -1091,6 +1087,20 @@ export async function runQuerySteps(
           `conformance_query.rs)`,
       )
     }
+    // #4670 — re-read as `unknown`, not through the declared `string?`: this
+    // runner's input is `JSON.parse` output, so a fixture spelling
+    // `"unordered": true` reaches here typed as a string and would buy the
+    // weaker comparison for free. Mirror of the Rust twin's `match`.
+    const unordered: unknown = (step as unknown as Record<string, unknown>)['unordered']
+    const isUnordered = unordered !== undefined && unordered !== null
+    if (isUnordered && (typeof unordered !== 'string' || unordered.trim() === '')) {
+      throw new Error(
+        `query step '${step.name}' (command '${step.command}'): \`unordered\` must be a ` +
+          `NON-EMPTY reason string saying why the backend's row order is not comparable ` +
+          `with the mock's, got ${JSON.stringify(unordered)}. Ordered is the default: if ` +
+          `the two stacks simply disagree, that is a divergence to fix, not a reason.`,
+      )
+    }
     const args = expandQueryArgs(step.args ?? {}) as Record<string, unknown>
     if (step.cursor_from != null) {
       if (!cursors.has(step.cursor_from)) {
@@ -1131,7 +1141,7 @@ export async function runQuerySteps(
     const envelope = (response ?? {}) as Record<string, unknown>
     out.push({
       name: step.name,
-      rows: step.ordered === true ? rows : rows.toSorted(cmpTokens),
+      rows: isUnordered ? rows.toSorted(cmpTokens) : rows,
       has_more:
         error !== null || shape.hasMoreKey === null
           ? null

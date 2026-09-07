@@ -575,8 +575,7 @@
       },
       "command": "list_all_tags_in_space",
       "comment": "Every live tag in the space, `ORDER BY tc.name` under SQLite's BINARY collation: `WIP-1` and `Zed` sort before every lowercase name, `a_b` before `apple`. `usage_count` counts LIVE holders through `block_tags`: S10 is deleted, so `Zed` is 2 (S9, S11) and `apple` 1 (S9); `orphan` has none and is still listed (LEFT JOIN). A locale-aware or case-folding sort, or a constant usage, diverges here.",
-      "name": "tags_in_space_binary_name_order",
-      "ordered": true
+      "name": "tags_in_space_binary_name_order"
     },
     {
       "args": {
@@ -595,8 +594,7 @@
       },
       "command": "list_tags_by_prefix",
       "comment": "`name LIKE 'ze%'` — SQLite's LIKE folds ASCII case, so `Zed` matches a lowercase prefix.",
-      "name": "tags_prefix_is_case_insensitive",
-      "ordered": true
+      "name": "tags_prefix_is_case_insensitive"
     },
     {
       "args": {
@@ -604,8 +602,7 @@
       },
       "command": "list_tags_by_prefix",
       "comment": "Both case-variants match the fold, and the page is `ORDER BY name` BINARY: `WIP-1` before `wip`.",
-      "name": "tags_prefix_orders_binary",
-      "ordered": true
+      "name": "tags_prefix_orders_binary"
     },
     {
       "args": {
@@ -614,8 +611,7 @@
       },
       "command": "list_tags_by_prefix",
       "comment": "#768: `LIMIT 1` over the BINARY-ordered page keeps `WIP-1` and would drop the exact match `wip`, so the exact (case-insensitive) match is fetched separately, the page's last row evicted to hold the cap, and `wip` spliced into name order. A mock that stops at the LIMIT page answers `WIP-1`.",
-      "name": "tags_prefix_limit_keeps_the_exact_match_768",
-      "ordered": true
+      "name": "tags_prefix_limit_keeps_the_exact_match_768"
     },
     {
       "args": {
@@ -623,8 +619,7 @@
       },
       "command": "list_tags_by_prefix",
       "comment": "`escape_like`: the `_` in the prefix is a literal, not the LIKE single-character wildcard, so `axb` does not match.",
-      "name": "tags_prefix_escapes_like_wildcards",
-      "ordered": true
+      "name": "tags_prefix_escapes_like_wildcards"
     },
     {
       "args": {
@@ -632,8 +627,7 @@
       },
       "command": "list_tags_by_prefix",
       "comment": "An empty prefix is `LIKE '%'`: every tag, BINARY order, under the default `MAX_TAGS_PREFIX` page.",
-      "name": "tags_prefix_empty_lists_every_tag",
-      "ordered": true
+      "name": "tags_prefix_empty_lists_every_tag"
     },
     {
       "args": {
@@ -659,8 +653,7 @@
       "args": {},
       "command": "list_property_keys",
       "comment": "`GROUP BY key ORDER BY COUNT(*) DESC, key ASC` over every `block_properties` row, deleted holders included (no join to `blocks`): `kind` and `status` hold three rows each (S10's rows survive its delete), so `key ASC` puts `kind` first, and the single `due` row comes last. An alphabetical listing, or one that adds keys nobody set, diverges here.",
-      "name": "property_keys_usage_ranked_then_key_asc",
-      "ordered": true
+      "name": "property_keys_usage_ranked_then_key_asc"
     },
     {
       "args": {
@@ -668,8 +661,7 @@
       },
       "command": "list_property_values",
       "comment": "Distinct `value_text` for the key, most-used first: `note` (S9, S11) before `idea` (S10, deleted but still counted).",
-      "name": "property_values_usage_ranked",
-      "ordered": true
+      "name": "property_values_usage_ranked"
     },
     {
       "args": {
@@ -677,8 +669,7 @@
       },
       "command": "list_property_values",
       "comment": "Three values with one row each: `value_text ASC` orders them, so `archived`, `closed`, `open`.",
-      "name": "property_values_tiebreak_value_asc",
-      "ordered": true
+      "name": "property_values_tiebreak_value_asc"
     },
     {
       "args": {
