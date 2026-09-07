@@ -1399,3 +1399,121 @@ async fn a_space_created_before_it_had_a_doc_reaches_its_peer_4775() {
     mat_a.shutdown();
     mat_b.shutdown();
 }
+
+/// #4801: a page moved to another space keeps its tasks' reserved columns
+/// (`todo_state`, `due_date`, …) on the paired device. The move hydrates the
+/// page's subtree into the target space's doc; the doc must carry the reserved
+/// keys too, because the peer's import replaces all four `blocks` columns from
+/// the doc, NULL for any key absent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_moved_page_keeps_its_task_dates_on_its_peer_4801() {
+    use crate::commands::{
+        create_block_inner, create_page_in_space_inner, create_space_inner,
+        move_blocks_to_space_inner, set_due_date_inner, set_todo_state_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        None,
+        "Plan".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let task = create_block_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        "content".into(),
+        "Ship it".into(),
+        Some(page.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    set_todo_state_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        task.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        task.as_str().into(),
+        Some("2026-09-10".into()),
+    )
+    .await
+    .unwrap();
+    let space = create_space_inner(&pool_a, "device-A", &mat_a, "Research".into(), None)
+        .await
+        .unwrap();
+    move_blocks_to_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        vec![page.clone()],
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+    mat_b.flush_background().await.unwrap();
+
+    let (todo_state, due_date): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT todo_state, due_date FROM blocks WHERE id = ?")
+            .bind(task.as_str())
+            .fetch_one(&pool_b)
+            .await
+            .unwrap();
+    assert_eq!(
+        (todo_state.as_deref(), due_date.as_deref()),
+        (Some("TODO"), Some("2026-09-10")),
+        "the moved task's state and due date must reach B"
+    );
+    // The agenda reads `agenda_cache`, which production refills after an
+    // inbound sync (`Materializer::enqueue_inbound_sync_rebuilds`, on a
+    // trailing debounce). Run that rebuild directly so the assertion below
+    // pins the dates, not a timer.
+    agaric_store::cache::rebuild_agenda_cache(&pool_b)
+        .await
+        .unwrap();
+    let agenda = agaric_store::pagination::list_agenda(
+        &pool_b,
+        "2026-09-10",
+        None,
+        &agaric_store::pagination::PageRequest::new(None, None).unwrap(),
+        None,
+    )
+    .await
+    .unwrap()
+    .items;
+    let listed: Vec<&str> = agenda.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        listed,
+        vec![task.as_str()],
+        "B's agenda must list the moved task"
+    );
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
