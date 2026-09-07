@@ -3459,6 +3459,15 @@ mod tests {
     const DEV: &str = "L39-test-device";
     const FIXED_TS: i64 = 1_735_689_600_000; // 2025-01-01T00:00:00Z
 
+    /// The grouping window the #4741 tests drive `find_undo_group_inner` with.
+    ///
+    /// Wide enough that the housekeeping rows are inside it on any runner, so
+    /// `group == 1` is the `origin` filter excluding them rather than a
+    /// window gap doing it — the assertion passing for the wrong reason
+    /// (#4813). The seeded ops sit at `FIXED_TS`, a year below any window
+    /// this size.
+    const GROUP_WINDOW_MS_4741: i64 = 60_000;
+
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -5129,8 +5138,8 @@ mod tests {
     /// Page → one real block plus three leaked empties, all old enough to
     /// sweep. With `with_user_edit`, the real block also carries the user's
     /// history: `create_block` ("v1") at `FIXED_TS - 100_000` and
-    /// `edit_block` ("v1" → "v2") at `FIXED_TS` — 100 s apart, so a 10 ms
-    /// window groups the edit alone. Then the real sweep runs and appends
+    /// `edit_block` ("v1" → "v2") at `FIXED_TS` — 100 s apart, so a
+    /// `GROUP_WINDOW_MS_4741` window groups the edit alone. Then the real sweep runs and appends
     /// three `delete_block` ops stamped NOW (2026 wall clock, far above the
     /// 2025 `FIXED_TS`), so they are the newest ops on the page.
     async fn seed_swept_page_4741(
@@ -5218,12 +5227,6 @@ mod tests {
             );
             assert_eq!(origin, "housekeeping");
         }
-        let gaps_ok = rows.windows(2).all(|w| w[1].3 - w[0].3 <= 10);
-        assert!(
-            gaps_ok,
-            "sweep ops are consecutive — inside any grouping window"
-        );
-
         SweptPage4741 {
             page_id,
             real_id,
@@ -5265,9 +5268,16 @@ mod tests {
         let mat = Materializer::new(pool.clone());
         let page = seed_swept_page_4741(&pool, &mat, true).await;
 
-        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
-            .await
-            .expect("group undo must succeed");
+        let results = undo_page_group_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.page_id.clone(),
+            0,
+            GROUP_WINDOW_MS_4741,
+        )
+        .await
+        .expect("group undo must succeed");
 
         let reversed: Vec<(&str, &OpRef)> = results
             .iter()
@@ -5291,7 +5301,7 @@ mod tests {
         let mat = Materializer::new(pool.clone());
         let page = seed_swept_page_4741(&pool, &mat, true).await;
 
-        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, GROUP_WINDOW_MS_4741)
             .await
             .unwrap();
         assert_eq!(
@@ -5455,15 +5465,22 @@ mod tests {
         let mat = Materializer::new(pool.clone());
         let page = seed_swept_page_4741(&pool, &mat, false).await;
 
-        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
-            .await
-            .unwrap();
+        let results = undo_page_group_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.page_id.clone(),
+            0,
+            GROUP_WINDOW_MS_4741,
+        )
+        .await
+        .unwrap();
         assert!(
             results.is_empty(),
             "#4741: group undo must find no seed; got {results:?}"
         );
 
-        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, GROUP_WINDOW_MS_4741)
             .await
             .unwrap();
         assert_eq!(group, 0, "#4741: nothing to size");
@@ -5478,8 +5495,8 @@ mod tests {
 
     /// Control, both arms: a USER-initiated delete appended after the sweep
     /// — through the real `delete_block_inner`, so its row is what
-    /// production writes (`origin = 'user'`) and lands within 10 ms of the
-    /// sweep's last op — is still the positional target of both the group
+    /// production writes (`origin = 'user'`) and lands inside
+    /// `GROUP_WINDOW_MS_4741` of the sweep's last op — is still the positional target of both the group
     /// and the single-op paths, and the group is exactly that one op (the
     /// sweep's rows below it do not extend it).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5497,7 +5514,24 @@ mod tests {
                 .is_some()
         );
 
-        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, 10)
+        // #4813 — the precondition that keeps `group == 1` meaningful, asserted
+        // against the WINDOW rather than against a wall-clock bound. If the
+        // housekeeping rows fell outside it, the group would be 1 because of a
+        // window gap and the origin filter would go untested.
+        let spread: i64 = sqlx::query_scalar(
+            "SELECT MAX(created_at) - MIN(created_at) FROM op_log WHERE op_type = 'delete_block'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            spread < GROUP_WINDOW_MS_4741,
+            "the sweep's rows and the user's delete must sit INSIDE the window \
+             (spread {spread}ms, window {GROUP_WINDOW_MS_4741}ms) or `group == 1` \
+             proves nothing about the origin filter"
+        );
+
+        let group = find_undo_group_inner(&pool, page.page_id.as_str(), 0, GROUP_WINDOW_MS_4741)
             .await
             .unwrap();
         assert_eq!(
@@ -5506,9 +5540,16 @@ mod tests {
         );
 
         // Arm 1: the fused group undo.
-        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
-            .await
-            .expect("group undo of a user delete must succeed");
+        let results = undo_page_group_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.page_id.clone(),
+            0,
+            GROUP_WINDOW_MS_4741,
+        )
+        .await
+        .expect("group undo of a user delete must succeed");
         let reversed: Vec<&str> = results
             .iter()
             .map(|r| r.reversed_op_type.as_str())
@@ -5570,9 +5611,16 @@ mod tests {
                 .unwrap();
         assert_eq!(origin, "agent:test-agent");
 
-        let results = undo_page_group_inner(&pool, DEV, &mat, page.page_id.clone(), 0, 10)
-            .await
-            .expect("group undo must succeed");
+        let results = undo_page_group_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.page_id.clone(),
+            0,
+            GROUP_WINDOW_MS_4741,
+        )
+        .await
+        .expect("group undo must succeed");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].reversed_op_type, "edit_block");
         assert_eq!(results[0].reversed_op.seq, rec.seq);
