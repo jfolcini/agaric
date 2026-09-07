@@ -2046,132 +2046,9 @@ async fn recover_blocks_from_op_log(
 
         match op_type.as_str() {
             "create_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let block_type = payload["block_type"].as_str().unwrap_or("content");
-                let content = payload
-                    .get("content")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("");
-                let parent_id = payload.get("parent_id").and_then(serde_json::Value::as_str);
-                // #1252: a new-scheme (#400/#603) `create_block` carries a
-                // 0-based `index` and OMITS the legacy sparse `position`
-                // (`CreateBlockPayload.position` is
-                // `skip_serializing_if = "Option::is_none"`). Reading only
-                // `position` here wrote `blocks.position = NULL` for every
-                // such block, collapsing recovered siblings to ULID order.
-                // Mirror the SQL-only materializer fallback
-                // (`apply_create_block_sql_only`): prefer the legacy
-                // `position`, else derive a 1-based provisional position from
-                // `index` via `index_to_provisional_position`.
-                let position = payload
-                    .get("position")
-                    .and_then(serde_json::Value::as_i64)
-                    .or_else(|| {
-                        payload
-                            .get("index")
-                            .and_then(serde_json::Value::as_i64)
-                            .map(agaric_store::pagination::index_to_provisional_position)
-                    });
-
-                // #1536: keep `OR IGNORE` so recovery is idempotent (a re-run,
-                // or a row already materialized by an earlier op in this same
-                // replay, must not abort). But unlike the keyed UPDATE/DELETE
-                // arms, a silently-ignored create is invisible: ULIDs make a
-                // real id collision impossible, so `rows_affected == 0` means
-                // the op_log carried two `create_block` ops for the same id —
-                // i.e. corruption. The first create wins and is preserved
-                // (success behaviour unchanged); we only surface the drop so a
-                // corrupted log is observable rather than silently flattened.
-                // #3269: `page_id` stays NULL here even under the head-shaped
-                // recovery table (`CONSTRAINT page_id_self_for_pages CHECK
-                // (block_type != 'page' OR page_id = id)`). A SQLite CHECK
-                // rejects only a FALSE result, and for a page row the
-                // expression evaluates to `false OR (NULL = id)` = NULL, which
-                // passes; the post-loop `UPDATE ... SET page_id = id WHERE
-                // block_type = 'page'` then makes it TRUE before COMMIT.
-                let result = sqlx::query(
-                    "INSERT OR IGNORE INTO blocks \
-                     (id, block_type, content, parent_id, position, deleted_at, \
-                      todo_state, priority, due_date, scheduled_date, page_id) \
-                     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
-                )
-                .bind(block_id)
-                .bind(block_type)
-                .bind(content)
-                .bind(parent_id)
-                .bind(position)
-                .execute(&mut *executor)
-                .await?;
-                if result.rows_affected() == 0 {
-                    // #3269 R4: `rows_affected() == 0` now has TWO causes, and
-                    // reporting the wrong one is worse than reporting nothing.
-                    //
-                    //  * The id is already in the table → the op_log really did
-                    //    carry two creates for one id (ULIDs make a genuine
-                    //    collision impossible), i.e. log corruption. The
-                    //    pre-existing diagnostic.
-                    //  * The id is NOT in the table → the head-shaped table
-                    //    REFUSED the row (`block_type_valid` /
-                    //    `page_id_self_for_pages` CHECK, STRICT typing) and
-                    //    `OR IGNORE` swallowed the violation. Before the head
-                    //    CHECK constraints existed this was unreachable; with them live it
-                    //    is routine, and calling it "possible op_log corruption"
-                    //    would slander a healthy log on the one path where that
-                    //    log is the only forensic artefact left.
-                    //
-                    // One extra probe, only on the (rare) zero-row branch.
-                    // The compile-checked macro: `blocks.id` is the one column
-                    // every era of this table has, so checking the probe against
-                    // head's schema is sound even though the table it runs on may
-                    // be the scaffold.
-                    let already_present: i64 =
-                        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", block_id)
-                            .fetch_one(&mut *executor)
-                            .await?;
-                    if already_present > 0 {
-                        diagnostics.duplicate_creates.push(block_id.to_owned());
-                    } else {
-                        diagnostics
-                            .constraint_rejected_creates
-                            .push(block_id.to_owned());
-                    }
-                }
+                replay_create_block(&mut *executor, &payload, &mut diagnostics).await?;
             }
-            "edit_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                if let Some(to_text) = payload.get("to_text").and_then(serde_json::Value::as_str) {
-                    // #2043: route the content UPDATE through the shared
-                    // projection (`project_edit_block_to_sql`) so its shape
-                    // (`SET content = ? WHERE id = ? AND deleted_at IS NULL`)
-                    // cannot drift from the engine/sql-only arms. The added
-                    // `deleted_at IS NULL` guard is inert here: recovery replays
-                    // in `created_at` order, so an `edit_block` always precedes
-                    // its block's later `delete_block` — the target row is never
-                    // yet soft-deleted when the edit lands. The recovered
-                    // `blocks` table's `content` column is `TEXT` under BOTH
-                    // shapes — plain TEXT in the scaffold, `TEXT` in a STRICT
-                    // table under the head shape (#3269) — and the projection
-                    // binds a Rust `String`, which is exactly what STRICT `TEXT`
-                    // accepts, so the macro-checked query runs unchanged against
-                    // either. We
-                    // synthesize the `BlockSnapshot` the projection expects from
-                    // the op payload; only `content` + `block_id` are read (the
-                    // other fields are inert placeholders), exactly as
-                    // `apply_edit_block_sql_only` does.
-                    let snapshot = agaric_engine::loro::engine::BlockSnapshot {
-                        block_id: block_id.to_owned(),
-                        block_type: String::new(),
-                        content: to_text.to_owned(),
-                        parent_id: None,
-                        position: 0,
-                    };
-                    agaric_engine::loro::projection::project_edit_block_to_sql(
-                        &mut *executor,
-                        &snapshot,
-                    )
-                    .await?;
-                }
-            }
+            "edit_block" => replay_edit_block(&mut *executor, &payload).await?,
             "move_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
                 let new_parent_id = payload
@@ -2651,191 +2528,22 @@ async fn recover_blocks_from_op_log(
                 }
             }
             "delete_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                // #429: a `delete_block` op encodes ONLY the root, but the
-                // production path (`delete_block_inner`) soft-deletes the whole
-                // active subtree and stamps every member with the op's single
-                // timestamp. Recovery must do the same or descendants reappear
-                // live under a tombstoned ancestor, and the deletion cohort is
-                // lost. Stamp the op's OWN `created_at` (not boot-time `now`)
-                // so distinct delete ops keep distinct cohorts, and cascade
-                // through the temp `blocks` tree (depth-bounded, same shape as
-                // production). The `deleted_at IS NULL` guard preserves an
-                // already-deleted descendant's original cohort timestamp.
-                //
-                // REACH (#4233): `CascadeReach::Active` — see the variant's doc.
-                // The `deleted_at IS NULL` guard above was not enough on its
-                // own: it prunes the WRITE, while the walk kept descending, so
-                // a LIVE block under a tombstoned child was still reached and
-                // stamped. The move sweep above carries the same reach, and the
-                // two move together (#4187).
-                //
-                // #618: encode per era — INTEGER epoch-ms once 0080 has run
-                // (any later rebuild re-run copies `deleted_at` RAW into a
-                // STRICT INTEGER column, so rfc3339 TEXT wedges 0085/0089 and
-                // corrupts at-head i64 reads), rfc3339 TEXT before that
-                // (0080's julianday() backfill converts it).
-                //
-                // #2043: this arm is INTENTIONALLY left inline, not routed
-                // through `project_delete_block_to_sql`. The reach is now the
-                // same, but that projection is i64-only (`deleted_at` INTEGER):
-                // the era-switched TEXT/INTEGER stamp above cannot be expressed
-                // through it, so unifying would mis-stamp the pre-0080 (TEXT)
-                // era. The walk FILTER carries no timestamp, which is why the
-                // reach could be aligned while the stamp stayed hand-rolled.
-                // #4232: a truncated delete cohort leaves the subtree's deep
-                // tail LIVE under a tombstoned ancestor — the invisible orphan
-                // this arm exists to prevent, below depth 100.
-                if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active)
-                    .await?
-                {
-                    diagnostics.cascade_truncations.push(CascadeTruncation {
-                        cascade: CASCADE_DELETE,
-                        block_id: block_id.to_owned(),
-                    });
-                }
-                // dynamic-sql: era-varying `deleted_at` stamp (#618) against
-                // the pre-migration `blocks`, keyed on the TEMP cohort
-                // materialised above (#4289).
-                let query = sqlx::query(
-                    "UPDATE blocks SET deleted_at = ?1 \
-                     WHERE deleted_at IS NULL \
-                       AND id IN (SELECT id FROM recovery_cascade_cohort)",
-                );
-                let query = if deleted_at_is_ms {
-                    query.bind(op_created_at_ms(&row, now_ms_fallback))
-                } else {
-                    query.bind(op_created_at_rfc3339(&row, &now_rfc3339))
-                };
-                query.execute(&mut *executor).await?;
+                replay_delete_block(
+                    &mut *executor,
+                    &payload,
+                    &mut diagnostics,
+                    &row,
+                    &now_rfc3339,
+                    now_ms_fallback,
+                    deleted_at_is_ms,
+                )
+                .await?;
             }
             "restore_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                // #613: a `restore_block` op encodes ONLY the root. This arm
-                // un-deletes a FLAT subtree cohort keyed on the originating
-                // delete op's `deleted_at_ref`, by design.
-                //
-                // #2043: this is INTENTIONALLY DIVERGENT from the projection
-                // (`project_restore_block_to_sql` / `collect_restore_cohort`)
-                // and MUST NOT be unified with it. The projection uses the
-                // stricter connected-cohort walk (#1055) plus upward ancestor
-                // restore (#1884/#2017); routing recovery through it would
-                // CHANGE which blocks get un-deleted (the exact
-                // orphan-promotion / RestoreBlock regression class #2043
-                // cites). Recovery deliberately keeps the flat
-                // `(seed, deleted_at_ref)` cohort + no ancestor restore.
-                //
-                // The previous root-only UPDATE left every descendant
-                // tombstoned after a delete(root)+restore(root) replay, and
-                // ignored the cohort token entirely (a root deleted
-                // independently earlier would get resurrected by a later
-                // unrelated restore op).
-                //
-                // Use the #429 delete-arm cascade shape, keyed on the cohort
-                // timestamp: `deleted_at_ref` is the originating delete op's
-                // `created_at` in epoch-ms — exactly what the delete arm
-                // above stamped into `deleted_at` (per era, #618). Pre-0080
-                // (TEXT era) the delete arm stored rfc3339, so the guard
-                // compares via the same julianday()→ms conversion migration
-                // 0079/0080 use; this is the deliberate TEXT-era exception
-                // to the "no julianday on INTEGER columns" rule.
-                //
-                // A legacy payload missing `deleted_at_ref` (pre-cohort
-                // producers) falls back to un-deleting the whole subtree
-                // unconditionally — the legacy restore semantics.
-                let deleted_at_ref = payload
-                    .get("deleted_at_ref")
-                    .and_then(serde_json::Value::as_i64);
-                // #4232: the mirror-image truncation — a restore that stops at
-                // the cap leaves the deep tail TOMBSTONED, orphaned from the
-                // cohort it was raised with. Probed before the UPDATE for
-                // symmetry; the walk is the standard one, so the answer does
-                // not depend on that.
-                if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Standard)
-                    .await?
-                {
-                    diagnostics.cascade_truncations.push(CascadeTruncation {
-                        cascade: CASCADE_RESTORE,
-                        block_id: block_id.to_owned(),
-                    });
-                }
-                // #4289: keyed on the TEMP cohort the probe above materialised,
-                // so the un-delete and the truncation answer come from one walk.
-                const RESTORE_CASCADE_PREFIX: &str = "UPDATE blocks SET deleted_at = NULL \
-                     WHERE id IN (SELECT id FROM recovery_cascade_cohort)";
-                match deleted_at_ref {
-                    Some(ref_ms) if deleted_at_is_ms => {
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
-                            "{RESTORE_CASCADE_PREFIX} AND deleted_at = ?1"
-                        )))
-                        .bind(ref_ms)
-                        .execute(&mut *executor)
-                        .await?;
-                    }
-                    Some(ref_ms) => {
-                        // TEXT era: `deleted_at` is rfc3339 (possibly the op
-                        // row's original string formatting), so compare on
-                        // the parsed ms value rather than string equality.
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
-                            "{RESTORE_CASCADE_PREFIX} \
-                             AND deleted_at IS NOT NULL \
-                             AND CAST(ROUND((julianday(deleted_at) - 2440587.5) * 86400000.0) \
-                                 AS INTEGER) = ?1"
-                        )))
-                        .bind(ref_ms)
-                        .execute(&mut *executor)
-                        .await?;
-                    }
-                    None => {
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
-                            "{RESTORE_CASCADE_PREFIX} AND deleted_at IS NOT NULL"
-                        )))
-                        .execute(&mut *executor)
-                        .await?;
-                    }
-                }
+                replay_restore_block(&mut *executor, &payload, &mut diagnostics, deleted_at_is_ms)
+                    .await?;
             }
-            "purge_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                // #615: production purge (`apply_purge_block_*`) hard-deletes
-                // the whole subtree, but the temp recovery table has no FK
-                // cascade (created constraint-free above), so a root-only
-                // DELETE left every purged descendant alive — and the orphan
-                // cleanup after this loop then PROMOTED them to live
-                // top-level blocks (`parent_id = NULL`), resurrecting
-                // user-destroyed data. Cascade with the same depth-bounded
-                // recursive CTE shape as the delete arm.
-                //
-                // #4232: the walk is materialised BEFORE the DELETE — unlike
-                // the soft-delete arms, this one removes the very rows it
-                // walks, so afterwards there is nothing left to ask.
-                // Truncation here is the worst of the four descendant walks:
-                // the unreached tail survives the purge with a dangling
-                // `parent_id`.
-                //
-                // #4287: which is why this arm does not just report it. The
-                // frontier the walk could not reach is finished off by
-                // [`purge_truncated_tails`] right here, so the blanket orphan
-                // cleanup after this loop never NULLs a `parent_id` whose
-                // ancestor was purged in this same replay — the promotion that
-                // turned user-destroyed data back into a live, searchable
-                // top-level block. Right here, and not after the loop, because
-                // ops replayed later can still move rows into or out of the
-                // surviving tail; see that function's doc.
-                let step = purge_cascade_step(&mut *executor, block_id).await?;
-                if step.truncated {
-                    diagnostics.cascade_truncations.push(CascadeTruncation {
-                        cascade: CASCADE_PURGE,
-                        block_id: block_id.to_owned(),
-                    });
-                }
-                // #4287: finish the tail NOW, while the tree still looks the
-                // way this purge left it. See [`purge_truncated_tails`] for why
-                // a post-loop pass was wrong in both directions.
-                let repair = purge_truncated_tails(&mut *executor, &step.unreached).await?;
-                diagnostics.purge_tail_rows_removed += repair.rows_removed;
-                diagnostics.purge_tails_finished.extend(repair.heads);
-            }
+            "purge_block" => replay_purge_block(&mut *executor, &payload, &mut diagnostics).await?,
             _ => {
                 // set_property / delete_property / add_tag are handled
                 // post-migration so they survive migration 73's DROP TABLE.
@@ -2904,6 +2612,366 @@ async fn recover_blocks_from_op_log(
         .await?;
 
     Ok(diagnostics)
+}
+
+/// Replay one `create_block` op into the pre-migration `blocks` table.
+///
+/// Extracted from [`recover_blocks_from_op_log`]'s `match` (#4639); the body is
+/// unchanged.
+async fn replay_create_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    let block_type = payload["block_type"].as_str().unwrap_or("content");
+    let content = payload
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let parent_id = payload.get("parent_id").and_then(serde_json::Value::as_str);
+    // #1252: a new-scheme (#400/#603) `create_block` carries a
+    // 0-based `index` and OMITS the legacy sparse `position`
+    // (`CreateBlockPayload.position` is
+    // `skip_serializing_if = "Option::is_none"`). Reading only
+    // `position` here wrote `blocks.position = NULL` for every
+    // such block, collapsing recovered siblings to ULID order.
+    // Mirror the SQL-only materializer fallback
+    // (`apply_create_block_sql_only`): prefer the legacy
+    // `position`, else derive a 1-based provisional position from
+    // `index` via `index_to_provisional_position`.
+    let position = payload
+        .get("position")
+        .and_then(serde_json::Value::as_i64)
+        .or_else(|| {
+            payload
+                .get("index")
+                .and_then(serde_json::Value::as_i64)
+                .map(agaric_store::pagination::index_to_provisional_position)
+        });
+
+    // #1536: keep `OR IGNORE` so recovery is idempotent (a re-run,
+    // or a row already materialized by an earlier op in this same
+    // replay, must not abort). But unlike the keyed UPDATE/DELETE
+    // arms, a silently-ignored create is invisible: ULIDs make a
+    // real id collision impossible, so `rows_affected == 0` means
+    // the op_log carried two `create_block` ops for the same id —
+    // i.e. corruption. The first create wins and is preserved
+    // (success behaviour unchanged); we only surface the drop so a
+    // corrupted log is observable rather than silently flattened.
+    // #3269: `page_id` stays NULL here even under the head-shaped
+    // recovery table (`CONSTRAINT page_id_self_for_pages CHECK
+    // (block_type != 'page' OR page_id = id)`). A SQLite CHECK
+    // rejects only a FALSE result, and for a page row the
+    // expression evaluates to `false OR (NULL = id)` = NULL, which
+    // passes; the post-loop `UPDATE ... SET page_id = id WHERE
+    // block_type = 'page'` then makes it TRUE before COMMIT.
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO blocks \
+         (id, block_type, content, parent_id, position, deleted_at, \
+          todo_state, priority, due_date, scheduled_date, page_id) \
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
+    )
+    .bind(block_id)
+    .bind(block_type)
+    .bind(content)
+    .bind(parent_id)
+    .bind(position)
+    .execute(&mut *executor)
+    .await?;
+    if result.rows_affected() == 0 {
+        // #3269 R4: `rows_affected() == 0` now has TWO causes, and
+        // reporting the wrong one is worse than reporting nothing.
+        //
+        //  * The id is already in the table → the op_log really did
+        //    carry two creates for one id (ULIDs make a genuine
+        //    collision impossible), i.e. log corruption. The
+        //    pre-existing diagnostic.
+        //  * The id is NOT in the table → the head-shaped table
+        //    REFUSED the row (`block_type_valid` /
+        //    `page_id_self_for_pages` CHECK, STRICT typing) and
+        //    `OR IGNORE` swallowed the violation. Before the head
+        //    CHECK constraints existed this was unreachable; with them live it
+        //    is routine, and calling it "possible op_log corruption"
+        //    would slander a healthy log on the one path where that
+        //    log is the only forensic artefact left.
+        //
+        // One extra probe, only on the (rare) zero-row branch.
+        // The compile-checked macro: `blocks.id` is the one column
+        // every era of this table has, so checking the probe against
+        // head's schema is sound even though the table it runs on may
+        // be the scaffold.
+        let already_present: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", block_id)
+                .fetch_one(&mut *executor)
+                .await?;
+        if already_present > 0 {
+            diagnostics.duplicate_creates.push(block_id.to_owned());
+        } else {
+            diagnostics
+                .constraint_rejected_creates
+                .push(block_id.to_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Replay one `edit_block` op into the pre-migration `blocks` table.
+///
+/// Extracted from [`recover_blocks_from_op_log`]'s `match` (#4639); the body is
+/// unchanged.
+async fn replay_edit_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    if let Some(to_text) = payload.get("to_text").and_then(serde_json::Value::as_str) {
+        // #2043: route the content UPDATE through the shared
+        // projection (`project_edit_block_to_sql`) so its shape
+        // (`SET content = ? WHERE id = ? AND deleted_at IS NULL`)
+        // cannot drift from the engine/sql-only arms. The added
+        // `deleted_at IS NULL` guard is inert here: recovery replays
+        // in `created_at` order, so an `edit_block` always precedes
+        // its block's later `delete_block` — the target row is never
+        // yet soft-deleted when the edit lands. The recovered
+        // `blocks` table's `content` column is `TEXT` under BOTH
+        // shapes — plain TEXT in the scaffold, `TEXT` in a STRICT
+        // table under the head shape (#3269) — and the projection
+        // binds a Rust `String`, which is exactly what STRICT `TEXT`
+        // accepts, so the macro-checked query runs unchanged against
+        // either. We
+        // synthesize the `BlockSnapshot` the projection expects from
+        // the op payload; only `content` + `block_id` are read (the
+        // other fields are inert placeholders), exactly as
+        // `apply_edit_block_sql_only` does.
+        let snapshot = agaric_engine::loro::engine::BlockSnapshot {
+            block_id: block_id.to_owned(),
+            block_type: String::new(),
+            content: to_text.to_owned(),
+            parent_id: None,
+            position: 0,
+        };
+        agaric_engine::loro::projection::project_edit_block_to_sql(&mut *executor, &snapshot)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Replay one `delete_block` op into the pre-migration `blocks` table.
+///
+/// Extracted from [`recover_blocks_from_op_log`]'s `match` (#4639); the body is
+/// unchanged.
+async fn replay_delete_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+    diagnostics: &mut ReplayDiagnostics,
+    row: &sqlx::sqlite::SqliteRow,
+    now_rfc3339: &str,
+    now_ms_fallback: i64,
+    deleted_at_is_ms: bool,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    // #429: a `delete_block` op encodes ONLY the root, but the
+    // production path (`delete_block_inner`) soft-deletes the whole
+    // active subtree and stamps every member with the op's single
+    // timestamp. Recovery must do the same or descendants reappear
+    // live under a tombstoned ancestor, and the deletion cohort is
+    // lost. Stamp the op's OWN `created_at` (not boot-time `now`)
+    // so distinct delete ops keep distinct cohorts, and cascade
+    // through the temp `blocks` tree (depth-bounded, same shape as
+    // production). The `deleted_at IS NULL` guard preserves an
+    // already-deleted descendant's original cohort timestamp.
+    //
+    // REACH (#4233): `CascadeReach::Active` — see the variant's doc.
+    // The `deleted_at IS NULL` guard above was not enough on its
+    // own: it prunes the WRITE, while the walk kept descending, so
+    // a LIVE block under a tombstoned child was still reached and
+    // stamped. The move sweep above carries the same reach, and the
+    // two move together (#4187).
+    //
+    // #618: encode per era — INTEGER epoch-ms once 0080 has run
+    // (any later rebuild re-run copies `deleted_at` RAW into a
+    // STRICT INTEGER column, so rfc3339 TEXT wedges 0085/0089 and
+    // corrupts at-head i64 reads), rfc3339 TEXT before that
+    // (0080's julianday() backfill converts it).
+    //
+    // #2043: this arm is INTENTIONALLY left inline, not routed
+    // through `project_delete_block_to_sql`. The reach is now the
+    // same, but that projection is i64-only (`deleted_at` INTEGER):
+    // the era-switched TEXT/INTEGER stamp above cannot be expressed
+    // through it, so unifying would mis-stamp the pre-0080 (TEXT)
+    // era. The walk FILTER carries no timestamp, which is why the
+    // reach could be aligned while the stamp stayed hand-rolled.
+    // #4232: a truncated delete cohort leaves the subtree's deep
+    // tail LIVE under a tombstoned ancestor — the invisible orphan
+    // this arm exists to prevent, below depth 100.
+    if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active).await? {
+        diagnostics.cascade_truncations.push(CascadeTruncation {
+            cascade: CASCADE_DELETE,
+            block_id: block_id.to_owned(),
+        });
+    }
+    // dynamic-sql: era-varying `deleted_at` stamp (#618) against
+    // the pre-migration `blocks`, keyed on the TEMP cohort
+    // materialised above (#4289).
+    let query = sqlx::query(
+        "UPDATE blocks SET deleted_at = ?1 \
+         WHERE deleted_at IS NULL \
+           AND id IN (SELECT id FROM recovery_cascade_cohort)",
+    );
+    let query = if deleted_at_is_ms {
+        query.bind(op_created_at_ms(row, now_ms_fallback))
+    } else {
+        query.bind(op_created_at_rfc3339(row, now_rfc3339))
+    };
+    query.execute(&mut *executor).await?;
+    Ok(())
+}
+
+/// Replay one `restore_block` op into the pre-migration `blocks` table.
+///
+/// Extracted from [`recover_blocks_from_op_log`]'s `match` (#4639); the body is
+/// unchanged.
+async fn replay_restore_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+    diagnostics: &mut ReplayDiagnostics,
+    deleted_at_is_ms: bool,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    // #613: a `restore_block` op encodes ONLY the root. This arm
+    // un-deletes a FLAT subtree cohort keyed on the originating
+    // delete op's `deleted_at_ref`, by design.
+    //
+    // #2043: this is INTENTIONALLY DIVERGENT from the projection
+    // (`project_restore_block_to_sql` / `collect_restore_cohort`)
+    // and MUST NOT be unified with it. The projection uses the
+    // stricter connected-cohort walk (#1055) plus upward ancestor
+    // restore (#1884/#2017); routing recovery through it would
+    // CHANGE which blocks get un-deleted (the exact
+    // orphan-promotion / RestoreBlock regression class #2043
+    // cites). Recovery deliberately keeps the flat
+    // `(seed, deleted_at_ref)` cohort + no ancestor restore.
+    //
+    // The previous root-only UPDATE left every descendant
+    // tombstoned after a delete(root)+restore(root) replay, and
+    // ignored the cohort token entirely (a root deleted
+    // independently earlier would get resurrected by a later
+    // unrelated restore op).
+    //
+    // Use the #429 delete-arm cascade shape, keyed on the cohort
+    // timestamp: `deleted_at_ref` is the originating delete op's
+    // `created_at` in epoch-ms — exactly what the delete arm
+    // above stamped into `deleted_at` (per era, #618). Pre-0080
+    // (TEXT era) the delete arm stored rfc3339, so the guard
+    // compares via the same julianday()→ms conversion migration
+    // 0079/0080 use; this is the deliberate TEXT-era exception
+    // to the "no julianday on INTEGER columns" rule.
+    //
+    // A legacy payload missing `deleted_at_ref` (pre-cohort
+    // producers) falls back to un-deleting the whole subtree
+    // unconditionally — the legacy restore semantics.
+    let deleted_at_ref = payload
+        .get("deleted_at_ref")
+        .and_then(serde_json::Value::as_i64);
+    // #4232: the mirror-image truncation — a restore that stops at
+    // the cap leaves the deep tail TOMBSTONED, orphaned from the
+    // cohort it was raised with. Probed before the UPDATE for
+    // symmetry; the walk is the standard one, so the answer does
+    // not depend on that.
+    if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Standard).await? {
+        diagnostics.cascade_truncations.push(CascadeTruncation {
+            cascade: CASCADE_RESTORE,
+            block_id: block_id.to_owned(),
+        });
+    }
+    // #4289: keyed on the TEMP cohort the probe above materialised,
+    // so the un-delete and the truncation answer come from one walk.
+    const RESTORE_CASCADE_PREFIX: &str = "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM recovery_cascade_cohort)";
+    match deleted_at_ref {
+        Some(ref_ms) if deleted_at_is_ms => {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{RESTORE_CASCADE_PREFIX} AND deleted_at = ?1"
+            )))
+            .bind(ref_ms)
+            .execute(&mut *executor)
+            .await?;
+        }
+        Some(ref_ms) => {
+            // TEXT era: `deleted_at` is rfc3339 (possibly the op
+            // row's original string formatting), so compare on
+            // the parsed ms value rather than string equality.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{RESTORE_CASCADE_PREFIX} \
+                 AND deleted_at IS NOT NULL \
+                 AND CAST(ROUND((julianday(deleted_at) - 2440587.5) * 86400000.0) \
+                     AS INTEGER) = ?1"
+            )))
+            .bind(ref_ms)
+            .execute(&mut *executor)
+            .await?;
+        }
+        None => {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{RESTORE_CASCADE_PREFIX} AND deleted_at IS NOT NULL"
+            )))
+            .execute(&mut *executor)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Replay one `purge_block` op into the pre-migration `blocks` table.
+///
+/// Extracted from [`recover_blocks_from_op_log`]'s `match` (#4639); the body is
+/// unchanged.
+async fn replay_purge_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    // #615: production purge (`apply_purge_block_*`) hard-deletes
+    // the whole subtree, but the temp recovery table has no FK
+    // cascade (created constraint-free above), so a root-only
+    // DELETE left every purged descendant alive — and the orphan
+    // cleanup after this loop then PROMOTED them to live
+    // top-level blocks (`parent_id = NULL`), resurrecting
+    // user-destroyed data. Cascade with the same depth-bounded
+    // recursive CTE shape as the delete arm.
+    //
+    // #4232: the walk is materialised BEFORE the DELETE — unlike
+    // the soft-delete arms, this one removes the very rows it
+    // walks, so afterwards there is nothing left to ask.
+    // Truncation here is the worst of the four descendant walks:
+    // the unreached tail survives the purge with a dangling
+    // `parent_id`.
+    //
+    // #4287: which is why this arm does not just report it. The
+    // frontier the walk could not reach is finished off by
+    // [`purge_truncated_tails`] right here, so the blanket orphan
+    // cleanup after this loop never NULLs a `parent_id` whose
+    // ancestor was purged in this same replay — the promotion that
+    // turned user-destroyed data back into a live, searchable
+    // top-level block. Right here, and not after the loop, because
+    // ops replayed later can still move rows into or out of the
+    // surviving tail; see that function's doc.
+    let step = purge_cascade_step(&mut *executor, block_id).await?;
+    if step.truncated {
+        diagnostics.cascade_truncations.push(CascadeTruncation {
+            cascade: CASCADE_PURGE,
+            block_id: block_id.to_owned(),
+        });
+    }
+    // #4287: finish the tail NOW, while the tree still looks the
+    // way this purge left it. See [`purge_truncated_tails`] for why
+    // a post-loop pass was wrong in both directions.
+    let repair = purge_truncated_tails(&mut *executor, &step.unreached).await?;
+    diagnostics.purge_tail_rows_removed += repair.rows_removed;
+    diagnostics.purge_tails_finished.extend(repair.heads);
+    Ok(())
 }
 
 /// After migrations run, recover the dependent tables (`block_properties`,
