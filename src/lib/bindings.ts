@@ -575,6 +575,13 @@ export const commands = {
 	 *  [`AppError::Validation`].
 	 */
 	notifyTask: (notification: TaskNotification) => typedError<null, AppError>(__TAURI_INVOKE("notify_task", { notification })),
+	/**  Tauri command: read the device-local reminder preferences (#4554). */
+	getReminderSettings: () => typedError<ReminderSettings, AppError>(__TAURI_INVOKE("get_reminder_settings")),
+	/**
+	 *  Tauri command: persist the device-local reminder preferences (#4554).
+	 *  A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
+	 */
+	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
@@ -3367,6 +3374,20 @@ export type RecoveryStatus = {
 	 *  raise the user-visible signal.
 	 */
 	replay_errors: string[],
+};
+
+/**
+ *  The device-local reminder preferences, stored in `app_settings` so the
+ *  maintenance job can read them without the webview.
+ */
+export type ReminderSettings = {
+	/**
+	 *  Master switch. Off by default: a fresh install never notifies until
+	 *  the user opts in from Settings → Notifications.
+	 */
+	enabled: boolean,
+	/**  Local wall-clock time, `HH:MM`, at which a task due today is notified. */
+	time: string,
 };
 
 /**  Lightweight metadata returned by [`batch_resolve_inner`]. */

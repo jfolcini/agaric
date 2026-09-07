@@ -32,6 +32,7 @@ pub mod mcp;
 // materializer once #4502 moved that down); the app keeps the path.
 pub use agaric_sync::recovery;
 pub mod recurrence;
+pub mod reminders;
 pub mod repair;
 pub mod soft_delete;
 pub mod spaces;
@@ -222,6 +223,9 @@ macro_rules! agaric_commands {
             $crate::commands::agenda::list_undated_tasks,
             // OS notifications for due / scheduled tasks
             $crate::commands::notifier::notify_task,
+            // Task reminders (#4554)
+            $crate::commands::notifier::get_reminder_settings,
+            $crate::commands::notifier::set_reminder_settings,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // BibTeX / CSL-JSON bibliography import (#1454 tier a)
@@ -1440,6 +1444,7 @@ fn spawn_boot_maintenance(
 /// (#703) — the flags exist only to keep the spawn signatures stable.
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn spawn_background_tasks(
+    app: tauri::AppHandle,
     pools: &db::DbPools,
     device_id: &str,
     materializer: &materializer::Materializer,
@@ -1526,6 +1531,8 @@ fn spawn_background_tasks(
     // enqueues a rebuild, then subsequent ticks only enqueue
     // when the UTC day number advances.
     let projected_agenda_last_day = Arc::new(std::sync::atomic::AtomicI32::new(i32::MIN));
+    let reminders_pool = pools.write.clone();
+    let reminders_app = app;
     let jobs = vec![
         maintenance::MaintenanceJob {
             name: "wal_checkpoint_truncate",
@@ -1654,6 +1661,35 @@ fn spawn_background_tasks(
                 let last_day = projected_agenda_last_day.clone();
                 Box::pin(async move {
                     maintenance::projected_agenda_midnight_tick(&mat, &last_day).await
+                })
+            }),
+        },
+        // #4554 — due-today task reminders. Always-on predicate: unlike the
+        // WAL and op-log jobs it must NOT gate on `is_foreground`, because a
+        // minimised window is exactly when a reminder is useful.
+        maintenance::MaintenanceJob {
+            name: "reminders_tick",
+            interval: std::time::Duration::from_secs(60),
+            last_run: None,
+            predicate: Box::new(|| true),
+            run: Box::new(move || {
+                let pool = reminders_pool.clone();
+                let app = reminders_app.clone();
+                Box::pin(async move {
+                    let notify = move |notification: commands::notifier::TaskNotification| {
+                        let app = app.clone();
+                        let fut: std::pin::Pin<
+                            Box<
+                                dyn std::future::Future<
+                                        Output = Result<(), agaric_core::error::AppError>,
+                                    > + Send,
+                            >,
+                        > = Box::pin(async move {
+                            commands::notifier::notify_task_inner(&app, &notification).await
+                        });
+                        fut
+                    };
+                    reminders::reminders_tick(&pool, &notify).await
                 })
             }),
         },
@@ -2530,7 +2566,13 @@ pub fn run() {
 
                 // Long-running background tasks: sweepers, maintenance daemon,
                 // periodic Loro snapshot.
-                spawn_background_tasks(&pools, &device_id, &materializer, &lifecycle);
+                spawn_background_tasks(
+                    app.handle().clone(),
+                    &pools,
+                    &device_id,
+                    &materializer,
+                    &lifecycle,
+                );
 
                 // Create scheduler wrapped in Arc for sharing with the SyncDaemon
                 let scheduler =

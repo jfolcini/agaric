@@ -271,7 +271,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is now behind, not ahea
 | Effort tracking | Arbitrary custom properties | `/effort` with a **fixed 6-option select** (15m/30m/1h/2h/4h/1d); no custom values, no rollup, no reporting | Done |
 | Overdue accumulation | Via embedded queries | DuePanel overdue section + the `UnfinishedTasks` rollover | Better |
 | Deadline warning period | `:scheduled/future-days` | Configurable 0-90 days in **Settings → General** (not PropertiesView, as previously stated) | Done |
-| Task / deadline notifications | Plugins only | **Stub.** OS notification plumbing, an enable toggle, a permission request, and a "send test notification" button — which is the *only* production caller. **No scheduler, no dedupe ledger, no snooze: no reminder ever fires.** The Rust module says so itself | Partial |
+| Task / deadline notifications | Plugins only | **Desktop, while running.** One OS notification per open task on its due date at a user-set time, deduped by a per-device ledger (#4554). Nothing fires with the app closed, on Android, for `scheduled_date`, ahead of the day, or as a catch-up | Partial |
 | Calendar integration | Plugins only | **Absent, and deliberately reverted** — migration 0091 drops the Google Calendar tables. No CalDAV, no ICS import or export | Gap |
 
 ### 9. Daily Journal
@@ -452,7 +452,7 @@ a project whose stated aim is superiority, these are the cheapest wins available
 | **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero in production.** The read path exists and is exercised only by tests: `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited`, but `src/lib/tauri/queries.ts:240` supplies `?? false` and the commands `unwrap_or(false)` (`src-tauri/src/commands/tags.rs:549,599`). Nothing forbids `true`; no production caller passes it. Inherited tags are displayed on a block and nothing else |
 | **`listStyle` block-level lists** | A full read pipeline: property → `ListMarkerContext` → `computeListOrdinals` → `ListMarker`, plus a ProseMirror decoration | **Zero.** `setListStyle` and `clearListStyle` have **no production callers**. Slash commands still write a `1.` or `-` markdown prefix, so the app carries two competing list models and pays for both |
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | Partial. The builder exposes **4 operators, Text only, 5 group keys, column-only aggregates**. The rest is reachable only by hand-editing saved-view JSON |
-| **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Zero reminders.** The only production caller is the "send test notification" button |
+| **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Desktop due-date reminders only** (#4554). No Android arm, no closed-app delivery, no catch-up |
 | **i18next** | ~3,056 translated keys across 13 namespaces, every visible string routed through `t()` | **One locale.** Zero locale files exist and the module docblock forbids adding any |
 
 ### Documentation that is actively false
@@ -618,8 +618,8 @@ back credibility; the second tier is the real product work.
 - **2. Either wire up or delete `block_tag_inherited` and `listStyle`.** Both are maintained, tested,
   documented, and unreachable. Wiring inheritance into `FilterPrimitive::Tag` is a small change
   with a real user-visible payoff; deleting is also fine. Carrying them is not.
-- **3. Ship the notification scheduler or remove the feature from the UI.** A settings tab that
-  suggests reminders exist, when the only code path is a test button, is worse than no tab.
+- **3. Finish the notification scheduler.** The desktop due-date slice ships (#4554); the Android
+  arm, closed-app delivery and the catch-up digest are what remain.
 
 ### Tier 1 — Close the credibility gaps (weeks)
 

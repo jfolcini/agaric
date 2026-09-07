@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, content FROM blocks\n         WHERE deleted_at IS NULL\n           AND due_date = ?1\n           AND (todo_state IS NULL OR todo_state NOT IN ('DONE', 'CANCELLED'))\n           AND NOT EXISTS (\n               SELECT 1 FROM app_settings\n               WHERE key = ?2 || blocks.id || '|' || ?1\n           )\n         ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "97f0166d516d1f8af84ba304092c0addd841f32d9a9e0473395cdbbf04e41171"
+}

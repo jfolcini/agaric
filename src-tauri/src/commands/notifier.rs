@@ -3,22 +3,19 @@
 //! Provides the minimal backend path for surfacing a due / scheduled task
 //! as a native OS notification through the platform notification backend
 //! (`notify-rust` directly on Linux, `tauri-plugin-notification` elsewhere).
-//! This is the shippable vertical slice of (issue #138): one command,
-//! [`notify_task`], that the frontend can call to fire a notification right
-//! now.  It deliberately does *not* yet include the full scheduler, dedupe
-//! ledger, snooze semantics, or the Settings sub-tab described in the issue
-//! body — those remain open follow-up work tracked on #138.
+//! [`notify_task`] fires one notification right now; it is the dispatch
+//! path for both the Settings "send test notification" button and the
+//! desktop reminder job in [`crate::reminders`] (#4554), which owns the
+//! *when* and the fired ledger while this module owns only the *how*.
+//! [`get_reminder_settings`] / [`set_reminder_settings`] expose that job's
+//! device-local preferences to the Settings tab.
 //!
 //! ## Why a "fire now" command rather than native scheduling
 //!
-//! `tauri-plugin-notification` does expose a `schedule` API, but its
-//! semantics (and reliability) differ sharply per platform, and the issue
-//! explicitly calls out dedupe / "do not re-fire on materialize replay"
-//! as the hard part of the design.  Wiring a thin "show this notification
-//! now" command first lets the frontend (or a future Rust scheduler) own
-//! the *when* and the dedupe ledger, while the plugin owns only the *how*.
-//! This keeps the slice small, testable, and forward-compatible with the
-//! eventual `notifier::mod.rs` scheduler.
+//! `tauri-plugin-notification` does expose a `schedule` API, but it is
+//! implemented on Android only — on desktop a scheduled notification fires
+//! immediately — so the desktop scheduler recomputes and fires from the
+//! database on the maintenance tick instead.
 //!
 //! ## Permissions
 //!
@@ -37,6 +34,8 @@ use specta::Type;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::commands::sanitize_internal_error;
+use crate::db::{ReadPool, WritePool};
+use crate::reminders::{self, ReminderSettings};
 use agaric_core::error::AppError;
 
 /// Payload describing the notification to fire for a due / scheduled task.
@@ -107,7 +106,7 @@ pub async fn notify_task(
 /// unit and the wrapper can funnel errors through
 /// [`sanitize_internal_error`] (per the IPC error-sanitization convention).
 #[tracing::instrument(skip(app, notification), err)]
-async fn notify_task_inner<R: tauri::Runtime>(
+pub(crate) async fn notify_task_inner<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     notification: &TaskNotification,
 ) -> Result<(), AppError> {
@@ -148,6 +147,32 @@ async fn notify_task_inner<R: tauri::Runtime>(
         })?;
         Ok(())
     }
+}
+
+/// Tauri command: read the device-local reminder preferences (#4554).
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip(pool), err)]
+pub async fn get_reminder_settings(
+    pool: tauri::State<'_, ReadPool>,
+) -> Result<ReminderSettings, AppError> {
+    reminders::get_settings(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: persist the device-local reminder preferences (#4554).
+/// A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip(pool), err)]
+pub async fn set_reminder_settings(
+    pool: tauri::State<'_, WritePool>,
+    settings: ReminderSettings,
+) -> Result<(), AppError> {
+    reminders::set_settings(&pool.0, &settings)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Upper bound on how long we wait for the dedicated notification thread to

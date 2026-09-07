@@ -133,14 +133,23 @@ test.describe('Settings panel', () => {
       page.locator('[data-testid="notifications-request-permission-button"]'),
     ).toBeVisible()
 
-    // Representative interaction: "Send test notification" is disabled
-    // until the enable toggle is on (`disabled={!enabled || testing}`).
-    // Purely a localStorage-backed preference — no IPC round trip.
+    // Representative interaction: "Send test notification" and the reminder
+    // time are disabled until the switch is on (`disabled={!enabled}`).
+    // #4554 — the preference is backend state now (`set_reminder_settings`),
+    // so leaving and re-entering the tab must re-read it as on.
+    const reminderTime = page.locator('[data-testid="notifications-reminder-time"]')
     await expect(enabledSwitch).toHaveAttribute('aria-checked', 'false')
     await expect(sendTestButton).toBeDisabled()
+    await expect(reminderTime).toBeDisabled()
     await enabledSwitch.click()
     await expect(enabledSwitch).toHaveAttribute('aria-checked', 'true')
     await expect(sendTestButton).toBeEnabled()
+    await expect(reminderTime).toBeEnabled()
+
+    await page.getByRole('tab', { name: 'General' }).click()
+    await page.getByRole('tab', { name: 'Notifications' }).click()
+    await expect(enabledSwitch).toHaveAttribute('aria-checked', 'true')
+    await expect(reminderTime).toHaveValue('09:00')
   })
 
   // #2687 — Help tab was never opened by any spec (bug-report-dialog.spec.ts

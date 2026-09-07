@@ -21,6 +21,9 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
+/** #4554 — mirrors `ReminderSettings::default()`; module-local like the clipboard text. */
+let mockReminderSettings: { enabled: boolean; time: string } = { enabled: false, time: '09:00' }
+
 /**
  * #3079 — reserved column-backed property keys and the block-row value channel
  * each one projects into. Mirrors the backend `reserved_key_blocks_column` /
@@ -611,6 +614,26 @@ export const propertiesHandlers = {
     return undefined
   },
 
+  // Mirrors `reminders::get_settings` / `set_settings` (#4554): device-local
+  // preferences in `app_settings`, defaults off / 09:00, `HH:MM` validated.
+  get_reminder_settings: () => ({ ...mockReminderSettings }),
+
+  set_reminder_settings: (args) => {
+    const a = args as { settings?: { enabled?: unknown; time?: unknown } }
+    const enabled = a.settings?.enabled === true
+    const time = typeof a.settings?.time === 'string' ? a.settings.time : ''
+    // Range-checked like `NaiveTime::parse_from_str(_, "%H:%M")`: `99:99` is
+    // rejected by the backend, so the mock must reject it too.
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      throw appErrorRejection({
+        kind: 'validation',
+        message: `reminder time must be HH:MM, got ${JSON.stringify(time)}`,
+      })
+    }
+    mockReminderSettings = { enabled, time }
+    return undefined
+  },
+
   // ---------------------------------------------------------------------------
   // Draft autosave (F-17)
   // ---------------------------------------------------------------------------
@@ -638,4 +661,6 @@ export const propertiesHandlers = {
   | 'delete_property_def'
   | 'list_projected_agenda'
   | 'notify_task'
+  | 'get_reminder_settings'
+  | 'set_reminder_settings'
 >

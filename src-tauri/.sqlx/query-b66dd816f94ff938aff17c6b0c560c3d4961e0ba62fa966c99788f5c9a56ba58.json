@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM app_settings WHERE key LIKE ? AND updated_at < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b66dd816f94ff938aff17c6b0c560c3d4961e0ba62fa966c99788f5c9a56ba58"
+}
