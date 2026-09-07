@@ -3571,11 +3571,300 @@ async fn tags_cache_dedup_folds_non_ascii_case_variants_3345() {
         "`Σigma` and `σigma` are ONE tag under normalize_tag_name, and the smaller \
          id survives; got {expected:#?}"
     );
-    // The claim this test exists for: SQLite's NOCASE does NOT fold these, so a
-    // rule based on it would emit two rows and collide on UNIQUE(name).
+    // The claim this test exists for, as the pair that discriminates it. Full
+    // Unicode lowercasing folds `Σ`/`σ` — so normalize_tag_name merges them —
+    // while NOCASE folds ASCII ONLY, so a rule based on it would emit two rows
+    // and collide on UNIQUE(name). Both halves are needed: the first alone
+    // passes for an ASCII pair too, and rewriting the fixture to `Aigma`/`aigma`
+    // would leave it green while the test stopped discriminating.
     assert_eq!(
         "Σigma".to_lowercase(),
         "σigma",
-        "the pair must be a genuine non-ASCII case variant for this to discriminate"
+        "the pair must be a genuine case variant for normalize_tag_name to fold"
+    );
+    assert_ne!(
+        "Σigma".to_ascii_lowercase(),
+        "σigma",
+        "the pair must be NON-ASCII, or NOCASE would fold it too and this proves nothing"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 10 — `agenda_cache` (#3345)
+// ---------------------------------------------------------------------------
+
+const AG_PAGE: &str = "01AGPAGE334500000000000000";
+const AG_TPAGE: &str = "01AGTPAGE33450000000000000";
+const AG_PROP: &str = "01AGPROP334500000000000000";
+const AG_TWOPROP: &str = "01AGTWOPROP334500000000000";
+const AG_TAGGED: &str = "01AGTAGGED3345000000000000";
+const AG_WINNER: &str = "01AGWINNER3345000000000000";
+const AG_DUE: &str = "01AGDUE3345000000000000000";
+const AG_SCHED: &str = "01AGSCHED33450000000000000";
+const AG_BOTHCOL: &str = "01AGBTHCX33450000000000000";
+const AG_DEAD: &str = "01AGDEAD334500000000000000";
+const AG_TCHILD: &str = "01AGTCHD334500000000000000";
+const AG_TAG_D3: &str = "01AGTAGD333450000000000000";
+const AG_TAG_D4: &str = "01AGTAGD433450000000000000";
+const AG_TAG_DEAD: &str = "01AGTAGDEAD334500000000000";
+const AG_TAG_PLAIN: &str = "01AGTAGPN33450000000000000";
+const AG_TAG_UPPER: &str = "01AGTAGPPR3345000000000000";
+
+/// `tc_insert_tag` hardcodes the tags_cache fixture's page as the parent, so
+/// this fixture needs its own.
+async fn ag_insert_tag(pool: &sqlx::SqlitePool, id: &str, content: &str, deleted_at: Option<i64>) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, deleted_at) \
+         VALUES (?, 'tag', ?, ?, 1, ?, ?)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(AG_PAGE)
+    .bind(AG_PAGE)
+    .bind(deleted_at)
+    .execute(pool)
+    .await
+    .expect("seed tag block");
+}
+
+async fn ag_date_property(pool: &sqlx::SqlitePool, block_id: &str, key: &str, date: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(date)
+        .execute(pool)
+        .await
+        .expect("seed date property");
+}
+
+/// `due_date` and `scheduled_date` are `blocks` COLUMNS — the
+/// `key_not_reserved` CHECK on `block_properties` forbids them as property
+/// rows, which is why they are a separate agenda arm at all.
+async fn ag_set_columns(
+    pool: &sqlx::SqlitePool,
+    block_id: &str,
+    due: Option<&str>,
+    scheduled: Option<&str>,
+) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("UPDATE blocks SET due_date = ?, scheduled_date = ? WHERE id = ?")
+        .bind(due)
+        .bind(scheduled)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .expect("seed agenda columns");
+}
+
+/// Every rule in `DESIRED_AGENDA_SQL`, each armed by a case that must fail it.
+async fn ag_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("agenda_cache.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, AG_PAGE, None).await;
+    bl_insert_page(&pool, AG_TPAGE, None).await;
+    // The template marker. Its VALUE is never read — `NOT EXISTS … AND tp.key =
+    // 'template'` excludes on the key's presence alone.
+    ag_date_property(&pool, AG_TPAGE, "template", "2026-03-01").await;
+
+    // Arm 0 — a property with a non-NULL value_date.
+    bl_insert_content(&pool, AG_PROP, AG_PAGE, None, "prop").await;
+    ag_date_property(&pool, AG_PROP, "deadline", "2026-03-01").await;
+
+    // Arm 0, AMBIGUOUS — two properties, one date, one block. `ORDER BY date,
+    // block_id, prio` leaves these two in unspecified order and the dedup keeps
+    // whichever came first, so BOTH sources are correct.
+    bl_insert_content(&pool, AG_TWOPROP, AG_PAGE, None, "two").await;
+    ag_date_property(&pool, AG_TWOPROP, "alpha", "2026-03-02").await;
+    ag_date_property(&pool, AG_TWOPROP, "beta", "2026-03-02").await;
+
+    // Arm 1 — a `date/YYYY-MM-DD` tag.
+    ag_insert_tag(&pool, AG_TAG_D3, "date/2026-03-03", None).await;
+    ag_insert_tag(&pool, AG_TAG_D4, "date/2026-03-04", None).await;
+    // Deleted tag → contributes nothing (`t.deleted_at IS NULL`).
+    ag_insert_tag(&pool, AG_TAG_DEAD, "date/2026-03-08", Some(1)).await;
+    // Not date-shaped → contributes nothing.
+    ag_insert_tag(&pool, AG_TAG_PLAIN, "project", None).await;
+    // `LIKE 'date/%'` is ASCII case-insensitive, so this IS a date tag.
+    ag_insert_tag(&pool, AG_TAG_UPPER, "DATE/2026-03-09", None).await;
+
+    bl_insert_content(&pool, AG_TAGGED, AG_PAGE, None, "tagged").await;
+    tc_tag_edge(&pool, AG_TAGGED, AG_TAG_D3).await;
+    tc_tag_edge(&pool, AG_TAGGED, AG_TAG_DEAD).await;
+    tc_tag_edge(&pool, AG_TAGGED, AG_TAG_PLAIN).await;
+    tc_tag_edge(&pool, AG_TAGGED, AG_TAG_UPPER).await;
+
+    // PRECEDENCE — a tag and a due_date naming the SAME day. prio 1 beats 2, so
+    // the tag wins; swap the two prios and this row changes source.
+    bl_insert_content(&pool, AG_WINNER, AG_PAGE, None, "winner").await;
+    tc_tag_edge(&pool, AG_WINNER, AG_TAG_D4).await;
+    ag_set_columns(&pool, AG_WINNER, Some("2026-03-04"), None).await;
+
+    // Arms 2 and 3, uncontested, then contested against each other.
+    bl_insert_content(&pool, AG_DUE, AG_PAGE, None, "due").await;
+    ag_set_columns(&pool, AG_DUE, Some("2026-03-05"), None).await;
+    bl_insert_content(&pool, AG_SCHED, AG_PAGE, None, "sched").await;
+    ag_set_columns(&pool, AG_SCHED, None, Some("2026-03-06")).await;
+    bl_insert_content(&pool, AG_BOTHCOL, AG_PAGE, None, "both").await;
+    ag_set_columns(&pool, AG_BOTHCOL, Some("2026-03-07"), Some("2026-03-07")).await;
+
+    // Deleted source block → nothing, from any arm.
+    bl_insert_content(&pool, AG_DEAD, AG_PAGE, None, "dead").await;
+    ag_date_property(&pool, AG_DEAD, "deadline", "2026-03-10").await;
+    ag_set_columns(&pool, AG_DEAD, Some("2026-03-10"), None).await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(AG_DEAD)
+        .execute(&pool)
+        .await
+        .expect("tombstone the source");
+
+    // A live block whose OWNING PAGE is a template → nothing.
+    bl_insert_content(&pool, AG_TCHILD, AG_TPAGE, None, "tchild").await;
+    ag_set_columns(&pool, AG_TCHILD, Some("2026-03-11"), None).await;
+
+    (pool, dir)
+}
+
+fn ag_key(date: &str, block: &str) -> (String, String) {
+    (date.to_owned(), block.to_owned())
+}
+
+/// **The acceptance criterion.** `agenda_cache` reconciles against a from-base
+/// fold, and every rule the fold transcribes is armed.
+#[tokio::test]
+async fn agenda_cache_reconciles_and_reports_a_stale_row_3345() {
+    let (pool, _dir) = ag_fixture().await;
+
+    // NON-VACUITY by VALUE: the whole expected map, not a subset. A block that
+    // is deleted, or lives under a template page, or carries a tag that is
+    // deleted or not date-shaped, is absent — and absence is only meaningful
+    // against a keyset asserted in full.
+    let expected = rebuild_agenda_cache_from_base(&pool)
+        .await
+        .expect("from-base rebuild");
+    let keys: Vec<(String, String)> = expected.keys().cloned().collect();
+    assert_eq!(
+        keys,
+        vec![
+            ag_key("2026-03-01", AG_PROP),
+            ag_key("2026-03-02", AG_TWOPROP),
+            ag_key("2026-03-03", AG_TAGGED),
+            ag_key("2026-03-04", AG_WINNER),
+            ag_key("2026-03-05", AG_DUE),
+            ag_key("2026-03-06", AG_SCHED),
+            ag_key("2026-03-07", AG_BOTHCOL),
+            ag_key("2026-03-09", AG_TAGGED),
+        ],
+        "the deleted block (2026-03-10), the template page's child (2026-03-11) \
+         and the deleted tag's day (2026-03-08) must all be absent; got {expected:#?}"
+    );
+
+    let one = |date: &str, block: &str| -> String {
+        let set = &expected[&ag_key(date, block)];
+        assert_eq!(
+            set.len(),
+            1,
+            "{date}/{block} should be unambiguous: {set:?}"
+        );
+        set.iter().next().expect("one source").clone()
+    };
+    assert_eq!(one("2026-03-01", AG_PROP), "property:deadline");
+    assert_eq!(one("2026-03-03", AG_TAGGED), format!("tag:{AG_TAG_D3}"));
+    assert_eq!(
+        one("2026-03-04", AG_WINNER),
+        format!("tag:{AG_TAG_D4}"),
+        "a tag (prio 1) outranks a due_date (prio 2) on the same day"
+    );
+    assert_eq!(one("2026-03-05", AG_DUE), "column:due_date");
+    assert_eq!(one("2026-03-06", AG_SCHED), "column:scheduled_date");
+    assert_eq!(
+        one("2026-03-07", AG_BOTHCOL),
+        "column:due_date",
+        "due_date (prio 2) outranks scheduled_date (prio 3) on the same day"
+    );
+    assert_eq!(
+        one("2026-03-09", AG_TAGGED),
+        format!("tag:{AG_TAG_UPPER}"),
+        "`LIKE 'date/%'` is ASCII case-insensitive, so `DATE/…` is a date tag"
+    );
+    assert_eq!(
+        expected[&ag_key("2026-03-02", AG_TWOPROP)],
+        BTreeSet::from(["property:alpha".to_owned(), "property:beta".to_owned()]),
+        "two properties on one day are a genuine tie, so both sources are correct"
+    );
+
+    // Production's own writer settles it.
+    agaric_store::cache::rebuild_agenda_cache(&pool)
+        .await
+        .expect("rebuild_agenda_cache");
+    assert_agenda_cache_reconciled(&pool, "after production's own rebuild").await;
+
+    // The tie is accepted from EITHER side, not just whichever production
+    // happened to store. Without this the set-valued expectation would be
+    // untested in one direction.
+    for source in ["property:alpha", "property:beta"] {
+        // dynamic-sql: test-only fault injection.
+        sqlx::query(
+            "UPDATE agenda_cache SET source = ? WHERE date = '2026-03-02' AND block_id = ?",
+        )
+        .bind(source)
+        .bind(AG_TWOPROP)
+        .execute(&pool)
+        .await
+        .expect("swap the tied source");
+        assert_agenda_cache_reconciled(&pool, source).await;
+    }
+
+    // Direction 1 — a source from a LOSING prio is still a divergence.
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("UPDATE agenda_cache SET source = 'column:due_date' WHERE block_id = ?")
+        .bind(AG_WINNER)
+        .execute(&pool)
+        .await
+        .expect("demote the source");
+    let drift = agenda_cache_reconciliation_failure(&pool, "source demoted")
+        .await
+        .expect("oracle must report the demoted source");
+    assert!(
+        drift.contains("agenda_cache.source") && drift.contains(AG_WINNER),
+        "expected a source divergence naming the block, got:\n{drift}"
+    );
+
+    // Direction 2 — a row the base rows do not justify.
+    agaric_store::cache::rebuild_agenda_cache(&pool)
+        .await
+        .expect("rebuild_agenda_cache");
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES ('2026-03-11', ?, 'column:due_date')")
+        .bind(AG_TCHILD)
+        .execute(&pool)
+        .await
+        .expect("insert a ghost row");
+    let extra = agenda_cache_reconciliation_failure(&pool, "ghost row")
+        .await
+        .expect("oracle must report the ghost row");
+    assert!(
+        extra.contains("agenda_cache.row") && extra.contains(AG_TCHILD),
+        "expected an extra-row divergence naming the template page's child, got:\n{extra}"
+    );
+
+    // Direction 3 — a row production should have written and did not.
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("DELETE FROM agenda_cache WHERE block_id = ?")
+        .bind(AG_DUE)
+        .execute(&pool)
+        .await
+        .expect("drop a row");
+    let missing = agenda_cache_reconciliation_failure(&pool, "row dropped")
+        .await
+        .expect("oracle must report the missing row");
+    assert!(
+        missing.contains("agenda_cache.row") && missing.contains(AG_DUE),
+        "expected a missing-row divergence naming the block, got:\n{missing}"
     );
 }
