@@ -771,8 +771,7 @@
       },
       "command": "query_by_property",
       "comment": "Vacuity guard for the property half: the four `status = open` rows (S2, S4, S6, S9). Every narrowing step below must return a strict subset of these or of the `status` holders.",
-      "name": "qbp_eq_text",
-      "ordered": true
+      "name": "qbp_eq_text"
     },
     {
       "args": {
@@ -789,8 +788,7 @@
       },
       "command": "query_by_property",
       "comment": "`neq` over the rows that HOLD the key: `(bp.value_text IS NULL OR bp.value_text != ?)`, so it is the complement within `status` holders (S3, S5), never the complement of the vault. An implementation that ignores `operator` returns the `eq` set instead.",
-      "name": "qbp_neq_text",
-      "ordered": true
+      "name": "qbp_neq_text"
     },
     {
       "args": {
@@ -807,8 +805,7 @@
       },
       "command": "query_by_property",
       "comment": "`neq` against a value that lives in the OTHER column: every `due` row holds its value in `value_date`, so `value_text` is NULL on all four, and `NULL != 'x'` is NULL, not TRUE. #384 writes the predicate `(bp.value_text IS NULL OR bp.value_text != ?)`, so all four holders come back; a mock that lets NULL fail `!=` returns nothing.",
-      "name": "qbp_neq_matches_a_null_value_column",
-      "ordered": true
+      "name": "qbp_neq_matches_a_null_value_column"
     },
     {
       "args": {
@@ -825,8 +822,7 @@
       },
       "command": "query_by_property",
       "comment": "`lt` is strict: S3 sits exactly on the bound and must be excluded; only S2 remains.",
-      "name": "qbp_date_lt_excludes_bound",
-      "ordered": true
+      "name": "qbp_date_lt_excludes_bound"
     },
     {
       "args": {
@@ -843,8 +839,7 @@
       },
       "command": "query_by_property",
       "comment": "`lte` keeps the bound: S2 and S3. Paired with the step above so the two arms cannot be swapped without one of them reddening.",
-      "name": "qbp_date_lte_includes_bound",
-      "ordered": true
+      "name": "qbp_date_lte_includes_bound"
     },
     {
       "args": {
@@ -860,8 +855,7 @@
       },
       "command": "query_by_property",
       "comment": "`valueDateRange` is `>= from AND < to`: S3 sits on `from` (kept), S5 sits on `to` (dropped), S2 is before (dropped), S4 inside. A closed or fully open range gets one endpoint wrong.",
-      "name": "qbp_date_range_half_open",
-      "ordered": true
+      "name": "qbp_date_range_half_open"
     },
     {
       "args": {
@@ -877,8 +871,7 @@
       },
       "command": "query_by_property",
       "comment": "Set membership over `value_text`: S3 and S5, neither of which is the first member alone.",
-      "name": "qbp_value_text_in",
-      "ordered": true
+      "name": "qbp_value_text_in"
     },
     {
       "args": {
@@ -894,8 +887,7 @@
       },
       "command": "query_by_property",
       "comment": "`parent_id IS NOT ?`: every `status` holder under S1 goes (S2, S3, S4, S5, S6); S9 under S8 stays.",
-      "name": "qbp_exclude_parent_keeps_others",
-      "ordered": true
+      "name": "qbp_exclude_parent_keeps_others"
     },
     {
       "args": {
@@ -912,8 +904,7 @@
       },
       "command": "query_by_property",
       "comment": "`TRIM(content, space/tab/LF/CR) != ''`: S6's content is only whitespace, so it drops out of the `open` set (S2, S4, S9 remain). A plain empty-string check keeps S6.",
-      "name": "qbp_content_non_empty_trims_whitespace",
-      "ordered": true
+      "name": "qbp_content_non_empty_trims_whitespace"
     },
     {
       "args": {
@@ -929,8 +920,7 @@
       },
       "command": "query_by_property",
       "comment": "`todo_state IS NULL OR todo_state NOT IN (...)`: S3 (DONE) is excluded; every holder with NO todo_state passes, and S4 (TODO) passes. An implementation that ignores the push-down keeps S3; one that requires a todo_state drops everything but S4.",
-      "name": "qbp_exclude_todo_states_passes_null",
-      "ordered": true
+      "name": "qbp_exclude_todo_states_passes_null"
     },
     {
       "args": {
@@ -946,8 +936,7 @@
       },
       "command": "query_by_property",
       "comment": "A reserved key reads the native column, not `block_properties`: S4 only.",
-      "name": "qbp_reserved_key_routes_to_column",
-      "ordered": true
+      "name": "qbp_reserved_key_routes_to_column"
     },
     {
       "args": {
@@ -998,8 +987,7 @@
       },
       "command": "query_by_tags",
       "comment": "Union of `work` and `home` holders: S2, S4, S5 and the page S8.",
-      "name": "tags_or",
-      "ordered": true
+      "name": "tags_or"
     },
     {
       "args": {
@@ -1014,8 +1002,7 @@
       },
       "command": "query_by_tags",
       "comment": "Intersection: only S2 holds both.",
-      "name": "tags_and",
-      "ordered": true
+      "name": "tags_and"
     },
     {
       "args": {
@@ -1030,8 +1017,7 @@
       },
       "command": "query_by_tags",
       "comment": "`not` compiles to `b.id NOT IN (<work holders>)` over EVERY live block in the space — pages, the whitespace block and the tag blocks themselves included — not only over blocks that carry some tag. A mock that treats an unknown mode as `and`, or that skips untagged blocks, diverges here.",
-      "name": "tags_not_is_the_complement_of_all_live_blocks",
-      "ordered": true
+      "name": "tags_not_is_the_complement_of_all_live_blocks"
     },
     {
       "args": {
@@ -1046,8 +1032,7 @@
       },
       "command": "query_by_tags",
       "comment": "`Prefix(work)` resolves through `tags_cache.name LIKE 'work%'`, so `workshop` (S3) matches alongside `work` (S2, S5, S8).",
-      "name": "tags_prefix_matches_workshop_too",
-      "ordered": true
+      "name": "tags_prefix_matches_workshop_too"
     },
     {
       "args": {
@@ -1062,8 +1047,7 @@
       },
       "command": "query_by_tags",
       "comment": "`home AND work*`: S2 alone (S4 has home but no work-prefixed tag).",
-      "name": "tags_and_of_tag_and_prefix",
-      "ordered": true
+      "name": "tags_and_of_tag_and_prefix"
     },
     {
       "args": {
@@ -1079,8 +1063,7 @@
       },
       "command": "query_by_tags",
       "comment": "With `includeInherited`, S9 (a child of the tagged page S8) joins the `work` holders through `block_tag_inherited`: S2, S5, S8, S9. Without the flag the same query returns S2, S5, S8 — the step below pins that.",
-      "name": "tags_include_inherited_reaches_descendant",
-      "ordered": true
+      "name": "tags_include_inherited_reaches_descendant"
     },
     {
       "args": {
@@ -1095,8 +1078,7 @@
       },
       "command": "query_by_tags",
       "comment": "`includeInherited` absent: S9 is NOT a holder.",
-      "name": "tags_direct_only_by_default",
-      "ordered": true
+      "name": "tags_direct_only_by_default"
     },
     {
       "args": {
@@ -1128,8 +1110,7 @@
       },
       "command": "query_by_tags",
       "comment": "`blockType` narrows the complement to content blocks: S3, S4, S6, S9 (pages and tags are not content; S2 and S5 hold work).",
-      "name": "tags_not_with_block_type",
-      "ordered": true
+      "name": "tags_not_with_block_type"
     },
     {
       "args": {
@@ -1163,8 +1144,7 @@
       },
       "command": "query_by_tag_expr",
       "comment": "`(work AND home) OR workshop`: S2 from the conjunction, S3 from the disjunct. Flattening the nesting into one `Or` would add S4, S5 and S8.",
-      "name": "expr_and_inside_or",
-      "ordered": true
+      "name": "expr_and_inside_or"
     },
     {
       "args": {
@@ -1192,8 +1172,7 @@
       },
       "command": "query_by_tag_expr",
       "comment": "`home AND NOT work*`: S4 only; S2 is excluded by the `Not` over the prefix.",
-      "name": "expr_not_prefix_inside_and",
-      "ordered": true
+      "name": "expr_not_prefix_inside_and"
     },
     {
       "args": {
@@ -1213,8 +1192,7 @@
       },
       "command": "query_by_tag_expr",
       "comment": "`NOT work` with inheritance on: S9 inherits `work` from S8, so it leaves the complement too (S1, S3, S4, S6, S10, S11, S12).",
-      "name": "expr_not_with_inherited",
-      "ordered": true
+      "name": "expr_not_with_inherited"
     },
     {
       "args": {

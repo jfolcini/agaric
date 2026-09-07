@@ -239,7 +239,8 @@
       },
       "command": "get_properties",
       "comment": "`get_properties_inner` reads `block_properties` and nothing else, so the reserved key `todo_state` — which the projection routes to the block's own COLUMN — must be ABSENT here even though the op that set it looks identical to the others. The deleted `temp` key must be absent too. The remaining four pin the typed-value projection, including the `Ref` whose value is relabeled to a canonical token.",
-      "name": "get_properties_excludes_column_routed_key"
+      "name": "get_properties_excludes_column_routed_key",
+      "unordered": "`get_properties_inner` has no ORDER BY, so the backend answers in `block_properties` primary-key order (`block_id, key`) while the mock answers in property-insertion order. The command promises neither, so the sequence is not comparable; the ROWS still are."
     },
     {
       "args": {
@@ -266,7 +267,8 @@
       },
       "command": "get_batch_properties",
       "comment": "Both requested blocks own properties, so this pins the GROUPING: every key must land under its own block, and S3's `status` must not leak into S2's bucket (both blocks carry a key of that name with different values). The present-but-empty map entry is pinned separately in `query_batch_properties_empty_entry`.",
-      "name": "get_batch_properties_groups_by_block"
+      "name": "get_batch_properties_groups_by_block",
+      "unordered": "`get_batch_properties_inner` has no ORDER BY, so each block's rows come back in `block_properties` primary-key order (`block_id, key`) on the backend and in property-insertion order on the mock. The command promises neither, so the sequence is not comparable; the ROWS still are."
     }
   ],
   "seed": {

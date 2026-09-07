@@ -318,8 +318,7 @@
       },
       "command": "list_blocks",
       "comment": "First page of two rows out of six, ordered by `id ASC` — which is DESCENDING position here. `total_count` is the full six regardless of page size.",
-      "name": "by_type_page_1",
-      "ordered": true
+      "name": "by_type_page_1"
     },
     {
       "args": {
@@ -335,8 +334,7 @@
       "command": "list_blocks",
       "comment": "The middle page — the one that exists only if the cursor was minted on the id keyset AND resumed on it. A `(position, id)` cursor reads the wrong column and lands on rows from the opposite end of the ordering.",
       "cursor_from": "by_type_page_1",
-      "name": "by_type_page_2",
-      "ordered": true
+      "name": "by_type_page_2"
     },
     {
       "args": {
@@ -352,8 +350,7 @@
       "command": "list_blocks",
       "comment": "The final page: `has_more` false, no `next_cursor`. Exactly two rows, so the end-of-results signal is not conflated with a short page.",
       "cursor_from": "by_type_page_2",
-      "name": "by_type_page_3",
-      "ordered": true
+      "name": "by_type_page_3"
     },
     {
       "args": {
@@ -368,8 +365,7 @@
       },
       "command": "list_blocks",
       "comment": "The `tagId` branch — `list_by_tag`, `ORDER BY bt.block_id ASC`, which is `b.id` under the join key's name. Five of the six content blocks carry the tag, so this also pins that the filter is applied at all.",
-      "name": "by_tag_page_1",
-      "ordered": true
+      "name": "by_tag_page_1"
     },
     {
       "args": {
@@ -385,8 +381,7 @@
       "command": "list_blocks",
       "comment": "The tag branch's boundary page. Same argument as `by_type_page_2`: with positions reversed against ids, a position keyset returns a disjoint pair here.",
       "cursor_from": "by_tag_page_1",
-      "name": "by_tag_page_2",
-      "ordered": true
+      "name": "by_tag_page_2"
     },
     {
       "args": {
@@ -402,8 +397,7 @@
       "command": "list_blocks",
       "comment": "The short final tag page: one row, `has_more` false. `total_count` stays null — `list_by_tag` never sets it, only the `blockType` arm does.",
       "cursor_from": "by_tag_page_2",
-      "name": "by_tag_page_3",
-      "ordered": true
+      "name": "by_tag_page_3"
     },
     {
       "args": {
@@ -421,8 +415,7 @@
       },
       "command": "list_blocks",
       "comment": "#3942 review note 7 — the `dateRange` branch, `list_agenda_range`, `ORDER BY ac.date ASC, b.id ASC`. Its `Cursor` stashes `ac.date` in the `deleted_at` slot (`Cursor::for_id_and_deleted_at`, `pagination/agenda.rs`) rather than growing the struct — the least obvious slot reuse of the five branches, and until this step the one no fixture paginated a second page of.",
-      "name": "agenda_range_page_1",
-      "ordered": true
+      "name": "agenda_range_page_1"
     },
     {
       "args": {
@@ -441,8 +434,7 @@
       "command": "list_blocks",
       "comment": "The boundary page: proves the `deleted_at`-slotted cursor actually resumes on `ac.date` (and its `id` tiebreak), not silently on id alone or not at all — the SAME differential #3821 exists to catch on the other branches, now exercised on this one.",
       "cursor_from": "agenda_range_page_1",
-      "name": "agenda_range_page_2",
-      "ordered": true
+      "name": "agenda_range_page_2"
     }
   ],
   "seed": {

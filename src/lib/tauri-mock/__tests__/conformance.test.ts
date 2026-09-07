@@ -125,8 +125,8 @@ const QUERY_DRIFT_SKIP = new Set<string>([
   //   - #3872 `get_batch_properties` omits a property-less block
   //     (`query_batch_properties_empty_entry`),
   //   - #3873 `list_tags_for_block` sorts by tag id, so
-  //     `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step is now
-  //     an `"ordered": true` pin.
+  //     `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step pins
+  //     the sequence (every step does, since #4670).
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {

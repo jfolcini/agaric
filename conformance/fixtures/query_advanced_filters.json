@@ -226,8 +226,7 @@
       },
       "command": "run_advanced_query",
       "comment": "Vacuity guard: a filterless advanced query must return the WHOLE seeded space on both stacks. If this step ever goes empty, the steps below agree only because neither reached any data. NOT `ordered` only because of #3821 (mock sorts `b.id ASC`, engine `b.id DESC`) — every id here is a SEED id, identical on both stacks, so this step can and should pin the order once #3821 lands. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
-      "name": "advanced_no_filter_returns_the_space",
-      "ordered": true
+      "name": "advanced_no_filter_returns_the_space"
     },
     {
       "args": {
@@ -247,8 +246,7 @@
       },
       "command": "run_advanced_query",
       "comment": "#3314 finding 1 (State half): exclude + is_null is an AND-join — non-NULL todo_state that is not DONE. An OR-join is a tautology and returns every row. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
-      "name": "advanced_state_exclude_done_and_unset",
-      "ordered": true
+      "name": "advanced_state_exclude_done_and_unset"
     },
     {
       "args": {
@@ -270,8 +268,7 @@
       },
       "command": "run_advanced_query",
       "comment": "#3314 finding 1 (Between half): SQL BETWEEN is inclusive on BOTH endpoints. S2 sits on `from`, S4 on `to`. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
-      "name": "advanced_due_date_between_is_inclusive",
-      "ordered": true
+      "name": "advanced_due_date_between_is_inclusive"
     },
     {
       "args": {
@@ -316,8 +313,7 @@
       },
       "command": "run_advanced_query",
       "comment": "#3893 — the first fixture step that PAGINATES `run_advanced_query`, and the reason the gap was invisible: the engine's `QueryCursor` had no conformance coverage of any kind, byte or row, so #3863's cursor divergence could not have reddened here no matter what the projection recorded. An EXPLICIT `position` sort, not the default: the default keyset is the bare `b.id` tiebreak, which #3821 (mock `b.id ASC`, engine `b.id DESC`) still orders the other way round, so a default-sorted page pair would redden on a known open bug instead of on this one. `position` is distinct across the seed except for the B1/B2 tie at 1, which is what exercises the appended `b.id DESC` tiebreak. The recorded `cursor` is the TWO-element tagged tuple `[Int,Text]` — the arity is the #3863 class exactly, since the pre-fix mock encoded the id alone.",
-      "name": "advanced_position_page_1",
-      "ordered": true
+      "name": "advanced_position_page_1"
     },
     {
       "args": {
@@ -338,8 +334,7 @@
       "command": "run_advanced_query",
       "comment": "The resumed page. Its rows are what a wrong boundary VALUE changes, which is why the `cursor` field erases values and pins structure only — the two assertions are complementary, not redundant. This step also needed `cursor_path` fixing: `AdvancedQueryRequest.cursor` is a field of the request DTO, and the harness was injecting a top-level `args.cursor` that the command would have ignored, so a 'second page' step would silently have re-read the FIRST page.",
       "cursor_from": "advanced_position_page_1",
-      "name": "advanced_position_page_2",
-      "ordered": true
+      "name": "advanced_position_page_2"
     },
     {
       "args": {
@@ -360,8 +355,7 @@
       "command": "run_advanced_query",
       "comment": "The short final page: one row, `has_more` false, and therefore `cursor` NULL. Pins that the end-of-results signal is not conflated with a full page, and that a last page hands back no cursor to chase.",
       "cursor_from": "advanced_position_page_2",
-      "name": "advanced_position_page_3",
-      "ordered": true
+      "name": "advanced_position_page_3"
     }
   ],
   "seed": {

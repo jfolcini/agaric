@@ -213,8 +213,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "PageSort::Alphabetical -> StringAsc on COALESCE(b.content,'') COLLATE NOCASE. Title order (Alpha, Bravo, Charlie) is neither seed-id order nor any count order, so this row sequence is reachable by no other arm.",
-      "name": "pages_sorted_alphabetical",
-      "ordered": true
+      "name": "pages_sorted_alphabetical"
     },
     {
       "args": {
@@ -226,8 +225,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "PageSort::Default -> SortKeyset::IdOnly (`b.id ASC`, no sort-key slot). Seed-label order, which every other arm permutes.",
-      "name": "pages_sorted_default",
-      "ordered": true
+      "name": "pages_sorted_default"
     },
     {
       "args": {
@@ -239,8 +237,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "PageSort::MostContent -> I64Desc on COALESCE(pc.child_block_count, 0). Descendant counts are 2 (S1) / 0 (S2) / 1 (S3), so DESC is S1, S3, S2 — distinct from every other arm, and an ASC keyset would exactly reverse it.",
-      "name": "pages_sorted_most_content",
-      "ordered": true
+      "name": "pages_sorted_most_content"
     },
     {
       "args": {
@@ -252,8 +249,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "PageSort::MostLinked -> I64Desc on COALESCE(pc.inbound_link_count, 0). S3 is linked twice (from S4 and S5), S2 once (from S6, a block on page S3 — so the count must roll a link up from the linking block to its owning page, and count the TARGET page's own subtree), S1 never.",
-      "name": "pages_sorted_most_linked",
-      "ordered": true
+      "name": "pages_sorted_most_linked"
     },
     {
       "args": {
@@ -265,8 +261,7 @@
       },
       "command": "list_pages_with_metadata",
       "comment": "PageSort::RecentlyModified -> StringDescNullCoalesced on COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), sentinel). Only S3 carries an op targeting the PAGE block itself (the three edit_block ops target CONTENT blocks, whose op-log rows must NOT count for their owning page), so S3 leads and the two sentinel-valued pages fall to the `b.id ASC` tiebreaker. An ASC keyset, or a sentinel that sorts above a real timestamp, puts S3 last.",
-      "name": "pages_sorted_recently_modified",
-      "ordered": true
+      "name": "pages_sorted_recently_modified"
     }
   ],
   "seed": {

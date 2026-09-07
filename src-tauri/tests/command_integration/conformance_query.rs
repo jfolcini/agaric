@@ -65,44 +65,36 @@
 //! empty `rows` and fails, instead of being normalised into agreement by a
 //! shape-tolerant extractor.
 //!
-//! ## Ordering — a DELIBERATELY WEAKENED comparison
+//! ## Ordering — ORDERED by default (#4670)
 //!
-//! `rows` is canonically SORTED unless the step sets `"ordered": true`, so by
-//! default a step compares SETS, not sequences: every ordering divergence is
-//! invisible to it. ONE reason remains benign: when the sort key is the raw
-//! block id and the fixture creates blocks through ops, the ids genuinely
-//! differ between the stacks, so their order is not comparable at all.
+//! `rows` is compared in the order the command returned it. A step that cannot
+//! be compared that way opts OUT with `"unordered": "<reason>"`, and the reason
+//! is mandatory: a bare `true` is rejected here, exactly as an `expect_error`
+//! that is not an `AppErrorKind` string is. An escape hatch nobody has to
+//! justify is one every step takes.
 //!
-//! #3821 used to be a second reason — the mock's `run_advanced_query` sorted
-//! `b.id ASC` (and paginated its keyset that way) while the engine's terminal
-//! tiebreaker is `b.id DESC` (`resolve_sort` in
-//! `agaric-store/src/query/engine.rs`). That was never an incomparability:
-//! `query_advanced_filters` queries only SEED blocks, whose ids are
-//! byte-identical on both stacks. #3821 is closed and the mock's
-//! `resolveSortTerms` now mirrors `resolve_sort`, so #3927 set `"ordered":
-//! true` on the DEFAULT-sorted `run_advanced_query` steps and re-authored,
-//! exactly as this note predicted. It matters beyond tidiness: those steps are
-//! the only evidence for `run_advanced_query`'s DEFAULT sort arm in the branch
-//! manifest (`conformance-coverage.test.ts`), and a set comparison is no
-//! evidence at all about an ORDERING branch.
+//! This used to be the other way round — `"ordered": true` was the opt-IN, so
+//! 47 of 119 steps compared SETS and every ordering divergence in them was
+//! invisible. Two real mock ordering bugs hid there and were only found
+//! head-on: #3821 (`run_advanced_query` ordered `b.id ASC` against the engine's
+//! `b.id DESC` terminal tiebreaker, `resolve_sort` in
+//! `agaric-store/src/query/engine.rs`) and #3873 (`list_tags_for_block`
+//! answering in `blockTags` INSERTION order against `ORDER BY tag_id`). Both
+//! are fixed and both are now pinned by ordered steps.
 //!
-//! Scope note (#3893): the closed #3821 only ever covered the DEFAULT keyset.
-//! The `advanced_position_page_*` steps added for #3893 carry an EXPLICIT
-//! `position` sort, are `"ordered": true`, and pass — including the `B2`
-//! before `B1` tie at position 1, which is the appended `b.id DESC`
-//! tiebreaker deciding. So a request that names its own sort was never
-//! exposed to #3821 in the first place.
+//! Three of the 119 steps opt out today, all for the same reason: the command
+//! they call has NO `ORDER BY`, so its sequence is the query plan's and not
+//! anything either stack can be held to (`batch_resolve_inner`,
+//! `get_properties_inner`, `get_batch_properties_inner`). The other benign
+//! reason, should a fixture meet it: a command whose terminal sort key is the
+//! RAW block id, over rows the fixture created through ops — a random ULID on
+//! the backend, a mock-local id in the mock. Nothing else is a reason. Two
+//! stacks that both sort and disagree is a divergence to fix.
 //!
-//! #3873 used to be a third reason here — `list_tags_for_block` returned
-//! `blockTags` INSERTION order on the mock against the backend's `ORDER BY
-//! tag_id`. The mock now sorts, so `query_point_reads_tags`'s
-//! `tags_two_surviving_in_id_order` step is `"ordered": true` and pins the
-//! sequence for real: it applies its two tags in DESCENDING id order, so an
-//! implementation that answers in application order fails it. The flip needed
-//! no re-authoring, exactly as this note predicted.
-//!
-//! Steps whose sort key is fixture-controlled data (page title, …) set
-//! `ordered` and DO compare sequences.
+//! An ordered comparison also matters beyond tidiness. A step is the branch
+//! manifest's evidence (`conformance-coverage.test.ts`) that a command's SORT
+//! arm was exercised, and a set comparison is no evidence at all about an
+//! ordering branch.
 
 use super::common::QueryByPropertyRequest;
 use super::common::pages::{
@@ -1693,10 +1685,21 @@ pub async fn run_query_steps(
             });
             PROJECTING_STEP.sync_scope(at.clone(), || inject_cursor(command, &mut args, cursor));
         }
-        let ordered = step
-            .get("ordered")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        // #4670 — ordered is the DEFAULT; a step opts out by NAMING why the two
+        // stacks cannot be compared in sequence. A bare `true` is refused for
+        // the same reason `expect_error: true` is: an unjustified escape hatch
+        // from an assertion is the cheapest thing in the file to reach for.
+        let unordered: bool = match step.get("unordered") {
+            None | Some(Value::Null) => false,
+            Some(Value::String(s)) if !s.trim().is_empty() => true,
+            Some(other) => panic!(
+                "{at}: `unordered` must be a NON-EMPTY reason string saying why the backend's \
+                 row order is not comparable with the mock's (e.g. \"sorted by raw block id, \
+                 which op-created rows do not share between the stacks\"), got {other}. \
+                 Ordered is the default: if the two stacks simply disagree, that is a \
+                 divergence to fix, not a reason."
+            ),
+        };
 
         // A command that REFUSES has behaved, and the refusal is recorded like
         // any other answer (#3928): `error` carries the `AppErrorKind` wire
@@ -1789,11 +1792,9 @@ pub async fn run_query_steps(
         cursors.insert(name.clone(), raw.next_cursor.clone());
         let cursor = cursor_shape(raw.next_cursor.as_deref());
         let mut rows: Vec<String> = raw.rows.iter().map(|t| relabel_token(t, labels)).collect();
-        if !ordered {
-            // Set comparison, not sequence comparison — see "Ordering" in the
-            // module docs. The cost is real: every ordering divergence of an
-            // unordered step is invisible here, which is why a step that
-            // exists to pin a SORT arm must set `"ordered": true`.
+        if unordered {
+            // Set comparison, not sequence comparison — the cost the step's
+            // reason had to justify. See "Ordering" in the module docs.
             rows.sort_by_key(|t| token_key(t));
         }
         out.push(json!({
@@ -2674,7 +2675,7 @@ mod group_token_tests {
     }
 
     /// Every bucket contributes, and the buckets keep the order the engine
-    /// paged them in (a step may then set `"ordered": true` to pin it).
+    /// paged them in, which a step pins by default (#4670).
     #[test]
     fn every_bucket_contributes() {
         assert_eq!(
@@ -2770,7 +2771,6 @@ mod query_runner_context_tests {
             "queries": [{
                 "name": "grouped_by_block_type",
                 "command": "run_advanced_query",
-                "ordered": true,
                 "args": { "request": {
                     "spaceId": TEST_SPACE_ID,
                     "limit": 100,
@@ -2923,6 +2923,40 @@ mod query_runner_context_tests {
             "queries": [
                 { "name": "block_that_is_not_there", "command": "get_block",
                   "expect_error": "validation", "args": { "blockId": MISSING } },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// #4670 — `"unordered": true` must not buy the weaker comparison. The
+    /// whole point of inverting the default is that opting out costs a stated
+    /// reason; a truthy flag is the escape hatch reappearing under a new name.
+    #[tokio::test]
+    #[should_panic(expected = "fixture 'ordering_demo' query step 'the_page' (command \
+                    'get_block'): `unordered` must be a NON-EMPTY reason string")]
+    async fn a_reasonless_unordered_opt_out_is_rejected() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "ordering_demo",
+            "queries": [
+                { "name": "the_page", "command": "get_block", "unordered": true,
+                  "args": { "blockId": PAGE } },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// The other half of the pair: a blank reason is a reason nobody wrote.
+    #[tokio::test]
+    #[should_panic(expected = "fixture 'ordering_demo' query step 'the_page' (command \
+                    'get_block'): `unordered` must be a NON-EMPTY reason string")]
+    async fn a_blank_unordered_reason_is_rejected() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "ordering_demo",
+            "queries": [
+                { "name": "the_page", "command": "get_block", "unordered": "   ",
+                  "args": { "blockId": PAGE } },
             ],
         });
         let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;

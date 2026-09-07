@@ -166,8 +166,7 @@
       },
       "command": "list_journal_pages_in_range",
       "comment": "`ordered` because the sort key is the page's date TITLE, which the fixture controls — and the seed is deliberately NOT in date order, so the expected sequence differs from the canonical `B1, B2, …` sort and this step really does pin `ORDER BY content ASC`.",
-      "name": "journal_pages_january",
-      "ordered": true
+      "name": "journal_pages_january"
     }
   ],
   "seed": {

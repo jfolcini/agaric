@@ -151,7 +151,6 @@ describe('runQuerySteps records the grouped payload', () => {
         {
           name: 'grouped_by_block_type',
           command: 'run_advanced_query',
-          ordered: true,
           args: {
             request: {
               // The IMPORT, not the literal — as the flat test below does,
@@ -186,8 +185,11 @@ describe('runQuerySteps records the grouped payload', () => {
   // the flat projection replaced by a hard-coded `const flat: string[] = []`,
   // i.e. it could not detect the very thing it claims ("the flat side is
   // untouched") being deleted outright. The recorded tokens below are the two
-  // seeded blocks in canonical order, so dropping the flat projection — or
-  // letting the grouped concatenation contribute to a flat response — reddens.
+  // seeded blocks in the order the request's DEFAULT sort returns them —
+  // `resolve_sort`'s `b.id DESC` terminal tiebreaker, so `P1` before `C1`
+  // (#4670 made that visible; the pair used to be compared as a set). Dropping
+  // the flat projection — or letting the grouped concatenation contribute to a
+  // flat response — reddens.
   it('leaves a flat run_advanced_query step untouched', async () => {
     const out = await runQuerySteps(
       [
@@ -200,6 +202,6 @@ describe('runQuerySteps records the grouped payload', () => {
       new Map(),
     )
 
-    expect(out[0]?.rows).toEqual(['C1', 'P1'])
+    expect(out[0]?.rows).toEqual(['P1', 'C1'])
   })
 })
