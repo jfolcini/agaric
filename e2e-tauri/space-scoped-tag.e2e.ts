@@ -36,21 +36,36 @@ const SWITCHER = '[aria-label="Switch space"]'
 const TAG_ITEM = `[data-testid="tag-item-${TAG}"]`
 
 /**
- * The active space's name, once the switcher has one to show.
+ * The switcher trigger's label, read as DOM text rather than through
+ * `getText()`.
  *
- * The trigger's text is Radix's mirror of the SELECTED `SelectItem`, and the
- * items come from `useSpaceStore.availableSpaces`, which SpaceSwitcher fills
- * from a fire-and-forget `refreshAvailableSpaces()` on mount. Until that
- * lands there is no item matching `currentSpaceId`, so the trigger renders
- * empty — which is what run 34065136247 read, 1.6 s after boot, and asserted
- * against. The app-ready signal (the sidebar's Journal nav) does not cover
- * this store, so the wait belongs here.
+ * `getText()` returns "" for this button — run 34088762135 polled it for the
+ * full 60 s while the failure screenshot shows the trigger plainly reading
+ * "Personal". The label is not the button's own text: Radix's `SelectValue`
+ * is a portal TARGET, and the selected `SelectItemText` renders into it from
+ * a subtree the closed Select keeps hidden, which WebDriver's rendered-text
+ * algorithm does not follow. `textContent` does, and it is unaffected by the
+ * trigger's `text-overflow: ellipsis` truncation either.
+ */
+async function switcherLabel(): Promise<string> {
+  const label = await browser.execute(
+    (selector: string) => document.querySelector(selector)?.textContent ?? '',
+    SWITCHER,
+  )
+  return label.trim()
+}
+
+/**
+ * The active space's name, once the switcher has one to show. SpaceSwitcher
+ * fills `availableSpaces` from a fire-and-forget `refreshAvailableSpaces()`
+ * on mount, so until that lands no item matches `currentSpaceId` and the
+ * trigger really is empty; the app-ready signal does not cover that store.
  */
 async function currentSpaceName(): Promise<string> {
   let name = ''
   await browser.waitUntil(
     async () => {
-      name = (await $(SWITCHER).getText()).trim()
+      name = await switcherLabel()
       return name !== ''
     },
     { timeout: NAV_TIMEOUT, timeoutMsg: 'the space switcher never showed an active space' },
@@ -60,7 +75,7 @@ async function currentSpaceName(): Promise<string> {
 
 async function switchToSpace(name: string): Promise<void> {
   await chooseSelectOption(SWITCHER, name)
-  await browser.waitUntil(async () => (await $(SWITCHER).getText()).includes(name), {
+  await browser.waitUntil(async () => (await switcherLabel()).includes(name), {
     timeout: ACTION_TIMEOUT,
     timeoutMsg: `space switcher never showed ${JSON.stringify(name)}`,
   })

@@ -55,6 +55,31 @@ but that IPC caps at 100 (invariant 10), so every page open logs
 Filed as #4805 — a production defect the mock-backed estate does not
 exhibit, i.e. exactly the class #4671 exists to catch.
 
+## Second red run
+
+[34088762135](https://github.com/jfolcini/agaric/actions/runs/34088762135) —
+`12 passed, 2 failed`. The attachment spec passes. The other two failed on
+causes the first run had hidden behind their earlier failures:
+
+4. **`space-scoped-tag`** — `getText()` on the switcher trigger returns ""
+   for the full 60 s, while the failure screenshot shows it plainly reading
+   "Personal". The label is not the button's own text: Radix's `SelectValue`
+   is a portal target and the selected `SelectItemText` renders into it from
+   the subtree the closed Select keeps hidden, which WebDriver's
+   rendered-text algorithm does not follow. Both the initial read and
+   `switchToSpace`'s confirmation now go through `textContent`.
+5. **`undo-todo-state`** — the single Ctrl+Z reversed a `delete_block` as
+   well as the checkbox's `set_property`. `handleToggleTodo` pushes a
+   ref-less undo entry, so Ctrl+Z resolves positionally through
+   `undoPageGroup`, which reverts everything within `UNDO_GROUP_WINDOW_MS`
+   (500 ms) of the newest op — and the Escape that dropped the empty
+   Enter-sibling landed inside that window. Restoring it left the page
+   unresolvable (`block '01M1X8…' not in current space`), the page editor
+   healed the stale reference and bounced to Journal, and the marked block
+   was gone. The block is now committed by navigating away instead of with
+   Enter+Escape, which removes the `delete_block` entirely and puts a
+   round-trip's worth of time between the block's ops and the checkbox's.
+
 ## Verification
 
 Pending: re-dispatched to the weekly lane. This section names the green run

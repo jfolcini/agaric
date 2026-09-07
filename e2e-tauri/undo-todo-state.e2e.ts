@@ -5,10 +5,20 @@
 // path (agaric-engine/src/reverse/) is only proven here. Ctrl+Z reaches
 // `useUndoShortcuts` only in the page editor with NO block focused, so the
 // page comes from the sidebar's "New Page" and the reversed action is the
-// task checkbox — one `set_todo_state` IPC, one `set_property` op, and the
-// last op on the page by a wide margin, so a single Ctrl+Z targets exactly
-// it (`handleToggleTodo` pushes a ref-less entry, which Ctrl+Z resolves
-// through the positional `undoPageGroup` fallback).
+// task checkbox — one `set_todo_state` IPC, one `set_property` op, whose
+// effect is readable straight off the checkbox's `aria-label`.
+//
+// TIMING IS LOAD-BEARING, and is why the block is committed by navigating
+// away rather than with Enter+Escape. `handleToggleTodo` pushes a REF-LESS
+// undo entry, so Ctrl+Z resolves it through the positional `undoPageGroup`
+// fallback, which reverts every op within `UNDO_GROUP_WINDOW_MS` (500 ms) of
+// the newest one. In run 34088762135 the Escape that dropped the empty
+// Enter-sibling landed inside that window, so the one Ctrl+Z also reversed
+// that `delete_block` and the page fell out from under the spec ("block not
+// in current space" → the page editor healed the stale reference and bounced
+// to Journal). The Journal round-trip below puts seconds between the block's
+// own ops and the checkbox's, so the group holds the checkbox op alone — and
+// it doubles as the blur that commits the text (`draft-blur-persist`).
 //
 // WHY NOT undoing a block CREATE, which this spec used to attempt: an empty
 // block cannot survive losing focus. BlockTree's #4729 leaked-empty-block
@@ -16,8 +26,7 @@
 // is invisible to the undo stack too — which is why run 34065136247 saw the
 // "Add block" row never reach the tree ("Add block did not add a second
 // row"). Giving the block content instead makes the last op an `edit_block`,
-// not the create. The checkbox is the one gesture whose single op IS the
-// last op, and its effect is readable straight off the DOM.
+// not the create.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -40,7 +49,7 @@ const MARKER = runScopedMarker('wdio-undo-todo')
 /** Resolve the marked block's task checkbox through its row wrapper. */
 async function taskMarker() {
   const staticBlock = blockStaticByMarker(MARKER)
-  await staticBlock.waitForExist({ timeout: NAV_TIMEOUT })
+  await staticBlock.waitForDisplayed({ timeout: NAV_TIMEOUT })
   const blockId = await staticBlock.getAttribute('data-block-id')
   const marker = $(`[data-block-id="${blockId}"]`).$('[data-testid="task-marker"]')
   await marker.waitForExist({ timeout: NAV_TIMEOUT })
@@ -53,47 +62,46 @@ async function taskMarker() {
  * `block.taskCycle` ("Task: {{state}}. Click to cycle.") replaces it once a
  * state is stored (BlockInlineControls `TaskMarkerButton`).
  */
-async function waitForTodoState(
-  marker: Awaited<ReturnType<typeof taskMarker>>,
-  set: boolean,
-  what: string,
-): Promise<void> {
+async function expectTodoState(set: boolean, what: string): Promise<void> {
+  const marker = await taskMarker()
   await browser.waitUntil(
     async () => ((await marker.getAttribute('aria-label')) ?? '').startsWith('Task:') === set,
     { timeout: NAV_TIMEOUT, timeoutMsg: what },
   )
 }
 
+/** Re-open the page the sidebar's "New Page" created, with nothing focused. */
+async function reopenTheNewPage(): Promise<void> {
+  await reopenPageByTitle('Untitled')
+  await blockStaticByMarker(MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  // Ctrl+Z is a no-op while a block is focused — in-editor history owns it.
+  await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+}
+
 describe('Agaric real-backend undo (#4671)', () => {
   it('clears the todo state Ctrl+Z reversed, durably', async () => {
     await waitForAppReady()
-    // A fresh page auto-creates and focuses its first block; commit a marker
-    // into it so the durable read has something to address the block by.
+    // A fresh page auto-creates and focuses its first block; the sidebar
+    // click commits the typed marker by blurring the editor, and the trip
+    // back re-mounts the page with nothing focused.
     await openNewPage()
     await typeMarkerVerified(MARKER)
-    await browser.keys(['Enter'])
-    await browser.keys(['Escape'])
-    await blockStaticByMarker(MARKER).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    // Escape drops the empty sibling Enter opened, and unmounts the roving
-    // editor — which is also the precondition for Ctrl+Z below
-    // (`useUndoShortcuts` bails while `focusedBlockId` is set).
-    await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+    await navigateTo('Journal')
+    await reopenTheNewPage()
 
     const marker = await taskMarker()
     await marker.moveTo()
     await marker.click()
-    await waitForTodoState(marker, true, 'the task checkbox never reported a set todo state')
+    await expectTodoState(true, 'the task checkbox never reported a set todo state')
 
     await browser.keys(['Control', 'z'])
     await waitForToast('Undid property change')
-    await waitForTodoState(await taskMarker(), false, 'undo did not clear the todo state in place')
+    await expectTodoState(false, 'undo did not clear the todo state in place')
 
-    // The durable read: leave the page editor entirely and re-open the page
-    // from the Pages list, so the state comes back from the backend.
+    // The durable read: leave the page editor entirely and come back, so the
+    // state is the one the backend reprojected, not the one the store held.
     await navigateTo('Journal')
-    await reopenPageByTitle('Untitled')
-    const after = blockStaticByMarker(MARKER)
-    await after.waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await waitForTodoState(await taskMarker(), false, 'the undone todo state came back on re-open')
+    await reopenTheNewPage()
+    await expectTodoState(false, 'the undone todo state came back on re-open')
   })
 })
