@@ -1943,11 +1943,78 @@ async fn purge_truncated_tails(
 /// post-mortem reader. Everything worth saying is accumulated into
 /// [`ReplayDiagnostics`] and emitted by the caller, for the attempt that
 /// actually committed.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
 ) -> Result<ReplayDiagnostics, agaric_core::error::AppError> {
+    let mut diagnostics = ReplayDiagnostics::default();
+    let ops = load_local_ops(&mut *executor, &mut diagnostics).await?;
+    if ops.is_empty() {
+        return Ok(diagnostics);
+    }
+
+    // #429: fallbacks only — used when an op's own `created_at` cannot be
+    // read/converted (it never should). The delete arm stamps the op's OWN
+    // timestamp so each delete cohort keeps a distinct `(seed, deleted_at)`
+    // identity that `list_trash` / `restore_block` group on; a shared
+    // boot-time `now` would collapse every recovered deletion into one cohort.
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let now_ms_fallback = now_ms();
+
+    for row in ops {
+        let op_type: String = row.try_get("op_type")?;
+        let payload_str: String = row.try_get("payload")?;
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
+
+        match op_type.as_str() {
+            "create_block" => {
+                replay_create_block(&mut *executor, &payload, &mut diagnostics).await?;
+            }
+            "edit_block" => replay_edit_block(&mut *executor, &payload).await?,
+            "move_block" => {
+                replay_move_block(&mut *executor, &payload, &mut diagnostics).await?;
+            }
+            "delete_block" => {
+                replay_delete_block(
+                    &mut *executor,
+                    &payload,
+                    &mut diagnostics,
+                    &row,
+                    &now_rfc3339,
+                    now_ms_fallback,
+                    deleted_at_is_ms,
+                )
+                .await?;
+            }
+            "restore_block" => {
+                replay_restore_block(&mut *executor, &payload, &mut diagnostics, deleted_at_is_ms)
+                    .await?;
+            }
+            "purge_block" => replay_purge_block(&mut *executor, &payload, &mut diagnostics).await?,
+            _ => {
+                // set_property / delete_property / add_tag are handled
+                // post-migration so they survive migration 73's DROP TABLE.
+            }
+        }
+    }
+
+    finish_block_recovery(&mut *executor).await?;
+    Ok(diagnostics)
+}
+
+/// The LOCALLY-AUTHORED ops to replay, oldest first, and the diagnostics that
+/// describe the op_log they came from.
+///
+/// Extracted from [`recover_blocks_from_op_log`] (#4639); body unchanged.
+/// Returns an EMPTY vec both when `op_log` does not exist (ancient database)
+/// and when it holds no local ops — the caller has nothing to replay either
+/// way, and `diagnostics.op_log_missing` distinguishes them.
+async fn load_local_ops(
+    executor: &mut sqlx::SqliteConnection,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>, agaric_core::error::AppError> {
     // Guard: op_log might not exist on ancient databases.
     // R4 (#347): propagate with `?` — a transient probe failure must not
     // silently skip block recovery.
@@ -1958,11 +2025,9 @@ async fn recover_blocks_from_op_log(
     .await?
         > 0;
 
-    let mut diagnostics = ReplayDiagnostics::default();
-
     if !op_log_exists {
         diagnostics.op_log_missing = true;
-        return Ok(diagnostics);
+        return Ok(Vec::new());
     }
 
     // #2504: the device-local-only limitation of this rebuild. Recorded here,
@@ -2023,534 +2088,17 @@ async fn recover_blocks_from_op_log(
     // would have to pick one of the two at build time.
     let ops = sqlx::query(ops_sql).fetch_all(&mut *executor).await?;
 
-    if ops.is_empty() {
-        return Ok(diagnostics);
-    }
-
     diagnostics.ops_replayed = ops.len();
+    Ok(ops)
+}
 
-    // #429: fallbacks only — used when an op's own `created_at` cannot be
-    // read/converted (it never should). The delete arm stamps the op's OWN
-    // timestamp so each delete cohort keeps a distinct `(seed, deleted_at)`
-    // identity that `list_trash` / `restore_block` group on; a shared
-    // boot-time `now` would collapse every recovered deletion into one cohort.
-    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
-    let now_ms_fallback = now_ms();
-
-    for row in ops {
-        let op_type: String = row.try_get("op_type")?;
-        let payload_str: String = row.try_get("payload")?;
-
-        let payload: serde_json::Value =
-            serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
-
-        match op_type.as_str() {
-            "create_block" => {
-                replay_create_block(&mut *executor, &payload, &mut diagnostics).await?;
-            }
-            "edit_block" => replay_edit_block(&mut *executor, &payload).await?,
-            "move_block" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let new_parent_id = payload
-                    .get("new_parent_id")
-                    .and_then(serde_json::Value::as_str);
-                // #1252: prefer the new-scheme 0-based `new_index` (as a
-                // 1-based provisional position) when present, else the legacy
-                // `new_position`. Mirrors `apply_move_block_sql_only`. The
-                // `move_block` arm was less broken than `create_block`
-                // (`MoveBlockPayload.new_position` is always serialized and
-                // mirrors `new_index`), but routing on `new_index` keeps
-                // recovery consistent with the live materializer.
-                let new_position = payload
-                    .get("new_index")
-                    .and_then(serde_json::Value::as_i64)
-                    .map(agaric_store::pagination::index_to_provisional_position)
-                    .or_else(|| {
-                        payload
-                            .get("new_position")
-                            .and_then(serde_json::Value::as_i64)
-                    });
-
-                // #2894: this arm shares the byte-identical UPDATE shape with the
-                // shared projection (`project_move_block_to_sql`:
-                // `UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?`),
-                // but is INTENTIONALLY left inline rather than routed through it.
-                // The projection binds `snapshot.position: i64` (a concrete rank —
-                // the engine read-back is never NULL); this recovery replay reads
-                // a raw op-log payload and binds `new_position: Option<i64>`,
-                // preserving a defensive `position = NULL` write for the
-                // (well-formed ops never hit it, but corruption-path) case where
-                // BOTH `new_index` and `new_position` are absent from the JSON.
-                // Converging would force that NULL corner onto the projection's
-                // non-nullable `i64` — there is no move-side sentinel mapping to
-                // fall back on (unlike the *create* path, where
-                // `apply_create_block_sql_only` folds an absent position into the
-                // `i64::MAX` NULL_POSITION_SENTINEL; `MoveBlockPayload.new_position`
-                // is a non-optional `i64`, so `apply_move_block_sql_only` never
-                // synthesizes that sentinel and `index_to_provisional_position`
-                // caps strictly below it). Converging is therefore an observable
-                // change in exactly the malformed-op-log corner this recovery
-                // exists to survive, and inconsistent with the `create_block`
-                // arm's NULL convention. The convergence is the UPDATE *shape*
-                // (which already matches), not the bind: leaving it inline is
-                // behaviour-preserving. The projection also has no cycle probe
-                // here (unlike the engine-less `apply_move_block_sql_only`
-                // fallback, which runs the shared `move_would_cycle` probe), so
-                // recovery's cycle-probe-free behaviour is likewise unchanged.
-                // #4204/#4188: classify the subject's tombstone BEFORE the
-                // reparent. An INHERITED tombstone (the subject is a cascade
-                // member of its parent's cohort, not a cohort ROOT) is a fact
-                // about the OLD parent, and one `SET parent_id` from now that
-                // parent is unrecoverable — `move_block`'s payload does not
-                // carry it. Returns the OLD PARENT's id, which the un-sweep
-                // below uses as the era-agnostic handle on the cohort's
-                // timestamp: the subject's own `deleted_at` is about to be
-                // cleared, but the old parent's copy of the same value stays
-                // put (it is an ancestor, never a member of the subject's
-                // descendant cohort).
-                //
-                // dynamic-sql: era-varying `blocks` at the pre-migration era
-                // (`query_scalar!` would check it against HEAD). The whole
-                // probe is an EQUALITY between two stored `deleted_at` values,
-                // so it never moves the column through Rust and holds in both
-                // the pre-0080 rfc3339-TEXT era and the at-head INTEGER one —
-                // the same era-agnostic-by-construction argument the sweep's
-                // statements below make.
-                let inherited_from_parent: Option<String> = sqlx::query_scalar::<_, String>(
-                    "SELECT b.parent_id FROM blocks b \
-                       JOIN blocks parent ON parent.id = b.parent_id \
-                      WHERE b.id = ?1 \
-                        AND b.deleted_at IS NOT NULL \
-                        AND parent.deleted_at IS NOT NULL \
-                        AND parent.deleted_at = b.deleted_at",
-                )
-                .bind(block_id)
-                .fetch_optional(&mut *executor)
-                .await?;
-
-                sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-                    .bind(new_parent_id)
-                    .bind(new_position)
-                    .bind(block_id)
-                    .execute(&mut *executor)
-                    .await?;
-
-                // #4187: the UPDATE above may have parked a LIVE block under a
-                // TOMBSTONED ancestor — the ordinary concurrent
-                // `{Delete(P), Move(B → P)}` pair, replayed delete-first
-                // because this loop orders by `created_at`. That rebuilds an
-                // invisible orphan: `B` is absent from the tree (its ancestor
-                // is trashed) and absent from the trash (it is not). The live
-                // materializer's two arms stopped producing that state in
-                // #4112; this is the third interpreter of the same op (#2894)
-                // and it must agree with them, or the rebuild diverges from the
-                // table it is supposed to reconstruct. Nothing downstream heals
-                // it either: `reproject_block_deleted_at_from_engine`'s R9
-                // sweep resolves the same merge, but only over a sync import's
-                // changed set, so a block nobody touches again stays orphaned.
-                //
-                // The rule (cascade-soft-delete the moved subtree at the
-                // nearest tombstoned ancestor's `deleted_at`) is R9's and
-                // #4112's. Since #4233 the downward REACH of the two walks it
-                // is built from agrees; what still differs is the DEPTH bound
-                // (R27 re-anchors past the cap, this replay stops at it and
-                // REPORTS the truncation, #4232) — see
-                // `sweep_move_under_tombstoned_ancestor`'s doc comment for why
-                // sweeping is the only candidate behaviour that CONVERGES with
-                // the move-first replay order, and why a move whose SUBJECT is
-                // already tombstoned must be applied unswept (that is the
-                // ordinary trash shape, and both orders already agree on it).
-                //
-                // That helper cannot be CALLED from here, for three independent
-                // reasons, so this arm hand-rolls the same rule the way the
-                // `delete_block` arm below hand-rolls the same cascade (#2043):
-                //
-                //  1. It is `pub(crate)` to `agaric-engine`; the app crate's
-                //     `materializer::handlers::sql_only` re-export cannot see
-                //     it. Widening it is a change to the shared item, not a
-                //     reuse of it.
-                //  2. It is i64-only end to end — `nearest_tombstoned_ancestor`
-                //     decodes `deleted_at` as `i64` and
-                //     `project_delete_block_to_sql` BINDS an `i64`. This pass
-                //     runs before `sqlx::migrate!`, at whatever era
-                //     `max_applied_migration` names, and pre-0080 `deleted_at`
-                //     is rfc3339 TEXT (#618) — the decode would fail outright
-                //     and the stamp would be the wrong era. The two statements
-                //     below never move `deleted_at` through Rust at all (the
-                //     probe only tests `IS NOT NULL`; the cascade copies the
-                //     ancestor's stored value with a subquery), so they are
-                //     era-agnostic by construction — strictly better than the
-                //     delete arm's era switch, since the cohort is stamped with
-                //     the ancestor's OWN bytes.
-                //  3. Its tail runs `tag_inheritance::remove_subtree_inherited`
-                //     against a head-shaped `block_tags`. Recovery does no tag
-                //     maintenance at all — the `delete_block` arm's cascade
-                //     does not either — because the tables it would touch are
-                //     at pre-migration era here and the derived pass rebuilds
-                //     that cache later.
-                //
-                // Runs on every move, including a same-parent reorder: like the
-                // materializer's sweep, it doubles as a repair pass for a
-                // subtree that was ALREADY an orphan in the log's own history.
-                //
-                // dynamic-sql: a recursive ancestor CTE. `query_scalar!` would
-                // check it against HEAD's `blocks`, which is exactly the
-                // assumption this pre-migration pass must not make (see the
-                // `pragma_table_info` probe above); the columns it reads
-                // (`id` / `parent_id` / `deleted_at`) exist in every era, but
-                // their TYPES do not, which is the whole point of reason 2.
-                // The seed's `deleted_at IS NULL` WAS the live-subject guard: a
-                // move whose subject is already tombstoned yielded no seed row,
-                // hence no sweep. #4204 widens it by exactly one case — the
-                // subject whose tombstone is INHERITED (`?2`), which the
-                // un-sweep below MAY clear, in which case it is a live subject
-                // one statement from now and the sweep must be able to
-                // re-derive its cohort from the new position. A tombstoned
-                // subject that is a cohort ROOT still yields no seed row and is
-                // still never swept
-                // (`recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`).
-                //
-                // MAY, not WILL: the un-sweep short-circuits when the new
-                // position already implies the same cohort, and then the
-                // subject is STILL tombstoned when the sweep runs. So this
-                // probe answering `Some` no longer means "safe to sweep", and
-                // the live-subject guard moved to where the answer is CONSUMED
-                // — see the re-read below the un-sweep.
-                // depth<100: DESCENDANT_DEPTH_CAP, mirroring
-                // the `delete_block` arm's bound (a corrupt `parent_id` cycle
-                // terminates at the cap rather than re-anchoring past it the
-                // way `nearest_tombstoned_ancestor` does).
-                //
-                // #4289: the climb's TRUNCATION answer rides in the same
-                // statement, off the same CTE. `ancestors` is a recursive CTE,
-                // which SQLite materialises once, so both subqueries below read
-                // one walk — where #4232's separate `ancestor_probe_truncated`
-                // (deleted by #4289; named here only as the shape this
-                // replaced) climbed the whole chain a second time, and the two
-                // answers were only textually guaranteed to agree. The extra
-                // level is
-                // asked for in the outer query, exactly as the descendant
-                // cohort asks it (see [`materialize_cascade_cohort`]): does the
-                // ancestor at exactly the cap still have a parent? That parent
-                // is the `DESCENDANT_DEPTH_CAP + 1`-th, the first one this
-                // probe could not see. Structural, not semantic: a block moved
-                // anywhere under a chain deeper than the cap reports here even
-                // when the vault holds no tombstone at all — see
-                // `recover_move_ancestor_probe_reports_a_deep_live_chain_with_no_tombstone`.
-                let (tombstoned_ancestor, ancestor_climb_truncated): (Option<String>, bool) =
-                    sqlx::query_as::<_, (Option<String>, bool)>(
-                        "WITH RECURSIVE ancestors(id, depth) AS ( \
-                             SELECT parent_id, 1 FROM blocks \
-                              WHERE id = ?1 AND (deleted_at IS NULL OR ?2) \
-                                AND parent_id IS NOT NULL \
-                             UNION ALL \
-                             SELECT b.parent_id, a.depth + 1 FROM blocks b \
-                               JOIN ancestors a ON b.id = a.id \
-                              WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
-                         ) \
-                         SELECT ( \
-                             SELECT a.id FROM ancestors a JOIN blocks b ON b.id = a.id \
-                              WHERE b.deleted_at IS NOT NULL \
-                              ORDER BY a.depth LIMIT 1 \
-                         ), EXISTS ( \
-                             SELECT 1 FROM blocks b JOIN ancestors a ON b.id = a.id \
-                              WHERE a.depth = 100 AND b.parent_id IS NOT NULL \
-                         )",
-                    )
-                    .bind(block_id)
-                    .bind(inherited_from_parent.is_some())
-                    .fetch_one(&mut *executor)
-                    .await?;
-
-                // #4232: only when the probe found NOTHING. A tombstone found
-                // within the cap is by construction the nearest one
-                // (`ORDER BY a.depth LIMIT 1`), so anything above the cap could
-                // not have changed the answer and reporting it would be noise.
-                // With no hit, though, "no tombstoned ancestor" and "ran out of
-                // rope at depth 100" are the same empty result — and only one
-                // of them means the sweep was correct to stay quiet. That
-                // suppression rule is pinned by
-                // `recover_move_ancestor_probe_suppressed_when_a_tombstone_was_found_within_the_cap`.
-                if tombstoned_ancestor.is_none() && ancestor_climb_truncated {
-                    diagnostics.cascade_truncations.push(CascadeTruncation {
-                        cascade: CASCADE_MOVE_SWEEP_ANCESTOR_PROBE,
-                        block_id: block_id.to_owned(),
-                    });
-                }
-
-                // #4204/#4188: the un-sweep, the sweep's mirror image. An
-                // INHERITED tombstone is POSITIONAL — it says "my parent's
-                // cohort swallowed me" — so the reparent above invalidated it.
-                // Clear it and let the sweep below re-derive the cohort from
-                // the new position; see
-                // `agaric_engine::apply::sql_only::unsweep_inherited_cohort_after_move`
-                // for the rule and its order-independence argument, which this
-                // arm implements rather than restates. Recovery is the third
-                // interpreter of the same op (#2894), so leaving it out would
-                // let a boot rebuild reintroduce exactly the divergence the
-                // materializer just stopped producing.
-                //
-                // The short-circuit (the ancestor at the NEW position already
-                // carries the subject's own cohort ts) covers the same-parent
-                // reorder and the move within one cohort, and is expressed as
-                // an equality between two stored `deleted_at` values, so it is
-                // era-agnostic for the same reason the probe above is.
-                //
-                // #4390 — the engine mirror is OUT OF SCOPE here, decided
-                // explicitly rather than left implicit. #4390 made the
-                // materializer's un-sweep durable by threading the ids it
-                // cleared out to a post-commit engine fan-out
-                // (`materializer::handlers::apply::dispatch_unswept_cohort`),
-                // so the SQL re-derivation survives a snapshot import. This arm
-                // has no such fan-out and cannot have one: it runs BEFORE
-                // `sqlx::migrate!`, at whatever era `max_applied_migration`
-                // names, on a raw `executor` — there is no `LoroState`, no
-                // per-space engine registry and no `SpaceId` in scope at this
-                // point in boot, and reaching for one would import the
-                // head-shaped, i64-only engine API into a pass whose whole
-                // premise is that the schema is NOT at head (see reasons 2 and
-                // 3 above).
-                //
-                // The residue, stated plainly: a vault whose `blocks` table is
-                // rebuilt by this pass gets the correct SQL answer, while its
-                // per-space engine keeps whatever `deleted_at` register its
-                // persisted snapshot holds — so a snapshot import after such a
-                // rebuild can still re-trash the subtree, exactly as the whole
-                // op path did before #4390. It is narrower than what #4390
-                // closed (that was every remote move; this is only a move
-                // replayed by a corrupt-DB rebuild) and it is not made worse by
-                // #4390. Widening the derived pass to cover it means giving
-                // recovery an engine handle after migration, which is a change
-                // to the boot sequence, not to this arm.
-                if let Some(old_parent_id) = inherited_from_parent {
-                    let same_cohort_at_new_position = match tombstoned_ancestor.as_deref() {
-                        None => false,
-                        Some(ancestor_id) => {
-                            // dynamic-sql: era-varying `blocks` at the
-                            // pre-migration era; a stored-value equality that
-                            // never decodes the column, so it holds in both the
-                            // pre-0080 rfc3339-TEXT era and the at-head INTEGER
-                            // one. `query_scalar!` would pin the statement to
-                            // the HEAD schema this replay is precisely NOT
-                            // running against.
-                            sqlx::query_scalar::<_, bool>(
-                                "SELECT EXISTS ( \
-                                 SELECT 1 FROM blocks subject, blocks ancestor \
-                                  WHERE subject.id = ?1 AND ancestor.id = ?2 \
-                                    AND subject.deleted_at = ancestor.deleted_at \
-                             )",
-                            )
-                            .bind(block_id)
-                            .bind(ancestor_id)
-                            .fetch_one(&mut *executor)
-                            .await?
-                        }
-                    };
-                    if !same_cohort_at_new_position {
-                        // The cohort to clear is recovery's own FLAT
-                        // `(subtree, deleted_at)` shape — the `restore_block`
-                        // arm's, not the projection's connected-cohort walk,
-                        // for the #2043 reason that arm states: recovery
-                        // deliberately keeps one cascade shape across its arms
-                        // rather than importing the head-shaped one.
-                        //
-                        // #4204 — the residual third-interpreter disagreement,
-                        // stated rather than left to be rediscovered. The
-                        // materializer's `unsweep_inherited_cohort_after_move`
-                        // routes through `clear_cohort_deleted_at_downward`,
-                        // whose walk is `DescendantWalkFilter::Cohort(ts)` —
-                        // CONTIGUOUS, so it stops descending at a child whose
-                        // `deleted_at` is not `ts`. This walk is the standard
-                        // flat subtree, filtered afterwards. They part on one
-                        // shape: `B(t1) > X(live) > Y(t1)`, where `Y` carries
-                        // the cohort ts but is not connected to `B` through it.
-                        // Recovery clears `Y`; the materializer leaves it
-                        // trashed.
-                        //
-                        // Left as-is deliberately: this arm clears rows that
-                        // are TOMBSTONED, so it shares the `restore_block`
-                        // arm's flat `(subtree, deleted_at)` shape and its
-                        // standard walk (the members it looks for sit below a
-                        // tombstone by construction). Importing the contiguous
-                        // one HERE would make recovery disagree with ITSELF —
-                        // a `RestoreBlock` on the cleared cohort would cover
-                        // rows this un-sweep would not — which is the
-                        // self-consistency #4187 exists to keep. Closing it
-                        // means changing this arm and `restore_block`
-                        // together, not this one alone. (#4233 aligned the two
-                        // arms that write LIVE rows, `delete_block` and the
-                        // move sweep; this pair is the other axis and stays
-                        // pinned.) Reaching it also needs a pre-existing
-                        // `deleted_at`-equal-but-disconnected row, which only a
-                        // #4188/#4204-shaped history produces.
-                        if materialize_cascade_cohort(
-                            &mut *executor,
-                            block_id,
-                            CascadeReach::Standard,
-                        )
-                        .await?
-                        {
-                            diagnostics.cascade_truncations.push(CascadeTruncation {
-                                cascade: CASCADE_MOVE_UNSWEEP,
-                                block_id: block_id.to_owned(),
-                            });
-                        }
-                        // dynamic-sql: era-varying `blocks`, keyed on the TEMP
-                        // cohort materialised above and on the OLD PARENT's
-                        // stored `deleted_at` — the subject's own copy is one
-                        // of the values this statement NULLs, so keying on it
-                        // would be self-referential. `id <> ?1` keeps the
-                        // subquery's row out of the updated set even in the
-                        // corrupt case where a `parent_id` cycle put the old
-                        // parent inside the subject's own subtree (this arm
-                        // has no cycle probe, by design — see the UPDATE
-                        // above).
-                        sqlx::query(
-                            "UPDATE blocks SET deleted_at = NULL \
-                              WHERE id IN (SELECT id FROM recovery_cascade_cohort) \
-                                AND id <> ?1 \
-                                AND deleted_at IS NOT NULL \
-                                AND deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1)",
-                        )
-                        .bind(&old_parent_id)
-                        .execute(&mut *executor)
-                        .await?;
-                        diagnostics
-                            .move_unswept_inherited_cohort
-                            .push(block_id.to_owned());
-                    }
-                }
-
-                // #4204: the sweep's OWN live-subject guard, re-read AFTER the
-                // un-sweep has had its chance to run. It is the exact mirror of
-                // `sweep_move_under_tombstoned_ancestor`'s
-                // `matches!(own_deleted_at, Some(None))` early return, and it
-                // exists because the probe above no longer carries that
-                // guarantee: `?2` widened the seed's `deleted_at IS NULL` so an
-                // INHERITED-tombstone subject would still get an ancestor
-                // answer to re-derive its cohort FROM. That widening is only
-                // sound when the un-sweep then CLEARS — and it does not clear
-                // in the short-circuit case (the new position implies the same
-                // cohort), which leaves a `Some(ancestor)` in hand for a
-                // subject that is still tombstoned. Consuming it there ran the
-                // cascade below over the moved subtree and stamped every LIVE
-                // descendant into the ancestor's cohort — a pre-existing live
-                // orphan (a peer's child of a concurrently deleted block)
-                // silently moved into the trash by a boot repair, in exactly
-                // the materializer-vs-recovery lockstep the un-sweep exists to
-                // preserve.
-                //
-                // Phrased as a re-read of the subject's own row rather than as
-                // "did the un-sweep branch fire", for two reasons: it is
-                // literally the materializer's condition, so the two cannot
-                // drift; and it answers from the state the cascade is about to
-                // read rather than from a Rust-side belief about what the
-                // UPDATE did. The three cases it separates:
-                //
-                //  * subject live all along (`?2` false) — unchanged, sweeps;
-                //  * subject inherited-tombstoned and UN-SWEPT — now live,
-                //    sweeps, which is #4188's re-stamp to the target cohort;
-                //  * subject inherited-tombstoned and SHORT-CIRCUITED — still
-                //    tombstoned, declines. (A cohort-ROOT tombstone never got
-                //    an ancestor out of the probe in the first place, so it
-                //    declines one step earlier, as before.)
-                //
-                // Costs one PK lookup, and only on a move that actually found a
-                // tombstoned ancestor — the same price the materializer pays.
-                // Pinned by `recover_move_within_one_cohort_leaves_a_live_orphan_alone_4188`
-                // (the recovery mirror of the materializer's
-                // `unsweep_short_circuits_a_move_within_one_cohort_4188`), and
-                // by the `move_swept_under_tombstone` half of
-                // `recover_move_within_one_cohort_does_not_unsweep_4188`.
-                let sweep_ancestor = match tombstoned_ancestor {
-                    None => None,
-                    Some(ancestor_id) => {
-                        // dynamic-sql: era-varying `blocks` at the
-                        // pre-migration era; an `IS NULL` test that never
-                        // decodes the column, so it holds in both the pre-0080
-                        // rfc3339-TEXT era and the at-head INTEGER one, for the
-                        // same reason the probe above does. `query_scalar!`
-                        // would pin the statement to the HEAD schema this
-                        // replay is precisely NOT running against.
-                        let subject_is_live = sqlx::query_scalar::<_, bool>(
-                            "SELECT EXISTS ( \
-                                 SELECT 1 FROM blocks WHERE id = ?1 AND deleted_at IS NULL \
-                             )",
-                        )
-                        .bind(block_id)
-                        .fetch_one(&mut *executor)
-                        .await?;
-                        subject_is_live.then_some(ancestor_id)
-                    }
-                };
-
-                if let Some(ancestor_id) = sweep_ancestor {
-                    // The `delete_block` arm's cascade shape, keyed on the
-                    // ancestor's own stored `deleted_at` (era-agnostic, and
-                    // byte-identical to the cohort a delete-last replay would
-                    // have produced, which is what makes the result restorable
-                    // as one unit — `RestoreBlock` groups on the shared
-                    // timestamp). The `deleted_at IS NULL` guard preserves an
-                    // already-trashed descendant's original cohort, exactly as
-                    // it does there.
-                    //
-                    // REACH (#4233): `CascadeReach::Active` — see the variant's
-                    // doc for why, and why this arm and the `delete_block` arm
-                    // below must carry the SAME reach. The residual gap to the
-                    // engine is depth only: its walk is unbounded (R27
-                    // re-anchoring), this one stops at the depth-100 cap and
-                    // REPORTS the truncation (#4232).
-                    // #4232/#4289: the sweep's own reach, answered off the
-                    // SAME walk the UPDATE below is keyed on — one enumeration
-                    // per swept move, not two.
-                    if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active)
-                        .await?
-                    {
-                        diagnostics.cascade_truncations.push(CascadeTruncation {
-                            cascade: CASCADE_MOVE_SWEEP,
-                            block_id: block_id.to_owned(),
-                        });
-                    }
-                    // dynamic-sql: era-varying `blocks` at the pre-migration
-                    // era, keyed on the TEMP cohort materialised above.
-                    sqlx::query(
-                        "UPDATE blocks \
-                            SET deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1) \
-                          WHERE deleted_at IS NULL \
-                            AND id IN (SELECT id FROM recovery_cascade_cohort)",
-                    )
-                    .bind(&ancestor_id)
-                    .execute(&mut *executor)
-                    .await?;
-                    diagnostics
-                        .move_swept_under_tombstone
-                        .push(block_id.to_owned());
-                }
-            }
-            "delete_block" => {
-                replay_delete_block(
-                    &mut *executor,
-                    &payload,
-                    &mut diagnostics,
-                    &row,
-                    &now_rfc3339,
-                    now_ms_fallback,
-                    deleted_at_is_ms,
-                )
-                .await?;
-            }
-            "restore_block" => {
-                replay_restore_block(&mut *executor, &payload, &mut diagnostics, deleted_at_is_ms)
-                    .await?;
-            }
-            "purge_block" => replay_purge_block(&mut *executor, &payload, &mut diagnostics).await?,
-            _ => {
-                // set_property / delete_property / add_tag are handled
-                // post-migration so they survive migration 73's DROP TABLE.
-            }
-        }
-    }
-
+/// The post-replay repair pass: re-home orphans, re-derive `page_id`, and drop
+/// the temp cascade table.
+///
+/// Extracted from [`recover_blocks_from_op_log`] (#4639); body unchanged.
+async fn finish_block_recovery(
+    executor: &mut sqlx::SqliteConnection,
+) -> Result<(), agaric_core::error::AppError> {
     // #4287: the truncated purges were already finished in the loop above, each
     // one immediately after its own cascade. That ordering matters: the cleanup
     // below cannot tell "orphaned by a truncated purge" from "orphaned by
@@ -2564,7 +2112,7 @@ async fn recover_blocks_from_op_log(
     // device and not present in the local op_log).
     sqlx::query(
         "UPDATE blocks SET parent_id = NULL \
-         WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM blocks)",
+          WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM blocks)",
     )
     .execute(&mut *executor)
     .await?;
@@ -2578,14 +2126,14 @@ async fn recover_blocks_from_op_log(
     loop {
         let rows = sqlx::query(
             "UPDATE blocks SET page_id = (
-                SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END
-                FROM blocks AS parent WHERE parent.id = blocks.parent_id
-            )
-            WHERE block_type = 'content' AND page_id IS NULL AND parent_id IS NOT NULL
-              AND EXISTS (
-                  SELECT 1 FROM blocks AS parent
-                  WHERE parent.id = blocks.parent_id AND parent.page_id IS NOT NULL
-              )",
+            SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END
+            FROM blocks AS parent WHERE parent.id = blocks.parent_id
+        )
+        WHERE block_type = 'content' AND page_id IS NULL AND parent_id IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM blocks AS parent
+              WHERE parent.id = blocks.parent_id AND parent.page_id IS NOT NULL
+          )",
         )
         .execute(&mut *executor)
         .await?
@@ -2611,7 +2159,555 @@ async fn recover_blocks_from_op_log(
         .execute(&mut *executor)
         .await?;
 
-    Ok(diagnostics)
+    Ok(())
+}
+
+/// The OLD parent's id when the subject's tombstone is INHERITED from it.
+///
+/// Extracted from [`replay_move_block`] (#4639); body unchanged. Must run
+/// BEFORE the reparent — one `SET parent_id` from now the old parent is
+/// unrecoverable, because `move_block`'s payload does not carry it.
+async fn probe_inherited_tombstone(
+    executor: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<String>, agaric_core::error::AppError> {
+    // #4204/#4188: classify the subject's tombstone BEFORE the
+    // reparent. An INHERITED tombstone (the subject is a cascade
+    // member of its parent's cohort, not a cohort ROOT) is a fact
+    // about the OLD parent, and one `SET parent_id` from now that
+    // parent is unrecoverable — `move_block`'s payload does not
+    // carry it. Returns the OLD PARENT's id, which the un-sweep
+    // below uses as the era-agnostic handle on the cohort's
+    // timestamp: the subject's own `deleted_at` is about to be
+    // cleared, but the old parent's copy of the same value stays
+    // put (it is an ancestor, never a member of the subject's
+    // descendant cohort).
+    //
+    // dynamic-sql: era-varying `blocks` at the pre-migration era
+    // (`query_scalar!` would check it against HEAD). The whole
+    // probe is an EQUALITY between two stored `deleted_at` values,
+    // so it never moves the column through Rust and holds in both
+    // the pre-0080 rfc3339-TEXT era and the at-head INTEGER one —
+    // the same era-agnostic-by-construction argument the sweep's
+    // statements below make.
+    let inherited_from_parent: Option<String> = sqlx::query_scalar::<_, String>(
+        "SELECT b.parent_id FROM blocks b \
+           JOIN blocks parent ON parent.id = b.parent_id \
+          WHERE b.id = ?1 \
+            AND b.deleted_at IS NOT NULL \
+            AND parent.deleted_at IS NOT NULL \
+            AND parent.deleted_at = b.deleted_at",
+    )
+    .bind(block_id)
+    .fetch_optional(&mut *executor)
+    .await?;
+
+    Ok(inherited_from_parent)
+}
+
+/// The nearest tombstoned ancestor of `block_id`.
+///
+/// Extracted from [`replay_move_block`] (#4639); body unchanged.
+async fn climb_to_tombstoned_ancestor(
+    executor: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    inherited_from_parent: Option<&str>,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<Option<String>, agaric_core::error::AppError> {
+    // #4187: the UPDATE above may have parked a LIVE block under a
+    // TOMBSTONED ancestor — the ordinary concurrent
+    // `{Delete(P), Move(B → P)}` pair, replayed delete-first
+    // because this loop orders by `created_at`. That rebuilds an
+    // invisible orphan: `B` is absent from the tree (its ancestor
+    // is trashed) and absent from the trash (it is not). The live
+    // materializer's two arms stopped producing that state in
+    // #4112; this is the third interpreter of the same op (#2894)
+    // and it must agree with them, or the rebuild diverges from the
+    // table it is supposed to reconstruct. Nothing downstream heals
+    // it either: `reproject_block_deleted_at_from_engine`'s R9
+    // sweep resolves the same merge, but only over a sync import's
+    // changed set, so a block nobody touches again stays orphaned.
+    //
+    // The rule (cascade-soft-delete the moved subtree at the
+    // nearest tombstoned ancestor's `deleted_at`) is R9's and
+    // #4112's. Since #4233 the downward REACH of the two walks it
+    // is built from agrees; what still differs is the DEPTH bound
+    // (R27 re-anchors past the cap, this replay stops at it and
+    // REPORTS the truncation, #4232) — see
+    // `sweep_move_under_tombstoned_ancestor`'s doc comment for why
+    // sweeping is the only candidate behaviour that CONVERGES with
+    // the move-first replay order, and why a move whose SUBJECT is
+    // already tombstoned must be applied unswept (that is the
+    // ordinary trash shape, and both orders already agree on it).
+    //
+    // That helper cannot be CALLED from here, for three independent
+    // reasons, so this arm hand-rolls the same rule the way the
+    // `delete_block` arm below hand-rolls the same cascade (#2043):
+    //
+    //  1. It is `pub(crate)` to `agaric-engine`; the app crate's
+    //     `materializer::handlers::sql_only` re-export cannot see
+    //     it. Widening it is a change to the shared item, not a
+    //     reuse of it.
+    //  2. It is i64-only end to end — `nearest_tombstoned_ancestor`
+    //     decodes `deleted_at` as `i64` and
+    //     `project_delete_block_to_sql` BINDS an `i64`. This pass
+    //     runs before `sqlx::migrate!`, at whatever era
+    //     `max_applied_migration` names, and pre-0080 `deleted_at`
+    //     is rfc3339 TEXT (#618) — the decode would fail outright
+    //     and the stamp would be the wrong era. The two statements
+    //     below never move `deleted_at` through Rust at all (the
+    //     probe only tests `IS NOT NULL`; the cascade copies the
+    //     ancestor's stored value with a subquery), so they are
+    //     era-agnostic by construction — strictly better than the
+    //     delete arm's era switch, since the cohort is stamped with
+    //     the ancestor's OWN bytes.
+    //  3. Its tail runs `tag_inheritance::remove_subtree_inherited`
+    //     against a head-shaped `block_tags`. Recovery does no tag
+    //     maintenance at all — the `delete_block` arm's cascade
+    //     does not either — because the tables it would touch are
+    //     at pre-migration era here and the derived pass rebuilds
+    //     that cache later.
+    //
+    // Runs on every move, including a same-parent reorder: like the
+    // materializer's sweep, it doubles as a repair pass for a
+    // subtree that was ALREADY an orphan in the log's own history.
+    //
+    // dynamic-sql: a recursive ancestor CTE. `query_scalar!` would
+    // check it against HEAD's `blocks`, which is exactly the
+    // assumption this pre-migration pass must not make (see the
+    // `pragma_table_info` probe above); the columns it reads
+    // (`id` / `parent_id` / `deleted_at`) exist in every era, but
+    // their TYPES do not, which is the whole point of reason 2.
+    // The seed's `deleted_at IS NULL` WAS the live-subject guard: a
+    // move whose subject is already tombstoned yielded no seed row,
+    // hence no sweep. #4204 widens it by exactly one case — the
+    // subject whose tombstone is INHERITED (`?2`), which the
+    // un-sweep below MAY clear, in which case it is a live subject
+    // one statement from now and the sweep must be able to
+    // re-derive its cohort from the new position. A tombstoned
+    // subject that is a cohort ROOT still yields no seed row and is
+    // still never swept
+    // (`recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`).
+    //
+    // MAY, not WILL: the un-sweep short-circuits when the new
+    // position already implies the same cohort, and then the
+    // subject is STILL tombstoned when the sweep runs. So this
+    // probe answering `Some` no longer means "safe to sweep", and
+    // the live-subject guard moved to where the answer is CONSUMED
+    // — see the re-read below the un-sweep.
+    // depth<100: DESCENDANT_DEPTH_CAP, mirroring
+    // the `delete_block` arm's bound (a corrupt `parent_id` cycle
+    // terminates at the cap rather than re-anchoring past it the
+    // way `nearest_tombstoned_ancestor` does).
+    //
+    // #4289: the climb's TRUNCATION answer rides in the same
+    // statement, off the same CTE. `ancestors` is a recursive CTE,
+    // which SQLite materialises once, so both subqueries below read
+    // one walk — where #4232's separate `ancestor_probe_truncated`
+    // (deleted by #4289; named here only as the shape this
+    // replaced) climbed the whole chain a second time, and the two
+    // answers were only textually guaranteed to agree. The extra
+    // level is
+    // asked for in the outer query, exactly as the descendant
+    // cohort asks it (see [`materialize_cascade_cohort`]): does the
+    // ancestor at exactly the cap still have a parent? That parent
+    // is the `DESCENDANT_DEPTH_CAP + 1`-th, the first one this
+    // probe could not see. Structural, not semantic: a block moved
+    // anywhere under a chain deeper than the cap reports here even
+    // when the vault holds no tombstone at all — see
+    // `recover_move_ancestor_probe_reports_a_deep_live_chain_with_no_tombstone`.
+    let (tombstoned_ancestor, ancestor_climb_truncated): (Option<String>, bool) =
+        sqlx::query_as::<_, (Option<String>, bool)>(
+            "WITH RECURSIVE ancestors(id, depth) AS ( \
+                 SELECT parent_id, 1 FROM blocks \
+                  WHERE id = ?1 AND (deleted_at IS NULL OR ?2) \
+                    AND parent_id IS NOT NULL \
+                 UNION ALL \
+                 SELECT b.parent_id, a.depth + 1 FROM blocks b \
+                   JOIN ancestors a ON b.id = a.id \
+                  WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+             ) \
+             SELECT ( \
+                 SELECT a.id FROM ancestors a JOIN blocks b ON b.id = a.id \
+                  WHERE b.deleted_at IS NOT NULL \
+                  ORDER BY a.depth LIMIT 1 \
+             ), EXISTS ( \
+                 SELECT 1 FROM blocks b JOIN ancestors a ON b.id = a.id \
+                  WHERE a.depth = 100 AND b.parent_id IS NOT NULL \
+             )",
+        )
+        .bind(block_id)
+        .bind(inherited_from_parent.is_some())
+        .fetch_one(&mut *executor)
+        .await?;
+
+    // #4232: only when the probe found NOTHING. A tombstone found
+    // within the cap is by construction the nearest one
+    // (`ORDER BY a.depth LIMIT 1`), so anything above the cap could
+    // not have changed the answer and reporting it would be noise.
+    // With no hit, though, "no tombstoned ancestor" and "ran out of
+    // rope at depth 100" are the same empty result — and only one
+    // of them means the sweep was correct to stay quiet. That
+    // suppression rule is pinned by
+    // `recover_move_ancestor_probe_suppressed_when_a_tombstone_was_found_within_the_cap`.
+    if tombstoned_ancestor.is_none() && ancestor_climb_truncated {
+        diagnostics.cascade_truncations.push(CascadeTruncation {
+            cascade: CASCADE_MOVE_SWEEP_ANCESTOR_PROBE,
+            block_id: block_id.to_owned(),
+        });
+    }
+    Ok(tombstoned_ancestor)
+}
+
+/// Lift the subject's cohort back out of its OLD parent's tombstone.
+///
+/// Extracted from [`replay_move_block`] (#4639); body unchanged.
+async fn unsweep_old_parent(
+    executor: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    inherited_from_parent: Option<String>,
+    tombstoned_ancestor: Option<&str>,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<(), agaric_core::error::AppError> {
+    // #4204/#4188: the un-sweep, the sweep's mirror image. An
+    // INHERITED tombstone is POSITIONAL — it says "my parent's
+    // cohort swallowed me" — so the reparent above invalidated it.
+    // Clear it and let the sweep below re-derive the cohort from
+    // the new position; see
+    // `agaric_engine::apply::sql_only::unsweep_inherited_cohort_after_move`
+    // for the rule and its order-independence argument, which this
+    // arm implements rather than restates. Recovery is the third
+    // interpreter of the same op (#2894), so leaving it out would
+    // let a boot rebuild reintroduce exactly the divergence the
+    // materializer just stopped producing.
+    //
+    // The short-circuit (the ancestor at the NEW position already
+    // carries the subject's own cohort ts) covers the same-parent
+    // reorder and the move within one cohort, and is expressed as
+    // an equality between two stored `deleted_at` values, so it is
+    // era-agnostic for the same reason the probe above is.
+    //
+    // #4390 — the engine mirror is OUT OF SCOPE here, decided
+    // explicitly rather than left implicit. #4390 made the
+    // materializer's un-sweep durable by threading the ids it
+    // cleared out to a post-commit engine fan-out
+    // (`materializer::handlers::apply::dispatch_unswept_cohort`),
+    // so the SQL re-derivation survives a snapshot import. This arm
+    // has no such fan-out and cannot have one: it runs BEFORE
+    // `sqlx::migrate!`, at whatever era `max_applied_migration`
+    // names, on a raw `executor` — there is no `LoroState`, no
+    // per-space engine registry and no `SpaceId` in scope at this
+    // point in boot, and reaching for one would import the
+    // head-shaped, i64-only engine API into a pass whose whole
+    // premise is that the schema is NOT at head (see reasons 2 and
+    // 3 above).
+    //
+    // The residue, stated plainly: a vault whose `blocks` table is
+    // rebuilt by this pass gets the correct SQL answer, while its
+    // per-space engine keeps whatever `deleted_at` register its
+    // persisted snapshot holds — so a snapshot import after such a
+    // rebuild can still re-trash the subtree, exactly as the whole
+    // op path did before #4390. It is narrower than what #4390
+    // closed (that was every remote move; this is only a move
+    // replayed by a corrupt-DB rebuild) and it is not made worse by
+    // #4390. Widening the derived pass to cover it means giving
+    // recovery an engine handle after migration, which is a change
+    // to the boot sequence, not to this arm.
+    if let Some(old_parent_id) = inherited_from_parent {
+        let same_cohort_at_new_position = match tombstoned_ancestor {
+            None => false,
+            Some(ancestor_id) => {
+                // dynamic-sql: era-varying `blocks` at the
+                // pre-migration era; a stored-value equality that
+                // never decodes the column, so it holds in both the
+                // pre-0080 rfc3339-TEXT era and the at-head INTEGER
+                // one. `query_scalar!` would pin the statement to
+                // the HEAD schema this replay is precisely NOT
+                // running against.
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS ( \
+                     SELECT 1 FROM blocks subject, blocks ancestor \
+                      WHERE subject.id = ?1 AND ancestor.id = ?2 \
+                        AND subject.deleted_at = ancestor.deleted_at \
+                 )",
+                )
+                .bind(block_id)
+                .bind(ancestor_id)
+                .fetch_one(&mut *executor)
+                .await?
+            }
+        };
+        if !same_cohort_at_new_position {
+            // The cohort to clear is recovery's own FLAT
+            // `(subtree, deleted_at)` shape — the `restore_block`
+            // arm's, not the projection's connected-cohort walk,
+            // for the #2043 reason that arm states: recovery
+            // deliberately keeps one cascade shape across its arms
+            // rather than importing the head-shaped one.
+            //
+            // #4204 — the residual third-interpreter disagreement,
+            // stated rather than left to be rediscovered. The
+            // materializer's `unsweep_inherited_cohort_after_move`
+            // routes through `clear_cohort_deleted_at_downward`,
+            // whose walk is `DescendantWalkFilter::Cohort(ts)` —
+            // CONTIGUOUS, so it stops descending at a child whose
+            // `deleted_at` is not `ts`. This walk is the standard
+            // flat subtree, filtered afterwards. They part on one
+            // shape: `B(t1) > X(live) > Y(t1)`, where `Y` carries
+            // the cohort ts but is not connected to `B` through it.
+            // Recovery clears `Y`; the materializer leaves it
+            // trashed.
+            //
+            // Left as-is deliberately: this arm clears rows that
+            // are TOMBSTONED, so it shares the `restore_block`
+            // arm's flat `(subtree, deleted_at)` shape and its
+            // standard walk (the members it looks for sit below a
+            // tombstone by construction). Importing the contiguous
+            // one HERE would make recovery disagree with ITSELF —
+            // a `RestoreBlock` on the cleared cohort would cover
+            // rows this un-sweep would not — which is the
+            // self-consistency #4187 exists to keep. Closing it
+            // means changing this arm and `restore_block`
+            // together, not this one alone. (#4233 aligned the two
+            // arms that write LIVE rows, `delete_block` and the
+            // move sweep; this pair is the other axis and stays
+            // pinned.) Reaching it also needs a pre-existing
+            // `deleted_at`-equal-but-disconnected row, which only a
+            // #4188/#4204-shaped history produces.
+            if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Standard).await? {
+                diagnostics.cascade_truncations.push(CascadeTruncation {
+                    cascade: CASCADE_MOVE_UNSWEEP,
+                    block_id: block_id.to_owned(),
+                });
+            }
+            // dynamic-sql: era-varying `blocks`, keyed on the TEMP
+            // cohort materialised above and on the OLD PARENT's
+            // stored `deleted_at` — the subject's own copy is one
+            // of the values this statement NULLs, so keying on it
+            // would be self-referential. `id <> ?1` keeps the
+            // subquery's row out of the updated set even in the
+            // corrupt case where a `parent_id` cycle put the old
+            // parent inside the subject's own subtree (this arm
+            // has no cycle probe, by design — see the UPDATE
+            // above).
+            sqlx::query(
+                "UPDATE blocks SET deleted_at = NULL \
+                  WHERE id IN (SELECT id FROM recovery_cascade_cohort) \
+                    AND id <> ?1 \
+                    AND deleted_at IS NOT NULL \
+                    AND deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1)",
+            )
+            .bind(&old_parent_id)
+            .execute(&mut *executor)
+            .await?;
+            diagnostics
+                .move_unswept_inherited_cohort
+                .push(block_id.to_owned());
+        }
+    }
+
+    Ok(())
+}
+
+/// Stamp the subject's live cohort with its NEW tombstoned ancestor's cohort.
+///
+/// Extracted from [`replay_move_block`] (#4639); body unchanged.
+async fn sweep_under_ancestor(
+    executor: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    tombstoned_ancestor: Option<String>,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<(), agaric_core::error::AppError> {
+    // #4204: the sweep's OWN live-subject guard, re-read AFTER the
+    // un-sweep has had its chance to run. It is the exact mirror of
+    // `sweep_move_under_tombstoned_ancestor`'s
+    // `matches!(own_deleted_at, Some(None))` early return, and it
+    // exists because the probe above no longer carries that
+    // guarantee: `?2` widened the seed's `deleted_at IS NULL` so an
+    // INHERITED-tombstone subject would still get an ancestor
+    // answer to re-derive its cohort FROM. That widening is only
+    // sound when the un-sweep then CLEARS — and it does not clear
+    // in the short-circuit case (the new position implies the same
+    // cohort), which leaves a `Some(ancestor)` in hand for a
+    // subject that is still tombstoned. Consuming it there ran the
+    // cascade below over the moved subtree and stamped every LIVE
+    // descendant into the ancestor's cohort — a pre-existing live
+    // orphan (a peer's child of a concurrently deleted block)
+    // silently moved into the trash by a boot repair, in exactly
+    // the materializer-vs-recovery lockstep the un-sweep exists to
+    // preserve.
+    //
+    // Phrased as a re-read of the subject's own row rather than as
+    // "did the un-sweep branch fire", for two reasons: it is
+    // literally the materializer's condition, so the two cannot
+    // drift; and it answers from the state the cascade is about to
+    // read rather than from a Rust-side belief about what the
+    // UPDATE did. The three cases it separates:
+    //
+    //  * subject live all along (`?2` false) — unchanged, sweeps;
+    //  * subject inherited-tombstoned and UN-SWEPT — now live,
+    //    sweeps, which is #4188's re-stamp to the target cohort;
+    //  * subject inherited-tombstoned and SHORT-CIRCUITED — still
+    //    tombstoned, declines. (A cohort-ROOT tombstone never got
+    //    an ancestor out of the probe in the first place, so it
+    //    declines one step earlier, as before.)
+    //
+    // Costs one PK lookup, and only on a move that actually found a
+    // tombstoned ancestor — the same price the materializer pays.
+    // Pinned by `recover_move_within_one_cohort_leaves_a_live_orphan_alone_4188`
+    // (the recovery mirror of the materializer's
+    // `unsweep_short_circuits_a_move_within_one_cohort_4188`), and
+    // by the `move_swept_under_tombstone` half of
+    // `recover_move_within_one_cohort_does_not_unsweep_4188`.
+    let sweep_ancestor = match tombstoned_ancestor {
+        None => None,
+        Some(ancestor_id) => {
+            // dynamic-sql: era-varying `blocks` at the
+            // pre-migration era; an `IS NULL` test that never
+            // decodes the column, so it holds in both the pre-0080
+            // rfc3339-TEXT era and the at-head INTEGER one, for the
+            // same reason the probe above does. `query_scalar!`
+            // would pin the statement to the HEAD schema this
+            // replay is precisely NOT running against.
+            let subject_is_live = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS ( \
+                     SELECT 1 FROM blocks WHERE id = ?1 AND deleted_at IS NULL \
+                 )",
+            )
+            .bind(block_id)
+            .fetch_one(&mut *executor)
+            .await?;
+            subject_is_live.then_some(ancestor_id)
+        }
+    };
+
+    if let Some(ancestor_id) = sweep_ancestor {
+        // The `delete_block` arm's cascade shape, keyed on the
+        // ancestor's own stored `deleted_at` (era-agnostic, and
+        // byte-identical to the cohort a delete-last replay would
+        // have produced, which is what makes the result restorable
+        // as one unit — `RestoreBlock` groups on the shared
+        // timestamp). The `deleted_at IS NULL` guard preserves an
+        // already-trashed descendant's original cohort, exactly as
+        // it does there.
+        //
+        // REACH (#4233): `CascadeReach::Active` — see the variant's
+        // doc for why, and why this arm and the `delete_block` arm
+        // below must carry the SAME reach. The residual gap to the
+        // engine is depth only: its walk is unbounded (R27
+        // re-anchoring), this one stops at the depth-100 cap and
+        // REPORTS the truncation (#4232).
+        // #4232/#4289: the sweep's own reach, answered off the
+        // SAME walk the UPDATE below is keyed on — one enumeration
+        // per swept move, not two.
+        if materialize_cascade_cohort(&mut *executor, block_id, CascadeReach::Active).await? {
+            diagnostics.cascade_truncations.push(CascadeTruncation {
+                cascade: CASCADE_MOVE_SWEEP,
+                block_id: block_id.to_owned(),
+            });
+        }
+        // dynamic-sql: era-varying `blocks` at the pre-migration
+        // era, keyed on the TEMP cohort materialised above.
+        sqlx::query(
+            "UPDATE blocks \
+                SET deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1) \
+              WHERE deleted_at IS NULL \
+                AND id IN (SELECT id FROM recovery_cascade_cohort)",
+        )
+        .bind(&ancestor_id)
+        .execute(&mut *executor)
+        .await?;
+        diagnostics
+            .move_swept_under_tombstone
+            .push(block_id.to_owned());
+    }
+    Ok(())
+}
+
+/// Replay one `move_block` op into the pre-migration `blocks` table.
+///
+/// Five phases, each its own function above: probe the inherited tombstone
+/// BEFORE the reparent, apply the move, climb for a tombstoned ancestor,
+/// un-sweep the old cohort, then sweep under the new one.
+async fn replay_move_block(
+    executor: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+    diagnostics: &mut ReplayDiagnostics,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    let new_parent_id = payload
+        .get("new_parent_id")
+        .and_then(serde_json::Value::as_str);
+    // #1252: prefer the new-scheme 0-based `new_index` (as a
+    // 1-based provisional position) when present, else the legacy
+    // `new_position`. Mirrors `apply_move_block_sql_only`. The
+    // `move_block` arm was less broken than `create_block`
+    // (`MoveBlockPayload.new_position` is always serialized and
+    // mirrors `new_index`), but routing on `new_index` keeps
+    // recovery consistent with the live materializer.
+    let new_position = payload
+        .get("new_index")
+        .and_then(serde_json::Value::as_i64)
+        .map(agaric_store::pagination::index_to_provisional_position)
+        .or_else(|| {
+            payload
+                .get("new_position")
+                .and_then(serde_json::Value::as_i64)
+        });
+
+    // #2894: this arm shares the byte-identical UPDATE shape with the
+    // shared projection (`project_move_block_to_sql`:
+    // `UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?`),
+    // but is INTENTIONALLY left inline rather than routed through it.
+    // The projection binds `snapshot.position: i64` (a concrete rank —
+    // the engine read-back is never NULL); this recovery replay reads
+    // a raw op-log payload and binds `new_position: Option<i64>`,
+    // preserving a defensive `position = NULL` write for the
+    // (well-formed ops never hit it, but corruption-path) case where
+    // BOTH `new_index` and `new_position` are absent from the JSON.
+    // Converging would force that NULL corner onto the projection's
+    // non-nullable `i64` — there is no move-side sentinel mapping to
+    // fall back on (unlike the *create* path, where
+    // `apply_create_block_sql_only` folds an absent position into the
+    // `i64::MAX` NULL_POSITION_SENTINEL; `MoveBlockPayload.new_position`
+    // is a non-optional `i64`, so `apply_move_block_sql_only` never
+    // synthesizes that sentinel and `index_to_provisional_position`
+    // caps strictly below it). Converging is therefore an observable
+    // change in exactly the malformed-op-log corner this recovery
+    // exists to survive, and inconsistent with the `create_block`
+    // arm's NULL convention. The convergence is the UPDATE *shape*
+    // (which already matches), not the bind: leaving it inline is
+    // behaviour-preserving. The projection also has no cycle probe
+    // here (unlike the engine-less `apply_move_block_sql_only`
+    // fallback, which runs the shared `move_would_cycle` probe), so
+    // recovery's cycle-probe-free behaviour is likewise unchanged.
+    let inherited_from_parent = probe_inherited_tombstone(&mut *executor, block_id).await?;
+    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+        .bind(new_parent_id)
+        .bind(new_position)
+        .bind(block_id)
+        .execute(&mut *executor)
+        .await?;
+
+    // The truncation diagnostic is pushed inside the climb, next to the probe
+    // that produces it, so the flag never leaves that function.
+    let tombstoned_ancestor = climb_to_tombstoned_ancestor(
+        &mut *executor,
+        block_id,
+        inherited_from_parent.as_deref(),
+        diagnostics,
+    )
+    .await?;
+    unsweep_old_parent(
+        &mut *executor,
+        block_id,
+        inherited_from_parent,
+        tombstoned_ancestor.as_deref(),
+        diagnostics,
+    )
+    .await?;
+    sweep_under_ancestor(&mut *executor, block_id, tombstoned_ancestor, diagnostics).await?;
+    Ok(())
 }
 
 /// Replay one `create_block` op into the pre-migration `blocks` table.
