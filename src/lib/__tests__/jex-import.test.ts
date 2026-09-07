@@ -10,11 +10,15 @@
  *  - an internal note link `:/<noteId>` resolves to a `[[Target]]` wikilink,
  *  - encrypted / unreadable items are skipped and counted (no crash),
  *  - a malformed/empty archive degrades to zero notes rather than throwing,
- *  - `jexNoteToMarkdown` stamps `source: joplin` frontmatter.
+ *  - `jexNoteToMarkdown` stamps `source: joplin` frontmatter,
+ *  - every resource-naming fallback (mime→extension table, id-named orphan
+ *    binaries, collision disambiguation) and the item/tar-header shapes a
+ *    hand-written export hits but a well-formed one does not (#4816).
  */
 
 import { describe, expect, it } from 'vitest'
 
+import { UNTITLED_PLACEHOLDER } from '@/lib/enex-import'
 import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
 
 // --- Synthetic USTAR tar builder -------------------------------------------
@@ -26,10 +30,20 @@ function octalField(n: number, len: number): string {
   return `${n.toString(8).padStart(len - 1, '0')}\0`
 }
 
+/** A member of the synthetic archive. */
+interface TarMember {
+  name: string
+  data: Uint8Array
+  /** USTAR `prefix` field (offset 345); the reader joins it as `<prefix>/<name>`. */
+  prefix?: string
+  /** USTAR type-flag byte (offset 156); defaults to `'0'` (regular file). */
+  typeflag?: number
+}
+
 /** Build a minimal-but-valid USTAR archive from `{ name, data }` members. */
-function buildTar(members: { name: string; data: Uint8Array }[]): Uint8Array {
+function buildTar(members: TarMember[]): Uint8Array {
   const blocks: Uint8Array[] = []
-  for (const { name, data } of members) {
+  for (const { name, data, prefix, typeflag } of members) {
     const header = new Uint8Array(512)
     header.set(enc.encode(name).subarray(0, 100), 0)
     header.set(enc.encode('0000644\0'), 100) // mode
@@ -37,8 +51,9 @@ function buildTar(members: { name: string; data: Uint8Array }[]): Uint8Array {
     header.set(enc.encode('0000000\0'), 116) // gid
     header.set(enc.encode(octalField(data.length, 12)), 124) // size
     header.set(enc.encode('00000000000\0'), 136) // mtime
-    header[156] = 0x30 // typeflag '0' (regular file)
+    header[156] = typeflag ?? 0x30 // typeflag '0' (regular file)
     header.set(enc.encode('ustar\0'), 257)
+    if (prefix !== undefined) header.set(enc.encode(prefix).subarray(0, 155), 345)
     header.set(enc.encode('00'), 263)
     // Checksum: sum with the field pre-filled with spaces, then write it back.
     for (let i = 148; i < 156; i++) header[i] = 0x20
@@ -79,12 +94,12 @@ function joplinItem(content: string, props: Record<string, string>): string {
 }
 
 /** A `.md` tar member from an item text. */
-function itemMember(id: string, text: string): { name: string; data: Uint8Array } {
+function itemMember(id: string, text: string): TarMember {
   return { name: `${id}.md`, data: enc.encode(text) }
 }
 
 /** Build a full `.jex` archive: one folder, two notes, one resource + binary. */
-function sampleJex(extra: { name: string; data: Uint8Array }[] = []): Uint8Array {
+function sampleJex(extra: TarMember[] = []): Uint8Array {
   const folder = joplinItem('Projects', { id: FOLDER_ID, parent_id: '', type_: '2' })
   const note1 = joplinItem(`Note One\n\nSee ![pic](:/${RES_ID}) and [go to beta](:/${NOTE2_ID}).`, {
     id: NOTE1_ID,
@@ -228,5 +243,242 @@ describe('jexNoteToMarkdown', () => {
     expect(md).not.toContain('created:')
     expect(md).not.toContain('updated:')
     expect(md).toContain('source: joplin')
+  })
+})
+
+// --- Resource naming ---------------------------------------------------------
+//
+// A resource's vault path is derived from three independent inputs — the tar
+// member's own extension, the `type_: 4` metadata item's `file_extension` /
+// `mime` / title, and a collision with an already-claimed path. The suite above
+// only ever exercises the fully-specified case (metadata title `pic.png`, tar
+// name `<id>.png`), so the fallbacks below need archives of their own.
+
+/** One resource to embed in the throwaway archive `jexWithResources` builds. */
+interface ResourceSpec {
+  id: string
+  /** Member name under `resources/`; no extension means the reader sees `ext: ''`. */
+  fileName: string
+  /** `type_: 4` metadata props. Omitted entirely for a binary with no metadata item. */
+  meta?: Record<string, string>
+  /** The metadata item's first content line — Joplin's resource title. */
+  metaTitle?: string
+}
+
+const EMBEDDER_ID = '7e'.repeat(16)
+
+/** Archive holding one root note that embeds every `specs` resource, in order. */
+function jexWithResources(specs: ResourceSpec[]): Uint8Array {
+  const body = specs.map((spec, i) => `![r${i}](:/${spec.id})`).join('\n')
+  const members: TarMember[] = [
+    itemMember(
+      EMBEDDER_ID,
+      joplinItem(`Embedder\n\n${body}`, { id: EMBEDDER_ID, parent_id: '', type_: '1' }),
+    ),
+  ]
+  for (const spec of specs) {
+    if (spec.meta !== undefined) {
+      const props = { id: spec.id, ...spec.meta, type_: '4' }
+      members.push(itemMember(spec.id, joplinItem(spec.metaTitle ?? '', props)))
+    }
+    members.push({ name: `resources/${spec.fileName}`, data: HELLO_BYTES })
+  }
+  return buildTar(members)
+}
+
+/** The attachments the embedding note ended up shipping, in reference order. */
+function embeddedAttachments(specs: ResourceSpec[]): { path: string; mime: string }[] {
+  const { notes } = parseJex(jexWithResources(specs))
+  const note = notes.find((n) => n.title === 'Embedder')
+  if (note === undefined) throw new Error('expected the embedding note')
+  return note.attachments.map((a) => ({ path: a.path, mime: a.mime }))
+}
+
+/** A distinct 32-hex resource id per mime case. */
+function mimeCaseId(index: number): string {
+  return `${'0'.repeat(30)}${index.toString(16).padStart(2, '0')}`
+}
+
+/** `mime → expected extension`, covering the known table and both fallbacks. */
+const MIME_EXT_CASES: readonly (readonly [mime: string, ext: string])[] = [
+  ['image/png', 'png'],
+  ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
+  ['image/gif', 'gif'],
+  ['image/webp', 'webp'],
+  ['image/svg+xml', 'svg'],
+  ['image/bmp', 'bmp'],
+  ['image/tiff', 'tiff'],
+  ['application/pdf', 'pdf'],
+  ['audio/mpeg', 'mp3'],
+  ['audio/mp4', 'm4a'],
+  ['audio/wav', 'wav'],
+  ['video/mp4', 'mp4'],
+  ['text/plain', 'txt'],
+  // Unknown mime: the subtype, punctuation-stripped and lowercased, when it is
+  // short enough to pass for an extension...
+  ['image/X-Icon', 'xicon'],
+  // ...and 'bin' when it is not — too long, or no subtype at all.
+  ['application/octet-stream', 'bin'],
+  ['binaryjunk', 'bin'],
+]
+
+describe('parseJex resource naming', () => {
+  it('derives the extension from the mime when neither the tar name nor the metadata has one', () => {
+    const specs = MIME_EXT_CASES.map(([mime], i) => ({
+      id: mimeCaseId(i),
+      fileName: mimeCaseId(i), // no extension on the member name
+      meta: { mime }, // no file_extension, no title
+    }))
+    expect(embeddedAttachments(specs)).toEqual(
+      MIME_EXT_CASES.map(([mime, ext], i) => ({ path: `${mimeCaseId(i)}.${ext}`, mime })),
+    )
+  })
+
+  it('names a binary with no metadata item by its id and an octet-stream extension', () => {
+    const orphan = '5e'.repeat(16)
+    expect(embeddedAttachments([{ id: orphan, fileName: orphan }])).toEqual([
+      { path: `${orphan}.bin`, mime: 'application/octet-stream' },
+    ])
+  })
+
+  it('falls back to octet-stream when the metadata omits the mime, keeping its file_extension', () => {
+    const id = '6f'.repeat(16)
+    const specs = [{ id, fileName: id, meta: { file_extension: 'png' } }]
+    expect(embeddedAttachments(specs)).toEqual([
+      { path: `${id}.png`, mime: 'application/octet-stream' },
+    ])
+  })
+
+  it('appends the extension to a metadata title that carries none', () => {
+    const id = '7a'.repeat(16)
+    const specs = [
+      {
+        id,
+        fileName: `${id}.png`,
+        meta: { mime: 'image/png', file_extension: 'png' },
+        metaTitle: 'diagram',
+      },
+    ]
+    expect(embeddedAttachments(specs)).toEqual([{ path: 'diagram.png', mime: 'image/png' }])
+  })
+
+  it('disambiguates resources whose titles claim the same vault path', () => {
+    const first = '1a'.repeat(16)
+    const second = '2b'.repeat(16)
+    const third = '3c'.repeat(16)
+    const fourth = '4d'.repeat(16)
+    const png = { mime: 'image/png', file_extension: 'png' }
+    const specs = [
+      { id: first, fileName: `${first}.png`, meta: png, metaTitle: 'pic.png' },
+      { id: second, fileName: `${second}.png`, meta: png, metaTitle: 'pic.png' },
+      { id: third, fileName: `${third}.png`, meta: png, metaTitle: 'a.png' },
+      { id: fourth, fileName: `${fourth}.png`, meta: png, metaTitle: 'a.png' },
+    ]
+    // The first claimant keeps the plain name; each later one gets a short
+    // id prefix spliced in before the extension.
+    expect(embeddedAttachments(specs).map((a) => a.path)).toEqual([
+      'pic.png',
+      `pic-${second.slice(0, 8)}.png`,
+      'a.png',
+      `a-${fourth.slice(0, 8)}.png`,
+    ])
+  })
+
+  it('ships one attachment per distinct resource however often a note embeds it', () => {
+    const first = '8a'.repeat(16)
+    const second = '9b'.repeat(16)
+    const noteId = 'ab'.repeat(16)
+    const png = { mime: 'image/png', file_extension: 'png', type_: '4' }
+    const archive = buildTar([
+      itemMember(
+        noteId,
+        joplinItem(
+          `Dupes\n\n![one](:/${first}) again ![encore](:/${first}) plus ![two](:/${second}).`,
+          { id: noteId, parent_id: '', type_: '1' },
+        ),
+      ),
+      itemMember(first, joplinItem('one.png', { id: first, ...png })),
+      itemMember(second, joplinItem('two.png', { id: second, ...png })),
+      { name: `resources/${first}.png`, data: HELLO_BYTES },
+      { name: `resources/${second}.png`, data: HELLO_BYTES },
+    ])
+    const { notes } = parseJex(archive)
+    expect(notes[0]?.attachments.map((a) => a.path)).toEqual(['one.png', 'two.png'])
+    // Every reference is still rewritten — deduplication is of the shipped
+    // bytes, not of the embeds.
+    expect(notes[0]?.markdown).toBe(
+      '![one](one.png) again ![encore](one.png) plus ![two](two.png).',
+    )
+  })
+})
+
+// --- Item and tar-header edge shapes ----------------------------------------
+
+describe('parseJex malformed item and header shapes', () => {
+  it('ends the metadata block at a line that is not `key: value`', () => {
+    const noteId = 'cd'.repeat(16)
+    // `NOCOLON` sits inside the trailing block but carries no colon, so the
+    // metadata walk stops there and everything up to and including it is body.
+    const text = `Title Line\n\nbody line\nNOCOLON\ntype_: 1\nid: ${noteId}\n`
+    const { notes } = parseJex(buildTar([itemMember(noteId, text)]))
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.title).toBe('Title Line')
+    expect(notes[0]?.markdown).toBe('body line\nNOCOLON')
+  })
+
+  it('imports a metadata-only item as an untitled, empty note', () => {
+    const noteId = 'ef'.repeat(16)
+    const text = `type_: 1\nid: ${noteId}\n`
+    const { notes, skipped } = parseJex(buildTar([itemMember(noteId, text)]))
+    expect(skipped).toBe(0)
+    expect(notes).toEqual([
+      {
+        title: UNTITLED_PLACEHOLDER,
+        markdown: '',
+        createdMs: null,
+        updatedMs: null,
+        attachments: [],
+      },
+    ])
+  })
+
+  it('joins a USTAR `prefix` header field onto the member name', () => {
+    const resourceId = '1f'.repeat(16)
+    const noteId = '2f'.repeat(16)
+    const archive = buildTar([
+      itemMember(
+        noteId,
+        joplinItem(`Prefixed\n\n![pic](:/${resourceId})`, {
+          id: noteId,
+          parent_id: '',
+          type_: '1',
+        }),
+      ),
+      itemMember(
+        resourceId,
+        joplinItem('pic.png', {
+          id: resourceId,
+          mime: 'image/png',
+          file_extension: 'png',
+          type_: '4',
+        }),
+      ),
+      // `resources/<id>.png` split across the USTAR name and prefix fields.
+      { name: `${resourceId}.png`, prefix: 'resources', data: HELLO_BYTES },
+    ])
+    const { notes } = parseJex(archive)
+    expect(notes[0]?.attachments.map((a) => a.path)).toEqual(['pic.png'])
+    expect(notes[0]?.markdown).toBe('![pic](pic.png)')
+  })
+
+  it('reads a member stored with the contiguous-file type flag', () => {
+    const noteId = '3f'.repeat(16)
+    const item = itemMember(
+      noteId,
+      joplinItem('Contiguous', { id: noteId, parent_id: '', type_: '1' }),
+    )
+    const archive = buildTar([{ ...item, typeflag: 0x37 }])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Contiguous'])
   })
 })
