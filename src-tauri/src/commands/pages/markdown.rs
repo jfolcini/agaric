@@ -711,15 +711,14 @@ struct PageExportData {
     tag_names_fm: Vec<String>,
 }
 
-/// Render the resolved export data as markdown. Pure — no database access, so
-/// the whole document is built from one consistent snapshot (#660).
+/// Emits one block as `<indent>- <content>` — the *exact* shape
+/// `import::parse_logseq_markdown` reconstructs, deriving block identity from
+/// the `- ` prefix and nesting depth from leading-spaces / 2 (#1916).
 ///
-/// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
-/// with the export tests as the oracle.
-/// Emits one block: its bullet, the reserved-column task metadata, its custom
-/// `key:: value` properties and its non-inline attachments, all indented from
-/// `depth`. The orphan safety net renders a stray through this same path at
-/// depth 0, so a stray and a walked block cannot drift apart.
+/// Below the bullet: the reserved-column task metadata, the block's custom
+/// `key:: value` properties, and its non-inline attachments, each indented one
+/// level further. The orphan safety net renders a stray through this same path
+/// at depth 0, so a stray and a walked block cannot drift apart.
 fn render_block(
     output: &mut String,
     block: &BlockRow,
@@ -896,15 +895,6 @@ fn render_page_attachments(output: &mut String, page_id: &str, data: &PageExport
     }
 }
 
-/// Block content (#1916).
-///
-/// Each descendant must be emitted as `<indent>- <content>` where
-/// `<indent>` is `"  ".repeat(depth)` — the *exact* shape
-/// `import::parse_logseq_markdown` reconstructs (it derives block identity
-/// from the `- ` prefix and nesting depth from leading-spaces / 2). The
-/// pre-fix loop wrote raw content with no bullet and no indentation, so
-/// Agaric's own export collapsed to a single block on re-import.
-///
 /// CRITICAL: `descendants` is ordered FLAT by `(position, id)` over the
 /// keyset — `position` is the *sibling* slot (dense within a parent), so
 /// two blocks under different parents can share a position and the global
@@ -945,6 +935,11 @@ fn group_children_by_parent<'a>(
     children_by_parent
 }
 
+/// Render the resolved export data as markdown. Pure — no database access, so
+/// the whole document is built from one consistent snapshot (#660).
+///
+/// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
+/// with the export tests as the oracle.
 fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
     let page = &data.page;
     let mut output = String::new();
