@@ -3,7 +3,7 @@
 //! `export_page_markdown`, `import_markdown` and their `*_inner` cores plus
 //! the progress-streaming import variant and the ULID-resolution helper.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 use tracing::instrument;
@@ -708,6 +708,344 @@ fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, Str
 ///
 /// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
 /// - [`AppError::NotFound`] — block not found
+/// Everything [`export_page_markdown_inner`] reads from the database, resolved
+/// under the single #660 snapshot transaction before any rendering starts.
+///
+/// A struct rather than a dozen parameters: the split of this function (#4639)
+/// separates "read the vault" from "render the markdown", and the seam between
+/// them is exactly this set. Grouping it also keeps the ordering guarantee
+/// visible — every field is read inside one `BEGIN DEFERRED` snapshot, so the
+/// renderer cannot observe a half-updated vault.
+struct PageExportData {
+    page: BlockRow,
+    descendants: Vec<BlockRow>,
+    attachments_by_block: HashMap<String, Vec<(String, String)>>,
+    tag_names: HashMap<String, String>,
+    page_titles: HashMap<String, String>,
+    block_ref_replacement: HashMap<String, String>,
+    same_page_ref_targets: HashSet<String>,
+    descendant_properties: HashMap<String, Vec<FrontmatterRow>>,
+    list_styles: HashMap<String, String>,
+    ref_titles: HashMap<String, String>,
+    properties: Vec<FrontmatterRow>,
+    aliases: Vec<String>,
+    tag_names_fm: Vec<String>,
+}
+
+/// Render the resolved export data as markdown. Pure — no database access, so
+/// the whole document is built from one consistent snapshot (#660).
+///
+/// Split out of `export_page_markdown_inner` (#4639); behaviour-preserving,
+/// with the export tests as the oracle.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
+    let PageExportData {
+        page,
+        descendants,
+        attachments_by_block,
+        tag_names,
+        page_titles,
+        block_ref_replacement,
+        same_page_ref_targets,
+        descendant_properties,
+        list_styles,
+        ref_titles,
+        properties,
+        aliases,
+        tag_names_fm,
+    } = data;
+
+    let mut output = String::new();
+
+    // Title
+    //
+    // #2991 — `page.content` is cloned (not moved) here because the page
+    // block's own non-inline attachments (emitted just below, after
+    // frontmatter) need the raw content string for the same inline-token
+    // dedup check the descendant loops use.
+    let title = page
+        .content
+        .clone()
+        .unwrap_or_else(|| "Untitled".to_string());
+    output.push_str(&format!("# {title}\n\n"));
+
+    // Frontmatter (if properties, aliases, or tags exist)
+    //
+    // (#1433) `aliases`/`tags` are emitted as YAML *flow sequences*
+    // (`[a, b]`). An item is emitted *bare* only when it is unambiguously a
+    // plain string in flow context — i.e. it does not look like a YAML
+    // scalar token (`true`/`null`/a number/etc.), does not start with a YAML
+    // indicator, has no surrounding whitespace, and contains no
+    // flow-significant or control characters. Anything else is emitted as a
+    // YAML double-quoted scalar with `\`, `"` and all control characters
+    // (`\n`, `\t`, `\r`, and `\xNN` for the rest) escaped, which is valid for
+    // *any* string. Legacy scalar property values keep their verbatim
+    // emission below. #1920 — the emit helpers now live in `markdown_yaml`
+    // (symmetric with the import-side `strip_yaml_quotes`).
+    use super::markdown_yaml::{yaml_flow_sequence, yaml_scalar_emit};
+
+    if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
+        output.push_str("---\n");
+        if !aliases.is_empty() {
+            output.push_str(&format!("aliases: {}\n", yaml_flow_sequence(&aliases)));
+        }
+        if !tag_names_fm.is_empty() {
+            output.push_str(&format!("tags: {}\n", yaml_flow_sequence(&tag_names_fm)));
+        }
+        for prop in properties {
+            let value = frontmatter_row_value(prop, &ref_titles);
+            // #2715 — route the scalar through the YAML emit helper so a value
+            // carrying a newline, a leading `---`, quotes, or other
+            // YAML-significant content is quoted / block-scalar-encoded instead
+            // of written verbatim (which could inject keys or break out of the
+            // frontmatter fence). `yaml_scalar_emit` is symmetric with the
+            // import-side `parse_frontmatter` re-parse.
+            output.push_str(&yaml_scalar_emit(&prop.key, &value));
+        }
+        output.push_str("---\n\n");
+    }
+
+    // #2991 — emit the PAGE block's own non-inline attachments.
+    //
+    // `attachments_by_block` was batch-fetched above (2b) for the page id
+    // AND every descendant, but neither render loop below iterates the page
+    // block itself: the DFS loop only walks `descendants`, and the orphan
+    // safety net only walks entries of `descendants` not reached by the DFS.
+    // An attachment attached directly to the page/title block (rather than
+    // to one of its descendant blocks) was therefore fetched but never
+    // emitted — silently dropped from the export, the same data-loss class
+    // #2961 fixed for descendant blocks, just for the root block.
+    //
+    // Dedup mirrors the DFS/orphan loops EXACTLY: an attachment id already
+    // present as an `attachment:<id>` token in the page's own `content` (an
+    // inline image) is skipped here so it isn't double-emitted — it was
+    // already rendered inline as part of the `# {title}` line above.
+    //
+    // Emitted at depth 0 (no indent), right after frontmatter and before the
+    // descendant bullets: these lines aren't nested under any bullet (the
+    // page has none — its content is the `# Title` heading), so they sit at
+    // the same top level as the first-level descendant bullets below.
+    if let Some(atts) = attachments_by_block.get(page_id) {
+        let page_content = page.content.as_deref().unwrap_or("");
+        for (att_id, filename) in atts {
+            if page_content.contains(&format!("attachment:{att_id}")) {
+                continue;
+            }
+            let label = attachment_link_label(filename);
+            output.push_str(&format!("- [{label}](attachment:{att_id})\n"));
+        }
+    }
+
+    // Block content (#1916).
+    //
+    // Each descendant must be emitted as `<indent>- <content>` where
+    // `<indent>` is `"  ".repeat(depth)` — the *exact* shape
+    // `import::parse_logseq_markdown` reconstructs (it derives block identity
+    // from the `- ` prefix and nesting depth from leading-spaces / 2). The
+    // pre-fix loop wrote raw content with no bullet and no indentation, so
+    // Agaric's own export collapsed to a single block on re-import.
+    //
+    // CRITICAL: `descendants` is ordered FLAT by `(position, id)` over the
+    // keyset — `position` is the *sibling* slot (dense within a parent), so
+    // two blocks under different parents can share a position and the global
+    // order does NOT guarantee parent-before-child (e.g. a child whose id
+    // sorts before its parent's). Emitting in that flat order would both
+    // mis-compute depth AND, worse, present a child bullet before its parent
+    // bullet, which the importer's document-order parent-stack would
+    // mis-reparent. So we re-order the subtree into DFS pre-order here:
+    // build `parent_id -> children` (children sorted by `(position, id)`,
+    // matching the read order), then walk depth-first from the page root.
+    // This guarantees every parent precedes its children and yields the
+    // correct depth for indentation.
+    let mut children_by_parent: HashMap<String, Vec<&BlockRow>> = HashMap::new();
+    for block in descendants {
+        let parent_key = block
+            .parent_id
+            .as_ref()
+            .map_or_else(|| page_id.to_string(), |p| p.clone().into_string());
+        children_by_parent
+            .entry(parent_key)
+            .or_default()
+            .push(block);
+    }
+    for children in children_by_parent.values_mut() {
+        // The read query already orders by `(COALESCE(position, sentinel),
+        // id)`; preserve that sibling order within each parent.
+        children.sort_by(|a, b| {
+            let pa = a.position.unwrap_or(NULL_POSITION_SENTINEL);
+            let pb = b.position.unwrap_or(NULL_POSITION_SENTINEL);
+            pa.cmp(&pb)
+                .then_with(|| a.id.clone().into_string().cmp(&b.id.clone().into_string()))
+        });
+    }
+
+    // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
+    // once `children_by_parent` is grouped and sibling-sorted, because an
+    // ordinal is a function of a block's NEIGHBOURS, which only this assembler
+    // knows (`markdown-serialize.ts` sees one block in isolation). Nothing
+    // numeric is stored: the number is re-derived on every export, so a
+    // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
+    // round trip.
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &list_styles);
+
+    // Iterative DFS pre-order from the page root. A visited set guards against
+    // a pathological parent cycle (a block whose ancestor chain loops back) so
+    // export can never infinite-loop on corrupt data.
+    let mut visited: HashSet<String> = HashSet::new();
+    // Stack of (block, depth), pushed in reverse so siblings pop in order.
+    let mut stack: Vec<(&BlockRow, usize)> = Vec::new();
+    if let Some(roots) = children_by_parent.get(page_id) {
+        for child in roots.iter().rev() {
+            stack.push((child, 0));
+        }
+    }
+    while let Some((block, depth)) = stack.pop() {
+        let id = block.id.clone().into_string();
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+
+        let indent = "  ".repeat(depth);
+        let content = block.content.as_deref().unwrap_or("");
+        let resolved =
+            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
+        // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
+        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+            &resolved,
+            &tag_names,
+            &page_titles,
+        );
+        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
+        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
+        push_block_bullet(&mut output, &indent, &list_marker, &resolved);
+
+        // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
+        // dates) lives in the reserved `blocks` columns, not in
+        // `block_properties`, so it is invisible to the content render above.
+        // Emit each populated column as a `key:: value` property line indented
+        // one level under the bullet — the EXACT form the importer's property
+        // parser reads back (`parse_logseq_markdown` attaches a `key:: value`
+        // line to its owning block, and the apply path routes the reserved
+        // keys `todo_state` / `priority` / `due_date` / `scheduled_date` into
+        // their columns via `typed_property_args_for_string_value`). No new
+        // syntax is invented — these are ordinary Logseq property lines.
+        let prop_indent = "  ".repeat(depth + 1);
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_deref()),
+            ("priority", block.priority.as_deref()),
+            ("scheduled_date", block.scheduled_date.as_deref()),
+            ("due_date", block.due_date.as_deref()),
+        ] {
+            if let Some(v) = value.filter(|s| !s.is_empty()) {
+                output.push_str(&format!("{prop_indent}{key}:: {v}\n"));
+            }
+        }
+
+        // #2962 — custom `block_properties` on this block (anything NOT one
+        // of the 4 reserved `blocks` columns above) round-trip the same way:
+        // one `key:: value` line per property, indented one level under the
+        // bullet. This is the exact shape `parse_logseq_markdown` reads back
+        // into `block.properties` (see the reserved-column comment above) —
+        // no new syntax, just the previously-missing emission for the
+        // escape-hatch custom-property case. `descendant_properties` was
+        // batch-read once for the whole subtree, so this is a HashMap lookup,
+        // not a per-block query.
+        if let Some(props) = descendant_properties.get(&id) {
+            for prop in props {
+                let value = frontmatter_row_value(prop, &ref_titles);
+                output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
+            }
+        }
+
+        // #2961 — emit a link line for each block-scoped (non-inline)
+        // attachment, nested one level under this block's bullet. Skips any
+        // attachment whose id already appears as an `attachment:<id>` token
+        // in `content` — that's an inline image, already rendered above by
+        // `resolve_ulids_for_export`/`push_block_bullet` — so only
+        // genuine file attachments (PDFs/docs/images with no inline token)
+        // get a line here.
+        if let Some(atts) = attachments_by_block.get(&id) {
+            for (att_id, filename) in atts {
+                if content.contains(&format!("attachment:{att_id}")) {
+                    continue;
+                }
+                let label = attachment_link_label(filename);
+                output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
+            }
+        }
+
+        // Push this block's children (reversed so they pop in sibling order)
+        // at depth + 1.
+        if let Some(kids) = children_by_parent.get(&id) {
+            for kid in kids.iter().rev() {
+                stack.push((kid, depth + 1));
+            }
+        }
+    }
+
+    // Safety net: any descendant NOT reachable by DFS from the page root
+    // (e.g. an orphan whose `parent_id` points outside this subtree while its
+    // denormalised `page_id` still names this page) would otherwise be
+    // silently dropped — the pre-fix flat loop emitted every descendant. Emit
+    // such strays at depth 0 in the read order so the export stays lossless.
+    for block in descendants {
+        let id = block.id.clone().into_string();
+        if visited.contains(&id) {
+            continue;
+        }
+        let content = block.content.as_deref().unwrap_or("");
+        let resolved =
+            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        // #2968 — same readable `v2n:` query rewrite as the DFS branch above.
+        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+            &resolved,
+            &tag_names,
+            &page_titles,
+        );
+        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
+        // #4552 slice 4 — an orphan keeps its own marker. Its ordinal comes
+        // from the same sibling group it was grouped into above (keyed by its
+        // out-of-subtree `parent_id`), so a run of orphaned `ordered` strays
+        // still numbers 1, 2, 3 rather than all reading `1.`
+        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
+        push_block_bullet(&mut output, "", &list_marker, &resolved);
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_deref()),
+            ("priority", block.priority.as_deref()),
+            ("scheduled_date", block.scheduled_date.as_deref()),
+            ("due_date", block.due_date.as_deref()),
+        ] {
+            if let Some(v) = value.filter(|s| !s.is_empty()) {
+                output.push_str(&format!("  {key}:: {v}\n"));
+            }
+        }
+        // #2962 — same custom-property emission as the DFS branch above, for
+        // the orphan-stray safety net.
+        if let Some(props) = descendant_properties.get(&id) {
+            for prop in props {
+                let value = frontmatter_row_value(prop, &ref_titles);
+                output.push_str(&format!("  {}:: {value}\n", prop.key));
+            }
+        }
+
+        // #2961 — same non-inline-attachment emission as the DFS loop above,
+        // so an orphan's attachments aren't dropped either. Indent matches
+        // this loop's `"  {key}:: {v}"` convention (one level, depth 0).
+        if let Some(atts) = attachments_by_block.get(&id) {
+            for (att_id, filename) in atts {
+                if content.contains(&format!("attachment:{att_id}")) {
+                    continue;
+                }
+                let label = attachment_link_label(filename);
+                output.push_str(&format!("  - [{label}](attachment:{att_id})\n"));
+            }
+        }
+    }
+
+    output
+}
+
 #[instrument(skip(pool), err)]
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn export_page_markdown_inner(
@@ -1281,296 +1619,25 @@ pub async fn export_page_markdown_inner(
     // and returns the connection to the pool promptly.
     tx.commit().await?;
 
-    // 5. Build markdown output
-    let mut output = String::new();
-
-    // Title
-    //
-    // #2991 — `page.content` is cloned (not moved) here because the page
-    // block's own non-inline attachments (emitted just below, after
-    // frontmatter) need the raw content string for the same inline-token
-    // dedup check the descendant loops use.
-    let title = page
-        .content
-        .clone()
-        .unwrap_or_else(|| "Untitled".to_string());
-    output.push_str(&format!("# {title}\n\n"));
-
-    // Frontmatter (if properties, aliases, or tags exist)
-    //
-    // (#1433) `aliases`/`tags` are emitted as YAML *flow sequences*
-    // (`[a, b]`). An item is emitted *bare* only when it is unambiguously a
-    // plain string in flow context — i.e. it does not look like a YAML
-    // scalar token (`true`/`null`/a number/etc.), does not start with a YAML
-    // indicator, has no surrounding whitespace, and contains no
-    // flow-significant or control characters. Anything else is emitted as a
-    // YAML double-quoted scalar with `\`, `"` and all control characters
-    // (`\n`, `\t`, `\r`, and `\xNN` for the rest) escaped, which is valid for
-    // *any* string. Legacy scalar property values keep their verbatim
-    // emission below. #1920 — the emit helpers now live in `markdown_yaml`
-    // (symmetric with the import-side `strip_yaml_quotes`).
-    use super::markdown_yaml::{yaml_flow_sequence, yaml_scalar_emit};
-
-    if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
-        output.push_str("---\n");
-        if !aliases.is_empty() {
-            output.push_str(&format!("aliases: {}\n", yaml_flow_sequence(&aliases)));
-        }
-        if !tag_names_fm.is_empty() {
-            output.push_str(&format!("tags: {}\n", yaml_flow_sequence(&tag_names_fm)));
-        }
-        for prop in &properties {
-            let value = frontmatter_row_value(prop, &ref_titles);
-            // #2715 — route the scalar through the YAML emit helper so a value
-            // carrying a newline, a leading `---`, quotes, or other
-            // YAML-significant content is quoted / block-scalar-encoded instead
-            // of written verbatim (which could inject keys or break out of the
-            // frontmatter fence). `yaml_scalar_emit` is symmetric with the
-            // import-side `parse_frontmatter` re-parse.
-            output.push_str(&yaml_scalar_emit(&prop.key, &value));
-        }
-        output.push_str("---\n\n");
-    }
-
-    // #2991 — emit the PAGE block's own non-inline attachments.
-    //
-    // `attachments_by_block` was batch-fetched above (2b) for the page id
-    // AND every descendant, but neither render loop below iterates the page
-    // block itself: the DFS loop only walks `descendants`, and the orphan
-    // safety net only walks entries of `descendants` not reached by the DFS.
-    // An attachment attached directly to the page/title block (rather than
-    // to one of its descendant blocks) was therefore fetched but never
-    // emitted — silently dropped from the export, the same data-loss class
-    // #2961 fixed for descendant blocks, just for the root block.
-    //
-    // Dedup mirrors the DFS/orphan loops EXACTLY: an attachment id already
-    // present as an `attachment:<id>` token in the page's own `content` (an
-    // inline image) is skipped here so it isn't double-emitted — it was
-    // already rendered inline as part of the `# {title}` line above.
-    //
-    // Emitted at depth 0 (no indent), right after frontmatter and before the
-    // descendant bullets: these lines aren't nested under any bullet (the
-    // page has none — its content is the `# Title` heading), so they sit at
-    // the same top level as the first-level descendant bullets below.
-    if let Some(atts) = attachments_by_block.get(page_id) {
-        let page_content = page.content.as_deref().unwrap_or("");
-        for (att_id, filename) in atts {
-            if page_content.contains(&format!("attachment:{att_id}")) {
-                continue;
-            }
-            let label = attachment_link_label(filename);
-            output.push_str(&format!("- [{label}](attachment:{att_id})\n"));
-        }
-    }
-
-    // Block content (#1916).
-    //
-    // Each descendant must be emitted as `<indent>- <content>` where
-    // `<indent>` is `"  ".repeat(depth)` — the *exact* shape
-    // `import::parse_logseq_markdown` reconstructs (it derives block identity
-    // from the `- ` prefix and nesting depth from leading-spaces / 2). The
-    // pre-fix loop wrote raw content with no bullet and no indentation, so
-    // Agaric's own export collapsed to a single block on re-import.
-    //
-    // CRITICAL: `descendants` is ordered FLAT by `(position, id)` over the
-    // keyset — `position` is the *sibling* slot (dense within a parent), so
-    // two blocks under different parents can share a position and the global
-    // order does NOT guarantee parent-before-child (e.g. a child whose id
-    // sorts before its parent's). Emitting in that flat order would both
-    // mis-compute depth AND, worse, present a child bullet before its parent
-    // bullet, which the importer's document-order parent-stack would
-    // mis-reparent. So we re-order the subtree into DFS pre-order here:
-    // build `parent_id -> children` (children sorted by `(position, id)`,
-    // matching the read order), then walk depth-first from the page root.
-    // This guarantees every parent precedes its children and yields the
-    // correct depth for indentation.
-    let mut children_by_parent: HashMap<String, Vec<&BlockRow>> = HashMap::new();
-    for block in &descendants {
-        let parent_key = block
-            .parent_id
-            .as_ref()
-            .map_or_else(|| page_id.to_string(), |p| p.clone().into_string());
-        children_by_parent
-            .entry(parent_key)
-            .or_default()
-            .push(block);
-    }
-    for children in children_by_parent.values_mut() {
-        // The read query already orders by `(COALESCE(position, sentinel),
-        // id)`; preserve that sibling order within each parent.
-        children.sort_by(|a, b| {
-            let pa = a.position.unwrap_or(NULL_POSITION_SENTINEL);
-            let pb = b.position.unwrap_or(NULL_POSITION_SENTINEL);
-            pa.cmp(&pb)
-                .then_with(|| a.id.clone().into_string().cmp(&b.id.clone().into_string()))
-        });
-    }
-
-    // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
-    // once `children_by_parent` is grouped and sibling-sorted, because an
-    // ordinal is a function of a block's NEIGHBOURS, which only this assembler
-    // knows (`markdown-serialize.ts` sees one block in isolation). Nothing
-    // numeric is stored: the number is re-derived on every export, so a
-    // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
-    // round trip.
-    let list_ordinals = compute_list_ordinals(&children_by_parent, &list_styles);
-
-    // Iterative DFS pre-order from the page root. A visited set guards against
-    // a pathological parent cycle (a block whose ancestor chain loops back) so
-    // export can never infinite-loop on corrupt data.
-    let mut visited: HashSet<String> = HashSet::new();
-    // Stack of (block, depth), pushed in reverse so siblings pop in order.
-    let mut stack: Vec<(&BlockRow, usize)> = Vec::new();
-    if let Some(roots) = children_by_parent.get(page_id) {
-        for child in roots.iter().rev() {
-            stack.push((child, 0));
-        }
-    }
-    while let Some((block, depth)) = stack.pop() {
-        let id = block.id.clone().into_string();
-        if !visited.insert(id.clone()) {
-            continue;
-        }
-
-        let indent = "  ".repeat(depth);
-        let content = block.content.as_deref().unwrap_or("");
-        let resolved =
-            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
-        // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
-        // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
-        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
-            &resolved,
-            &tag_names,
-            &page_titles,
-        );
-        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
-        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
-        push_block_bullet(&mut output, &indent, &list_marker, &resolved);
-
-        // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
-        // dates) lives in the reserved `blocks` columns, not in
-        // `block_properties`, so it is invisible to the content render above.
-        // Emit each populated column as a `key:: value` property line indented
-        // one level under the bullet — the EXACT form the importer's property
-        // parser reads back (`parse_logseq_markdown` attaches a `key:: value`
-        // line to its owning block, and the apply path routes the reserved
-        // keys `todo_state` / `priority` / `due_date` / `scheduled_date` into
-        // their columns via `typed_property_args_for_string_value`). No new
-        // syntax is invented — these are ordinary Logseq property lines.
-        let prop_indent = "  ".repeat(depth + 1);
-        for (key, value) in [
-            ("todo_state", block.todo_state.as_deref()),
-            ("priority", block.priority.as_deref()),
-            ("scheduled_date", block.scheduled_date.as_deref()),
-            ("due_date", block.due_date.as_deref()),
-        ] {
-            if let Some(v) = value.filter(|s| !s.is_empty()) {
-                output.push_str(&format!("{prop_indent}{key}:: {v}\n"));
-            }
-        }
-
-        // #2962 — custom `block_properties` on this block (anything NOT one
-        // of the 4 reserved `blocks` columns above) round-trip the same way:
-        // one `key:: value` line per property, indented one level under the
-        // bullet. This is the exact shape `parse_logseq_markdown` reads back
-        // into `block.properties` (see the reserved-column comment above) —
-        // no new syntax, just the previously-missing emission for the
-        // escape-hatch custom-property case. `descendant_properties` was
-        // batch-read once for the whole subtree, so this is a HashMap lookup,
-        // not a per-block query.
-        if let Some(props) = descendant_properties.get(&id) {
-            for prop in props {
-                let value = frontmatter_row_value(prop, &ref_titles);
-                output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
-            }
-        }
-
-        // #2961 — emit a link line for each block-scoped (non-inline)
-        // attachment, nested one level under this block's bullet. Skips any
-        // attachment whose id already appears as an `attachment:<id>` token
-        // in `content` — that's an inline image, already rendered above by
-        // `resolve_ulids_for_export`/`push_block_bullet` — so only
-        // genuine file attachments (PDFs/docs/images with no inline token)
-        // get a line here.
-        if let Some(atts) = attachments_by_block.get(&id) {
-            for (att_id, filename) in atts {
-                if content.contains(&format!("attachment:{att_id}")) {
-                    continue;
-                }
-                let label = attachment_link_label(filename);
-                output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
-            }
-        }
-
-        // Push this block's children (reversed so they pop in sibling order)
-        // at depth + 1.
-        if let Some(kids) = children_by_parent.get(&id) {
-            for kid in kids.iter().rev() {
-                stack.push((kid, depth + 1));
-            }
-        }
-    }
-
-    // Safety net: any descendant NOT reachable by DFS from the page root
-    // (e.g. an orphan whose `parent_id` points outside this subtree while its
-    // denormalised `page_id` still names this page) would otherwise be
-    // silently dropped — the pre-fix flat loop emitted every descendant. Emit
-    // such strays at depth 0 in the read order so the export stays lossless.
-    for block in &descendants {
-        let id = block.id.clone().into_string();
-        if visited.contains(&id) {
-            continue;
-        }
-        let content = block.content.as_deref().unwrap_or("");
-        let resolved =
-            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
-        // #2968 — same readable `v2n:` query rewrite as the DFS branch above.
-        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
-            &resolved,
-            &tag_names,
-            &page_titles,
-        );
-        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
-        // #4552 slice 4 — an orphan keeps its own marker. Its ordinal comes
-        // from the same sibling group it was grouped into above (keyed by its
-        // out-of-subtree `parent_id`), so a run of orphaned `ordered` strays
-        // still numbers 1, 2, 3 rather than all reading `1.`
-        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
-        push_block_bullet(&mut output, "", &list_marker, &resolved);
-        for (key, value) in [
-            ("todo_state", block.todo_state.as_deref()),
-            ("priority", block.priority.as_deref()),
-            ("scheduled_date", block.scheduled_date.as_deref()),
-            ("due_date", block.due_date.as_deref()),
-        ] {
-            if let Some(v) = value.filter(|s| !s.is_empty()) {
-                output.push_str(&format!("  {key}:: {v}\n"));
-            }
-        }
-        // #2962 — same custom-property emission as the DFS branch above, for
-        // the orphan-stray safety net.
-        if let Some(props) = descendant_properties.get(&id) {
-            for prop in props {
-                let value = frontmatter_row_value(prop, &ref_titles);
-                output.push_str(&format!("  {}:: {value}\n", prop.key));
-            }
-        }
-
-        // #2961 — same non-inline-attachment emission as the DFS loop above,
-        // so an orphan's attachments aren't dropped either. Indent matches
-        // this loop's `"  {key}:: {v}"` convention (one level, depth 0).
-        if let Some(atts) = attachments_by_block.get(&id) {
-            for (att_id, filename) in atts {
-                if content.contains(&format!("attachment:{att_id}")) {
-                    continue;
-                }
-                let label = attachment_link_label(filename);
-                output.push_str(&format!("  - [{label}](attachment:{att_id})\n"));
-            }
-        }
-    }
-
-    Ok(output)
+    // 5. Render. The read half above is the only thing that touches the
+    //    database; everything below is a pure function of what it resolved
+    //    (#4639).
+    let data = PageExportData {
+        page,
+        descendants,
+        attachments_by_block,
+        tag_names,
+        page_titles,
+        block_ref_replacement,
+        same_page_ref_targets,
+        descendant_properties,
+        list_styles,
+        ref_titles,
+        properties,
+        aliases,
+        tag_names_fm,
+    };
+    Ok(render_page_markdown(page_id, &data))
 }
 
 /// `true` when `line` is a fenced-code delimiter (three-or-more backticks),
