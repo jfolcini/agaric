@@ -35,6 +35,29 @@ const TAG = runScopedMarker('wdio-scoped')
 const SWITCHER = '[aria-label="Switch space"]'
 const TAG_ITEM = `[data-testid="tag-item-${TAG}"]`
 
+/**
+ * The active space's name, once the switcher has one to show.
+ *
+ * The trigger's text is Radix's mirror of the SELECTED `SelectItem`, and the
+ * items come from `useSpaceStore.availableSpaces`, which SpaceSwitcher fills
+ * from a fire-and-forget `refreshAvailableSpaces()` on mount. Until that
+ * lands there is no item matching `currentSpaceId`, so the trigger renders
+ * empty — which is what run 34065136247 read, 1.6 s after boot, and asserted
+ * against. The app-ready signal (the sidebar's Journal nav) does not cover
+ * this store, so the wait belongs here.
+ */
+async function currentSpaceName(): Promise<string> {
+  let name = ''
+  await browser.waitUntil(
+    async () => {
+      name = (await $(SWITCHER).getText()).trim()
+      return name !== ''
+    },
+    { timeout: NAV_TIMEOUT, timeoutMsg: 'the space switcher never showed an active space' },
+  )
+  return name
+}
+
 async function switchToSpace(name: string): Promise<void> {
   await chooseSelectOption(SWITCHER, name)
   await browser.waitUntil(async () => (await $(SWITCHER).getText()).includes(name), {
@@ -46,8 +69,7 @@ async function switchToSpace(name: string): Promise<void> {
 describe('Agaric real-backend space-scoped tag (#4671 / #3081)', () => {
   it('lists an inline-created tag only in the space it was created in, across switches', async () => {
     await waitForAppReady()
-    const spaceA = (await $(SWITCHER).getText()).trim()
-    expect(spaceA).not.toBe('')
+    const spaceA = await currentSpaceName()
 
     // 1. Create space B through the manage dialog (creating does not switch).
     await chooseSelectOption(SWITCHER, 'Manage spaces')

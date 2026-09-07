@@ -53,12 +53,24 @@ describe('Agaric real-backend attachment paste (#4671)', () => {
     const block = blockStaticByMarker(MARKER)
     await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const blockId = await block.getAttribute('data-block-id')
-    const row = $(`li[data-block-id="${blockId}"]`)
+    // `[data-block-id="<id>"]` (no tag prefix) is the row wrapper the passing
+    // reserved-property spec already resolves the task checkbox through:
+    // SortableBlock renders a <div>, so a `li[...]` prefix matches nothing.
+    const row = $(`[data-block-id="${blockId}"]`)
+    // The badge renders only when `attachmentCount > 0` (BlockInlineControls
+    // BlockMetadataRow), and the count comes from the `list_attachments_batch`
+    // the remounted BlockTree issued — so its aria-label IS the re-queried
+    // durable read. The attachment SECTION is deliberately not asserted: it is
+    // behind the badge's `showAttachments` toggle (default false), so its
+    // absence says nothing about what the backend stored.
     const badge = row.$('[data-testid="attachment-badge"]')
     await badge.waitForExist({ timeout: NAV_TIMEOUT })
-    expect(await badge.getAttribute('aria-label')).toBe('1 attachment')
-    const section = row.$('[data-testid="attachment-section"]')
-    await section.waitForExist({ timeout: NAV_TIMEOUT })
-    await expect(section).toBeExisting()
+    await browser.waitUntil(
+      async () => (await badge.getAttribute('aria-label')) === '1 attachment',
+      {
+        timeout: NAV_TIMEOUT,
+        timeoutMsg: 'the attachment badge never reported exactly one attachment',
+      },
+    )
   })
 })

@@ -448,12 +448,28 @@ export async function reopenPageByTitle(title: string): Promise<void> {
 /**
  * Wait for a sonner toast whose text contains `text`. Toasts carry no testid
  * (ui/sonner.tsx); sonner stamps `data-sonner-toast` on each `<li>`.
+ *
+ * The match is done in JS over the resolved elements rather than with WDIO's
+ * `*=` partial-text selector, which compiles to `contains(., "<text>")` and
+ * therefore produces INVALID XPath the moment the expected text contains a
+ * double quote (run 34065136247: `Attached "wdio-paste.png"` — the toast
+ * template `blockTree.attachedFileMessage` quotes the filename — failed with
+ * `invalid selector: The string did not match the expected pattern`).
  */
 export async function waitForToast(text: string): Promise<void> {
-  await $(`[data-sonner-toast]*=${text}`).waitForDisplayed({
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: `no toast containing ${JSON.stringify(text)} appeared`,
-  })
+  await browser.waitUntil(
+    async () => {
+      const toasts = await $$('[data-sonner-toast]').getElements()
+      for (const toast of toasts) {
+        if ((await toast.getText()).includes(text)) return true
+      }
+      return false
+    },
+    {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: `no toast containing ${JSON.stringify(text)} appeared`,
+    },
+  )
 }
 
 /**
