@@ -61,14 +61,6 @@ function renumberSiblingsIn(blocks: Blocks, parentId: string | null): void {
 }
 
 /**
- * #958 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER live
- * children, then collapse the whole group to dense 1-based positions. Mirrors
- * `insertAtSlotAndRenumber` in `handlers.ts`. Restoring a move's raw
- * `old_position` directly collides with the sibling now in that slot; giving
- * the moved block a fractional key that sorts JUST before the slot's current
- * occupant, then renumbering, lands it back at the intended rank.
- */
-/**
  * #957/#4669 — the `refreshDescendantPageIds` walk, over the caller-supplied
  * `blocks` map. A moved subtree's descendants must carry the restored page
  * root, exactly as on the forward path.
@@ -93,6 +85,14 @@ function refreshDescendantPageIdsIn(blocks: Blocks, rootBlockId: string): void {
   }
 }
 
+/**
+ * #958 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER live
+ * children, then collapse the whole group to dense 1-based positions. Mirrors
+ * `insertAtSlotAndRenumber` in `handlers.ts`. Restoring a move's raw
+ * `old_position` directly collides with the sibling now in that slot; giving
+ * the moved block a fractional key that sorts JUST before the slot's current
+ * occupant, then renumbering, lands it back at the intended rank.
+ */
 function insertAtSlotIn(
   blocks: Blocks,
   parentId: string | null,

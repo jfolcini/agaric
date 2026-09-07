@@ -193,7 +193,7 @@ fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
                 json!({ "command": "move_block", "args": {
                     "blockId": label(&label_of, m.block_id.as_str()),
                     "newParentId": new_parent,
-                    "newIndex": m.new_index.unwrap_or(m.new_position) - 1,
+                    "newIndex": m.new_position - 1,
                 }})
             }
             OpPayload::DeleteBlock(d) => json!({ "command": "delete_block", "args": {

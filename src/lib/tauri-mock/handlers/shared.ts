@@ -1196,6 +1196,23 @@ export function insertAtSlotAndRenumber(
  * descendants keep a stale `page_id`, diverging from the backend (and breaking
  * `load_page_subtree`, which keys on `page_id`).
  */
+export function refreshDescendantPageIds(rootBlockId: string): void {
+  const root = blocks.get(rootBlockId)
+  if (!root) return
+  const newPageId = (root['page_id'] as string | null) ?? null
+  const all = Array.from(blocks.values())
+  // BFS over parent_id edges from the moved block down through its subtree.
+  const queue: string[] = [rootBlockId]
+  while (queue.length > 0) {
+    const parentId = queue.shift() as string
+    const children = all.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
+    for (const child of children) {
+      child['page_id'] = newPageId
+      queue.push(child['id'] as string)
+    }
+  }
+}
+
 /**
  * #4669 — the REVERSE-path pair of {@link renumberSiblings} /
  * {@link insertAtSlotAndRenumber}, live-only on both counts.
@@ -1251,23 +1268,6 @@ export function insertAtLiveSlotAndRenumber(
   })
   moved['position'] = clamped + 0.5
   renumberLiveSiblings(parentId)
-}
-
-export function refreshDescendantPageIds(rootBlockId: string): void {
-  const root = blocks.get(rootBlockId)
-  if (!root) return
-  const newPageId = (root['page_id'] as string | null) ?? null
-  const all = Array.from(blocks.values())
-  // BFS over parent_id edges from the moved block down through its subtree.
-  const queue: string[] = [rootBlockId]
-  while (queue.length > 0) {
-    const parentId = queue.shift() as string
-    const children = all.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
-    for (const child of children) {
-      child['page_id'] = newPageId
-      queue.push(child['id'] as string)
-    }
-  }
 }
 
 // -- filtered_blocks_query helpers (extracted to keep the handler flat) -------

@@ -178,6 +178,38 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(rowOf(KID)['page_id']).toBe(PAGE)
   })
 
+  it('#4669 — redo takes the reverse path too, not a forward re-apply', () => {
+    // `redo_page_op` looks like "do it again", but the backend builds a REVERSE
+    // payload and runs it through `apply_reverse_in_tx`
+    // (`src-tauri/src/commands/history.rs`) — so it is live-only on both counts,
+    // exactly like undo. With a tombstone in the group the forward helpers put
+    // the block one rank too high, and `position` is snapshot-compared for
+    // every row, so that is a contract break on a LIVE block rather than a
+    // tombstone's stale rank. The fuzz lane cannot see it: `chain_to_fixture`
+    // emits no undo or redo command.
+    const A = '0000000000000000000REDOTMA'
+    const B = '0000000000000000000REDOTMB'
+    seedPage([A, B])
+
+    dispatch('delete_block', { blockId: A })
+    expect(rowOf(A)['position']).toBe(1)
+
+    // Forward move: the group densifies tombstone-inclusive, so B stays 2.
+    dispatch('move_block', { blockId: B, newParentId: PAGE, newIndex: 1 })
+    expect(rowOf(B)['position']).toBe(2)
+
+    const undone = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
+      new_op_ref: { seq: number }
+    }
+    dispatch('redo_page_op', { pageId: PAGE, undoSeq: undone.new_op_ref.seq })
+
+    // The live target group is empty (A is a tombstone), so the slot clamps to
+    // 0 and B densifies to 1 over the live list — A's stale rank untouched.
+    expect(rowOf(A)['position']).toBe(1)
+    expect(rowOf(B)['position']).toBe(1)
+    expect(loadedRootOrder()).toEqual([B])
+  })
+
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {
     // GS-style ids; GS_3 indents under GS_2, dedents back to root, then undo
     // must re-nest it under GS_2 at the indented depth.
