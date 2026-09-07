@@ -34,6 +34,33 @@ import {
   pushOp,
 } from '@/lib/tauri-mock/seed'
 
+/** The backend's `MCP_PAGE_LIMIT_CAP` for `list_pages_with_metadata`. */
+const LIST_PAGES_WITH_METADATA_MAX_LIMIT = 100
+
+/**
+ * Validate `list_pages_with_metadata`'s `limit` the way the backend does —
+ * REJECT an out-of-range ask rather than clamping it (AGENTS.md invariant 10:
+ * "Pagination `limit` is validated, not clamped").
+ *
+ * This mirrored a `Math.min(..., 100)` clamp, and that is exactly how #4805
+ * shipped: `PagesTreeSection` asked for 200, every mock-backed test quietly got
+ * 100 and passed, and the real backend refused the call with a `Validation`
+ * error, so the child-pages tree was dead for every user on every page. A mock
+ * that accepts what the backend rejects trains callers on a contract that does
+ * not exist.
+ */
+function listPagesWithMetadataLimit(raw: unknown): number {
+  if (raw == null) return 50
+  const limit = raw as number
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIST_PAGES_WITH_METADATA_MAX_LIMIT) {
+    throw validationRejection(
+      `list_pages_with_metadata limit must be in [1, ${LIST_PAGES_WITH_METADATA_MAX_LIMIT}]; ` +
+        `got ${String(raw)}`,
+    )
+  }
+  return limit
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -187,7 +214,7 @@ export const pagesHandlers = {
     const spaceId = filter['spaceId'] as string
     const sort = (filter['sort'] as string | undefined) ?? 'alphabetical'
     const cursor = a['cursor'] as string | null
-    const limit = Math.min(Number((a['limit'] as number | null) ?? 50), 100)
+    const limit = listPagesWithMetadataLimit(a['limit'])
 
     // Block-link edges derived from `[[ULID]]` tokens (mock stand-in for the
     // backend's `block_links` table) so the link facets and `MostLinked` sort

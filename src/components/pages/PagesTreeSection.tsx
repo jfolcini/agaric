@@ -37,7 +37,7 @@ import type { PageResponse, PageWithMetadataRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
-import { paginationLimit } from '@/lib/safe-limit'
+import { LIST_PAGES_WITH_METADATA_LIMIT } from '@/lib/safe-limit'
 import { useSpaceStore } from '@/stores/space'
 
 /** The `{ id, content }` pair `buildPageTree` consumes. */
@@ -80,10 +80,11 @@ function descendantGlob(pageTitle: string): string {
 }
 
 /**
- * Runaway guard for the cursor drain: 10 pages x the 200-row page limit,
- * so the tree is TRUNCATED past 2000 descendants. A namespace that deep
- * is well past the point where a flat tree panel is usable, and the cap
- * keeps a non-advancing cursor from spinning forever.
+ * Runaway guard for the cursor drain: 10 pages x the 100-row page limit
+ * ({@link LIST_PAGES_WITH_METADATA_LIMIT}), so the tree is TRUNCATED past
+ * 1000 descendants. A namespace that deep is well past the point where a
+ * flat tree panel is usable, and the cap keeps a non-advancing cursor from
+ * spinning forever.
  */
 const MAX_DESCENDANT_PAGES = 10
 
@@ -99,7 +100,7 @@ async function fetchDescendantPages(spaceId: string, pageTitle: string): Promise
           filters: [{ type: 'PathGlob', pattern: descendantGlob(pageTitle), exclude: false }],
         },
         cursor,
-        paginationLimit(200),
+        LIST_PAGES_WITH_METADATA_LIMIT,
       )
       .then(unwrap)
     // Defensive narrowing: some smoke-test mocks resolve `invoke` with a

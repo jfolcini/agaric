@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { PageWithMetadataRow } from '@/lib/bindings'
+import { LIST_PAGES_WITH_METADATA_MAX } from '@/lib/safe-limit'
 
 // #2927 phase 7 — `PagesTreeSection` calls `commands` from `@/lib/bindings`
 // directly. The spies see the real wire arguments; the shim wraps a
@@ -128,7 +129,7 @@ describe('PagesTreeSection', () => {
         filters: [{ type: 'PathGlob', pattern: 'Notes/*', exclude: false }],
       },
       null,
-      200,
+      LIST_PAGES_WITH_METADATA_MAX,
     )
   })
 
@@ -158,7 +159,7 @@ describe('PagesTreeSection', () => {
         filters: [{ type: 'PathGlob', pattern: '?Notes???2026?/*', exclude: false }],
       }),
       null,
-      200,
+      LIST_PAGES_WITH_METADATA_MAX,
     )
 
     const user = userEvent.setup()
