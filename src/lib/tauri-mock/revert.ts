@@ -21,17 +21,22 @@ type Properties = Map<string, Map<string, Record<string, unknown>>>
 type BlockTags = Map<string, Set<string>>
 
 /**
- * #958 — assign dense 1-based `position` to every live child of `parentId`,
- * in `position ASC, id ASC` order. Mirrors `renumberSiblings` in
- * `handlers.ts`: reverting a move must collapse the moved block AND the
+ * #958 — assign dense 1-based `position` to every child of `parentId`, in
+ * `position ASC, id ASC` order. Mirrors `renumberSiblings` in
+ * `handlers/shared.ts`: reverting a move must collapse the moved block AND the
  * sibling group it rejoins back to dense ranks, otherwise the restored raw
  * `old_position` collides with the sibling now occupying that slot and the
  * `position ASC, id ASC` load ordering breaks (order/depth fails to revert
  * in place — #958).
  */
 function renumberSiblingsIn(blocks: Blocks, parentId: string | null): void {
+  // #4669: soft-deleted children are INCLUDED and keep their slot, exactly as
+  // in the `handlers/shared.ts` original. These twins exist only because of a
+  // circular import, so a divergence between them is a bug by construction —
+  // and this one was reachable: delete A (tombstone at 1), move B away, undo
+  // the move, and B was renumbered to 1 as well, on top of A.
   const siblings = [...blocks.values()].filter(
-    (b) => ((b['parent_id'] as string | null) ?? null) === parentId && !b['deleted_at'],
+    (b) => ((b['parent_id'] as string | null) ?? null) === parentId,
   )
   siblings.sort((x, y) => {
     const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
@@ -60,11 +65,10 @@ function insertAtSlotIn(
 ): void {
   const moved = blocks.get(blockId)
   if (!moved) return
+  // #4669: counts soft-deleted siblings, like its `handlers/shared.ts`
+  // original — the backend resolves the slot against the whole group.
   const others = [...blocks.values()].filter(
-    (b) =>
-      ((b['parent_id'] as string | null) ?? null) === parentId &&
-      !b['deleted_at'] &&
-      b['id'] !== blockId,
+    (b) => ((b['parent_id'] as string | null) ?? null) === parentId && b['id'] !== blockId,
   )
   others.sort((x, y) => {
     const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER

@@ -106,6 +106,43 @@ pub fn seed_label_to_id(label: &str) -> String {
     format!("{}{}", "0".repeat(pad), label)
 }
 
+/// Resolve one id-shaped fixture op arg.
+///
+/// `Sn` (and any label under 26 chars) expands through [`seed_label_to_id`].
+/// `Cn` (#4669) names the **n-th block the ops created so far**, 1-based, read
+/// from the op log's `create_block` sidecar — the only way a fixture can
+/// address a block that did not exist when it was authored, because BOTH
+/// runners mint their own ULID for a `create_block` and reconcile through the
+/// canonical relabel. Without it a fixture (or a generated chain) can create
+/// blocks but never edit, move, tag or delete one.
+///
+/// Fails CLOSED: an out-of-range `Cn` panics rather than falling through to the
+/// seed expansion, which would silently address a block that does not exist.
+/// TS twin: `resolveOpArgId` in `conformance-replay.ts`.
+pub fn resolve_op_arg_id(label: &str, created_ids: &[String]) -> String {
+    // The digit bound (not "any digits"): a literal 26-char ULID may begin with
+    // `C` followed by digits, and must pass through to `seed_label_to_id`.
+    let digits = match label.strip_prefix('C') {
+        Some(rest)
+            if !rest.is_empty() && rest.len() <= 6 && rest.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            rest
+        }
+        _ => return seed_label_to_id(label),
+    };
+    let n: usize = digits.parse().expect("digits parse");
+    created_ids
+        .get(n.wrapping_sub(1))
+        .unwrap_or_else(|| {
+            panic!(
+                "conformance op arg '{label}' names the {n}th op-created block, but only {} have \
+                 been created at this point in the op list",
+                created_ids.len()
+            )
+        })
+        .clone()
+}
+
 /// List the fixture files, sorted by name for deterministic test order.
 fn fixture_paths() -> Vec<PathBuf> {
     // CARGO_MANIFEST_DIR == <repo>/src-tauri; fixtures live at <repo>/conformance.
@@ -197,12 +234,16 @@ fn seed_block_into_engine(state: &agaric_engine::loro::shared::LoroState, b: &Va
 /// `set_due_date` / `set_scheduled_date`) map to a `SetProperty` op with the
 /// reserved key — exactly what the `*_inner` commands emit and what
 /// `project_set_property_to_sql` writes to the dedicated `blocks` column.
-async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value) {
+async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids: &[String]) {
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
     let arg = |k: &str| args.get(k);
     let arg_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
-    let arg_label_id = |k: &str| arg(k).and_then(Value::as_str).map(seed_label_to_id);
+    let arg_label_id = |k: &str| {
+        arg(k)
+            .and_then(Value::as_str)
+            .map(|l| resolve_op_arg_id(l, created_ids))
+    };
     let label_block_id = |k: &str| BlockId::from(arg_label_id(k).expect("blockId").as_str());
     // Build a SetProperty payload for a reserved column-backed key. The value
     // goes in the typed field the projection reads for that key
@@ -272,11 +313,11 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value) {
                     .get("value_date")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
-                // value_ref is a block id — expand it through the seed-label map.
+                // value_ref is a block id — expand it through the label map.
                 value_ref: v
                     .get("value_ref")
                     .and_then(Value::as_str)
-                    .map(|s| BlockId::from(seed_label_to_id(s).as_str())),
+                    .map(|s| BlockId::from(resolve_op_arg_id(s, created_ids).as_str())),
                 value_bool: v.get("value_bool").and_then(Value::as_bool),
             })
         }
@@ -894,12 +935,15 @@ fn verify_removed_value_in_engine(
     state: &agaric_engine::loro::shared::LoroState,
     fixture_name: &str,
     op: &Value,
+    created_ids: &[String],
 ) -> Result<(), String> {
     use agaric_engine::loro::engine::PropertyValue;
 
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
-    let block_id = args["blockId"].as_str().map(seed_label_to_id);
+    let block_id = args["blockId"]
+        .as_str()
+        .map(|l| resolve_op_arg_id(l, created_ids));
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
     let mut guard = state
         .registry
@@ -923,7 +967,10 @@ fn verify_removed_value_in_engine(
         }
     } else if command == "remove_tag" {
         let block_id = block_id.expect("remove_tag blockId");
-        let tag_id = seed_label_to_id(args["tagId"].as_str().expect("remove_tag tagId"));
+        let tag_id = resolve_op_arg_id(
+            args["tagId"].as_str().expect("remove_tag tagId"),
+            created_ids,
+        );
         let tags = engine
             .read_tags(&block_id)
             .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
@@ -993,12 +1040,29 @@ fn set_property_clear_detection_matches_fixture_payload_projection() {
 // Per-fixture run + assert / update
 // ---------------------------------------------------------------------------
 
-async fn run_fixture(path: &PathBuf) {
-    let raw = std::fs::read_to_string(path).unwrap();
-    let mut fixture: Value = serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));
-    let name = fixture["name"].as_str().unwrap_or("<unnamed>").to_owned();
+/// One fixture replayed against the REAL backend: the mock-comparison
+/// snapshot, the canonical relabel order the `queries` leg projects through,
+/// and the live pool those queries run against.
+///
+/// #4669: two drivers share this replay — [`run_fixture`] (the committed
+/// corpus) and `conformance_fuzz` (generated chains). A private second copy of
+/// the seed + apply loop would be a second backend implementation, which is the
+/// drift this harness exists to catch.
+pub struct FixtureReplay {
+    pub snapshot: Value,
+    pub canonical_order: Vec<String>,
+    pub pool: SqlitePool,
+    /// Held so the temp DB and the per-instance engine state outlive the
+    /// `queries` leg, exactly as they did when this was one function.
+    _mat: Materializer,
+    _dir: tempfile::TempDir,
+}
 
+/// Seed a fresh backend from `fixture["seed"]`, apply `fixture["ops"]` through
+/// the durable-op path, guard every settled boundary, and build the normalized
+/// snapshot.
+pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
+    let name = name.to_owned();
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -1104,30 +1168,32 @@ async fn run_fixture(path: &PathBuf) {
     // exact raw SQL positions except for the one parent group a successful
     // purge is known to leave gapped. A later create/move touching that group
     // owes a dense reproject, so it removes the allowance before comparison.
+    // #4669: the ids of blocks created by the ops SO FAR, in op order — what a
+    // `Cn` op-arg label resolves against. Refreshed after every op, so an op
+    // can only name a block an EARLIER op created.
+    let mut created_ids: Vec<String> = Vec::new();
     if let Some(ops) = fixture["ops"].as_array() {
         for op in ops.clone() {
             let command = op["command"].as_str().expect("op command");
+            let resolve = |label: Option<&str>| label.map(|l| resolve_op_arg_id(l, &created_ids));
             let old_parent = if matches!(command, "move_block" | "purge_block") {
-                let block_id = seed_label_to_id(
-                    op["args"]["blockId"]
-                        .as_str()
-                        .expect("structural op blockId"),
-                );
+                let block_id =
+                    resolve(op["args"]["blockId"].as_str()).expect("structural op blockId");
                 read_structural_op_parent(&pool, &name, command, &block_id)
                     .await
                     .unwrap_or_else(|message| panic!("{message}"))
             } else {
                 None
             };
-            apply_op(&pool, &mat, &op).await;
+            apply_op(&pool, &mat, &op, &created_ids).await;
 
             match command {
                 "create_block" => {
-                    let parent = op["args"]["parentId"].as_str().map(seed_label_to_id);
+                    let parent = resolve(op["args"]["parentId"].as_str());
                     purge_gapped_parents.remove(&parent);
                 }
                 "move_block" => {
-                    let new_parent = op["args"]["newParentId"].as_str().map(seed_label_to_id);
+                    let new_parent = resolve(op["args"]["newParentId"].as_str());
                     purge_gapped_parents.remove(&old_parent);
                     purge_gapped_parents.remove(&new_parent);
                 }
@@ -1136,9 +1202,12 @@ async fn run_fixture(path: &PathBuf) {
                 }
                 _ => {}
             }
-            for created in read_created_block_ids_in_op_order(&pool).await {
-                if !canonical_order.contains(&created) {
-                    canonical_order.push(created);
+            verify_removed_value_in_engine(state, &name, &op, &created_ids)
+                .unwrap_or_else(|message| panic!("{message}"));
+            created_ids = read_created_block_ids_in_op_order(&pool).await;
+            for created in &created_ids {
+                if !canonical_order.contains(created) {
+                    canonical_order.push(created.clone());
                 }
             }
             verify_fixture_engine_parity(
@@ -1150,8 +1219,6 @@ async fn run_fixture(path: &PathBuf) {
             )
             .await
             .unwrap_or_else(|message| panic!("{message}"));
-            verify_removed_value_in_engine(state, &name, &op)
-                .unwrap_or_else(|message| panic!("{message}"));
         }
     }
     // Catch any top-level pages created mid-op so their descendants resolve a
@@ -1173,12 +1240,31 @@ async fn run_fixture(path: &PathBuf) {
     let snapshot: Snapshot = build_snapshot_with_order(raw_state, &canonical_order);
     let snapshot_value = serde_json::to_value(&snapshot).unwrap();
 
+    FixtureReplay {
+        snapshot: snapshot_value,
+        canonical_order,
+        pool,
+        _mat: mat,
+        _dir,
+    }
+}
+
+async fn run_fixture(path: &PathBuf) {
+    let raw = std::fs::read_to_string(path).unwrap();
+    let mut fixture: Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));
+    let name = fixture["name"].as_str().unwrap_or("<unnamed>").to_owned();
+
+    let replay = replay_fixture(&fixture, &name).await;
+    let snapshot_value = replay.snapshot.clone();
+
     // 5. #3347 — optional post-op READ steps. Each runs one query command
     // against the real backend and projects its response into the same
     // canonical `Bn` vocabulary the snapshot uses. Authored by the SAME
     // `CONFORMANCE_UPDATE=1` flow, asserted by the SAME two runners.
-    let labels = super::conformance_snapshot::canonical_label_map(&canonical_order);
-    let queries_value = super::conformance_query::run_query_steps(&pool, &fixture, &labels).await;
+    let labels = super::conformance_snapshot::canonical_label_map(&replay.canonical_order);
+    let queries_value =
+        super::conformance_query::run_query_steps(&replay.pool, &fixture, &labels).await;
 
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         fixture["expected"] = snapshot_value;
@@ -1534,10 +1620,13 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
 
     // 1. Move LAST child C to the HEAD (slot 0 — no clamp engages). Expected
     //    settled order: C, A, B → ranks C=1, A=2, B=3.
+    // `&[]`: `resolve_op_arg_id` only consults `created_ids` for a `C<n>`
+    // back-reference, and this op names a SEED label.
     apply_op(
         &pool,
         &mat,
         &json!({"command": "move_block", "args": {"blockId": "BC", "newParentId": "S1", "newIndex": 0}}),
+        &[],
     )
     .await;
 
@@ -1561,6 +1650,7 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
         &pool,
         &mat,
         &json!({"command": "move_block", "args": {"blockId": "BA", "newParentId": "S1", "newIndex": 2}}),
+        &[],
     )
     .await;
 

@@ -1101,14 +1101,22 @@ export function buildPageMetaRow(
 }
 
 /**
- * #400 — assign dense 1-based `position` to every live child of `parentId`,
- * in their current sort order, so the mock mirrors the backend's dense-rank
+ * #400 — assign dense 1-based `position` to every child of `parentId`, in
+ * their current sort order, so the mock mirrors the backend's dense-rank
  * semantics (`position ASC, id ASC`, no gaps, no collisions).
+ *
+ * #4669: a soft-deleted child is INCLUDED and keeps its slot, because that is
+ * what `reproject_dense_positions` does — its own test says so: "assigns dense
+ * 1-based ranks for the whole ordered sibling group ... including a
+ * soft-deleted tombstone that keeps its slot" (#419). Filtering tombstones out
+ * here did not merely drift from the backend, it produced DUPLICATE positions:
+ * create → delete → create left the tombstone at 1 (never renumbered) and gave
+ * the new block 1 as well. Found by the differential-fuzz lane, which is the
+ * first thing to exercise a delete followed by a create — no committed fixture
+ * did.
  */
 export function renumberSiblings(parentId: string | null): void {
-  const siblings = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'],
-  )
+  const siblings = [...blocks.values()].filter((b) => (b['parent_id'] ?? null) === parentId)
   siblings.sort((x, y) => {
     const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
     const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
@@ -1121,10 +1129,19 @@ export function renumberSiblings(parentId: string | null): void {
 }
 
 /**
- * #400 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER live
+ * #400 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER
  * children, then renumber the whole group to dense 1-based positions. `slot`
  * is clamped to `[0, otherCount]`; a value >= otherCount (e.g.
  * `Number.MAX_SAFE_INTEGER` for "append") lands the block last.
+ *
+ * #4669: "other children" includes SOFT-DELETED ones, because the backend
+ * ranks the whole sibling group and a tombstone keeps its slot (#419). Counting
+ * only live siblings made the slot mean something different on each side:
+ * create at index 0 → delete → create at index 1 put the new block at position
+ * 1 in the mock (slot 1 clamped to 0, the tombstone being invisible) and at
+ * position 2 in the backend (the tombstone still occupying slot 0). Found by
+ * the differential-fuzz lane; no committed fixture creates a sibling after
+ * deleting one.
  */
 export function insertAtSlotAndRenumber(
   parentId: string | null,
@@ -1134,7 +1151,7 @@ export function insertAtSlotAndRenumber(
   const moved = blocks.get(blockId)
   if (!moved) return
   const others = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'] && b['id'] !== blockId,
+    (b) => (b['parent_id'] ?? null) === parentId && b['id'] !== blockId,
   )
   others.sort((x, y) => {
     const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER

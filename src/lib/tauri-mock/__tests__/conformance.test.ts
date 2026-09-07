@@ -22,46 +22,30 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   assertUniqueStepNames,
-  type QueryResult,
   type QueryStep,
   runQuerySteps,
   stampMockSpace,
 } from '@/lib/tauri-mock/__tests__/conformance-query'
 import {
+  canonicalOrder,
+  clearMock,
+  createdBlockIdsInOpOrder,
+  expandOpArgs,
+  type Fixture,
+  loadSeed,
+  replayFixture,
+} from '@/lib/tauri-mock/__tests__/conformance-replay'
+import {
   buildSnapshot,
   canonicalLabelMap,
-  type MockState,
   type NormalizedSnapshot,
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import {
-  blocks,
-  blockTags,
-  makeBlock,
-  opLog,
-  properties,
-  propertyDefs,
-  seedBlocks,
-} from '@/lib/tauri-mock/seed'
+import { blocks, blockTags, opLog, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Fixture loading
 // ---------------------------------------------------------------------------
-
-interface Fixture {
-  name: string
-  seed: {
-    blocks: Array<Record<string, unknown>>
-    properties: Array<Record<string, unknown>>
-    tags: Array<Record<string, unknown>>
-  }
-  ops: Array<{ command: string; args: Record<string, unknown> }>
-  expected: Record<string, unknown> | null
-  /** #3347 — optional post-op READ steps (see `./conformance-query`). */
-  queries?: QueryStep[]
-  /** Backend-authored projection of each `queries` step. */
-  expected_queries?: QueryResult[]
-}
 
 const FIXTURES_DIR = join(process.cwd(), 'conformance', 'fixtures')
 
@@ -73,146 +57,6 @@ function loadFixtures(): Array<{ path: string; fixture: Fixture }> {
       const path = join(FIXTURES_DIR, f)
       return { path, fixture: JSON.parse(readFileSync(path, 'utf8')) as Fixture }
     })
-}
-
-/**
- * Expand a stable seed label (`S1`, `S2`, …) to its 26-char block id — `label`
- * right-justified in 26 `'0'` chars. IDENTICAL to the Rust runner's
- * `seed_label_to_id`. Pages/blocks referenced in op args and `[[id]]` link
- * tokens must use the expanded form.
- */
-function seedLabelToId(label: string): string {
-  if (label.length >= 26) return label
-  return label.padStart(26, '0')
-}
-
-// ---------------------------------------------------------------------------
-// Mock reset + seed
-// ---------------------------------------------------------------------------
-
-/** Clear every mock store back to empty (no canonical browser-preview seed). */
-function clearMock(): void {
-  seedBlocks() // resets counters + opLog + reseeds; we then wipe the canonical seed
-  blocks.clear()
-  properties.clear()
-  blockTags.clear()
-  propertyDefs.clear()
-  opLog.length = 0
-}
-
-/** Walk `row`'s `parent_id` chain to the root page; the page root's id is the
- *  `page_id`. Cycle-guarded. Returns `null` when no page ancestor exists. */
-function resolveRootPageId(row: Record<string, unknown>): string | null {
-  let cursor: string | null = (row['parent_id'] as string | null) ?? null
-  const guard = new Set<string>()
-  while (cursor != null && !guard.has(cursor)) {
-    guard.add(cursor)
-    const parent = blocks.get(cursor)
-    if (!parent) break
-    if (parent['block_type'] === 'page') return parent['id'] as string
-    cursor = (parent['parent_id'] as string | null) ?? null
-  }
-  return null
-}
-
-/** Insert one seed block into the `blocks` store and return its expanded id. */
-function loadSeedBlock(b: Record<string, unknown>): string {
-  const id = seedLabelToId(b['id'] as string)
-  const parentId = b['parent_id'] == null ? null : seedLabelToId(b['parent_id'] as string)
-  blocks.set(
-    id,
-    makeBlock(
-      id,
-      b['block_type'] as string,
-      (b['content'] as string | null) ?? null,
-      parentId,
-      (b['position'] as number | null) ?? 0,
-    ),
-  )
-  return id
-}
-
-/** Insert one seed property bundle into the `properties` store. */
-function loadSeedProperty(p: Record<string, unknown>): void {
-  const blockId = seedLabelToId(p['block_id'] as string)
-  const key = p['key'] as string
-  const v = (p['value'] as Record<string, unknown>) ?? {}
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set(key, {
-    key,
-    value_text: (v['value_text'] as string | null) ?? null,
-    value_num: (v['value_num'] as number | null) ?? null,
-    value_date: (v['value_date'] as string | null) ?? null,
-    value_ref: v['value_ref'] == null ? null : seedLabelToId(v['value_ref'] as string),
-    value_bool: v['value_bool'] == null ? null : (v['value_bool'] as boolean) ? 1 : 0,
-  })
-}
-
-/** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
-function loadSeed(fixture: Fixture): void {
-  for (const b of fixture.seed.blocks) {
-    loadSeedBlock(b)
-  }
-  // #1775: `makeBlock` stamps a non-page block's `page_id` with its IMMEDIATE
-  // parent, but the backend's `page_id` is the ROOT page of the parent chain.
-  // Resolve every seeded block's `page_id` to its root page so nested-subtree
-  // fixtures match the backend-authored snapshot (the move handler already does
-  // this for moved subtrees via `refreshDescendantPageIds`; the seed loader did
-  // not, so a never-moved nested block kept a stale immediate-parent page_id).
-  for (const b of fixture.seed.blocks) {
-    const id = seedLabelToId(b['id'] as string)
-    const row = blocks.get(id)
-    if (!row) continue
-    row['page_id'] = row['block_type'] === 'page' ? id : resolveRootPageId(row)
-  }
-  for (const p of fixture.seed.properties) {
-    loadSeedProperty(p)
-  }
-  for (const t of fixture.seed.tags) {
-    const blockId = seedLabelToId(t['block_id'] as string)
-    const tagId = seedLabelToId(t['tag_id'] as string)
-    if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
-    blockTags.get(blockId)?.add(tagId)
-  }
-}
-
-/**
- * Rewrite an op's args for the mock: seed labels (`S1`) referenced by id-shaped
- * arg keys are expanded to their 26-char form so they match the inserted block
- * ids. `value_ref` inside a `set_property` value bundle is expanded too.
- */
-function expandOpArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...args }
-  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId']) {
-    if (typeof out[key] === 'string') out[key] = seedLabelToId(out[key] as string)
-  }
-  if (out['value'] != null && typeof out['value'] === 'object') {
-    const v = { ...(out['value'] as Record<string, unknown>) }
-    if (typeof v['value_ref'] === 'string') v['value_ref'] = seedLabelToId(v['value_ref'] as string)
-    out['value'] = v
-  }
-  return out
-}
-
-/** Build the canonical relabel order: seed ids (seed order) then created ids
- *  (op order, from the mock op_log's create_block entries). Mirrors the Rust
- *  runner's order computation exactly. */
-function canonicalOrder(fixture: Fixture): string[] {
-  const order: string[] = []
-  for (const b of fixture.seed.blocks) {
-    order.push(seedLabelToId(b['id'] as string))
-  }
-  for (const entry of opLog) {
-    if (entry.op_type !== 'create_block') continue
-    try {
-      const payload = JSON.parse(entry.payload) as Record<string, unknown>
-      const id = payload['block_id'] as string | undefined
-      if (id != null && !order.includes(id)) order.push(id)
-    } catch {
-      // ignore malformed payloads
-    }
-  }
-  return order
 }
 
 // ---------------------------------------------------------------------------
@@ -298,15 +142,7 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
         `fixture '${fixture.name}' has no \`expected\` — author it with CONFORMANCE_UPDATE=1 on the Rust side`,
       ).not.toBeNull()
 
-      loadSeed(fixture)
-      for (const op of fixture.ops) {
-        dispatch(op.command, expandOpArgs(op.args))
-      }
-
-      const state: MockState = { blocks, properties, blockTags, opLog }
-      const snapshot = buildSnapshot(state, canonicalOrder(fixture))
-
-      expect(snapshot).toEqual(fixture.expected)
+      expect(replayFixture(fixture)).toEqual(fixture.expected)
     })
   }
 
@@ -336,7 +172,7 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
         // against a space-less mock.
         stampMockSpace()
         for (const op of fixture.ops) {
-          dispatch(op.command, expandOpArgs(op.args))
+          dispatch(op.command, expandOpArgs(op.args, createdBlockIdsInOpOrder()))
         }
         stampMockSpace()
 

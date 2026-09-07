@@ -106,8 +106,15 @@ setup = "iroh-no-proxy-windows"
 #     mixed-op stream through an all-to-all snapshot sweep. Measured 15.2s
 #     nominal against the same 2×30s=60s window, and observed TMT at 60.021s in
 #     a full-workspace run.
+#   * `conformance_fuzz::mock_matches_backend_on_generated_op_chains_4669`
+#     (#4669) — the differential-fuzz lane. 256 proptest cases, each replaying a
+#     generated op chain through the real backend AND through the TS mock in a
+#     child node process. Measured 48.0s nominal against the same 2x30s=60s
+#     window, and observed TMT at 60.010s in a full-workspace run BEFORE the
+#     case count was raised. It is `#[ignore]`d, so this only bites in the
+#     weekly `--run-ignored=only` sweep — which is the one place it runs.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`

@@ -6,7 +6,8 @@
     "src/lib/search-query/index.ts",
     "src/components/EmojiPicker/index.ts",
     "src/editor/markdown-parse.ts",
-    "src/lib/keyboard-config.ts"
+    "src/lib/keyboard-config.ts",
+    "src/lib/tauri-mock/__tests__/conformance-fuzz-bridge.ts"
   ],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/lib/bindings.ts"],

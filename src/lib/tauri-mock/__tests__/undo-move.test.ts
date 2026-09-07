@@ -104,6 +104,62 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(rowOf(A)['position']).not.toBe(rowOf(B)['position'])
   })
 
+  it('#4669 — undoing a move past a tombstone does not collide with it', () => {
+    // `revert.ts` carries its own copies of `renumberSiblings` /
+    // `insertAtSlotAndRenumber` (a circular import forced the duplication), so
+    // a divergence between the copies and the originals is a bug by
+    // construction. Both filtered soft-deleted siblings out, which is the same
+    // duplicate-position defect the differential-fuzz lane found on the
+    // forward path — but on the UNDO path, which that lane cannot reach: its
+    // renderer emits no undo command.
+    const A = '00000000000000000000TOMB_A'
+    const B = '00000000000000000000TOMB_B'
+    const OTHER = '000000000000000000OTHERPAGE'
+    seedPage([A, B])
+    blocks.set(OTHER, makeBlock(OTHER, 'page', 'Other', null, 2))
+
+    // A is tombstoned and KEEPS position 1 — the backend ranks the whole
+    // sibling group, tombstones included (`reproject_dense_positions`, #419).
+    dispatch('delete_block', { blockId: A })
+    expect(rowOf(A)['deleted_at']).not.toBeNull()
+    expect(rowOf(A)['position']).toBe(1)
+
+    // Move B off the page, then undo it back.
+    dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
+    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+
+    expect(rowOf(B)['parent_id']).toBe(PAGE)
+    // The whole point: B must not be handed the tombstone's slot. Filtering
+    // A out left `others` empty, so B was renumbered to 1 on top of it.
+    expect(rowOf(B)['position']).not.toBe(rowOf(A)['position'])
+    expect(rowOf(A)['position']).toBe(1)
+    expect(rowOf(B)['position']).toBe(2)
+  })
+
+  it('#4669 — reverting a move past a tombstone via revert_ops does not collide', () => {
+    // `revert_ops` goes through `revert.ts`'s `applyRevertForOp`, which carries
+    // its OWN copies of the two position helpers (a circular import forced the
+    // duplication). `undo_page_op` above never reaches them, so without this
+    // the copies could drift back and nothing would say so.
+    const A = '0000000000000000000REVTOMB_A'
+    const B = '0000000000000000000REVTOMB_B'
+    const OTHER = '00000000000000000REVOTHERPG'
+    seedPage([A, B])
+    blocks.set(OTHER, makeBlock(OTHER, 'page', 'Other', null, 2))
+
+    dispatch('delete_block', { blockId: A })
+    dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
+
+    const moveOp = opLog.findLast((o) => o.op_type === 'move_block')
+    if (!moveOp) throw new Error('no move_block op to revert')
+    dispatch('revert_ops', { ops: [{ device_id: moveOp.device_id, seq: moveOp.seq }] })
+
+    expect(rowOf(B)['parent_id']).toBe(PAGE)
+    expect(rowOf(B)['position']).not.toBe(rowOf(A)['position'])
+    expect(rowOf(A)['position']).toBe(1)
+    expect(rowOf(B)['position']).toBe(2)
+  })
+
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {
     // GS-style ids; GS_3 indents under GS_2, dedents back to root, then undo
     // must re-nest it under GS_2 at the indented depth.
