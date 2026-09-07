@@ -1879,6 +1879,227 @@ pub async fn assert_block_tag_refs_reconciled(pool: &SqlitePool, context: &str) 
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 9 — `tags_cache`, the tag roll-up (#3345)
+// ---------------------------------------------------------------------------
+
+/// One `tags_cache` row's derived content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedTagRow {
+    /// The surviving tag's raw `blocks.content` — production selects the
+    /// column, not the normalised key.
+    pub name: String,
+    /// Distinct LIVE source blocks referencing this tag, explicitly or inline.
+    pub usage_count: i64,
+}
+
+async fn dump_block_tags(pool: &SqlitePool) -> Result<Vec<(String, String)>, AppError> {
+    const SQL: &str = "SELECT block_id, tag_id FROM block_tags";
+    // dynamic-sql: static SQL, test-only oracle base-table dump.
+    let rows = sqlx::query_as::<_, (String, String)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTagRow>, AppError> {
+    const SQL: &str = "SELECT tag_id, name, usage_count FROM tags_cache";
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let rows = sqlx::query_as::<_, (String, String, i64)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(tag_id, name, usage_count)| (tag_id, DerivedTagRow { name, usage_count }))
+        .collect())
+}
+
+/// `tags_cache` folded from base rows.
+///
+/// Transcribed from `DESIRED_TAGS_SQL` (`agaric-store/src/cache/tags.rs`) plus
+/// the Rust-side dedup that runs after it, folded here rather than re-expressed
+/// as SQL so this is an independent recomputation:
+///
+///   * a row exists per LIVE `block_type = 'tag'` block with NON-NULL content —
+///     a NULL-content tag gets no row at all;
+///   * `usage_count` is `COUNT(*)` over the `UNION` (not `UNION ALL`, so
+///     DISTINCT) of `block_tags` and `block_tag_refs`, each arm keeping only
+///     pairs whose SOURCE block is live. A tag with no usages still gets a row,
+///     via the `LEFT JOIN` + `COALESCE(…, 0)`;
+///   * duplicate names collapse (#626): `tags_cache.name` is UNIQUE but
+///     `blocks.content` is not, so among live tags sharing a name only the
+///     SMALLEST `id` survives. Identity is
+///     [`agaric_core::tag_norm::normalize_tag_name`] — NFC → full-Unicode
+///     lowercase → NFC — and NOT `COLLATE NOCASE`, which folds ASCII only and
+///     split non-ASCII case-variants the sync engine had already merged
+///     (#1990).
+///
+/// `block_tag_refs` is read as STORED rather than re-derived from content.
+/// It is audited by Artefact 8, so each artefact checks one derivation step and
+/// a stale inline-ref row is reported against the table that owns it instead of
+/// being misattributed to this roll-up.
+pub async fn rebuild_tags_cache_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<String, DerivedTagRow>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let explicit = dump_block_tags(pool).await?;
+    let inline = dump_block_tag_refs(pool).await?;
+    Ok(fold_tags_cache_from_base(&blocks, &explicit, &inline))
+}
+
+fn fold_tags_cache_from_base(
+    blocks: &[BaseBlock],
+    explicit: &[(String, String)],
+    inline: &[(String, String)],
+) -> BTreeMap<String, DerivedTagRow> {
+    let live: BTreeSet<&str> = blocks
+        .iter()
+        .filter(|b| b.deleted_at.is_none())
+        .map(|b| b.id.as_str())
+        .collect();
+
+    // Distinct (tag, source) pairs from both arms, source-liveness enforced —
+    // the `UNION`'s dedup and each arm's `JOIN blocks … WHERE deleted_at IS
+    // NULL`.
+    let mut usages: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (source_id, tag_id) in explicit
+        .iter()
+        .map(|(block_id, tag_id)| (block_id.as_str(), tag_id.as_str()))
+        .chain(
+            inline
+                .iter()
+                .map(|(source_id, tag_id)| (source_id.as_str(), tag_id.as_str())),
+        )
+    {
+        if !live.contains(source_id) {
+            continue;
+        }
+        usages.entry(tag_id).or_default().insert(source_id);
+    }
+
+    // Survivors: smallest id per normalised name, among live named tags.
+    let mut winner_by_norm: BTreeMap<String, &BaseBlock> = BTreeMap::new();
+    for tag in blocks
+        .iter()
+        .filter(|b| b.block_type == "tag" && b.deleted_at.is_none())
+    {
+        let Some(content) = tag.content.as_deref() else {
+            continue;
+        };
+        let key = agaric_core::tag_norm::normalize_tag_name(content);
+        winner_by_norm
+            .entry(key)
+            .and_modify(|held| {
+                if tag.id < held.id {
+                    *held = tag;
+                }
+            })
+            .or_insert(tag);
+    }
+
+    winner_by_norm
+        .into_values()
+        .map(|tag| {
+            let usage_count = usages.get(tag.id.as_str()).map_or(0, |sources| {
+                i64::try_from(sources.len()).unwrap_or(i64::MAX)
+            });
+            (
+                tag.id.clone(),
+                DerivedTagRow {
+                    name: tag.content.clone().unwrap_or_default(),
+                    usage_count,
+                },
+            )
+        })
+        .collect()
+}
+
+const TAGS_CACHE_OWNER: &str = "rebuild_tags_cache(_split) and refresh_tag_usage_count (the \
+     RebuildTagsCache and RefreshTagUsageCount tasks) — and, one level up, the arms of \
+     materializer::dispatch::invalidations_for_op that enqueue them: the tags view reads \
+     usage_count directly, and tag_query resolves a name through this table, so a wrong \
+     count is a wrong number on screen and a missing row is a tag the resolver cannot find";
+
+/// `tags_cache` against a from-base rebuild, in both directions.
+pub async fn reconcile_tags_cache(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_tags_cache_from_base(pool).await?;
+    let stored = dump_tags_cache(pool).await?;
+
+    let mut out = Vec::new();
+
+    for (tag_id, want) in &expected {
+        match stored.get(tag_id) {
+            None => out.push(Divergence {
+                artefact: "tags_cache.row",
+                key: tag_id.clone(),
+                expected: format!("a row {want:?}"),
+                actual: "no row in tags_cache — the tag is unresolvable by name".to_owned(),
+                owner: TAGS_CACHE_OWNER,
+            }),
+            Some(got) if got.name != want.name => out.push(Divergence {
+                artefact: "tags_cache.name",
+                key: tag_id.clone(),
+                expected: format!("{:?}", want.name),
+                actual: format!("{:?}", got.name),
+                owner: TAGS_CACHE_OWNER,
+            }),
+            Some(got) if got.usage_count != want.usage_count => out.push(Divergence {
+                artefact: "tags_cache.usage_count",
+                key: tag_id.clone(),
+                expected: format!(
+                    "{} distinct live source block(s) across block_tags ∪ block_tag_refs",
+                    want.usage_count
+                ),
+                actual: format!("{}", got.usage_count),
+                owner: TAGS_CACHE_OWNER,
+            }),
+            Some(_) => {}
+        }
+    }
+
+    for tag_id in stored.keys() {
+        if expected.contains_key(tag_id) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "tags_cache.row",
+            key: tag_id.clone(),
+            expected: "no row (the tag is deleted, has NULL content, or lost the #626 \
+                       duplicate-name tie-break to a smaller id)"
+                .to_owned(),
+            actual: "a row in tags_cache".to_owned(),
+            owner: TAGS_CACHE_OWNER,
+        });
+    }
+
+    Ok(out)
+}
+
+/// The formatted first `tags_cache` divergence, or `None` when it reconciles.
+pub async fn tags_cache_reconciliation_failure(pool: &SqlitePool, context: &str) -> Option<String> {
+    let divergences = match reconcile_tags_cache(pool).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "tags_cache oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "TAGS_CACHE RECONCILIATION FAILED at [{context}]\n  \
+         tags_cache disagrees with a from-base rebuild in {} place(s); first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `tags_cache` divergence unless it equals its rebuild.
+pub async fn assert_tags_cache_reconciled(pool: &SqlitePool, context: &str) {
+    if let Some(report) = tags_cache_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Artefact 7 — `block_links_unresolved`, the OBLIGATIONS index (#4229)
 // ---------------------------------------------------------------------------
 
