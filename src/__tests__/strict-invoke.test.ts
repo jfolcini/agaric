@@ -22,6 +22,7 @@ import {
   strictInvokeFallback,
   takeUnstubbedInvokes,
 } from '@/__tests__/helpers/invoke'
+import { makeBlockRow, withOps } from '@/__tests__/helpers/rows'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 
@@ -86,18 +87,23 @@ describe('mockInvokeCommands', () => {
 
   it('passes the command arguments to the handler', async () => {
     vi.mocked(invoke).mockImplementation(
-      mockInvokeCommands({ edit_block: (args) => `saw:${String(args['toText'])}` }),
+      mockInvokeCommands({
+        // The payload carries the argument back so the assertion proves the
+        // handler SAW it; the shape is the command's real one (#4668).
+        edit_block: (args) =>
+          withOps(makeBlockRow({ id: 'B1', content: `saw:${String(args['toText'])}` })),
+      }),
     )
 
-    await expect(invoke('edit_block', { blockId: 'B1', toText: 'hello' })).resolves.toBe(
-      'saw:hello',
-    )
+    await expect(invoke('edit_block', { blockId: 'B1', toText: 'hello' })).resolves.toMatchObject({
+      content: 'saw:hello',
+    })
   })
 
   it('honours a handler that returns undefined', async () => {
-    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_visit: () => undefined }))
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ cancel_sync: () => undefined }))
 
-    await expect(invoke('record_page_visit')).resolves.toBeUndefined()
+    await expect(invoke('cancel_sync')).resolves.toBeUndefined()
     expect(takeUnstubbedInvokes()).toEqual([])
   })
 
@@ -115,7 +121,9 @@ describe('mockInvokeCommands', () => {
   })
 
   it('sends an unlisted command to the strict fallback', async () => {
-    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ edit_block: () => null }))
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ edit_block: () => withOps(makeBlockRow({ id: 'B1' })) }),
+    )
 
     await expect(invoke('create_block')).rejects.toThrow(
       /no mock registered for command "create_block"/,
@@ -125,7 +133,10 @@ describe('mockInvokeCommands', () => {
 
   it('accepts an alternative fallback that still fails on the unknown', async () => {
     vi.mocked(invoke).mockImplementation(
-      mockInvokeCommands({ edit_block: () => null }, { fallback: pageRowInvokeFallback }),
+      mockInvokeCommands(
+        { edit_block: () => withOps(makeBlockRow({ id: 'B1' })) },
+        { fallback: pageRowInvokeFallback },
+      ),
     )
 
     // The one modelled incidental call resolves…

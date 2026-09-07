@@ -18,6 +18,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { makeBlockRow } from '@/__tests__/helpers/rows'
 import {
   useUnlinkedReferences,
   type UseUnlinkedReferencesParams,
@@ -37,15 +38,9 @@ function makeGroup(
   return {
     page_id: pageId,
     page_title: pageTitle,
-    blocks: blocks.map((b) => ({
-      id: b.id,
-      block_type: 'content',
-      content: b.content,
-      parent_id: pageId,
-      page_id: pageId,
-      position: 1,
-      deleted_at: null,
-    })),
+    blocks: blocks.map((b) =>
+      makeBlockRow({ id: b.id, content: b.content, parent_id: pageId, page_id: pageId }),
+    ),
   }
 }
 

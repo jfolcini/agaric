@@ -7,6 +7,7 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { makeBlockRow, withOps } from '@/__tests__/helpers/rows'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -342,14 +343,17 @@ describe('PageBlockStore', () => {
         // pin that distinction.
         mockedInvoke.mockImplementation(
           mockInvokeCommands({
-            edit_block: (args) => ({
-              id: 'A',
-              block_type: 'text',
-              content: args['toText'],
-              parent_id: null,
-              position: 0,
-              deleted_at: null,
-            }),
+            edit_block: (args) =>
+              withOps(
+                makeBlockRow({
+                  id: 'A',
+                  block_type: 'text',
+                  content: args['toText'] as string,
+                  parent_id: null,
+                  position: 0,
+                  deleted_at: null,
+                }),
+              ),
             create_block: () => Promise.reject(new Error('create failed')),
           }),
         )

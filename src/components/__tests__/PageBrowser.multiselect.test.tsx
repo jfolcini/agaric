@@ -26,10 +26,11 @@ import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
 import {
-  type InvokeHandler,
+  type TypedInvokeHandlers,
   mockInvokeCommands,
   pageRowInvokeFallback,
 } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow } from '@/__tests__/helpers/rows'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -60,13 +61,13 @@ const PAGES = [
  * covered by a fallback resolving `undefined`, which `unwrap` reports as a
  * successful (empty) response.
  */
-function mockPageList(handlers: Readonly<Record<string, InvokeHandler>> = {}) {
+function mockPageList(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
     mockInvokeCommands(
       {
         resolve_page_by_alias: () => null,
         list_pages_with_metadata: () => ({
-          items: PAGES,
+          items: PAGES.map(asPageWithMetadataRow),
           next_cursor: null,
           has_more: false,
           total_count: PAGES.length,

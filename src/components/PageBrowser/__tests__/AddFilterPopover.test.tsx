@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { makePageHeading } from '@/__tests__/helpers/rows'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import {
   HasParentMatchingEditor,
@@ -753,6 +754,7 @@ describe('AddFilterPopover', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }),
         }),
       )
@@ -867,8 +869,9 @@ describe('AddFilterPopover', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }),
-          list_all_pages_in_space: () => [{ id: 'PAGE_A', content: 'Roadmap' }],
+          list_all_pages_in_space: () => [makePageHeading({ id: 'PAGE_A', content: 'Roadmap' })],
         }),
       )
       const user = userEvent.setup()
@@ -934,6 +937,7 @@ describe('AddFilterPopover', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }),
         }),
       )
@@ -1023,6 +1027,7 @@ describe('AddFilterPopover', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }),
         }),
       )
@@ -1157,6 +1162,7 @@ describe('AddFilterPopover', () => {
             ],
             next_cursor: null,
             has_more: false,
+            total_count: null,
           }),
           list_all_pages_in_space: () => Promise.reject(new Error('backend down')),
         }),

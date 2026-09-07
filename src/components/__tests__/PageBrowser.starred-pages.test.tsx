@@ -59,6 +59,7 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
   return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
 })
 
+import { asPageWithMetadataRow } from '@/__tests__/helpers/rows'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
@@ -80,7 +81,7 @@ function stubPageList(items: ReturnType<typeof makePage>[]) {
     mockInvokeCommands(
       {
         list_pages_with_metadata: () => ({
-          items,
+          items: items.map(asPageWithMetadataRow),
           next_cursor: null,
           has_more: false,
           total_count: null,

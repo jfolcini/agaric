@@ -116,7 +116,8 @@ function installBackend(): void {
         const b = graph.get(args['blockId'] as string)
         if (!b) throw new Error('block not found')
         b.content = args['toText'] as string
-        return { ...toRow(b), ops: [] }
+        // `WithOps<T>` names the field `op_refs`; `ops` was invented here (#4668).
+        return { ...toRow(b), op_refs: [] }
       },
     }),
   )

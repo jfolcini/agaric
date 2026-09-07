@@ -17,6 +17,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { makeBlockRow } from '@/__tests__/helpers/rows'
 import { useBacklinkGroups, type UseBacklinkGroupsParams } from '@/hooks/useBacklinkGroups'
 import { queryClient } from '@/lib/query-client'
 
@@ -35,15 +36,9 @@ function makeGroup(
   return {
     page_id: pageId,
     page_title: pageTitle,
-    blocks: blocks.map((b) => ({
-      id: b.id,
-      block_type: 'content',
-      content: b.content,
-      parent_id: pageId,
-      page_id: pageId,
-      position: 1,
-      deleted_at: null,
-    })),
+    blocks: blocks.map((b) =>
+      makeBlockRow({ id: b.id, content: b.content, parent_id: pageId, page_id: pageId }),
+    ),
   }
 }
 
@@ -242,6 +237,7 @@ describe('useBacklinkGroups', () => {
       has_more: true,
       total_count: 40,
       filtered_count: 4,
+      truncated: false,
     }
     // Non-first pages report 0/0 by design — the merged view must keep the
     // first page's numbers, not adopt the zeroes.
@@ -251,6 +247,7 @@ describe('useBacklinkGroups', () => {
       has_more: false,
       total_count: 0,
       filtered_count: 0,
+      truncated: false,
     }
     let callCount = 0
     mockedInvoke.mockImplementation(

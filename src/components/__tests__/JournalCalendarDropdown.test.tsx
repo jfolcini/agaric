@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { makeBlockRow } from '@/__tests__/helpers/rows'
 import {
   computeSourceModifiers,
   JournalCalendarDropdown,
@@ -259,8 +260,8 @@ describe('JournalCalendarDropdown', () => {
       mockInvokeCommands({
         count_agenda_batch_by_source: () => ({}),
         list_journal_pages_in_range: () => [
-          { id: 'P1', content: '2025-06-10' },
-          { id: 'P2', content: '2025-06-20' },
+          makeBlockRow({ id: 'P1', content: '2025-06-10' }),
+          makeBlockRow({ id: 'P2', content: '2025-06-20' }),
         ],
       }),
     )
@@ -369,7 +370,7 @@ describe('JournalCalendarDropdown', () => {
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
         count_agenda_batch_by_source: () => ({}),
-        list_journal_pages_in_range: () => [{ id: 'P1', content: '2025-06-10' }],
+        list_journal_pages_in_range: () => [makeBlockRow({ id: 'P1', content: '2025-06-10' })],
       }),
     )
 

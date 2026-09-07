@@ -65,7 +65,10 @@ export function makeDailyPage(overrides: Partial<BlockRow> = {}): BlockRow {
 }
 
 /** Common empty paginated response. */
-export const emptyPage = { items: [], next_cursor: null, has_more: false }
+/// `PageResponse` always carries `total_count` (#4668: the stub omitted it, so
+/// every suite using this fixture asserted against a shape the backend never
+/// sends).
+export const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /** Create a HistoryEntry (op_log row) with positional defaults. */
 export function makeHistoryEntry(
