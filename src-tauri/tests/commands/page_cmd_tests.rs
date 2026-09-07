@@ -10549,3 +10549,59 @@ async fn export_import_export_list_style_fixpoint_4552() {
 
     mat.shutdown();
 }
+
+/// A block whose denormalised `page_id` names this page but whose `parent_id`
+/// points outside the subtree is unreachable by the DFS walk. The safety net
+/// must still emit it — at depth 0, with its property lines — or the export
+/// silently drops it (#1916).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_a_stray_the_dfs_walk_cannot_reach() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01SSSSSSSSSSSSSSSSSSSSPAGE";
+    const CHILD: &str = "01SSSSSSSSSSSSSSSSSSSSKDS1";
+    const OTHER: &str = "01SSSSSSSSSSSSSSSSSSSSFAR1";
+    const STRAY: &str = "01SSSSSSSSSSSSSSSSSSSSSTR1";
+
+    insert_block(&pool, PAGE, "page", "Orphan Host", None, Some(0)).await;
+    insert_block(
+        &pool,
+        CHILD,
+        "content",
+        "Reachable child",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, OTHER, "page", "Elsewhere", None, Some(1)).await;
+    insert_block(&pool, STRAY, "content", "Stray block", Some(OTHER), Some(1)).await;
+
+    // `page_id` says PAGE, `parent_id` says OTHER: the descendant read returns
+    // the stray, the DFS from PAGE never reaches it.
+    sqlx::query("UPDATE blocks SET page_id = ?, todo_state = 'TODO' WHERE id = ?")
+        .bind(PAGE)
+        .bind(STRAY)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    let lines: Vec<&str> = md.lines().collect();
+
+    // Whole lines, not substrings: a deeper-indented bullet still CONTAINS the
+    // undented one, so `md.contains(..)` would wave an indentation bug through.
+    assert!(
+        lines.contains(&"- Reachable child"),
+        "the reachable child must export at depth 0, got: {md}"
+    );
+    let stray = lines
+        .iter()
+        .position(|l| *l == "- Stray block")
+        .unwrap_or_else(|| panic!("an unreachable stray must still export at depth 0, got: {md}"));
+    assert_eq!(
+        lines[stray + 1],
+        "  todo_state:: TODO",
+        "a stray's reserved-column metadata is indented one level under its \
+         bullet, exactly as a walked block's is, got: {md}"
+    );
+}
