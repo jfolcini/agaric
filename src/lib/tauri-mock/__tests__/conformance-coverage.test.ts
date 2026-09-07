@@ -499,7 +499,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_device_id: 'no domain state — this install’s device identity',
   get_status: 'no domain state — sync transport status',
   get_recovery_status: 'no domain state — boot recovery status',
-  get_reminder_settings: 'no domain state — device-local reminder preferences',
+  get_reminder_settings:
+    'device-local reminder preferences in `app_settings`, outside the conformance snapshot ' +
+    'scope — the read side of `set_reminder_settings`',
   get_mdns_status: 'no domain state — mDNS discovery status',
   get_bind_exposure_status: 'no domain state — sync endpoint bind exposure',
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
@@ -566,6 +568,23 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'first (#3927)',
 }
 
+// NOTE for whoever lifts the remaining agenda-date waiver above (and for
+// `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
+// `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
+// `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
+// in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
+// inside `pagination::list_agenda[_range]`. This manifest only models the
+// top-level `filter_count` chain, so a single query step with ANY
+// `agenda_source` value will credit the WHOLE arm the moment it gets a query
+// step — exactly the branch-invisible-coverage shape #3878 exists to catch,
+// one level down. `agenda_range_page_1`/`_2` pass no `source` (the "no
+// source" case), so `agenda-range`'s `due_date`/`scheduled_date`-source
+// sub-arms are credited but not actually exercised — the SAME residual gap
+// this note already named, now realised on the arm that lifted first.
+// Closing it needs `agenda_source` modelled as its own sub-branch (e.g.
+// `list_blocks::agenda-date::due_date`), not just a step with a non-null
+// `date`/`dateRange`.
+
 /**
  * #4667 — the PERMANENT half of the two allowlists above.
  *
@@ -624,14 +643,86 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
  * The shrink-only ratchet (#4667), mirroring `tauri-import-baseline`: these are
  * the waived commands that COULD be pinned and are not yet.
  *
- * The assertion below is an EQUALITY, not a ceiling, so it bites in both
- * directions — pinning a command fails the test until the number comes down
- * (a stale baseline would otherwise hide the win), and waiving a new one fails
- * it until the number goes up in a diff a reviewer can see. That is the whole
- * mechanism: the count is not documentation, it is the friction.
+ * NAMES, not a count, for the reason `check-tauri-import-baseline.mjs` uses a
+ * sorted list: a count nets out. A diff that pins one command and waives a new
+ * one leaves 42 either way and lands green, which is exactly the case this
+ * ratchet exists to make visible. Both directions now name the command in the
+ * diff — pin one and delete its line here, waive one and add it.
  */
-const NOT_YET_PINNED_MUTATING_BASELINE = 42
-const NOT_YET_PINNED_READ_BASELINE = 27
+const NOT_YET_PINNED_MUTATING: readonly string[] = [
+  'add_attachment_with_bytes',
+  'add_tags_by_ids',
+  'cancel_pairing',
+  'compact_op_log_cmd',
+  'confirm_pairing',
+  'create_blocks_batch',
+  'create_page_in_space',
+  'create_property_def',
+  'create_space',
+  'delete_attachment',
+  'delete_blocks_by_ids',
+  'delete_draft',
+  'delete_peer_ref',
+  'delete_property_def',
+  'fetch_link_metadata',
+  'flush_all_drafts',
+  'flush_draft',
+  'import_bibliography',
+  'import_markdown',
+  'move_blocks_batch',
+  'move_blocks_to_space',
+  'purge_all_deleted',
+  'purge_blocks_by_ids',
+  'quick_capture_block',
+  'redo_page_op',
+  'rename_attachment',
+  'restore_all_deleted',
+  'restore_blocks_by_ids',
+  'restore_page_to_op',
+  'revert_ops',
+  'save_draft',
+  'set_page_aliases',
+  'set_peer_address',
+  'set_property_batch',
+  'set_reminder_settings',
+  'set_todo_state_batch',
+  'undo_op',
+  'undo_ops',
+  'undo_page_group',
+  'undo_page_op',
+  'update_peer_name',
+  'update_property_def_options',
+]
+
+const NOT_YET_PINNED_READ: readonly string[] = [
+  'compute_block_vs_current_diff',
+  'compute_edit_diff',
+  'count_agenda_batch_by_source',
+  'count_backlinks_batch',
+  'count_trash',
+  'export_page_markdown',
+  'get_backlinks',
+  'get_block_history',
+  'get_compaction_status',
+  'get_link_metadata',
+  'get_page_aliases',
+  'get_property_def',
+  'get_reminder_settings',
+  'list_attachments',
+  'list_attachments_batch',
+  'list_backlinks_grouped',
+  'list_drafts',
+  'list_page_aliases_by_prefix',
+  'list_page_history',
+  'list_peer_refs',
+  'list_projected_agenda',
+  'list_property_defs',
+  'list_spaces',
+  'list_unlinked_references',
+  'read_attachment_meta',
+  'resolve_page_by_alias',
+  'trash_descendant_counts',
+]
 
 function notYetPinned(
   allowlist: Readonly<Record<string, string>>,
@@ -641,22 +732,6 @@ function notYetPinned(
     .filter((cmd) => !principled.has(cmd))
     .toSorted()
 }
-// NOTE for whoever lifts the remaining agenda-date waiver above (and for
-// `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
-// `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
-// `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
-// in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
-// inside `pagination::list_agenda[_range]`. This manifest only models the
-// top-level `filter_count` chain, so a single query step with ANY
-// `agenda_source` value will credit the WHOLE arm the moment it gets a query
-// step — exactly the branch-invisible-coverage shape #3878 exists to catch,
-// one level down. `agenda_range_page_1`/`_2` pass no `source` (the "no
-// source" case), so `agenda-range`'s `due_date`/`scheduled_date`-source
-// sub-arms are credited but not actually exercised — the SAME residual gap
-// this note already named, now realised on the arm that lifted first.
-// Closing it needs `agenda_source` modelled as its own sub-branch (e.g.
-// `list_blocks::agenda-date::due_date`), not just a step with a non-null
-// `date`/`dateRange`.
 
 // ---------------------------------------------------------------------------
 // Commands whose query steps run on the BACKEND leg only (#3826)
@@ -2614,19 +2689,17 @@ describe('#3083 conformance-coverage ratchet', () => {
     expect({ orphanMutating, orphanRead }).toEqual({ orphanMutating: [], orphanRead: [] })
   })
 
-  it('#4667 not-yet-pinned counts match the baseline exactly (shrink-only)', () => {
-    const mutating = notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING)
-    const read = notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ)
+  it('#4667 the not-yet-pinned lists match exactly (shrink-only)', () => {
+    const message =
+      'not-yet-pinned changed. FIX: pin a command and DELETE its line from the ' +
+      'list below, or justify a new waiver and add it where a reviewer sees it.'
 
-    expect(
-      { mutating: mutating.length, read: read.length },
-      `not-yet-pinned changed. FIX: pin one and LOWER the baseline, or justify a ` +
-        `new waiver and raise it.\nmutating (${mutating.length}): ` +
-        `${JSON.stringify(mutating)}\nread (${read.length}): ${JSON.stringify(read)}`,
-    ).toEqual({
-      mutating: NOT_YET_PINNED_MUTATING_BASELINE,
-      read: NOT_YET_PINNED_READ_BASELINE,
-    })
+    expect(notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING), message).toEqual(
+      NOT_YET_PINNED_MUTATING,
+    )
+    expect(notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ), message).toEqual(
+      NOT_YET_PINNED_READ,
+    )
   })
 
   it('allowlist stays honest (no stale, read-only, or now-covered entries)', () => {

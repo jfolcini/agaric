@@ -34,8 +34,9 @@ the snapshot is too narrow, which is a thing a widened snapshot fixes.
 setter writes, so classifying the setter as debt and the getter as permanent
 was the same inconsistency in the other direction.
 
-Re-classified per-command, the split is 12 + 14 — which is exactly what
-#4667's independent audit measured before any of this was written.
+Re-classified per-command, the split is 11 + 14. #4667's independent audit
+measured 12 + 14; the one it counts as principled and this does not is
+`confirm_pairing`, which the second review round moved to debt.
 
 ## Why the existing guard was not enough
 
@@ -80,9 +81,10 @@ Three mutants, against a copy, restored and `cmp`-verified. All red:
 #4667 measured 52 mutating + 55 read waived. The file today holds 53 + 41; the
 read side shrank as commands were pinned since that audit. The numbers here are
 measured from the file rather than copied from the issue body, which is the
-point of making the count a test rather than prose — though the principled
-counts landing on the issue's own 12 + 14 after re-classification is a useful
-cross-check that the criterion is the same one the audit used.
+point of making this a test rather than prose. The principled side lands within
+one of the issue's own 12 + 14, and the single disagreement (`confirm_pairing`)
+is itself a finding rather than noise, which is a useful sign the criterion is
+the one the audit used.
 
 ## Not done here
 
@@ -90,3 +92,25 @@ The issue's other two acceptance criteria — query steps for the 14 self-labell
 "fixture candidate" reads, and widening the migration⇒mock CONTRACT map beyond
 its 9 of 59 tables — are separate work. This commit is the mechanism that makes
 that burn-down visible; it does not do the burning down.
+
+## Third review round: a count nets out
+
+The ratchet shipped as two numbers, and the reviewer showed the hole: a diff
+that pins one command AND waives a new one leaves 42 either way and lands
+green — the exact case the mechanism exists to make visible.
+`check-tauri-import-baseline.mjs` uses a sorted committed NAME list for this
+reason, failing on "new entry or stale entry" rather than on a delta. Both
+baselines are now `readonly string[]`, which also deleted the `JSON.stringify`
+message-building the count needed to say anything useful.
+
+Falsified on the net-out case specifically, and isolated so nothing else in
+the file could be doing the work: move `start_sync` out of the principled set
+and `add_tags_by_ids` into it. Both stay waived and both are real command
+names, so no other guard fires; the count is 42 before and after, and exactly
+one assertion reddens.
+
+`get_reminder_settings`'s reason string was the last survivor of the
+false-claim shape — it said "no domain state" while reading the `app_settings`
+row `set_reminder_settings` writes, so a contributor applying the stated
+criterion would have moved it into the permanent set and shrunk the debt
+without pinning anything.
