@@ -17,8 +17,12 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
  * Check whether a suggestion popup (.suggestion-popup) is currently visible.
  * Used to suppress arrow-key block navigation when a popup menu is open,
  * so Up/Down scroll the menu instead of switching blocks.
+ *
+ * Exported since #4550: the unlocked embed's own capture-phase Escape handler
+ * needs the SAME bail, and a second copy of the detached-node reasoning below
+ * would be one to keep in sync.
  */
-function isSuggestionPopupVisible(): boolean {
+export function isSuggestionPopupVisible(): boolean {
   const popup = document.querySelector('.suggestion-popup') as HTMLElement | null
   if (!popup) return false
   // A `.suggestion-popup` element can survive in memory after being detached
@@ -65,6 +69,31 @@ export interface DeleteBlockOpts {
    * the default placement applies.
    */
   cursorPlacement: 'end'
+}
+
+/**
+ * Every action inert, for a focused block this tree's store does not own
+ * (#4550: an unlocked embed borrows the host tree's editable row).
+ *
+ * Passed INSTEAD of detaching the keymap, and the difference matters: the
+ * bindings `preventDefault()` before they call back, so an attached-but-inert
+ * keymap SWALLOWS the structural chords, while a detached one merely stops
+ * intercepting them and lets ProseMirror act. Enter is the worked example —
+ * with no handler, ProseMirror inserts a paragraph and `runUnmountFlush`'s
+ * `shouldSplitOnBlur` turns that into a real split of the source block. Plain
+ * typing and TipTap's own formatting keymap never route through here, so they
+ * are untouched either way, which is what "text edits only" means.
+ */
+export const INERT_BLOCK_KEYBOARD_CALLBACKS: BlockKeyboardCallbacks = {
+  onFocusPrev: () => {},
+  onFocusNext: () => {},
+  onDeleteBlock: () => {},
+  onIndent: () => {},
+  onDedent: () => {},
+  onFlush: () => null,
+  onMergeWithPrev: () => {},
+  onEnterSave: () => {},
+  onEscapeCancel: () => {},
 }
 
 export interface BlockKeyboardCallbacks {
