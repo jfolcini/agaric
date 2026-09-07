@@ -2,8 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { es } from 'date-fns/locale'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import { i18n } from '@/lib/i18n'
+import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
 import {
   expandTemplateVariables,
   insertTemplateBlocks,
@@ -20,7 +20,7 @@ import {
 const TEST_LOCALE_TAG = 'xx'
 
 async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
-  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  registerDateLocale(TEST_LOCALE_TAG, es)
   await i18n.changeLanguage(TEST_LOCALE_TAG)
   try {
     return await run()

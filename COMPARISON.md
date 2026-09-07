@@ -450,10 +450,10 @@ a project whose stated aim is superiority, these are the cheapest wins available
 | Thing | Cost paid | Benefit collected |
 | --- | --- | --- |
 | **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero in production.** The read path exists and is exercised only by tests: `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited`, but `src/lib/tauri/queries.ts:240` supplies `?? false` and the commands `unwrap_or(false)` (`src-tauri/src/commands/tags.rs:549,599`). Nothing forbids `true`; no production caller passes it. Inherited tags are displayed on a block and nothing else |
-| **`listStyle` block-level lists** | A full read pipeline: property → `ListMarkerContext` → `computeListOrdinals` → `ListMarker`, plus a ProseMirror decoration | **Zero.** `setListStyle` and `clearListStyle` have **no production callers**. Slash commands still write a `1.` or `-` markdown prefix, so the app carries two competing list models and pays for both |
+| **`listStyle` block-level lists** | A full read pipeline: property → `ListMarkerContext` → `computeListOrdinals` → `ListMarker`, plus a ProseMirror decoration | **Wired.** Turn-into, the slash commands and the `-` / `1.` syntax shortcut all write the property, and Enter / Backspace continue and leave a list (#4552). The markdown prefix is no longer a second list model |
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | Partial. The builder exposes **4 operators, Text only, 5 group keys, column-only aggregates**. The rest is reachable only by hand-editing saved-view JSON |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Desktop due-date reminders only** (#4554). No Android arm, no closed-app delivery, no catch-up |
-| **i18next** | ~3,056 translated keys across 13 namespaces, every visible string routed through `t()` | **One locale.** Zero locale files exist and the module docblock forbids adding any |
+| **i18next** | ~3,056 translated keys across 13 namespaces, every visible string routed through `t()` | **Two locales, one of them partial.** A language preference (System / English / Español) switches without a restart; `es` is a lazily-imported chunk carrying the `errors` namespace, and every other key falls back to English (#4555). The remaining twelve namespaces land one PR at a time |
 
 ### Documentation that is actively false
 

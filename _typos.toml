@@ -27,6 +27,11 @@ extend-exclude = [
     # Append-only dev journal; free-form notes, not user-facing copy.
     # (Sessions 1–800 in the two archive files; 801+ in session-NNN-<slug>.md.)
     "docs/session-log/",
+    # Spanish string catalog (#4555) — Spanish words are not misspelled
+    # English ones ("comandos" → "commandos", "Informe" → "Inform"). The
+    # English namespaces one level up stay scanned; each new locale
+    # directory adds its own line here.
+    "src/lib/i18n/es/",
 ]
 
 [default.extend-words]

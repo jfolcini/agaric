@@ -113,6 +113,7 @@ import {
   useLocalStoragePreference,
 } from '@/hooks/useLocalStoragePreference'
 import type { FilterPrimitive } from '@/lib/bindings'
+import { isLanguagePreference, type LanguagePreference } from '@/lib/i18n/locales'
 import { logger } from '@/lib/logger'
 
 export interface PreferenceDefinition<T> {
@@ -913,6 +914,39 @@ const TOOLTIP_DELAY_PREFERENCE: PreferenceDefinition<TooltipDelay> = {
   serialize: identity,
 }
 
+/**
+ * `agaric-language` — the UI language (#4555, `src/hooks/useLanguage.ts`).
+ * Device-scoped: a language is a property of the person reading this
+ * screen, not of the notes, so it is deliberately NOT written to SQLite and
+ * never crosses the sync wire — the same phone and laptop can run different
+ * languages against the same data.
+ *
+ * Bare-string value validated against the `locales.ts` allowlist; anything
+ * else (a hand-edited value, or a locale a future build dropped) resets to
+ * the default.
+ *
+ * The default is `'en'`, NOT `'system'`, and stays that way until a locale
+ * other than English is substantially translated. `'system'` on a device set
+ * to `es` resolves to `es` for a user who never opened Settings: 42 of 3,056
+ * keys, so `<html lang="es">` over a ~99% English UI — the exact
+ * mis-announcement `applyDocumentLang` exists to prevent — and
+ * `useVoiceInput` handing `SpeechRecognition.lang = 'es'` to someone
+ * dictating English. The help text that explains the gap only reaches people
+ * who opened the tab. `'system'` is the right default once coverage is real;
+ * it is one line here.
+ */
+const LANGUAGE_PREFERENCE: PreferenceDefinition<LanguagePreference> = {
+  key: 'agaric-language',
+  scope: 'device',
+  version: 1,
+  defaultValue: 'en',
+  parse: (raw) => {
+    if (isLanguagePreference(raw)) return raw
+    throw new Error(`invalid language: ${raw}`)
+  },
+  serialize: identity,
+}
+
 /** Editor/UI font-size choices (`src/hooks/useFontSize.ts`). */
 export type FontSize = 'small' | 'medium' | 'large'
 
@@ -1230,6 +1264,7 @@ export const PREFERENCES = {
   filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,
   motion: MOTION_PREFERENCE,
   tooltipDelay: TOOLTIP_DELAY_PREFERENCE,
+  language: LANGUAGE_PREFERENCE,
   fontSize: FONT_SIZE_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,

@@ -34,7 +34,7 @@ Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) ·
 A handful of facts touch every feature; rather than repeat them in each file:
 
 - **All UI is keyboard-reachable.** See [features/keyboard.md](features/keyboard.md).
-- **All text is internationalised** via i18next. Every visible string — toasts, ARIA labels, empty states, error messages — passes through `t()`.
+- **All text is internationalised** via i18next. Every visible string — toasts, ARIA labels, empty states, error messages — passes through `t()`. Two locales ship: English, statically bundled because it is the fallback, and Spanish, a lazily-imported chunk that today covers the `errors` namespace and falls back to English elsewhere. The language is a device-scoped preference (Settings → Appearance) that switches without a restart and drives `<html lang>` and every date format. `src/lib/i18n/locales.ts`, `src/hooks/useLanguage.ts`.
 - **All interactive elements meet a 44 px touch floor** on coarse-pointer devices (see `docs/UX.md` § Touch & responsive).
 - **All edits are offline-first.** They land in the local SQLite database first and sync afterwards (see [features/sync.md](features/sync.md)).
 - **Everything is space-scoped by default.** The active space filters every list, search, agenda, backlink and history view (see [features/spaces.md](features/spaces.md)).

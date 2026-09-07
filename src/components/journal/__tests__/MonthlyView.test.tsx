@@ -14,16 +14,23 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
+import { es } from 'date-fns/locale'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { DayEntry } from '@/lib/date-utils'
-import { t } from '@/lib/i18n'
+import { i18n, t } from '@/lib/i18n'
+import { __unregisterDateLocaleForTests, registerDateLocale } from '@/lib/i18n/locales'
 import { useJournalStore } from '@/stores/journal'
+
+// #4555 — a synthetic tag rather than a real one, so the assertion proves
+// the headers TRACK `i18n.language` rather than matching a locale the code
+// could have hardcoded. Same helper shape as `MonthlyDayCell.test.tsx`.
+const TEST_LOCALE_TAG = 'xx'
 
 // ── Mock useBatchCounts ─────────────────────────────────────────────
 const mockBatchCounts = vi.hoisted(() => ({
@@ -222,6 +229,33 @@ describe('MonthlyView', () => {
     expect(headers).toHaveLength(7)
     expect(headers[0]).toHaveTextContent('Sun')
     expect(headers[6]).toHaveTextContent('Sat')
+  })
+
+  // #4555 / #4575 note 1 — `dayHeaders` used to call `getDateLocale()`
+  // INSIDE a `useMemo` keyed only on `[weekStartsOn]`. The component
+  // re-renders on a language change (it calls `useTranslation()`), but the
+  // memo did not recompute, so a Spanish month kept an English weekday row.
+  // Asserted on a live `changeLanguage` of the ALREADY-MOUNTED tree — a
+  // fresh render would pass either way, because a first render has no stale
+  // memo to serve.
+  it('#4555: weekday headers follow a language change without a remount', async () => {
+    render(<MonthlyView makeDayEntry={makeDayEntry} />)
+    expect(screen.getAllByRole('columnheader')[0]).toHaveTextContent('Mon')
+
+    registerDateLocale(TEST_LOCALE_TAG, es)
+    try {
+      await act(async () => {
+        await i18n.changeLanguage(TEST_LOCALE_TAG)
+      })
+      const headers = screen.getAllByRole('columnheader')
+      expect(headers[0]).toHaveTextContent('lun')
+      expect(headers[6]).toHaveTextContent('dom')
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      __unregisterDateLocaleForTests(TEST_LOCALE_TAG)
+    }
   })
 
   // ── #2057: roving tabindex + arrow-key navigation ───────────────────

@@ -21,9 +21,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { MonthlyDayCell } from '@/components/journal/MonthlyDayCell'
-import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import type { DayEntry } from '@/lib/date-utils'
 import { i18n } from '@/lib/i18n'
+import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
 
 // #4555 — falsification helper: see the matching comment in
 // `src/lib/__tests__/date-utils.test.ts` for why a plain 'xx' tag (rather
@@ -31,7 +31,7 @@ import { i18n } from '@/lib/i18n'
 const TEST_LOCALE_TAG = 'xx'
 
 async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
-  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  registerDateLocale(TEST_LOCALE_TAG, es)
   await i18n.changeLanguage(TEST_LOCALE_TAG)
   try {
     return await run()

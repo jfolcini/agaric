@@ -16,6 +16,7 @@ import { common } from '@/lib/i18n/common'
 import { editor } from '@/lib/i18n/editor'
 import { errors } from '@/lib/i18n/errors'
 import { history } from '@/lib/i18n/history'
+import { resolveLocale } from '@/lib/i18n/locales'
 import { pages } from '@/lib/i18n/pages'
 import { properties } from '@/lib/i18n/properties'
 import { references } from '@/lib/i18n/references'
@@ -23,9 +24,17 @@ import { settings } from '@/lib/i18n/settings'
 import { shortcuts } from '@/lib/i18n/shortcuts'
 import { sync } from '@/lib/i18n/sync'
 import { toolbar } from '@/lib/i18n/toolbar'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Catalog key convention: `namespace.name`, optionally suffixed with one
+ * CLDR plural category. The `es` catalog is held to the same convention by
+ * `src/lib/i18n/__tests__/es-catalog.test.ts`.
+ */
+const KEY_CONVENTION_RE = /^[a-zA-Z]+(\.[a-zA-Z0-9]+)+(_zero|_one|_two|_few|_many|_other)?$/
 
 /** Return the flat translation object for the English locale. */
 function getTranslations(): Record<string, string> {
@@ -39,8 +48,17 @@ describe('i18n initialisation', () => {
     expect(i18n.isInitialized).toBe(true)
   })
 
-  it('uses English as the default language', () => {
-    expect(i18n.language).toBe('en')
+  // #4555 — this used to read `expect(i18n.language).toBe('en')`, which
+  // pinned the app to one locale rather than pinning anything worth
+  // pinning. What must stay true now that a language preference exists is
+  // narrower and stronger: `en` is ALWAYS loaded (it is `fallbackLng`, and
+  // a fallback that has to be fetched is one that can fail), and the boot
+  // language is whatever the stored preference resolves to. Under vitest no
+  // preference is stored and `src/main.tsx` never runs, so that resolves to
+  // `en` here.
+  it('always has the English bundle loaded, and boots at the resolved locale', () => {
+    expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
+    expect(i18n.language).toBe(resolveLocale(readPreference(PREFERENCES.language)))
   })
 
   it('has a non-empty translation bundle', () => {
@@ -51,11 +69,12 @@ describe('i18n initialisation', () => {
 
 // #4555 — `document.documentElement.lang` used to be a static `lang="en"`
 // baked into `index.html`; nothing in `src/` ever wrote it. This pins the
-// TRACKING behaviour (the attribute follows whatever `i18n.language`
-// resolves to across a `changeLanguage` round trip) rather than asserting a
-// literal `'es'` — Phase 0 ships no `es` resource bundle and no language
-// preference, so nothing in production ever requests `'es'` today; what
-// this proves is that the wiring is correct, not that Spanish is reachable.
+// TRACKING behaviour: the attribute follows whatever `i18n.language`
+// resolves to across a `changeLanguage` round trip, for ANY tag, whether or
+// not a catalog for it happens to be loaded. That is deliberately stronger
+// than asserting the two shipped locales — the attribute feeds
+// `SpeechRecognition.lang` in `useVoiceInput`, which cares about the tag,
+// not about whether the UI strings arrived.
 describe('document.documentElement.lang tracking (#4555)', () => {
   afterEach(async () => {
     // i18next is a shared singleton across this whole test file — restore
@@ -434,10 +453,16 @@ describe('no duplicate keys', () => {
     expect(mergedKeyCount).toBe(individualKeyCount)
   })
 
+  // #4555 — the suffix group used to be `(_one|_other)?`, the two CLDR
+  // plural categories English can produce. Spanish resolves through
+  // `Intl.PluralRules` too and its categories are ['many','one','other'],
+  // so a legal `es` key would have failed a rule that was really "English
+  // has two plural forms" wearing a naming convention's clothes. Widened to
+  // the full CLDR category set, which is the actual convention.
   it('every key follows the namespace.name convention', () => {
     const translations = getTranslations()
     for (const key of Object.keys(translations)) {
-      expect(key).toMatch(/^[a-zA-Z]+(\.[a-zA-Z0-9]+)+(_one|_other)?$/)
+      expect(key).toMatch(KEY_CONVENTION_RE)
     }
   })
 })
