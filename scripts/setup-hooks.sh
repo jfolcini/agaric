@@ -194,6 +194,63 @@ ensure_cargo_binstall() {
   fi
 }
 
+# uv is the only way zizmor installs on a box whose proxy 403s binstall's
+# GitHub API lookup: binstall then builds from source, and zizmor's dependency
+# tree needs a newer rustc than rust-toolchain.toml pins, so both cargo paths
+# fail (#4808). That is arch-independent, hence a matrix covering every
+# platform this repo builds on rather than binstall's Linux-only one. uv also
+# runs .mcp.json's code-review-graph, which needs no cargo — hence
+# ~/.local/bin, exported onto PATH above.
+#
+# Tarball-and-digest, never upstream's install.sh: a downloaded file reaching
+# a shell is the download-then-run Scorecard flags (#215) whatever verifies it.
+#
+# To bump: set UV_VERSION and refresh the four digests from upstream's
+# `<tarball>.sha256` sidecars — recomputing them, since a truncated fetch
+# hashes as empty rather than failing.
+UV_VERSION="0.8.17"
+UV_SHA256_X86_64="4057052999a210fe78d93599d2165da9e24c8bbb23370cdd26b66a98ab479203"
+UV_SHA256_AARCH64="bd141b7e263935d14f5725f2a5c1c942fd89642e37683cb904f1984ce7e365f4"
+UV_SHA256_DARWIN_ARM64="e4d4859d7726298daa4c12e114f269ff282b2cfc2b415dc0b2ca44ae2dbd358e"
+UV_SHA256_DARWIN_X86_64="31ed353cfd8e6c962e7c60617bd8a9d6b97b704c1ecb5b5eceaff8c6121b54ac"
+ensure_uv() {
+  if have uv; then ok "uv (already installed)"; return; fi
+  local triple="" want=""
+  case "${OS}-$(uname -m)" in
+    Linux-x86_64)               triple="x86_64-unknown-linux-musl";  want="$UV_SHA256_X86_64" ;;
+    Linux-aarch64|Linux-arm64)  triple="aarch64-unknown-linux-musl"; want="$UV_SHA256_AARCH64" ;;
+    Darwin-arm64)               triple="aarch64-apple-darwin";       want="$UV_SHA256_DARWIN_ARM64" ;;
+    Darwin-x86_64)              triple="x86_64-apple-darwin";        want="$UV_SHA256_DARWIN_X86_64" ;;
+  esac
+  if [ -z "$triple" ]; then
+    warn "no pinned uv build for ${OS}-$(uname -m) — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
+    return
+  fi
+  note "installing uv (zizmor's wheel installer)…"
+  local url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${triple}.tar.gz"
+  local dest="$HOME/.local/bin" tmp
+  tmp="$(mktemp -d)"
+  # Same guard, same reasoning as ensure_cargo_binstall above (#3622).
+  if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+    warn "mktemp -d failed (no writable temp dir?) — skipping the uv download"
+    return
+  fi
+  mkdir -p "$dest"
+  # Verify the pinned digest, then extract the two binaries. No downloaded
+  # content is ever handed to a shell interpreter.
+  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/uv.tgz" \
+       && verify_sha256 "$tmp/uv.tgz" "$want" \
+       && tar -xzf "$tmp/uv.tgz" -C "$tmp" "uv-${triple}/uv" "uv-${triple}/uvx" \
+       && install -m 0755 "$tmp/uv-${triple}/uv" "$dest/uv" \
+       && install -m 0755 "$tmp/uv-${triple}/uvx" "$dest/uvx" \
+       && have uv; then
+    ok "uv ${UV_VERSION} (prebuilt, ${triple})"
+  else
+    warn "uv download/verify failed — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
+  fi
+  rm -rf "$tmp"
+}
+
 # pinned_version_for <crate> — echoes the EXACT version this crate must
 # install as, matching a version CI pins explicitly (today: sqruff, via
 # `sqruff@0.38.0` in the `taiki-e/install-action` `tool:` lists of
@@ -512,6 +569,9 @@ install_sqlx_cli() {
 echo "Setting up the prek hook toolchain (OS: $OS)…"
 
 # --- Rust hook tools -------------------------------------------------------
+# uv first, and OUTSIDE the cargo gate: it needs no cargo, and .mcp.json's
+# code-review-graph wants it on a box that has no Rust at all.
+ensure_uv
 if ! have cargo; then
   warn "Rust/cargo not found — install via https://rustup.rs, then re-run."
   warn "Skipping the cargo-based tools (prek, cargo-deny, sqlx-cli, …)."
