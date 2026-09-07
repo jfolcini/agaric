@@ -45,10 +45,13 @@ export default defineConfig({
       // OpenSSF Best Practices Silver tier coverage gates.
       //
       // #749: THIS BLOCK IS THE SINGLE SOURCE OF TRUTH for the coverage
-      // thresholds. The CI vitest job (`.github/workflows/_validate.yml`)
-      // runs the full suite with coverage and NO threshold override, so
-      // these values actually gate there; the prior contradictory `=0`
-      // override and the `>=80%/>=75%` step-summary string were removed.
+      // thresholds. They gate in CI's `vitest-coverage` job
+      // (`.github/workflows/_validate.yml`), on the MERGED report from both
+      // vitest shards. #4818 sharded the suite, so the shards themselves pass
+      // `--coverage.thresholds.*=0`: a shard runs half the tests and would
+      // fail these on arithmetic rather than on a regression. That is the one
+      // legitimate `=0` override — the contradictory full-suite one #749
+      // removed, and the `>=80%/>=75%` step-summary string, stay gone.
       //
       // Design principle: gates sit a deliberate margin below the last
       // full-suite measurement so an unrelated PR that adds a moderately

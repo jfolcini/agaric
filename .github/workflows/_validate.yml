@@ -27,9 +27,12 @@ name: Validate (prek-equivalent)
 #                        markdown link/citation checks, typos, lychee); runs
 #                        ONLY on a docs-only diff (exactly one of
 #                        lint/docs-lint runs per push/PR).
-#   - vitest          — the full frontend suite as a single job (coverage,
-#                        production build, bundle-size gate); gated on
-#                        frontend changes. Node 24 (primary).
+#   - vitest          — the frontend suite, sharded 2 ways; each shard emits a
+#                        blob report. Gated on frontend changes. Node 24
+#                        (primary).
+#   - vitest-coverage — replays both blobs into one report, gates the #749
+#                        coverage thresholds on it, and runs the production
+#                        build + bundle-size gate. Paired with vitest.
 #   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
 #                        changes.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
@@ -242,7 +245,8 @@ jobs:
           frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$)'
           # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
           # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
-          # named: `pr-diff-base` in `lint`, `check-bundle-budget` in `vitest`),
+          # named: `pr-diff-base` in `lint`, `check-bundle-budget` in
+          # `vitest-coverage`),
           # so a tooling-only PR is `ci` and pays no suite. The few files a suite
           # consumes are routed to that suite above, data files included, so a
           # re-baseline PR still runs the gate that reads it: the sqlx drift
@@ -251,7 +255,7 @@ jobs:
           # the two coverage scripts, and every script a `src/**/*.test.ts`
           # imports or spawns (the six `check-*.mjs` guards with unit tests in
           # `src/__tests__/`, plus `scripts/lib/js-scanner.mjs`) to frontend,
-          # since only `vitest` runs those tests; the coverage ratchet and its
+          # since only the vitest shards run those tests; the ratchet and its
           # `coverage-baseline.json` also to backend, since `cargo-coverage`
           # runs it with `--gate`. Adding a vitest test for another script
           # means adding that script here too. A script that no suite executes
@@ -1285,13 +1289,8 @@ jobs:
         run: prek run --all-files --hook-stage pre-push lychee
 
   # ---------------------------------------------------------------------------
-  # vitest — frontend unit + integration suite (PEND-86: single job).
-  # Previously a 3-shard matrix + a separate merge job; consolidated into one
-  # full-suite run. Three ~3-min shards in parallel cost three runner slots and
-  # still needed a 4th (merge) job, while the critical path was gated by the
-  # 16-min cargo-tests long pole anyway. One full run (~8-9 min with v8
-  # coverage) frees two runner slots, drops the merge job, and produces the
-  # coverage report directly — no cross-shard istanbul merge to maintain.
+  # vitest — frontend unit + integration suite, sharded 2 ways (#4818). Each
+  # cell emits a blob report; `vitest-coverage` below replays both.
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
@@ -1303,11 +1302,104 @@ jobs:
     # diff error), and a classifier failure fails the gate outright.
     if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — full-suite wall-clock was ~3×2.2 min of test work split
-    # across shards; run as one job that's ~6-7 min of tests + ~2 min v8
-    # instrumentation, plus the ~1-2 min production build below (issue
-    # #812). ~10-11 min observed-equivalent; +50% headroom + round up to
-    # nearest 5 → 20 min.
+    # #4818 — the one-job full suite outgrew its cap: observed on main
+    # 2026-09-07 at 14m38s and 18m09s against a 20-min budget, and cancelled
+    # AT the cap on two PRs the same day, producing no result at all. Sharded
+    # back to 2 cells, each running half the tests; the production build,
+    # bundle gate and the coverage thresholds move to `vitest-coverage` below.
+    #
+    # This reverses PEND-86's collapse to one job, whose two stated reasons
+    # have both expired: the suite was ~8-9 min then (it is not now), and the
+    # critical path was gated by a ~16-min cargo-tests that PEND-86 itself
+    # sharded away. The merge job it declined to keep is the same shape
+    # cargo-coverage adopted in that commit.
+    #
+    # Measured on the first sharded CI run: 7m15s per cell including checkout
+    # and npm ci, against 18m09s for the single-job suite. 20 min is ~2.7x that
+    # — the cap this lane had before, now with real headroom under it.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Vitest (shard ${{ matrix.shard }}/2, blob report + raw coverage)
+        # `--reporter=blob` records this shard's results and raw v8 coverage
+        # to `.vitest-reports/blob-${{ matrix.shard }}-2.json`; the
+        # `vitest-coverage` job replays both with `--mergeReports`. The blob
+        # name carries the shard index, so the two never collide.
+        #
+        # #749's coverage thresholds are DISABLED here and enforced on the
+        # merged report instead. A shard sees only half the suite — measured
+        # locally, one shard of an 8-file subset reported 1.25% line coverage
+        # where the merge of both reported 2.07% — so leaving the thresholds
+        # on would fail every shard on arithmetic, not on a coverage
+        # regression. They still gate; they gate once, downstream, on the
+        # whole picture.
+        run: |
+          npx vitest run \
+            --shard=${{ matrix.shard }}/2 \
+            --reporter=blob \
+            --coverage \
+            --coverage.thresholds.lines=0 \
+            --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 \
+            --coverage.thresholds.statements=0
+
+      - name: Upload shard blob report
+        # `!cancelled()`, not the default: a shard whose tests FAIL exits 1 but
+        # still writes its blob (measured), and uploading it is what lets
+        # `vitest-coverage` re-report the actual test failure rather than fail
+        # on a half-suite coverage number. Not `always()` — a cancelled shard
+        # (timeout) may have written nothing, and `if-no-files-found: error`
+        # would then turn that into a second, more confusing red.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: .vitest-reports/
+          # `.vitest-reports` is a DOT-directory and upload-artifact skips
+          # hidden files by default, so without this the upload finds nothing
+          # and `if-no-files-found: error` reds a shard whose tests all passed.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # vitest-coverage — replays both shard blobs into one report, and is where
+  # the #749 coverage thresholds gate. It is in `validate-all`'s needs (as
+  # `cargo-coverage` is): the threshold check moved OUT of `vitest` when that
+  # job was sharded, so leaving this one ungated would retire the coverage
+  # floor without anyone noticing.
+  #
+  # The production build + bundle-size gate live here rather than in a shard:
+  # they are per-commit, not per-shard, and running them twice would buy
+  # nothing.
+  # ---------------------------------------------------------------------------
+  vitest-coverage:
+    runs-on: ubuntu-24.04
+    needs: vitest
+    # Same rule as cargo-coverage: `success() || failure()` means the shards
+    # actually RAN. A frontend-absent PR skips `vitest`, and a skipped upstream
+    # would otherwise let this job run and then fail downloading blobs that
+    # were never produced.
+    if: ${{ (success() || failure()) && needs.vitest.result != 'cancelled' }}
+    # npm ci + a report replay (no test execution) + the ~1-2 min production
+    # build. Provisional until this job has run once; the shards next door are
+    # measured at 7m15s.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1323,26 +1415,28 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (full suite, with coverage)
-        # #749: `vitest.config.ts` is the SINGLE source of truth for the
-        # coverage thresholds. This step no longer overrides them to 0 — the
-        # config thresholds now actually gate here, at zero marginal cost
-        # (the suite already runs with coverage). Measured full-suite
-        # coverage clears all four with headroom (lines 91.6 / functions
-        # 90.9 / branches 82.0 / statements 89.8), so enabling the gate
-        # does not red an otherwise-green PR; it stops a new untested module
-        # from silently dropping below the OSPS-Silver line. The old three
-        # contradictory versions (config 90/89/80/89, the `=0` override
-        # here, and a `>=80%/>=75%` step-summary string) were reconciled to
-        # this one by #749 — then drifted apart again (#3258) when a later
-        # PR changed the config thresholds without updating the two prose
-        # copies below. Do not restate the numbers in a comment here; the
-        # "Coverage summary" step derives them from `vitest.config.ts` at
-        # run time via `scripts/print-coverage-thresholds.mjs` so this
-        # comment can't go stale again. Writes the json summary to
-        # `coverage-merged/` for the summary step + artifact.
+      - name: Download shard blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vitest-blob-*
+          merge-multiple: true
+          path: .vitest-reports/
+
+      - name: Merge shard reports and gate coverage (#749)
+        # `--mergeReports` replays the recorded blobs — it runs NO tests — and
+        # reports the union of their coverage. #749: `vitest.config.ts` is the
+        # single source of truth for the thresholds, and they gate HERE, on
+        # the merged report. Do not restate the numbers in a comment; the
+        # "Coverage summary" step derives them from the config at run time via
+        # `scripts/print-coverage-thresholds.mjs`, so this comment cannot go
+        # stale (it did once, #3258).
+        #
+        # A shard's test failure is recorded in its blob and re-reported here,
+        # so this job reds too — but the shard itself is already red, and both
+        # are in the gate.
         run: |
           npx vitest run \
+            --mergeReports \
             --coverage \
             --coverage.reportsDirectory=coverage-merged \
             --coverage.reporter=json \
@@ -1373,7 +1467,7 @@ jobs:
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
         run: |
           {
-            echo "## Coverage (vitest, full suite)"
+            echo "## Coverage (vitest, 2 shards merged)"
             echo
             echo "| Metric | % | Covered / Total |"
             echo "| --- | --- | --- |"
@@ -1409,7 +1503,6 @@ jobs:
           path: coverage-merged/
           if-no-files-found: error
           retention-days: 30
-
   # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 3-ways. Per-shard report uploaded
   # on failure (artifact name includes the shard number so the shards don't
@@ -1906,7 +1999,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -1986,6 +2079,10 @@ jobs:
           # absent from the diff.
           fe_skip_ok="false"; if [ "$frontend" != "true" ]; then fe_skip_ok="true"; fi
           check_job vitest "$fe_skip_ok"
+          # #4818 — the #749 coverage thresholds moved out of `vitest` and
+          # into this job when vitest was sharded, so it has to be gated for
+          # the coverage floor to keep existing.
+          check_job vitest-coverage "$fe_skip_ok"
           check_job playwright "$fe_skip_ok"
 
           # backend suite (+ its transitive coverage): skip allowed only when
