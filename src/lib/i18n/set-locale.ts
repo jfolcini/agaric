@@ -75,9 +75,21 @@ export async function loadLocale(lng: SupportedLocale): Promise<void> {
 }
 
 /**
+ * The locale of the most recent `setLocale` call. An earlier call whose
+ * catalog settles after a later one must not apply: `en` is bundled and
+ * every other locale is a chunk, so an abandoned Spanish load reliably
+ * resolves LAST and would otherwise leave a Spanish UI under a Settings
+ * select reading "English" (#4812).
+ */
+let latestRequest: SupportedLocale = DEFAULT_LOCALE
+
+/**
  * Switch the app's language: load the catalog, then change it. Awaiting the
  * chunk BEFORE `changeLanguage` is what makes the switch atomic — otherwise
- * the UI would flash a fully-English render between the two.
+ * the UI would flash a fully-English render between the two. A load
+ * superseded by a newer `setLocale` while it was in flight is dropped
+ * instead of applied, so switching twice mid-load lands on the locale the
+ * user asked for last (#4812).
  *
  * A failed chunk load leaves the current language in place and logs; the
  * user keeps a working UI in the language they already had, which is a
@@ -98,6 +110,7 @@ export async function loadLocale(lng: SupportedLocale): Promise<void> {
  * registered).
  */
 export async function setLocale(lng: SupportedLocale): Promise<void> {
+  latestRequest = lng
   try {
     await loadLocale(lng)
   } catch (err) {
@@ -109,5 +122,6 @@ export async function setLocale(lng: SupportedLocale): Promise<void> {
     )
     return
   }
+  if (latestRequest !== lng) return
   await i18n.changeLanguage(lng)
 }

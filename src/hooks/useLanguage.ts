@@ -8,25 +8,17 @@
  * Appearance tab for its Select — both instances see the same stored value,
  * so a change made in one window switches the language in every window.
  *
- * The effect is guarded on `i18n.language`, so the common case (the stored
- * preference already matches the locale `src/main.tsx` resolved and loaded
- * before the first render) does no work at all.
- *
- * There is no in-flight/disabled state, and the guard above is on
- * `i18n.language` — which is one switch BEHIND while a chunk is loading.
- * KNOWN GAP (#4812): pick Espanol, then English before `import('@/lib/i18n/es')`
- * settles, and this effect reads `i18n.language === 'en'` — still true, the
- * switch has not landed — and returns, so `setLocale('en')` never runs; the
- * Spanish load then resolves and leaves a Spanish UI under a Select reading
- * "English", with nothing to re-fire the effect. Closing it takes two guards
- * (this one on the REQUESTED locale, and a supersede check inside `setLocale`,
- * because `en` is bundled while `es` is a chunk, so the stale load reliably
- * resolves last), and neither is reachable from the vitest harness: the
- * already-cached chunk settles inside the same `act`, so a test written here
- * passes with or without the fix. It is filed rather than guessed at.
+ * The effect is guarded on the locale it last REQUESTED, so the common case
+ * (the stored preference already matches the locale `src/main.tsx` resolved
+ * and loaded before the first render) does no work at all. Guarding on
+ * `i18n.language` instead would skip the second of two quick switches
+ * (#4812): that value is one switch behind while a catalog chunk is in
+ * flight, so picking Espanol and then English reads `'en'` and returns
+ * early, and `setLocale('en')` never runs. `setLocale` owns the other half —
+ * dropping the abandoned Spanish load when it finally settles.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { i18n } from '@/lib/i18n'
 import { type LanguagePreference, resolveLocale } from '@/lib/i18n/locales'
@@ -40,9 +32,11 @@ export function useLanguage(): {
 } {
   const [language, setValue] = usePreference(PREFERENCES.language)
   const resolvedLocale = resolveLocale(language)
+  const requestedLocale = useRef(i18n.language)
 
   useEffect(() => {
-    if (i18n.language === resolvedLocale) return
+    if (requestedLocale.current === resolvedLocale) return
+    requestedLocale.current = resolvedLocale
     void setLocale(resolvedLocale)
   }, [resolvedLocale])
 
