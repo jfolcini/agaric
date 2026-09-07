@@ -180,6 +180,9 @@ describe('useBlockPropertyIpc.setProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLOCK_1',
       key: 'effort',
+      // `value_bool` is spelled even though `SetPropertyParams` has no boolean
+      // slot: the five-key contract is enforced by `check-set-property-args`
+      // (#3127), because an omitted key drops whatever was stored.
       value: {
         value_text: '3',
         value_num: null,

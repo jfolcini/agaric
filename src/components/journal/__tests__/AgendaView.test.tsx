@@ -30,16 +30,16 @@ vi.mock('@/lib/agenda-filters', () => ({
 
 // ── Mock tauri lib ──────────────────────────────────────────────────
 vi.mock('@/lib/tauri', () => ({
-  queryByProperty: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
 
 // #2927 phase 5 — AgendaView now calls the generated `commands.batchResolve`,
 // so mocking only the `@/lib/tauri` wrapper no longer intercepts it. Back the
 // generated surface instead, resolving the same typed-result envelope
-// `unwrap` expects. (`queryByProperty` above still routes through the
-// wrapper via `@/lib/agenda-filters`.)
+// `unwrap` expects. #4412 — `queryByProperty` retired its wrapper too, so it is
+// mocked on the same generated surface.
 const mockedBatchResolve = vi.hoisted(() => vi.fn())
+const mockedQueryByProperty = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -49,6 +49,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       batchResolve: (...args: unknown[]) =>
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      queryByProperty: (...args: unknown[]) =>
+        mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -155,13 +157,11 @@ import {
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
 import { notify } from '@/lib/notify'
-import { queryByProperty } from '@/lib/tauri'
 
 const mockedNotifyRetry = vi.mocked(notify.retry)
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
 const mockedLoadMoreUnfilteredAgenda = vi.mocked(loadMoreUnfilteredAgenda)
-const mockedQueryByProperty = vi.mocked(queryByProperty)
 
 /** Shared factory + domain defaults for AgendaView tests. */
 const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>

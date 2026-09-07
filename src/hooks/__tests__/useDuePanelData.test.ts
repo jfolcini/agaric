@@ -20,14 +20,35 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/tauri', () => ({
-  listBlocks: vi.fn(),
-  batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
-  queryByProperty: vi.fn(),
   paginationLimit: (n: number) => n,
   listProjectedAgendaLimit: (n: number) => n,
   listBlocksLimit: (n: number) => n,
 }))
+
+// #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
+// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// envelope, so the spies resolve raw data and the mock wraps it.
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty } = vi.hoisted(() => ({
+  mockedListBlocks: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+  mockedQueryByProperty: vi.fn(),
+}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listBlocks: (...args: unknown[]) =>
+        mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      queryByProperty: (...args: unknown[]) =>
+        mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 let mockInvalidationKey = 0
 vi.mock('@/hooks/useBlockPropertyEvents', () => ({
@@ -52,16 +73,14 @@ vi.mock('@/lib/notify', () => ({
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '@/hooks/useDuePanelData'
+import type { BlockRow, PageResponse, ResolvedBlock } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '@/lib/tauri'
+import { listProjectedAgenda } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
-const mockedListBlocks = vi.mocked(listBlocks)
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
-const mockedQueryByProperty = vi.mocked(queryByProperty)
 const mockedUseBlockPropertyEvents = vi.mocked(useBlockPropertyEvents)
 const mockedNotifyError = vi.mocked(notify.error)
 
@@ -117,7 +136,8 @@ describe('useDuePanelData', () => {
       expect(result.current.blocks).toHaveLength(1)
     })
     expect(mockedListBlocks).toHaveBeenCalledWith(
-      expect.objectContaining({ agendaDate: '2025-06-15' }),
+      expect.objectContaining({ date: '2025-06-15' }),
+      expect.anything(),
     )
   })
 
@@ -146,7 +166,7 @@ describe('useDuePanelData', () => {
     const pendingBlocks = new Promise((r) => {
       resolveBlocks = r
     })
-    mockedListBlocks.mockReturnValue(pendingBlocks as ReturnType<typeof listBlocks>)
+    mockedListBlocks.mockReturnValue(pendingBlocks as Promise<PageResponse<BlockRow>>)
 
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
 
@@ -189,7 +209,8 @@ describe('useDuePanelData', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaDate: '2025-06-15' }),
+        expect.objectContaining({ date: '2025-06-15' }),
+        expect.anything(),
       )
     })
 
@@ -199,7 +220,8 @@ describe('useDuePanelData', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaDate: '2025-06-16' }),
+        expect.objectContaining({ date: '2025-06-16' }),
+        expect.anything(),
       )
     })
   })
@@ -222,7 +244,8 @@ describe('useDuePanelData', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaSource: 'column:due_date' }),
+        expect.objectContaining({ source: 'column:due_date' }),
+        expect.anything(),
       )
     })
   })
@@ -307,6 +330,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_page2' }),
+        expect.anything(),
       )
     })
 
@@ -346,12 +370,12 @@ describe('useDuePanelData', () => {
 
     // The NEXT listBlocks call is the loadMore — hold it deferred so we can
     // resolve it AFTER the date change bumps the request token.
-    let resolveStaleLoadMore!: (v: Awaited<ReturnType<typeof listBlocks>>) => void
+    let resolveStaleLoadMore!: (v: PageResponse<BlockRow>) => void
     mockedListBlocks.mockImplementationOnce(
       () =>
         new Promise((r) => {
           resolveStaleLoadMore = r
-        }) as ReturnType<typeof listBlocks>,
+        }) as Promise<PageResponse<BlockRow>>,
     )
 
     // Fire the loadMore but do NOT resolve it yet.
@@ -362,6 +386,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_A_page2' }),
+        expect.anything(),
       )
     })
 
@@ -520,7 +545,7 @@ describe('useDuePanelData', () => {
 
     // Mock listBlocks to return a never-resolving promise so we can observe
     // the intermediate synchronous state before the async fetch completes.
-    mockedListBlocks.mockReturnValue(new Promise(() => {}) as ReturnType<typeof listBlocks>)
+    mockedListBlocks.mockReturnValue(new Promise(() => {}) as Promise<PageResponse<BlockRow>>)
 
     // Change the filter — the useEffect should setLoading(true) synchronously
     rerender({ sourceFilter: 'column:due_date' })
@@ -814,7 +839,7 @@ describe('useDuePanelData', () => {
     mockedBatchResolve.mockReturnValue(
       new Promise((_, rej) => {
         rejectBatch = rej
-      }) as ReturnType<typeof batchResolve>,
+      }) as Promise<ResolvedBlock[]>,
     )
 
     const { unmount } = renderHook(() =>
@@ -1085,18 +1110,16 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       total_count: null,
     })
     let returningToFirstDate = false
-    let resolveReturningMain:
-      | ((resolved: Awaited<ReturnType<typeof batchResolve>>) => void)
-      | undefined
+    let resolveReturningMain: ((resolved: ResolvedBlock[]) => void) | undefined
 
-    mockedListBlocks.mockImplementation(({ agendaDate }) => {
-      if (!agendaDate) throw new Error('expected an agenda date')
-      return Promise.resolve(blocksFor(agendaDate))
+    mockedListBlocks.mockImplementation((request: { date: string | null }) => {
+      if (!request.date) throw new Error('expected an agenda date')
+      return Promise.resolve(blocksFor(request.date))
     })
     mockedListProjectedAgenda.mockImplementation(({ startDate }) =>
       Promise.resolve(projectedFor(startDate)),
     )
-    mockedBatchResolve.mockImplementation((ids) => {
+    mockedBatchResolve.mockImplementation((ids: string[]) => {
       if (returningToFirstDate && ids.includes('MAIN_PARENT_2026-04-15')) {
         return new Promise((resolve) => {
           resolveReturningMain = resolve

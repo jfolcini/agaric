@@ -19,12 +19,14 @@ import { Button } from '@/components/ui/button'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useToday } from '@/hooks/useToday'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
-import { batchResolve, listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
+import { listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -212,7 +214,7 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
   const titles = new Map<string, string>()
   if (parentIds.length === 0) return titles
   try {
-    const resolved = await batchResolve(parentIds, 'global')
+    const resolved = unwrap(await commands.batchResolve(parentIds, { kind: 'global' }))
     for (const r of resolved) {
       titles.set(r.id, r.title ?? translate('common.untitled'))
     }

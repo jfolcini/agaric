@@ -2127,6 +2127,10 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
 
     await waitFor(() => {
+      // #4412 — the call site names only the field it sets; the other four
+      // `SetPropertyArgs` slots are `#[serde(default)]`
+      // (`src-tauri/src/commands/mod.rs:587`), so omitting them is the same
+      // `None` the retired wrapper's `?? null` produced.
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
         key: 'space',

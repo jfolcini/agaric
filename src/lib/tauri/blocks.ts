@@ -4,16 +4,14 @@ import type {
   BatchDeleteResponse,
   BlockRow,
   CreateBlockSpec,
-  DateRange,
   DeleteResponse,
   PageResponse,
   PurgeResponse,
   RestoreResponse,
-  SpaceScope,
   WithOps,
 } from '@/lib/bindings'
 import type { SafeLimit } from '@/lib/safe-limit'
-import { toSpaceScope, requireActiveScope } from '@/lib/tauri/_shared'
+import { toSpaceScope } from '@/lib/tauri/_shared'
 
 /** Create a new block. Returns the created block with its generated ID.
  *
@@ -185,48 +183,6 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
   return unwrap(await commands.firstChildForBlocks(blockIds))
 }
 
-/** List blocks with optional filters and cursor-based pagination.
- *
- * The public TypeScript shape keeps the agenda knobs (`agendaDate`,
- * `agendaDateRange`, `agendaSource`) as three top-level fields for
- * backward compatibility. On the IPC boundary all query params are
- * marshalled into the single Rust `ListBlocksRequest` DTO (#2277 item 7) —
- * the intentional per-command IPC request type. The `spaceId`-derived
- * `SpaceScope` stays a separate argument.
- *
- * `spaceId` (#2248) — required. The backend filters results to
- * blocks whose owning page carries `space = <spaceId>`. It is wrapped into
- * the canonical `{ kind: 'active', space_id }` via `requireActiveScope`,
- * which throws on an empty string. There is intentionally no cross-space
- * (`global`) block listing, so callers with no active space must NOT invoke
- * this: short-circuit locally on a falsy `currentSpaceId` and render an empty
- * result. Passing `''` throws loudly (rather than the old silent empty-page
- * no-match) instead of leaking across spaces.
- */
-export async function listBlocks(params: {
-  parentId?: string | undefined
-  blockType?: string | undefined
-  tagId?: string | undefined
-  agendaDate?: string | undefined
-  agendaDateRange?: DateRange | undefined
-  agendaSource?: string | undefined
-  cursor?: string | undefined
-  limit?: SafeLimit | undefined
-  spaceId: string
-}): Promise<PageResponse<BlockRow>> {
-  const request = {
-    parentId: params.parentId ?? null,
-    blockType: params.blockType ?? null,
-    tagId: params.tagId ?? null,
-    date: params.agendaDate ?? null,
-    dateRange: params.agendaDateRange ?? null,
-    source: params.agendaSource ?? null,
-    cursor: params.cursor ?? null,
-    limit: params.limit ?? null,
-  }
-  return unwrap(await commands.listBlocks(request, requireActiveScope(params.spaceId)))
-}
-
 /**
  * Paginate soft-deleted blocks (the trash view). Scoped to a single space.
  *
@@ -255,44 +211,4 @@ export async function listTrash(params: {
 /** Fetch a single block by ID. */
 export async function getBlock(blockId: string): Promise<BlockRow> {
   return unwrap(await commands.getBlock(blockId))
-}
-
-/** Resolved metadata for a block — lightweight alternative to full BlockRow. */
-export interface ResolvedBlock {
-  id: string
-  title: string | null
-  block_type: string
-  deleted: boolean
-}
-
-/**
- * #2300 — explicit resolution scope for {@link batchResolve}: a space ULID to
- * scope resolution to that (active) space, or the literal `'global'` to opt IN
- * to cross-space resolution (trash / global search). REQUIRED: omitting the
- * scope — the old silent-`global` default — is no longer possible, so a
- * callsite that means active-space scoping can't leak other spaces' titles by
- * forgetting the argument (the 'no live links between spaces' policy).
- */
-export type ResolveScope = string | 'global'
-
-/** Batch-resolve block metadata for multiple IDs in a single call.
- *
- * `scope` — REQUIRED (#2300). Pass a space ULID to restrict resolution to
- * blocks whose owning page carries `space = <scope>`; foreign-space targets
- * simply do not appear in the response, which is what makes the chip fall into
- * the "unknown id" branch and render via the broken-link UX (locked-in policy:
- * no live links between spaces, ever). Pass the literal `'global'` to opt IN to
- * cross-space resolution on surfaces that genuinely want it (trash breadcrumbs,
- * global search).
- *
- * The scope is no longer optional: previously omitting `spaceId` silently
- * routed through `toSpaceScope(undefined)` → `{ kind: 'global' }`, so a caller
- * that meant active-space scoping could leak other spaces' titles just by
- * forgetting the argument. Making it required turns that mistake into a compile
- * error — a caller must now spell out `'global'` to cross spaces on purpose.
- */
-export async function batchResolve(ids: string[], scope: ResolveScope): Promise<ResolvedBlock[]> {
-  const spaceScope: SpaceScope =
-    scope === 'global' ? { kind: 'global' } : { kind: 'active', space_id: scope }
-  return unwrap(await commands.batchResolve(ids, spaceScope))
 }

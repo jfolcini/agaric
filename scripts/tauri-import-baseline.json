@@ -6,9 +6,7 @@
   "src/components/SpaceManageDialog.tsx",
   "src/components/TagList.tsx",
   "src/components/TrashView.tsx",
-  "src/components/agenda/DonePanel.tsx",
   "src/components/agenda/DuePanel.tsx",
-  "src/components/attachments/AttachmentRenderer.tsx",
   "src/components/backlinks/UnlinkedReferences.tsx",
   "src/components/common/CommandPalette.tsx",
   "src/components/editor/BlockPropertyDrawer.tsx",
@@ -38,6 +36,5 @@
   "src/lib/paste-internalize.ts",
   "src/lib/query-result-columns.ts",
   "src/lib/template-utils.ts",
-  "src/lib/vault-import.ts",
-  "src/stores/resolve.ts"
+  "src/lib/vault-import.ts"
 ]

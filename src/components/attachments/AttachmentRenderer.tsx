@@ -11,11 +11,12 @@ import {
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
+import { unwrap } from '@/lib/app-error'
 import { formatSize } from '@/lib/attachment-utils'
+import { commands } from '@/lib/bindings'
 import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setProperty } from '@/lib/tauri'
 
 /** Map an alignment value to the flex justification of the image row. */
 const ALIGNMENT_JUSTIFY: Record<ImageAlignment, string> = {
@@ -277,12 +278,15 @@ function AttachmentImage({
       if (snapped === imageWidth) return
       const prev = imageWidth
       onImageWidthChange(snapped)
-      setProperty({ blockId, key: 'image_width', valueText: snapped }).catch((err) => {
-        logger.warn('AttachmentRenderer', 'resize save failed', { blockId, snapped }, err)
-        // Revert on failure — restore the previous width.
-        onImageWidthChange(prev)
-        notify.error(t('imageResize.saveFailed'))
-      })
+      commands
+        .setProperty(blockId, 'image_width', { value_text: snapped })
+        .then(unwrap)
+        .catch((err) => {
+          logger.warn('AttachmentRenderer', 'resize save failed', { blockId, snapped }, err)
+          // Revert on failure — restore the previous width.
+          onImageWidthChange(prev)
+          notify.error(t('imageResize.saveFailed'))
+        })
     },
     [blockId, imageWidth, onImageWidthChange, t],
   )
@@ -310,17 +314,16 @@ function AttachmentImage({
       }
       if (next === imageCaption) return
       onImageCaptionChange(next)
-      setProperty({
-        blockId,
-        key: 'image_caption',
-        valueText: next,
-      }).catch((err) => {
-        logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
-        // Revert on failure — restore the previous caption.
-        onImageCaptionChange(imageCaption)
-        setCaptionDraft(imageCaption)
-        notify.error(t('imageCaption.saveFailed'))
-      })
+      commands
+        .setProperty(blockId, 'image_caption', { value_text: next })
+        .then(unwrap)
+        .catch((err) => {
+          logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
+          // Revert on failure — restore the previous caption.
+          onImageCaptionChange(imageCaption)
+          setCaptionDraft(imageCaption)
+          notify.error(t('imageCaption.saveFailed'))
+        })
     },
     [blockId, imageCaption, onImageCaptionChange, t],
   )

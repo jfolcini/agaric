@@ -21,18 +21,25 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    batchResolve: vi.fn(),
     getBlock: vi.fn(),
+  }
+})
+
+const { mockBatchResolve } = vi.hoisted(() => ({ mockBatchResolve: vi.fn() }))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: { ...actual.commands, batchResolve: mockBatchResolve },
   }
 })
 
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { queryClient } from '@/lib/query-client'
 import { parse } from '@/lib/search-query'
-import { batchResolve, searchBlocks, type SearchBlockRow } from '@/lib/tauri'
+import { searchBlocks, type SearchBlockRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
-const mockedBatchResolve = vi.mocked(batchResolve)
 
 const toggles = { caseSensitive: false, wholeWord: false, isRegex: false }
 
@@ -67,7 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   queryClient.clear()
-  mockedBatchResolve.mockResolvedValue([])
+  mockBatchResolve.mockResolvedValue({ status: 'ok', data: [] })
 })
 
 afterEach(() => {

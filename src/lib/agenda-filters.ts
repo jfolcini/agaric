@@ -15,14 +15,15 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { PageResponse } from '@/lib/bindings'
+import type { PageResponse, PropertyFilter, TagFilterExpr } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
 import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
-import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from '@/lib/tauri'
-import { filteredBlocksQuery, listUndatedTasks, queryByProperty } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
+import type { BlockRow } from '@/lib/tauri'
+import { listUndatedTasks } from '@/lib/tauri'
 
 /**
  * Per-page limit for agenda queries — pinned to `PageRequest::new`'s
@@ -143,20 +144,46 @@ async function fetchUnfilteredAgendaPage(
 ): Promise<ExecuteFiltersResult> {
   const [dueResp, schedResp, undatedResp] = await Promise.all([
     state.due !== undefined
-      ? queryByProperty({
-          key: 'due_date',
-          cursor: state.due ?? undefined,
-          limit: AGENDA_QUERY_LIMIT,
-          spaceId,
-        })
+      ? commands
+          .queryByProperty(
+            {
+              key: 'due_date',
+              valueText: null,
+              valueDate: null,
+              operator: null,
+              cursor: state.due ?? null,
+              limit: AGENDA_QUERY_LIMIT,
+              excludeParentId: null,
+              contentNonEmpty: null,
+              blockType: null,
+              valueTextIn: null,
+              valueDateRange: null,
+              excludeTodoStates: null,
+            },
+            toSpaceScope(spaceId),
+          )
+          .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
     state.scheduled !== undefined
-      ? queryByProperty({
-          key: 'scheduled_date',
-          cursor: state.scheduled ?? undefined,
-          limit: AGENDA_QUERY_LIMIT,
-          spaceId,
-        })
+      ? commands
+          .queryByProperty(
+            {
+              key: 'scheduled_date',
+              valueText: null,
+              valueDate: null,
+              operator: null,
+              cursor: state.scheduled ?? null,
+              limit: AGENDA_QUERY_LIMIT,
+              excludeParentId: null,
+              contentNonEmpty: null,
+              blockType: null,
+              valueTextIn: null,
+              valueDateRange: null,
+              excludeTodoStates: null,
+            },
+            toSpaceScope(spaceId),
+          )
+          .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
     state.undated !== undefined
       ? listUndatedTasks({ cursor: state.undated ?? undefined, limit: AGENDA_QUERY_LIMIT, spaceId })
@@ -286,9 +313,16 @@ function toHalfOpenRange(range: { start: string; end: string }): [string, string
  */
 type BlockPostFilter = (block: BlockRow) => boolean
 
+/**
+ * The three mutually-exclusive value slots of `PropertyFilter`, all empty.
+ * Every filter below sets at most one of them, and the generated type
+ * requires all three to be spelled.
+ */
+const NO_VALUE = { valueText: null, valueDate: null, valueDateRange: null } as const
+
 /** Output of {@link translateFilters}: the IPC payload + residual predicates. */
 interface TranslatedFilters {
-  propertyFilters: FilteredBlocksPropertyFilter[]
+  propertyFilters: PropertyFilter[]
   postFilters: BlockPostFilter[]
 }
 
@@ -360,8 +394,8 @@ function appendFutureDateDimension(
       // Overdue alone — legacy encoding (excluding null-column blocks is
       // implicit: the backend adds `b.<col> IS NOT NULL` automatically).
       out.propertyFilters.push(
-        { key: columnKey, operator: 'lt', valueDate: todayStr },
-        { key: 'todo_state', operator: 'neq', valueText: 'DONE' },
+        { ...NO_VALUE, key: columnKey, operator: 'lt', valueDate: todayStr },
+        { ...NO_VALUE, key: 'todo_state', operator: 'neq', valueText: 'DONE' },
       )
     }
     return
@@ -369,16 +403,25 @@ function appendFutureDateDimension(
 
   if (!hasOverdue) {
     if (span.start === span.end) {
-      out.propertyFilters.push({ key: columnKey, operator: 'eq', valueDate: span.start })
+      out.propertyFilters.push({
+        ...NO_VALUE,
+        key: columnKey,
+        operator: 'eq',
+        valueDate: span.start,
+      })
     } else {
-      out.propertyFilters.push({ key: columnKey, valueDateRange: toHalfOpenRange(span) })
+      out.propertyFilters.push({
+        ...NO_VALUE,
+        key: columnKey,
+        valueDateRange: toHalfOpenRange(span),
+      })
     }
     return
   }
 
   // Overdue OR [span.start, span.end]: superset in SQL, residual in JS.
   const [, endExclusive] = toHalfOpenRange(span)
-  out.propertyFilters.push({ key: columnKey, operator: 'lt', valueDate: endExclusive })
+  out.propertyFilters.push({ ...NO_VALUE, key: columnKey, operator: 'lt', valueDate: endExclusive })
   const start = span.start
   out.postFilters.push((block) => {
     const col = columnKey === 'due_date' ? block.due_date : block.scheduled_date
@@ -411,7 +454,7 @@ function appendPastDateDimension(
   }
   const span = unionRanges(ranges)
   if (!span) return
-  out.propertyFilters.push({ key: propertyKey, valueDateRange: toHalfOpenRange(span) })
+  out.propertyFilters.push({ ...NO_VALUE, key: propertyKey, valueDateRange: toHalfOpenRange(span) })
 }
 
 /**
@@ -435,11 +478,11 @@ function appendCustomPropertyDimension(values: string[], out: TranslatedFilters)
   for (const [key, entry] of byKey) {
     const [firstText] = entry.texts
     if (entry.isSet || firstText === undefined) {
-      out.propertyFilters.push({ key })
+      out.propertyFilters.push({ ...NO_VALUE, key })
     } else if (entry.texts.length === 1) {
-      out.propertyFilters.push({ key, operator: 'eq', valueText: firstText })
+      out.propertyFilters.push({ ...NO_VALUE, key, operator: 'eq', valueText: firstText })
     } else {
-      out.propertyFilters.push({ key, operator: 'eq', valueTextIn: entry.texts })
+      out.propertyFilters.push({ ...NO_VALUE, key, operator: 'eq', valueTextIn: entry.texts })
     }
   }
 }
@@ -457,6 +500,7 @@ function translateFilters(filters: AgendaFilter[], today: Date): TranslatedFilte
       case 'status': {
         if (filter.values.length > 0) {
           out.propertyFilters.push({
+            ...NO_VALUE,
             key: 'todo_state',
             operator: 'eq',
             valueTextIn: filter.values,
@@ -466,7 +510,12 @@ function translateFilters(filters: AgendaFilter[], today: Date): TranslatedFilte
       }
       case 'priority': {
         if (filter.values.length > 0) {
-          out.propertyFilters.push({ key: 'priority', operator: 'eq', valueTextIn: filter.values })
+          out.propertyFilters.push({
+            ...NO_VALUE,
+            key: 'priority',
+            operator: 'eq',
+            valueTextIn: filter.values,
+          })
         }
         break
       }
@@ -525,21 +574,24 @@ function applyPostFilters(blocks: BlockRow[], postFilters: BlockPostFilter[]): B
  * `has_more: false`).
  */
 async function fetchFilteredBlocksWindow(
-  propertyFilters: FilteredBlocksPropertyFilter[],
-  tagFilters: FilteredBlocksTagFilter | undefined,
+  propertyFilters: PropertyFilter[],
+  tagFilters: TagFilterExpr | undefined,
   postFilters: BlockPostFilter[],
   spaceId: string,
   initialCursor?: string,
 ): Promise<{ blocks: BlockRow[]; hasMore: boolean; cursor: string | null }> {
   let cursor = initialCursor
   for (;;) {
-    const resp = await filteredBlocksQuery({
-      propertyFilters,
-      tagFilters,
-      spaceId,
-      limit: AGENDA_QUERY_LIMIT,
-      cursor,
-    })
+    const resp = unwrap(
+      await commands.filteredBlocksQuery(
+        propertyFilters,
+        tagFilters ?? null,
+        null,
+        toSpaceScope(spaceId),
+        cursor ?? null,
+        AGENDA_QUERY_LIMIT,
+      ),
+    )
     const blocks = applyPostFilters(resp.items, postFilters)
     if (blocks.length > 0 || !resp.has_more || resp.next_cursor === null) {
       return { blocks, hasMore: resp.has_more, cursor: resp.next_cursor }
@@ -562,7 +614,7 @@ export const TAG_FILTER_UNSATISFIABLE = Symbol('tag-filter-unsatisfiable')
 
 /**
  * Resolve every `tag` dimension in the filter list into a single
- * `FilteredBlocksTagFilter` payload. One `listTagsByPrefix` IPC per
+ * `TagFilterExpr` payload. One `listTagsByPrefix` IPC per
  * distinct prefix.
  *
  * Three outcomes (distinguishing the empty-input case from the
@@ -573,11 +625,11 @@ export const TAG_FILTER_UNSATISFIABLE = Symbol('tag-filter-unsatisfiable')
  *   resolved: the tag dimension matches nothing, so the cross-dimension
  *   AND must collapse to empty. Returning `undefined` here would silently
  *   drop the tag constraint and widen the result to a superset.
- * - `FilteredBlocksTagFilter` — at least one value resolved.
+ * - `TagFilterExpr` — at least one value resolved.
  */
 async function resolveTagFilters(
   filters: AgendaFilter[],
-): Promise<FilteredBlocksTagFilter | typeof TAG_FILTER_UNSATISFIABLE | undefined> {
+): Promise<TagFilterExpr | typeof TAG_FILTER_UNSATISFIABLE | undefined> {
   const tagValues = filters.filter((f) => f.dimension === 'tag').flatMap((f) => f.values)
   if (tagValues.length === 0) return undefined
 

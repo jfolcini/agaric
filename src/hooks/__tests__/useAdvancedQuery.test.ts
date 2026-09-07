@@ -12,8 +12,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/tauri', () => ({
   runAdvancedQuery: vi.fn(),
-  batchResolve: vi.fn(),
 }))
+
+// #4412 — `batchResolve` retired its `@/lib/tauri` wrapper; the hook calls
+// `commands.batchResolve` and unwraps the `Result` envelope.
+const mockedResolve = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      batchResolve: (...args: unknown[]) =>
+        mockedResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { queryClient } from '@/lib/query-client'
@@ -25,11 +39,10 @@ import type {
   QueryGroup,
   SortKey,
 } from '@/lib/tauri'
-import { batchResolve, runAdvancedQuery } from '@/lib/tauri'
+import { runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedRun = vi.mocked(runAdvancedQuery)
-const mockedResolve = vi.mocked(batchResolve)
 
 const SPACE = 'SPACE_A'
 

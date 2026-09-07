@@ -25,9 +25,12 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
-import { deleteBlock, editBlock, getProperty, queryByProperty } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
+import { deleteBlock, editBlock, getProperty } from '@/lib/tauri'
 import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 
 /** Marker property key + value identifying a saved query view. */
@@ -78,12 +81,25 @@ export function SavedViews({
     setLoading(true)
     setListError(false)
     try {
-      const resp = await queryByProperty({
-        key: VIEW_TYPE_KEY,
-        valueText: QUERY_VIEW_MARKER,
-        spaceId: spaceId ?? null,
-        limit: PAGINATION_LIMIT,
-      })
+      const resp = unwrap(
+        await commands.queryByProperty(
+          {
+            key: VIEW_TYPE_KEY,
+            valueText: QUERY_VIEW_MARKER,
+            valueDate: null,
+            operator: null,
+            cursor: null,
+            limit: PAGINATION_LIMIT,
+            excludeParentId: null,
+            contentNonEmpty: null,
+            blockType: null,
+            valueTextIn: null,
+            valueDateRange: null,
+            excludeTodoStates: null,
+          },
+          toSpaceScope(spaceId),
+        ),
+      )
       setViews(
         resp.items.map((row) => ({
           id: row.id,

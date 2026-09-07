@@ -15,7 +15,7 @@ import {
   collectResolveIds,
   extractUlidRefs,
 } from '@/hooks/useDuePanelData'
-import type { ResolvedBlock } from '@/lib/tauri'
+import type { ResolvedBlock } from '@/lib/bindings'
 
 describe('applySourceFilter', () => {
   const date = '2025-06-15'

@@ -11,9 +11,11 @@
  * value literals. See `docs/architecture/list-ergonomics.md` for the model.
  */
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import type { PropertyRow } from '@/lib/tauri/properties'
-import { deleteProperty, setProperty } from '@/lib/tauri/properties'
+import { deleteProperty } from '@/lib/tauri/properties'
 
 /** The block-property key under which list-ness is stored. */
 export const LIST_STYLE_KEY = 'listStyle'
@@ -53,7 +55,15 @@ export async function setListStyle(blockId: string, style: ListStyle): Promise<v
     await deleteProperty(blockId, LIST_STYLE_KEY)
     return
   }
-  await setProperty({ blockId, key: LIST_STYLE_KEY, valueText: style })
+  unwrap(
+    await commands.setProperty(blockId, LIST_STYLE_KEY, {
+      value_text: style,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }),
+  )
 }
 
 /** Clear a block's list style (equivalent to `setListStyle(id, 'none')`). */

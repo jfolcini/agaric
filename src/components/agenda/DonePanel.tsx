@@ -30,12 +30,14 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, PageResponse } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import type { BlockRow, PageResponse } from '@/lib/tauri'
-import { batchResolve, queryByProperty } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export interface DonePanelProps {
@@ -89,15 +91,25 @@ export function DonePanel({
       ],
       queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
         try {
-          return await queryByProperty({
-            key: 'completed_at',
-            valueDate: date,
-            ...(pageParam != null && { cursor: pageParam }),
-            limit: PAGINATION_LIMIT,
-            spaceId: currentSpaceId,
-            ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
-            contentNonEmpty: true,
-          })
+          return unwrap(
+            await commands.queryByProperty(
+              {
+                key: 'completed_at',
+                valueText: null,
+                valueDate: date,
+                operator: null,
+                cursor: pageParam ?? null,
+                limit: PAGINATION_LIMIT,
+                excludeParentId: excludePageId ?? null,
+                contentNonEmpty: true,
+                blockType: null,
+                valueTextIn: null,
+                valueDateRange: null,
+                excludeTodoStates: null,
+              },
+              toSpaceScope(currentSpaceId),
+            ),
+          )
         } catch (err) {
           logger.error('DonePanel', 'Failed to load done items', undefined, err)
           throw err
@@ -156,7 +168,9 @@ export function DonePanel({
     const uniqueParentIds = collectUniqueParentIds(blocks)
     if (uniqueParentIds.length === 0) return
     let cancelled = false
-    batchResolve(uniqueParentIds, 'global')
+    commands
+      .batchResolve(uniqueParentIds, { kind: 'global' })
+      .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
         setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))

@@ -1,7 +1,6 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
-  BlockRow,
   DeletePropertyResponse,
   PageResponse,
   PropertyDefinition,
@@ -12,27 +11,6 @@ import type { SafeLimit } from '@/lib/safe-limit'
 
 /** The generated wire shape (#4414) — re-exported, not redeclared. */
 export type { PropertyRow } from '@/lib/bindings'
-
-/** Set (upsert) a property on a block. Exactly one value field must be non-null. */
-export async function setProperty(params: {
-  blockId: string
-  key: string
-  valueText?: string | null | undefined
-  valueNum?: number | null | undefined
-  valueDate?: string | null | undefined
-  valueRef?: string | null | undefined
-  valueBool?: boolean | null | undefined
-}): Promise<WithOps<BlockRow>> {
-  return unwrap(
-    await commands.setProperty(params.blockId, params.key, {
-      value_text: params.valueText ?? null,
-      value_num: params.valueNum ?? null,
-      value_date: params.valueDate ?? null,
-      value_ref: params.valueRef ?? null,
-      value_bool: params.valueBool ?? null,
-    }),
-  )
-}
 
 /** Delete a property from a block by key. */
 /**

@@ -25,10 +25,29 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/tauri', () => ({
-  queryByProperty: vi.fn(),
-  batchResolve: vi.fn(),
   getBlock: vi.fn(),
 }))
+
+// #4412 — `queryByProperty` / `batchResolve` retired their `@/lib/tauri`
+// wrappers; the panel calls `commands.*` and unwraps the `Result` envelope, so
+// the spies resolve raw data and the mock wraps it in `{ status: 'ok', data }`.
+const { mockedQueryByProperty, mockedBatchResolve } = vi.hoisted(() => ({
+  mockedQueryByProperty: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      queryByProperty: (...args: unknown[]) =>
+        mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual
@@ -116,10 +135,6 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { DonePanel } from '@/components/agenda/DonePanel'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { batchResolve, queryByProperty } from '@/lib/tauri'
-
-const mockedQueryByProperty = vi.mocked(queryByProperty)
-const mockedBatchResolve = vi.mocked(batchResolve)
 
 const emptyResponse = {
   items: [],
@@ -357,6 +372,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_page2' }),
+        expect.anything(),
       )
     })
   })
@@ -423,6 +439,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'completed_at', valueDate: '2025-06-15' }),
+        expect.anything(),
       )
     })
 
@@ -441,6 +458,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'completed_at', valueDate: '2025-06-16' }),
+        expect.anything(),
       )
     })
   })
@@ -692,6 +710,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ contentNonEmpty: true }),
+      expect.anything(),
     )
   })
 
@@ -718,6 +737,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ excludeParentId: 'PAGE_1', contentNonEmpty: true }),
+      expect.anything(),
     )
   })
 

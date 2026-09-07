@@ -26,16 +26,15 @@
 
 import { useCallback } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, WithOps } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import {
   getProperties as getPropertiesIpc,
   listPropertyDefs as listPropertyDefsIpc,
-  setProperty as setPropertyIpc,
 } from '@/lib/tauri'
 
-/**
- * Mirrors the inline param shape of `setProperty` in `src/lib/tauri.ts`.
- * Kept in sync manually — tauri.ts does not export this as a named type.
- */
+/** Named-param shape the drawer writes properties with. */
 export interface SetPropertyParams {
   blockId: string
   key: string
@@ -51,7 +50,7 @@ export interface UseBlockPropertyIpcReturn {
   /** Fetch every typed property definition (the vocabulary). Throws on IPC failure. */
   listPropertyDefs: typeof listPropertyDefsIpc
   /** Write a single property row. Returns the updated `BlockRow` on success; throws on IPC failure. */
-  setProperty: typeof setPropertyIpc
+  setProperty: (params: SetPropertyParams) => Promise<WithOps<BlockRow>>
 }
 
 export function useBlockPropertyIpc(): UseBlockPropertyIpcReturn {
@@ -60,8 +59,17 @@ export function useBlockPropertyIpc(): UseBlockPropertyIpcReturn {
     [],
   )
   const listPropertyDefs = useCallback<typeof listPropertyDefsIpc>(() => listPropertyDefsIpc(), [])
-  const setProperty = useCallback<typeof setPropertyIpc>(
-    (params: SetPropertyParams) => setPropertyIpc(params),
+  const setProperty = useCallback(
+    async (params: SetPropertyParams) =>
+      unwrap(
+        await commands.setProperty(params.blockId, params.key, {
+          value_text: params.valueText ?? null,
+          value_num: params.valueNum ?? null,
+          value_date: params.valueDate ?? null,
+          value_ref: params.valueRef ?? null,
+          value_bool: null,
+        }),
+      ),
     [],
   )
   return { getProperties, listPropertyDefs, setProperty }

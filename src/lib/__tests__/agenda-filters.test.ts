@@ -721,7 +721,9 @@ describe('executeAgendaFilters', () => {
       expect(propertyFilters).toHaveLength(1)
       expect(propertyFilters[0]).toMatchObject({ key: 'assignee' })
       expect(propertyFilters[0]?.['valueText']).toBeNull()
-      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
+      // #4412 — `valueTextIn` is `#[serde(default)]` (`src-tauri/src/commands/queries.rs:44`),
+      // so the is-set filter omits it and the backend reads `vec![]`.
+      expect(propertyFilters[0]?.['valueTextIn']).toBeUndefined()
     })
 
     it('bare key subsumes MANY valued entries regardless of order (#1746)', async () => {
@@ -741,7 +743,9 @@ describe('executeAgendaFilters', () => {
       expect(propertyFilters).toHaveLength(1)
       expect(propertyFilters[0]).toMatchObject({ key: 'assignee' })
       expect(propertyFilters[0]?.['valueText']).toBeNull()
-      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
+      // #4412 — `valueTextIn` is `#[serde(default)]` (`src-tauri/src/commands/queries.rs:44`),
+      // so the is-set filter omits it and the backend reads `vec![]`.
+      expect(propertyFilters[0]?.['valueTextIn']).toBeUndefined()
     })
   })
 
@@ -1129,12 +1133,13 @@ describe('executeAgendaFilters', () => {
       const call = filteredCalls()[0] as Record<string, unknown>
       const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
       expect(propertyFilters[0]).toMatchObject({ key: 'custom_key' })
-      // valueText / valueTextIn / valueDate / valueDateRange must all be
-      // unset (null / empty after marshalling in tauri.ts).
+      // valueText / valueDate / valueDateRange must all be null; `valueTextIn`
+      // is `#[serde(default)]` (`src-tauri/src/commands/queries.rs:44`) so it is omitted and
+      // the backend reads `vec![]` (#4412).
       expect(propertyFilters[0]?.['valueText']).toBeNull()
       expect(propertyFilters[0]?.['valueDate']).toBeNull()
       expect(propertyFilters[0]?.['valueDateRange']).toBeNull()
-      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
+      expect(propertyFilters[0]?.['valueTextIn']).toBeUndefined()
     })
   })
 

@@ -23,15 +23,36 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearProjectedCache } from '@/hooks/useDuePanelData'
 
 vi.mock('@/lib/tauri', () => ({
-  listBlocks: vi.fn(),
-  batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
-  queryByProperty: vi.fn(),
   getBlock: vi.fn(),
   paginationLimit: (n: number) => n,
   listProjectedAgendaLimit: (n: number) => n,
   listBlocksLimit: (n: number) => n,
 }))
+
+// #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
+// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// envelope, so the spies resolve raw data and the mock wraps it.
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty } = vi.hoisted(() => ({
+  mockedListBlocks: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+  mockedQueryByProperty: vi.fn(),
+}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listBlocks: (...args: unknown[]) =>
+        mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      queryByProperty: (...args: unknown[]) =>
+        mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // jsdom's zero-height scroll container would otherwise collapse the virtual
 // grouped-blocks list to zero rows (mirrors `DuePanel.test.tsx`).
@@ -55,15 +76,12 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { DuePanel } from '@/components/agenda/DuePanel'
-import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '@/lib/tauri'
+import { listProjectedAgenda } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
-const mockedListBlocks = vi.mocked(listBlocks)
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
-const mockedQueryByProperty = vi.mocked(queryByProperty)
 
 const emptyResponse = { items: [], next_cursor: null, has_more: false, total_count: null }
 

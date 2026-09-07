@@ -7,6 +7,13 @@ import { requireActiveScope } from '@/lib/tauri/_shared'
 
 /** Full-text search across all blocks, paginated by relevance.
  *
+ * KEPT (#4412). `SearchFilter.scope` is `#[serde(default)]` over a
+ * `SpaceScope` whose `Default` is `Global`
+ * (`src-tauri/agaric-store/src/space.rs:216-223`), so an omitted `scope` silently
+ * searches EVERY space; this wrapper's default is `requireActiveScope`, the
+ * opposite. Deleting it would make the cross-space leak a missing object key
+ * rather than a compile error.
+ *
  * `spaceId` (Phase 4) — required. Restricts matches to blocks
  * whose owning page carries `space = <spaceId>`. Callers must resolve
  * the active `currentSpaceId` (from `useSpaceStore`) before invoking;
@@ -116,6 +123,10 @@ export async function searchBlocks(
 
 /**
  * Phase 1 — partitioned full-text search.
+ *
+ * KEPT (#4412) for the same `SearchFilter.scope` reason as
+ * {@link searchBlocks}: the wire default is `Global`, this wrapper's is
+ * `requireActiveScope`.
  *
  * Returns `pages` (rows where `block_type='page'`) and `blocks`
  * (unrestricted rank-ordered set; may include pages alongside content)

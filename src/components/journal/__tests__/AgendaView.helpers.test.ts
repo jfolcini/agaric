@@ -19,7 +19,7 @@ import {
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
 import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
-import type { ResolvedBlock } from '@/lib/tauri'
+import type { ResolvedBlock } from '@/lib/bindings'
 
 describe('collectUniquePageIds', () => {
   it('returns an empty array for no blocks', () => {

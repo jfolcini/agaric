@@ -648,11 +648,7 @@ describe('AttachmentRenderer', () => {
 
     fireEvent.pointerUp(handle, { clientX: 100, pointerId: 1 })
     expect(onImageWidthChange).toHaveBeenCalledWith('50')
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: 'image_width',
-      valueText: '50',
-    })
+    expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_width', { value_text: '50' })
     // Live readout is gone once the drag ends.
     expect(screen.queryByTestId('image-resize-live')).not.toBeInTheDocument()
   })
@@ -787,10 +783,8 @@ describe('AttachmentRenderer', () => {
     fireEvent.blur(caption)
 
     expect(onImageCaptionChange).toHaveBeenCalledWith('Sunset over the bay')
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: 'image_caption',
-      valueText: 'Sunset over the bay',
+    expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_caption', {
+      value_text: 'Sunset over the bay',
     })
   })
 
@@ -911,10 +905,8 @@ describe('AttachmentRenderer', () => {
       // Blur commits the user's edit.
       fireEvent.blur(caption)
       expect(onImageCaptionChange).toHaveBeenCalledWith('My edit')
-      expect(mockedSetProperty).toHaveBeenCalledWith({
-        blockId: 'B1',
-        key: 'image_caption',
-        valueText: 'My edit',
+      expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_caption', {
+        value_text: 'My edit',
       })
     })
 
@@ -938,11 +930,7 @@ describe('AttachmentRenderer', () => {
       fireEvent.blur(caption)
 
       expect(onImageCaptionChange).toHaveBeenCalledWith('')
-      expect(mockedSetProperty).toHaveBeenCalledWith({
-        blockId: 'B1',
-        key: 'image_caption',
-        valueText: '',
-      })
+      expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_caption', { value_text: '' })
     })
 
     it('skips the persist when an edit lands back on the original caption', async () => {

@@ -67,7 +67,9 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
+import { listBlocksLimit } from '@/lib/safe-limit'
+import { requireActiveScope } from '@/lib/space-scope'
+import { getBatchProperties } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -286,11 +288,21 @@ export function SpaceManageDialog({
         emptinessFetchedRef.current.add(id)
         void (async () => {
           try {
-            const result = await listBlocks({
-              blockType: 'page',
-              spaceId: id,
-              limit: listBlocksLimit(1),
-            })
+            const result = unwrap(
+              await commands.listBlocks(
+                {
+                  parentId: null,
+                  blockType: 'page',
+                  tagId: null,
+                  date: null,
+                  dateRange: null,
+                  source: null,
+                  cursor: null,
+                  limit: listBlocksLimit(1),
+                },
+                requireActiveScope(id),
+              ),
+            )
             if (!active) return
             // Spaces are themselves page blocks. The current
             // `listBlocks(blockType:'page', spaceId)` query returns

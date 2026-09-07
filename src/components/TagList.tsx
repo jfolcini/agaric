@@ -41,14 +41,7 @@ import {
   tagColorForeground,
 } from '@/lib/tag-colors'
 import type { TagCacheRow } from '@/lib/tauri'
-import {
-  createBlock,
-  deleteBlock,
-  deleteProperty,
-  editBlock,
-  purgeBlock,
-  setProperty,
-} from '@/lib/tauri'
+import { createBlock, deleteBlock, deleteProperty, editBlock, purgeBlock } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -264,7 +257,15 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     setTagColors((prev) => ({ ...prev, [tagId]: color }))
     setColorPickerOpen(null)
     try {
-      await setProperty({ blockId: tagId, key: 'color', valueText: color })
+      unwrap(
+        await commands.setProperty(tagId, 'color', {
+          value_text: color,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        }),
+      )
     } catch (err) {
       // localStorage already persisted — property sync is best-effort
       logger.warn('TagList', 'failed to persist tag color via setProperty', { tagId, color }, err)

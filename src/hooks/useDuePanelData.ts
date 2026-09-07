@@ -33,19 +33,20 @@ import { useTranslation } from 'react-i18next'
 
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useToday } from '@/hooks/useToday'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, PageResponse, ResolvedBlock } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
-import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '@/lib/tauri'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import type { ProjectedAgendaEntry } from '@/lib/tauri'
 import {
-  batchResolve,
-  listBlocks,
   listBlocksLimit,
   listProjectedAgenda,
   listProjectedAgendaLimit,
   paginationLimit,
-  queryByProperty,
 } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -149,13 +150,21 @@ function listBlocksForAgenda(
     })
   }
   const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
-  return listBlocks({
-    agendaDate: date,
-    ...(effectiveSource != null && { agendaSource: effectiveSource }),
-    ...(cursor != null && { cursor }),
-    limit: listBlocksLimit(limit),
-    spaceId,
-  })
+  return commands
+    .listBlocks(
+      {
+        parentId: null,
+        blockType: null,
+        tagId: null,
+        date,
+        dateRange: null,
+        source: effectiveSource,
+        cursor: cursor ?? null,
+        limit: listBlocksLimit(limit),
+      },
+      requireActiveScope(spaceId),
+    )
+    .then(unwrap)
 }
 
 /**
@@ -172,7 +181,7 @@ export async function resolveAndMergeTitles(
   applyResolved: (resolved: ResolvedBlock[]) => void,
 ): Promise<void> {
   if (ids.length === 0) return
-  const resolved = await batchResolve(ids, 'global')
+  const resolved = unwrap(await commands.batchResolve(ids, { kind: 'global' }))
   if (isStale()) return
   applyResolved(resolved)
 }
@@ -275,14 +284,25 @@ export function useDuePanelData({
         // (the silent clamp the previous `limit: 500` was hitting);
         // workspaces with more than 200 distinct overdue items would
         // need cursor pagination, which the Due panel doesn't surface.
-        const resp = await queryByProperty({
-          key: 'due_date',
-          valueDateRange: ['0001-01-01', date],
-          excludeTodoStates: ['DONE'],
-          contentNonEmpty: true,
-          limit: paginationLimit(200),
-          spaceId: currentSpaceId,
-        })
+        const resp = unwrap(
+          await commands.queryByProperty(
+            {
+              key: 'due_date',
+              valueText: null,
+              valueDate: null,
+              operator: null,
+              cursor: null,
+              limit: paginationLimit(200),
+              excludeParentId: null,
+              contentNonEmpty: true,
+              blockType: null,
+              valueTextIn: null,
+              valueDateRange: ['0001-01-01', date],
+              excludeTodoStates: ['DONE'],
+            },
+            toSpaceScope(currentSpaceId),
+          ),
+        )
         if (stale) return
 
         // Defence-in-depth: the SQL push-down above already excludes
@@ -354,14 +374,25 @@ export function useDuePanelData({
         const endExclusiveDate = new Date(`${endStr}T00:00:00`)
         endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
         const endExclusive = formatDate(endExclusiveDate)
-        const resp = await queryByProperty({
-          key: 'due_date',
-          valueDateRange: [tomorrowStr, endExclusive],
-          excludeTodoStates: ['DONE'],
-          contentNonEmpty: true,
-          limit: paginationLimit(200),
-          spaceId: currentSpaceId,
-        })
+        const resp = unwrap(
+          await commands.queryByProperty(
+            {
+              key: 'due_date',
+              valueText: null,
+              valueDate: null,
+              operator: null,
+              cursor: null,
+              limit: paginationLimit(200),
+              excludeParentId: null,
+              contentNonEmpty: true,
+              blockType: null,
+              valueTextIn: null,
+              valueDateRange: [tomorrowStr, endExclusive],
+              excludeTodoStates: ['DONE'],
+            },
+            toSpaceScope(currentSpaceId),
+          ),
+        )
         if (stale) return
 
         const upcoming = resp.items.filter(
