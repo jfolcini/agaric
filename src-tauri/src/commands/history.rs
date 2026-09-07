@@ -3461,21 +3461,11 @@ mod tests {
 
     /// The grouping window the #4741 tests drive `find_undo_group_inner` with.
     ///
-    /// #4813: this was 10 ms, and the fixture asserted the sweep's own ops
-    /// landed within 10 ms of each other — a wall-clock claim about the HOST,
-    /// which stops holding under load and made the test flaky.
-    ///
-    /// The proximity matters, so it could not simply be dropped: `group == 1`
-    /// is only meaningful when the housekeeping rows are INSIDE the window and
-    /// are excluded on `origin`. If they fell outside it, the assertion would
-    /// pass on a window gap instead — true for the wrong reason.
-    ///
-    /// Widening the window fixes both halves. Real elapsed time between the
-    /// sweep and the user's delete is milliseconds even on a loaded runner, so
-    /// proximity is now guaranteed rather than hoped for; and a wider window
-    /// gives those rows MORE opportunity to extend the group, so the assertion
-    /// is strictly sharper than it was at 10 ms. The seeded ops sit at
-    /// `FIXED_TS` (2025-01-01), far outside any window this size.
+    /// Wide enough that the housekeeping rows are inside it on any runner, so
+    /// `group == 1` is the `origin` filter excluding them rather than a
+    /// window gap doing it — the assertion passing for the wrong reason
+    /// (#4813). The seeded ops sit at `FIXED_TS`, a year below any window
+    /// this size.
     const GROUP_WINDOW_MS_4741: i64 = 60_000;
 
     async fn test_pool() -> (SqlitePool, TempDir) {
@@ -5148,8 +5138,8 @@ mod tests {
     /// Page → one real block plus three leaked empties, all old enough to
     /// sweep. With `with_user_edit`, the real block also carries the user's
     /// history: `create_block` ("v1") at `FIXED_TS - 100_000` and
-    /// `edit_block` ("v1" → "v2") at `FIXED_TS` — 100 s apart, so a 10 ms
-    /// window groups the edit alone. Then the real sweep runs and appends
+    /// `edit_block` ("v1" → "v2") at `FIXED_TS` — 100 s apart, so a
+    /// `GROUP_WINDOW_MS_4741` window groups the edit alone. Then the real sweep runs and appends
     /// three `delete_block` ops stamped NOW (2026 wall clock, far above the
     /// 2025 `FIXED_TS`), so they are the newest ops on the page.
     async fn seed_swept_page_4741(
@@ -5505,8 +5495,8 @@ mod tests {
 
     /// Control, both arms: a USER-initiated delete appended after the sweep
     /// — through the real `delete_block_inner`, so its row is what
-    /// production writes (`origin = 'user'`) and lands within 10 ms of the
-    /// sweep's last op — is still the positional target of both the group
+    /// production writes (`origin = 'user'`) and lands inside
+    /// `GROUP_WINDOW_MS_4741` of the sweep's last op — is still the positional target of both the group
     /// and the single-op paths, and the group is exactly that one op (the
     /// sweep's rows below it do not extend it).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
