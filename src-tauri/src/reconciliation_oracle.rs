@@ -402,6 +402,9 @@ struct BaseBlock {
     /// The promoted `scheduled_date` property (migration 0013). Same shape and
     /// role as `due_date`, at a lower agenda precedence.
     scheduled_date: Option<String>,
+    /// The promoted TODO state. `Some("DONE")` takes a repeating block out of
+    /// the projected agenda entirely.
+    todo_state: Option<String>,
 }
 
 /// One `attachments` row, reduced to the columns the blob store depends on.
@@ -424,6 +427,7 @@ type BaseBlockRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
@@ -436,7 +440,7 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     // dynamic-sql: static SQL, test-only oracle base-table dump.
     let rows = sqlx::query_as::<_, BaseBlockRow>(
         "SELECT id, parent_id, page_id, block_type, content, deleted_at, space_id, due_date, \
-         scheduled_date FROM blocks",
+         scheduled_date, todo_state FROM blocks",
     )
     .fetch_all(pool)
     .await?;
@@ -453,6 +457,7 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
                 space_id,
                 due_date,
                 scheduled_date,
+                todo_state,
             )| BaseBlock {
                 id,
                 parent_id,
@@ -463,6 +468,7 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
                 space_id,
                 due_date,
                 scheduled_date,
+                todo_state,
             },
         )
         .collect())
@@ -2135,21 +2141,33 @@ struct BaseProperty {
     /// The typed date sidecar. NON-NULL is what promotes a property to an
     /// agenda source; the untyped `value` column is never consulted.
     value_date: Option<String>,
+    /// Carries the `repeat` rule and, via `repeat-until`, nothing else — the
+    /// projected agenda reads a rule only from here.
+    value_text: Option<String>,
+    /// Carries `repeat-count` / `repeat-seq`. REAL in the schema, whole numbers
+    /// in practice.
+    value_num: Option<f64>,
 }
 
 async fn dump_block_properties(pool: &SqlitePool) -> Result<Vec<BaseProperty>, AppError> {
-    const SQL: &str = "SELECT block_id, key, value_date FROM block_properties";
+    const SQL: &str =
+        "SELECT block_id, key, value_date, value_text, value_num FROM block_properties";
     // dynamic-sql: static SQL, test-only oracle base-table dump.
-    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(SQL)
-        .fetch_all(pool)
-        .await?;
+    let rows =
+        sqlx::query_as::<_, (String, String, Option<String>, Option<String>, Option<f64>)>(SQL)
+            .fetch_all(pool)
+            .await?;
     Ok(rows
         .into_iter()
-        .map(|(block_id, key, value_date)| BaseProperty {
-            block_id,
-            key,
-            value_date,
-        })
+        .map(
+            |(block_id, key, value_date, value_text, value_num)| BaseProperty {
+                block_id,
+                key,
+                value_date,
+                value_text,
+                value_num,
+            },
+        )
         .collect())
 }
 
@@ -2201,8 +2219,9 @@ fn date_tag_date(content: Option<&str>) -> Option<String> {
     {
         return None;
     }
-    // Offsets 6-9, 11-12 and 14-15 in the 1-indexed SUBSTR calls, minus the
-    // five-character prefix.
+    // The 1-indexed SUBSTR offsets 6-9, 11-12 and 14-15, re-expressed 0-indexed
+    // on `date`: minus the five-character prefix AND minus one for the indexing
+    // base.
     let digits_at = [0, 1, 2, 3, 5, 6, 8, 9];
     if !digits_at.iter().all(|&i| date[i].is_ascii_digit()) {
         return None;
@@ -2413,6 +2432,237 @@ pub async fn agenda_cache_reconciliation_failure(
 /// Panic with the first `agenda_cache` divergence unless it equals its rebuild.
 pub async fn assert_agenda_cache_reconciled(pool: &SqlitePool, context: &str) {
     if let Some(report) = agenda_cache_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 11 — `projected_agenda_cache`, the recurrence horizon (#3345)
+// ---------------------------------------------------------------------------
+
+/// One `projected_agenda_cache` row: `(block_id, projected_date, source)`, the
+/// table's whole primary key.
+type ProjectedRow = (String, String, String);
+
+async fn dump_projected_agenda_cache(
+    pool: &SqlitePool,
+) -> Result<BTreeSet<ProjectedRow>, AppError> {
+    const SQL: &str = "SELECT block_id, projected_date, source FROM projected_agenda_cache";
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let rows = sqlx::query_as::<_, ProjectedRow>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// `projected_agenda_cache` folded from base rows, for a PINNED `today`.
+///
+/// Transcribed from `rebuild_projected_agenda_cache_impl`'s source `SELECT` and
+/// `project_block_into` (`agaric-store/src/cache/projected_agenda.rs`).
+///
+/// # This artefact audits ONE layer, and it is not the arithmetic
+///
+/// Every other artefact folds base rows into expected rows with no help from
+/// the code it audits. This one cannot: the occurrence arithmetic lives in
+/// [`agaric_store::recurrence_math::project_block_dates`], and a second
+/// implementation of a recurrence expander would be a large new surface whose
+/// own bugs would read as production defects. So the fold CALLS it, and audits
+/// the layer around it — which blocks are eligible, and with which parameters:
+///
+///   * a row exists per LIVE block carrying a `repeat` property with a NON-NULL
+///     `value_text`. `project_block_into` additionally skips an EMPTY rule, and
+///     that guard is deliberately not mirrored: `project_block_dates`
+///     normalises and returns on an empty rule anyway, so mirroring it would add
+///     a branch no test could redden;
+///   * `todo_state = 'DONE'` removes the block entirely;
+///   * the block must carry at least one of `due_date` / `scheduled_date`;
+///   * the same template exclusion as `agenda_cache`: a block whose owning page
+///     carries a `template` property contributes nothing;
+///   * `remaining` is `count - seq` when both are present and `count > seq`,
+///     `count` when `seq` is absent, and `0` when `count <= seq` — the arm that
+///     silently stops a finished series;
+///   * the window is `range_start = today` with `NaiveDate::MAX` as the end
+///     sentinel, capped at `HORIZON_OCCURRENCES` occurrences PER SOURCE.
+///
+/// So a divergence here means the wrong blocks were projected, or the right
+/// ones with the wrong bounds — not that a `RRULE` was expanded incorrectly.
+/// `recurrence_math` has its own tests for that. Stating the boundary is the
+/// point: an oracle that quietly shares the code it audits is worse than no
+/// oracle, because it reports confidence it does not have.
+///
+/// # `today` is a parameter, and that is load-bearing
+///
+/// Production reads `chrono::Local::now()`. The expected contents of this table
+/// therefore change at local midnight, which makes this the one artefact that is
+/// not a pure function of the database. It takes `today` explicitly, and callers
+/// must pass the SAME date the rebuild used — otherwise a day rollover between
+/// the rebuild and the check reads as a divergence, which is a flake rather than
+/// a defect. That is also why it is deliberately NOT wired into the aggregate
+/// [`reconcile`] sweep, which has no date to pin.
+pub async fn rebuild_projected_agenda_from_base(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+) -> Result<BTreeSet<ProjectedRow>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let properties = dump_block_properties(pool).await?;
+    Ok(fold_projected_agenda_from_base(&blocks, &properties, today))
+}
+
+fn fold_projected_agenda_from_base(
+    blocks: &[BaseBlock],
+    properties: &[BaseProperty],
+    today: chrono::NaiveDate,
+) -> BTreeSet<ProjectedRow> {
+    let template_pages: BTreeSet<&str> = properties
+        .iter()
+        .filter(|p| p.key == "template")
+        .map(|p| p.block_id.as_str())
+        .collect();
+
+    // `block_properties` is keyed `(block_id, key)`, so at most one row each.
+    let prop = |block_id: &str, key: &str| -> Option<&BaseProperty> {
+        properties
+            .iter()
+            .find(|p| p.block_id == block_id && p.key == key)
+    };
+
+    let mut out = BTreeSet::new();
+    for block in blocks {
+        if block.deleted_at.is_some() || block.todo_state.as_deref() == Some("DONE") {
+            continue;
+        }
+        if block.due_date.is_none() && block.scheduled_date.is_none() {
+            continue;
+        }
+        if block
+            .page_id
+            .as_deref()
+            .is_some_and(|page| template_pages.contains(page))
+        {
+            continue;
+        }
+        // Only the SQL's `bp.value_text IS NOT NULL`. `project_block_into` also
+        // guards `!r.is_empty()`, but that guard is redundant and is NOT
+        // mirrored here: `project_block_dates` normalises the rule and returns
+        // on an empty one, so an empty rule emits nothing either way. A copy of
+        // it here would be a branch no test could redden.
+        let Some(rule) = prop(&block.id, "repeat").and_then(|p| p.value_text.as_deref()) else {
+            continue;
+        };
+
+        let repeat_until = prop(&block.id, "repeat-until")
+            .and_then(|p| p.value_date.as_deref())
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+        let repeat_count = prop(&block.id, "repeat-count").and_then(|p| p.value_num);
+        let repeat_seq = prop(&block.id, "repeat-seq").and_then(|p| p.value_num);
+
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "transcribes production's own cast; both are non-negative whole f64"
+        )]
+        let remaining = match (repeat_count, repeat_seq) {
+            (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
+            (Some(count), None) => Some(count as usize),
+            (Some(_), Some(_)) => Some(0usize),
+            _ => None,
+        };
+
+        agaric_store::recurrence_math::project_block_dates(
+            block.due_date.as_deref(),
+            block.scheduled_date.as_deref(),
+            rule,
+            repeat_until,
+            remaining,
+            today,
+            today,
+            chrono::NaiveDate::MAX,
+            Some(agaric_store::cache::HORIZON_OCCURRENCES),
+            |projected, source| {
+                out.insert((
+                    block.id.clone(),
+                    projected.format("%Y-%m-%d").to_string(),
+                    source.to_owned(),
+                ));
+            },
+        );
+    }
+    out
+}
+
+const PROJECTED_AGENDA_OWNER: &str = "rebuild_projected_agenda_cache(_split) (the \
+     RebuildProjectedAgendaCache task) — and, one level up, the arms of \
+     materializer::dispatch::invalidations_for_op that enqueue it: a missing row is a repeating \
+     task that never appears on its future date, and an extra one is a task shown on a day its \
+     rule does not name";
+
+/// `projected_agenda_cache` against a from-base rebuild, in both directions.
+///
+/// `today` must be the date the rebuild ran with — see
+/// [`rebuild_projected_agenda_from_base`].
+pub async fn reconcile_projected_agenda(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_projected_agenda_from_base(pool, today).await?;
+    let stored = dump_projected_agenda_cache(pool).await?;
+
+    let mut out = Vec::new();
+    for row in expected.difference(&stored) {
+        let (block_id, date, source) = row;
+        out.push(Divergence {
+            artefact: "projected_agenda_cache.row",
+            key: format!("{block_id} / {date} / {source}"),
+            expected: "a row — the rule projects this occurrence inside the horizon".to_owned(),
+            actual: "no row in projected_agenda_cache".to_owned(),
+            owner: PROJECTED_AGENDA_OWNER,
+        });
+    }
+    for row in stored.difference(&expected) {
+        let (block_id, date, source) = row;
+        out.push(Divergence {
+            artefact: "projected_agenda_cache.row",
+            key: format!("{block_id} / {date} / {source}"),
+            expected: "no row (the block is deleted, DONE, under a template page, has no repeat \
+                       rule, or the occurrence falls outside the horizon)"
+                .to_owned(),
+            actual: "a row in projected_agenda_cache".to_owned(),
+            owner: PROJECTED_AGENDA_OWNER,
+        });
+    }
+    Ok(out)
+}
+
+/// The formatted first `projected_agenda_cache` divergence, or `None`.
+pub async fn projected_agenda_reconciliation_failure(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+    context: &str,
+) -> Option<String> {
+    let divergences = match reconcile_projected_agenda(pool, today).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "projected_agenda_cache oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "PROJECTED_AGENDA_CACHE RECONCILIATION FAILED at [{context}]\n  \
+         projected_agenda_cache disagrees with a from-base rebuild in {} place(s); first:\n    \
+         {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `projected_agenda_cache` divergence unless it reconciles.
+pub async fn assert_projected_agenda_reconciled(
+    pool: &SqlitePool,
+    today: chrono::NaiveDate,
+    context: &str,
+) {
+    if let Some(report) = projected_agenda_reconciliation_failure(pool, today, context).await {
         panic!("{report}");
     }
 }

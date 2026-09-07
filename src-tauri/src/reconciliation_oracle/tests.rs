@@ -3868,3 +3868,224 @@ async fn agenda_cache_reconciles_and_reports_a_stale_row_3345() {
         "expected a missing-row divergence naming the block, got:\n{missing}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Artefact 11 — `projected_agenda_cache` (#3345)
+// ---------------------------------------------------------------------------
+
+const PA_PAGE: &str = "01PAPAGE334500000000000000";
+const PA_TPAGE: &str = "01PATPAGE33450000000000000";
+const PA_DAILY: &str = "01PADAILY33450000000000000";
+const PA_DONE: &str = "01PADONE334500000000000000";
+const PA_DEAD: &str = "01PADEAD334500000000000000";
+const PA_TCHILD: &str = "01PATCHD334500000000000000";
+const PA_NORULE: &str = "01PANORXLE3345000000000000";
+const PA_EMPTY: &str = "01PAEMPTY33450000000000000";
+const PA_NODATE: &str = "01PANODATE3345000000000000";
+const PA_FINISHED: &str = "01PAFNSHED3345000000000000";
+const PA_LIMITED: &str = "01PAXLMTED3345000000000000";
+const PA_BOTH: &str = "01PABOTH334500000000000000";
+
+/// The pinned reference date. Production reads `Local::now()`; every assertion
+/// here passes this same date to both the rebuild and the oracle, which is the
+/// whole reason both take it.
+fn pa_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date")
+}
+
+async fn pa_text_property(pool: &sqlx::SqlitePool, block_id: &str, key: &str, value: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .expect("seed text property");
+}
+
+async fn pa_num_property(pool: &sqlx::SqlitePool, block_id: &str, key: &str, value: f64) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .expect("seed num property");
+}
+
+/// Every eligibility rule the projected-agenda source `SELECT` and
+/// `project_block_into` apply, each armed by a case that must fail it.
+async fn pa_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("projected.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, PA_PAGE, None).await;
+    bl_insert_page(&pool, PA_TPAGE, None).await;
+    pa_num_property(&pool, PA_TPAGE, "template", 1.0).await;
+
+    // The happy path: one source, a daily rule.
+    bl_insert_content(&pool, PA_DAILY, PA_PAGE, None, "daily").await;
+    ag_set_columns(&pool, PA_DAILY, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_DAILY, "repeat", "+1d").await;
+
+    // BOTH sources — the horizon cap is per source, not per block.
+    bl_insert_content(&pool, PA_BOTH, PA_PAGE, None, "both").await;
+    ag_set_columns(&pool, PA_BOTH, Some("2026-01-01"), Some("2026-01-01")).await;
+    pa_text_property(&pool, PA_BOTH, "repeat", "+1d").await;
+
+    // `repeat-count` bounds the series.
+    bl_insert_content(&pool, PA_LIMITED, PA_PAGE, None, "limited").await;
+    ag_set_columns(&pool, PA_LIMITED, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_LIMITED, "repeat", "+1d").await;
+    pa_num_property(&pool, PA_LIMITED, "repeat-count", 3.0).await;
+
+    // count <= seq → `remaining = 0` → a finished series emits nothing.
+    bl_insert_content(&pool, PA_FINISHED, PA_PAGE, None, "finished").await;
+    ag_set_columns(&pool, PA_FINISHED, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_FINISHED, "repeat", "+1d").await;
+    pa_num_property(&pool, PA_FINISHED, "repeat-count", 3.0).await;
+    pa_num_property(&pool, PA_FINISHED, "repeat-seq", 5.0).await;
+
+    // `todo_state = 'DONE'` removes the block.
+    bl_insert_content(&pool, PA_DONE, PA_PAGE, None, "done").await;
+    ag_set_columns(&pool, PA_DONE, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_DONE, "repeat", "+1d").await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(PA_DONE)
+        .execute(&pool)
+        .await
+        .expect("mark DONE");
+
+    // Deleted → nothing.
+    bl_insert_content(&pool, PA_DEAD, PA_PAGE, None, "dead").await;
+    ag_set_columns(&pool, PA_DEAD, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_DEAD, "repeat", "+1d").await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(PA_DEAD)
+        .execute(&pool)
+        .await
+        .expect("tombstone");
+
+    // Owning page is a template → nothing.
+    bl_insert_content(&pool, PA_TCHILD, PA_TPAGE, None, "tchild").await;
+    ag_set_columns(&pool, PA_TCHILD, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_TCHILD, "repeat", "+1d").await;
+
+    // No `repeat` row at all → nothing (the JOIN drops it).
+    bl_insert_content(&pool, PA_NORULE, PA_PAGE, None, "norule").await;
+    ag_set_columns(&pool, PA_NORULE, Some("2026-01-01"), None).await;
+
+    // An EMPTY rule. `value_text IS NOT NULL` ADMITS this row — the SQL cannot
+    // reject it — so something downstream must drop it, and both sides rely on
+    // the SAME thing: `project_block_dates` normalises the rule and returns on
+    // an empty one (`recurrence_math.rs:495`). Kept as a contract pin, NOT as
+    // proof of an independent gate; falsification showed a fold-side
+    // `!is_empty()` check is dead code.
+    bl_insert_content(&pool, PA_EMPTY, PA_PAGE, None, "empty").await;
+    ag_set_columns(&pool, PA_EMPTY, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, PA_EMPTY, "repeat", "").await;
+
+    // A rule but no date to anchor it → nothing.
+    bl_insert_content(&pool, PA_NODATE, PA_PAGE, None, "nodate").await;
+    pa_text_property(&pool, PA_NODATE, "repeat", "+1d").await;
+
+    (pool, dir)
+}
+
+fn pa_count(rows: &BTreeSet<(String, String, String)>, block: &str) -> usize {
+    rows.iter().filter(|(b, _, _)| b == block).count()
+}
+
+/// **The acceptance criterion.** `projected_agenda_cache` reconciles against a
+/// from-base fold, and every eligibility rule is armed.
+#[tokio::test]
+async fn projected_agenda_reconciles_and_reports_a_dropped_occurrence_3345() {
+    let (pool, _dir) = pa_fixture().await;
+    let today = pa_today();
+    let horizon = agaric_store::cache::HORIZON_OCCURRENCES;
+
+    let expected = rebuild_projected_agenda_from_base(&pool, today)
+        .await
+        .expect("from-base rebuild");
+
+    // NON-VACUITY by VALUE, and by the exact set of blocks that contribute.
+    let mut blocks: Vec<&str> = expected.iter().map(|(b, _, _)| b.as_str()).collect();
+    blocks.sort_unstable();
+    blocks.dedup();
+    assert_eq!(
+        blocks,
+        vec![PA_BOTH, PA_DAILY, PA_LIMITED],
+        "DONE, deleted, template-owned, rule-less, EMPTY-rule and date-less blocks \
+         must all contribute nothing; got {blocks:?}"
+    );
+    assert_eq!(
+        pa_count(&expected, PA_DAILY),
+        horizon,
+        "one source, capped at HORIZON_OCCURRENCES"
+    );
+    assert_eq!(
+        pa_count(&expected, PA_BOTH),
+        horizon * 2,
+        "the cap is per SOURCE, so due_date and scheduled_date each get a full horizon"
+    );
+    assert_eq!(
+        pa_count(&expected, PA_LIMITED),
+        3,
+        "repeat-count bounds the series well inside the horizon"
+    );
+    assert_eq!(
+        pa_count(&expected, PA_EMPTY),
+        0,
+        "an EMPTY repeat rule passes `value_text IS NOT NULL`; project_block_dates \
+         normalises it away on both sides"
+    );
+
+    // Production's own writer settles it, with the SAME pinned date.
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, today)
+        .await
+        .expect("rebuild_projected_agenda_cache_with_today");
+    assert_projected_agenda_reconciled(&pool, today, "after production's own rebuild").await;
+
+    // Direction 1 — an occurrence production should have written and did not.
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("DELETE FROM projected_agenda_cache WHERE block_id = ? AND projected_date = ?")
+        .bind(PA_LIMITED)
+        .bind("2026-01-02")
+        .execute(&pool)
+        .await
+        .expect("drop an occurrence");
+    let missing = projected_agenda_reconciliation_failure(&pool, today, "occurrence dropped")
+        .await
+        .expect("oracle must report the dropped occurrence");
+    assert!(
+        missing.contains("projected_agenda_cache.row") && missing.contains(PA_LIMITED),
+        "expected a missing-row divergence naming the block, got:\n{missing}"
+    );
+
+    // Direction 2 — a row the base rows do not justify.
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, today)
+        .await
+        .expect("rebuild");
+    // dynamic-sql: test-only fault injection.
+    sqlx::query(
+        "INSERT INTO projected_agenda_cache (block_id, projected_date, source) \
+         VALUES (?, '2026-02-01', 'due_date')",
+    )
+    .bind(PA_DONE)
+    .execute(&pool)
+    .await
+    .expect("insert a ghost row");
+    let extra = projected_agenda_reconciliation_failure(&pool, today, "ghost row")
+        .await
+        .expect("oracle must report the ghost row");
+    assert!(
+        extra.contains("projected_agenda_cache.row") && extra.contains(PA_DONE),
+        "expected an extra-row divergence naming the DONE block, got:\n{extra}"
+    );
+}
