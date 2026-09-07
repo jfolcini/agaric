@@ -27,6 +27,7 @@ import type { StoreApi } from 'zustand'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { withOps } from '@/__tests__/helpers/rows'
 import { HostRowAriaContext } from '@/components/editor/embed/host-row-aria'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { PREFERENCES, effectiveKey } from '@/lib/preferences'
@@ -116,8 +117,7 @@ function installBackend(): void {
         const b = graph.get(args['blockId'] as string)
         if (!b) throw new Error('block not found')
         b.content = args['toText'] as string
-        // `WithOps<T>` names the field `op_refs`; `ops` was invented here (#4668).
-        return { ...toRow(b), op_refs: [] }
+        return withOps(toRow(b))
       },
     }),
   )

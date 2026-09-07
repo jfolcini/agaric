@@ -19,6 +19,21 @@
  * count, because that seam is typed against the generated command return types
  * and fails `npm run typecheck` on drift.
  *
+ * ## The metric reads prose, so the population is fenced twice
+ *
+ * The match is textual: any file that SPELLS the stub expression counts, even
+ * in a comment or an error message. `src/__tests__/helpers/invoke.ts` and
+ * `src/test-setup.ts` both do, and neither stubs anything — counting every
+ * `.ts` made them permanent members no migration could remove. Restricting the
+ * walk to `*.test.ts(x)` drops them by a positive rule about the population the
+ * metric is actually over.
+ *
+ * That leaves this file. Its subject IS `vi.mocked(invoke).mockResolvedValue(…)`,
+ * so the sentence you are reading counts itself, and the exclusion below is
+ * live: delete it and the number goes 85 -> 86 with nothing migrated. Whether
+ * it fires depends on how this comment happens to be worded, which is why the
+ * exclusion is explicit rather than left to phrasing.
+ *
  * ## Why an equality rather than a ceiling
  *
  * `<=` lets a stale baseline hide a win: migrate a file, the count drops, the
@@ -46,16 +61,19 @@ import { describe, expect, it } from 'vitest'
  * Lower this when you migrate one to `mockInvokeCommands`; the test fails if it
  * does not match, in either direction.
  */
-const HAND_STUB_FILE_BASELINE = 87
+const HAND_STUB_FILE_BASELINE = 85
 
-const STUB_CALL = /\.mock(?:Resolved|Rejected)Value(?:Once)?\s*\(/
+// Anchored at the alias: only a stub call that immediately follows it counts,
+// so a `.mockResolvedValue(` on a different mock nearby cannot be attributed
+// to invoke.
+const STUB_CALL = /^\s*\.mock(?:Resolved|Rejected)Value(?:Once)?\s*\(/
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) {
       if (entry !== 'node_modules') walk(full, out)
-    } else if (/\.tsx?$/.test(entry)) {
+    } else if (/\.test\.tsx?$/.test(entry)) {
       out.push(full)
     }
   }
@@ -72,7 +90,7 @@ function handStubsInvoke(source: string): boolean {
   for (const alias of aliases) {
     let from = source.indexOf(alias)
     while (from !== -1) {
-      if (STUB_CALL.test(source.slice(from + alias.length, from + alias.length + 80))) return true
+      if (STUB_CALL.test(source.slice(from + alias.length))) return true
       from = source.indexOf(alias, from + 1)
     }
   }
@@ -81,9 +99,6 @@ function handStubsInvoke(source: string): boolean {
 
 describe('#4668 hand-stubbed invoke ratchet', () => {
   it('the number of files handing invoke a literal only goes down', () => {
-    // This file names the patterns in its own prose, so it would otherwise
-    // count itself — the same self-match that makes a `pgrep -f` waiter never
-    // exit.
     const files = walk('src')
       .filter((f) => !f.endsWith('hand-stub-ratchet.test.ts'))
       .filter((f) => handStubsInvoke(readFileSync(f, 'utf8')))

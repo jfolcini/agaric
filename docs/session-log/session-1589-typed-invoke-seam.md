@@ -43,7 +43,7 @@ place instead of silently in every stub that omitted it.
 
 ## The ratchet
 
-`hand-stub-ratchet.test.ts` counts **87** files that hand the invoke mock a
+`hand-stub-ratchet.test.ts` counts **85** test files that hand the invoke mock a
 literal. Equality, not `<=`, for the same reason as #4667's — a stale baseline
 would hide a migration and let the count drift back up.
 
@@ -83,6 +83,24 @@ passed both silently.
 
 ## Not done here
 
-`mockInvokeCommands` is typed; the 149 remaining hand-stub files are not
+`mockInvokeCommands` is typed; the 85 remaining hand-stub files are not
 migrated. That is #4668's step 2 ("migrate by directory"), and the ratchet is
 what makes it visible.
+
+## Second review round: the metric reads prose
+
+The reviewer's second pass found the match unanchored against an 80-character
+window, so a `.mockResolvedValue(` on an unrelated mock could be attributed to
+invoke, and called the file's self-exclusion dead. Anchoring it at the alias
+(`/^\s*\.mock(?:Resolved|Rejected)Value(?:Once)?\s*\(/` against everything
+after the alias) removes the window and the magic 80, and changed no count.
+
+The self-exclusion was a different story. Deleting it and writing one sentence
+explaining the deletion put the number back up 85 -> 86, because the sentence
+spells the expression the metric greps for. The match is textual, so prose
+counts: `src/__tests__/helpers/invoke.ts` (an error message) and
+`src/test-setup.ts` (a comment) were both members no migration could ever
+remove. Restricting the walk to `*.test.ts(x)` drops those two by a positive
+rule about the population, taking the baseline 87 -> 85; the self-exclusion
+stays for this file, and is now load-bearing rather than dead — removing it
+reddens at 86.

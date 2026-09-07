@@ -109,7 +109,6 @@ export function pageRowInvokeFallback(command: string): Promise<unknown> {
   return strictInvokeFallback(command)
 }
 
-/** Handler for one command: receives the command's argument object. */
 /**
  * #4668 — the command → raw-invoke-return map, derived from the GENERATED
  * bindings so it cannot drift from the Rust surface.
@@ -163,6 +162,7 @@ export type TypedInvokeHandlers = {
   [K in keyof CommandReturns]?: TypedInvokeHandler<K>
 }
 
+/** Handler for one command: receives the command's argument object. */
 export type InvokeHandler = (args: Record<string, unknown>) => unknown
 
 /**
