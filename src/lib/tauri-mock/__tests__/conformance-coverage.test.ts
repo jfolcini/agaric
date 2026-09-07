@@ -563,6 +563,83 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'rather than computing one (handlers/search.ts), so a step needs that implemented ' +
     'first (#3927)',
 }
+
+/**
+ * #4667 — the PERMANENT half of the two allowlists above.
+ *
+ * A waiver here is principled: the command carries no domain state a snapshot
+ * could compare, so no fixture will ever pin it and its entry is not debt.
+ *
+ * The test is each command's OWN reason string, not the section it sits under.
+ * "no durable/persistent state" is permanent; "outside the conformance snapshot
+ * scope" is NOT — that says the snapshot is too narrow, which is a thing a
+ * widened snapshot fixes. Classifying by section header put five `app_settings`
+ * / `peer_refs` writers here on the first pass, next to a `list_peer_refs`
+ * counted as debt for a byte-identical reason.
+ *
+ * Everything else in those allowlists is the OTHER half — a command that could
+ * be pinned and is not yet. That half is a ratchet (see
+ * `NOT_YET_PINNED_*_BASELINE` below): the guard that already existed fails on a
+ * stale or now-covered entry, but nothing distinguished "cannot be pinned" from
+ * "nobody has pinned it", so 76% of the surface read as a settled decision
+ * rather than as debt with a number on it.
+ */
+const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
+  // Transport sessions only — these hold no durable row anywhere.
+  'start_sync',
+  'cancel_sync',
+  'start_pairing',
+  'confirm_pairing',
+  // Observability / runtime toggles — no persistent domain state.
+  'log_frontend',
+  'ingest_otel_spans',
+  'set_trace_sampling',
+  'notify_task',
+  'mcp_set_enabled',
+  'mcp_rw_set_enabled',
+  'mcp_disconnect_all',
+  'mcp_rw_disconnect_all',
+])
+
+const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
+  // Process / environment / telemetry status — no domain state.
+  'collect_bug_report_metadata',
+  'read_logs_for_report',
+  'get_device_id',
+  'get_status',
+  'get_recovery_status',
+  'get_mdns_status',
+  'get_bind_exposure_status',
+  'get_os_network_block_status',
+  'is_flatpak',
+  'get_mcp_status',
+  'get_mcp_rw_status',
+  'get_mcp_socket_path',
+  'get_mcp_rw_socket_path',
+  'get_mcp_recent_activity',
+])
+
+/**
+ * The shrink-only ratchet (#4667), mirroring `tauri-import-baseline`: these are
+ * the waived commands that COULD be pinned and are not yet.
+ *
+ * The assertion below is an EQUALITY, not a ceiling, so it bites in both
+ * directions — pinning a command fails the test until the number comes down
+ * (a stale baseline would otherwise hide the win), and waiving a new one fails
+ * it until the number goes up in a diff a reviewer can see. That is the whole
+ * mechanism: the count is not documentation, it is the friction.
+ */
+const NOT_YET_PINNED_MUTATING_BASELINE = 41
+const NOT_YET_PINNED_READ_BASELINE = 27
+
+function notYetPinned(
+  allowlist: Readonly<Record<string, string>>,
+  principled: ReadonlySet<string>,
+): string[] {
+  return Object.keys(allowlist)
+    .filter((cmd) => !principled.has(cmd))
+    .toSorted()
+}
 // NOTE for whoever lifts the remaining agenda-date waiver above (and for
 // `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
 // `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
@@ -2519,6 +2596,40 @@ describe('#3083 conformance-coverage ratchet', () => {
         `NO_FIXTURE_ALLOWLIST in this file with a reason. If the command is ` +
         `read-only, give it a query-verb prefix or add it to READ_ONLY_EXACT.`,
     ).toEqual([])
+  })
+
+  // ── #4667: the not-yet-pinned ratchet ──────────────────────────────────
+  //
+  // The honesty tests below already fail on a stale or now-covered waiver.
+  // What they could not say is WHICH waivers are debt: a principled one (no
+  // domain state, no fixture will ever pin it) and an unwritten one read
+  // identically. These two split them and put a number on the second half.
+
+  it('#4667 every waived command is either principled or counted as debt', () => {
+    // A principled entry must actually BE waived — otherwise it is a stale
+    // name that silently shrinks the debt count without pinning anything.
+    const orphanMutating = [...NO_DOMAIN_STATE_MUTATING].filter((c) => !(c in NO_FIXTURE_ALLOWLIST))
+    const orphanRead = [...NO_DOMAIN_STATE_READ].filter((c) => !(c in READ_NO_QUERY_ALLOWLIST))
+    expect({ orphanMutating, orphanRead }).toEqual({ orphanMutating: [], orphanRead: [] })
+  })
+
+  it('#4667 not-yet-pinned counts match the baseline exactly (shrink-only)', () => {
+    const mutating = notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING)
+    const read = notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ)
+
+    // EQUALITY, not `<=`. Pinning one of these must fail here until the
+    // baseline comes down, or a stale number hides the win and lets the count
+    // drift back up unnoticed — the failure mode `tauri-import-baseline`
+    // exists to prevent.
+    expect(
+      { mutating: mutating.length, read: read.length },
+      `not-yet-pinned changed. FIX: pin one and LOWER the baseline, or justify a ` +
+        `new waiver and raise it.\nmutating (${mutating.length}): ` +
+        `${JSON.stringify(mutating)}\nread (${read.length}): ${JSON.stringify(read)}`,
+    ).toEqual({
+      mutating: NOT_YET_PINNED_MUTATING_BASELINE,
+      read: NOT_YET_PINNED_READ_BASELINE,
+    })
   })
 
   it('allowlist stays honest (no stale, read-only, or now-covered entries)', () => {
