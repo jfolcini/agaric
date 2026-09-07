@@ -1314,9 +1314,10 @@ jobs:
     # sharded away. The merge job it declined to keep is the same shape
     # cargo-coverage adopted in that commit.
     #
-    # 25 min is provisional — half of an 18-min suite plus npm ci, with
-    # headroom, pending real per-shard samples. Trim it once we have them.
-    timeout-minutes: 25
+    # Measured on the first sharded CI run: 7m15s per cell including checkout
+    # and npm ci, against 18m09s for the single-job suite. 20 min is ~2.7x that
+    # — the cap this lane had before, now with real headroom under it.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1370,6 +1371,10 @@ jobs:
         with:
           name: vitest-blob-${{ matrix.shard }}
           path: .vitest-reports/
+          # `.vitest-reports` is a DOT-directory and upload-artifact skips
+          # hidden files by default, so without this the upload finds nothing
+          # and `if-no-files-found: error` reds a shard whose tests all passed.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
@@ -1392,9 +1397,10 @@ jobs:
     # would otherwise let this job run and then fail downloading blobs that
     # were never produced.
     if: ${{ (success() || failure()) && needs.vitest.result != 'cancelled' }}
-    # Provisional, like the shard cap above: npm ci + a report replay (no test
-    # execution) + the ~1-2 min production build. Trim once measured.
-    timeout-minutes: 25
+    # npm ci + a report replay (no test execution) + the ~1-2 min production
+    # build. Provisional until this job has run once; the shards next door are
+    # measured at 7m15s.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

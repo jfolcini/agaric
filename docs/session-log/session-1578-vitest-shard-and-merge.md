@@ -64,12 +64,21 @@ Hence the thresholds are set to 0 on the shards and enforced once, downstream.
 That reinstates a `=0` override #749 removed, so the reason is written at the
 step: a shard failing on arithmetic is not a coverage regression.
 
-## Provisional
+## Measured on the first sharded CI run
 
-Both caps are 25 minutes, and the comments say so. Half an 18-minute suite plus
-`npm ci` should land far below that, but there are no per-shard samples yet —
-`cargo-tests` carries the same "generous budget until we have instrumented
-per-shard samples" note. Trim once the first runs land.
+**7m15s per shard**, including checkout and `npm ci`, against 18m09s for the
+single-job suite. Both caps are set to 20 minutes off that number rather than a
+guess — the cap this lane already had, now with ~2.7x headroom under it instead
+of 10%.
+
+That first run also found something no local test could: `.vitest-reports` is a
+dot-directory, and `actions/upload-artifact` skips hidden files unless
+`include-hidden-files: true` is set. The shard's tests all passed, the blob was
+written, and the job went red on `if-no-files-found: error` finding nothing.
+Locally the directory is right there; only the artifact upload treats it as
+hidden. This is the class of defect that only the real lane can surface, which
+is the argument for landing the workflow change and reading its own run rather
+than reasoning about it.
 
 The suite's growth itself is untouched; #4818 tracks that.
 
