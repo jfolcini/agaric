@@ -52,6 +52,15 @@ export const references: Record<string, string> = {
   'embed.showAllInSource_other': '{{count}} more blocks \u2014 show all in source',
   'embed.pickerItem': 'Insert embed\u2026',
   'embed.pickerHeader': 'Embed a block or page',
+  // Phase 2 \u2014 edit in place, behind a per-embed unlock that is never
+  // persisted. The hint is permanent rather than a toast fired on a blocked
+  // chord: the restriction is a property of the region, so it belongs beside
+  // the state that created it.
+  'embed.unlock': 'Edit this embed in place',
+  'embed.lock': 'Stop editing this embed',
+  'embed.editingPrefix': 'Editing {{page}}',
+  'embed.editHint': 'Text edits only \u2014 open the source to restructure',
+  'embed.unlockedAnnouncement': 'Editing {{page}} in place. Text edits only.',
   'unlinkedRefs.headerNone': 'No Unlinked References',
   'unlinkedRefs.headerOne': '1 Unlinked Reference',
   'unlinkedRefs.header': '{{count}} Unlinked References',

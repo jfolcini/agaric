@@ -1,16 +1,45 @@
 /**
- * `EmbedContainer` — the block-level `{{embed …}}` render (#4550, phase 1).
+ * `EmbedContainer` — the block-level `{{embed …}}` render (#4550).
  *
- * Read-only, by design rather than by timidity. `AGENTS.md` invariant #4 is
- * one roving TipTap instance per mounted `BlockTree`, and focus is GLOBAL
- * (`useBlockStore` holds `focusedBlockId` app-wide). `storeOwnsBlock` /
- * `addOwnedBlockListener` keep N trees from racing conflicting IPCs on one
- * chord — but those gates were designed and tested for SIBLING trees. An
- * embed makes them NESTED: focus would sit in a store mounted inside the
- * store that owns the host page, and every document-level chord would fire
- * against the embedded page's store from the host page's keyboard context.
- * That is provable, but it must be proven, and it is not what stands between
- * users and this feature's value. Edit-in-place is phase 2.
+ * **Read-only until the user unlocks this one embed** (phase 2). The default
+ * is not timidity, it is `AGENTS.md` invariant #4: one roving TipTap instance
+ * per mounted `BlockTree`, with GLOBAL focus (`useBlockStore` holds
+ * `focusedBlockId` app-wide). `storeOwnsBlock` / `addOwnedBlockListener` keep
+ * N trees from racing conflicting IPCs on one chord, but those gates were
+ * designed for SIBLING trees; an embed makes them NESTED, with focus sitting
+ * in a store mounted inside the store that owns the host page.
+ *
+ * What unlocking does, and what it deliberately does not:
+ *
+ *  - The embed mounts NO editor. The focused row renders the HOST tree's
+ *    editable row (`EmbedRowEditorContext`), so the one roving instance roves
+ *    into the embed. There is never a second `<EditorContent>`.
+ *  - That row sits inside the SOURCE page's `PageBlockStoreProvider` below,
+ *    so its debounced commit, blur flush and draft autosave all write to the
+ *    page that owns the block — not the host page.
+ *  - STRUCTURAL chords stay off. Every one of them is bound to the host
+ *    tree's store, which does not hold an embedded block, so `BlockTree` hands
+ *    `useBlockKeyboard` a null editor and `useBlockFlush` refuses the flush.
+ *    Restructuring someone else's outline from a page that is not theirs is
+ *    invisible where it lands; the header says so while unlocked.
+ *  - The unlock is component state: session-scoped, never persisted, per
+ *    embed. Relocking, or focus leaving the embed, returns it to read-only.
+ *  - Unlocking MOVES the focus to the embed's first editable row, which is
+ *    what makes the feature keyboard-operable at all: embedded rows carry no
+ *    tab stop, and phase 1 deliberately kept arrow-key outline navigation from
+ *    descending into an embed, so the toggle is the only way in. **Escape** is
+ *    the way out: it relocks and returns focus to the container, this region's
+ *    one tab stop, so Tab moves on from there. It SAVES — relocking clears the
+ *    focus, and `useEditorBlur` persists on the way out — which is the opposite
+ *    of what Escape does in a host row, where it discards and toasts. That is
+ *    deliberate: an edit here lands on another page, and silently dropping it
+ *    on a keypress the user reached for as "get me out" would be worse than
+ *    keeping it. It bails while a suggestion picker is open so the pickers keep
+ *    their own Escape. Escape has to be handled in the
+ *    CAPTURE phase, because the roving editor holds the INERT callback set
+ *    while it sits on an embedded row and `useBlockKeyboard` would otherwise
+ *    `preventDefault()` + `stopPropagation()` it along with Tab and the
+ *    arrows — which is what would make an unlocked embed a keyboard trap.
  *
  * The container renders in every degraded state — never nothing. The host
  * block's content still holds the token, so a silent disappearance leaves an
@@ -29,11 +58,33 @@
  * with Enter = open source and Space = toggle collapse.
  */
 
-import { ChevronDown, ChevronRight, ExternalLink, RotateCcw, Repeat } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Lock,
+  LockOpen,
+  RotateCcw,
+  Repeat,
+} from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  getActiveEmbed,
+  releaseActiveEmbed,
+  setActiveEmbed,
+  subscribeActiveEmbed,
+} from '@/components/editor/embed/active-embed'
 import {
   EmbedChainContext,
   extendEmbedChain,
@@ -44,13 +95,20 @@ import {
   type EmbedRenderer,
   type EmbedRenderProps,
 } from '@/components/editor/embed/embed-renderer'
+import { useEmbedRowEditor } from '@/components/editor/embed/embed-row-editor-context'
 import { embedAncestors, selectEmbeddedRows } from '@/components/editor/embed/embed-rows'
 import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { useEmbedTarget } from '@/components/editor/embed/use-embed-target'
+import { isSuggestionPopupVisible } from '@/editor/use-block-keyboard'
+import {
+  blockIsRenderedByAMountedTree,
+  subscribeBlockCommandTargets,
+} from '@/lib/block-command-bus'
 import { normalizeBlockRefTitle } from '@/lib/block-title'
-import { EMBED_MOUNT_LIMIT, MAX_EMBED_DEPTH } from '@/lib/embed-token'
+import { EMBED_MOUNT_LIMIT, MAX_EMBED_DEPTH, parseEmbedToken } from '@/lib/embed-token'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import {
   PageBlockStoreProvider,
@@ -309,6 +367,14 @@ function EmbedBody({
 }: EmbedBodyProps): React.ReactElement {
   const { t } = useTranslation()
   const store = usePageBlockStoreApi()
+  // #4550 phase 2 — the per-embed unlock. Component state, deliberately:
+  // session-scoped and never persisted, so a reload, a re-mount, or a second
+  // view of the same source page all start locked. Two embeds of one block
+  // unlock independently because each holds its own.
+  const [unlockRequested, setUnlocked] = useState(false)
+  // Identity for the one-editable-embed slot. Two embeds of the same block are
+  // indistinguishable by target, page or focus — see `active-embed.ts`.
+  const embedInstanceId = useId()
   const blocks = usePageBlockStore((s) => s.blocks)
   const blocksById = usePageBlockStore((s) => s.blocksById)
   const loading = usePageBlockStore((s) => s.loading)
@@ -364,18 +430,145 @@ function EmbedBody({
     [sourcePageTitle, ancestors, t],
   )
 
+  // #4550 phase 2 — "blurring returns to read-only". The signal is the GLOBAL
+  // focused block, not DOM focusout: swapping a row between its read-only div
+  // and the editable one detaches the old node mid-click, and a focusout with
+  // a null `relatedTarget` there would relock the embed the user just entered.
+  // The `wasInside` latch is what makes this a blur rather than a "focus is
+  // elsewhere" test: `setUnlocked` and the focus move below are two different
+  // stores, so an effect run that lands between them would see "unlocked with
+  // focus outside" and relock the embed on the tick it was opened.
+  // A block a mounted `BlockTree` already renders must not become editable
+  // here: `isFocused` is `focusedBlockId === block.id` in every tree at once,
+  // so focusing it would mount an `EditableBlock` in that tree AND the host
+  // tree's editable row inside this embed — two `EditorSurface`s and two
+  // `id="editor-<id>"` nodes for one roving instance, the invariant-4
+  // violation this design exists to avoid. Reachable both ways the `/embed`
+  // picker allows: an embed of a block on the page it sits on, and a journal
+  // week where one mounted day embeds another mounted day's block.
+  // Where unlocking puts the caret. A row that is itself an embed renders a
+  // nested container instead of an editable row, so focusing it would unlock
+  // into nothing; skip to the first row that can actually host the editor.
+  const firstEditableRowId = useMemo(
+    () => rows.find((r) => parseEmbedToken(r.content) == null)?.id ?? null,
+    [rows],
+  )
+  // Keyed on a ROW, not on `targetId`. Every row in an embed comes from the one
+  // source-page store, so either answers for a block target — but a PAGE target
+  // is never in any store's `blocksById` at all: `buildFlatTree` starts at the
+  // page's children, which `selectEmbeddedRows` states itself ("The page block
+  // itself is not a row in its own flat tree"). Asking about the page id made
+  // this a no-op for exactly the case where the embed's rows ARE another
+  // mounted tree's own rows: `/embed` page P from page P, or Monday's page
+  // embedding Tuesday's in the journal week.
+  const renderedByAMountedTree = useSyncExternalStore(
+    subscribeBlockCommandTargets,
+    () => firstEditableRowId != null && blockIsRenderedByAMountedTree(firstEditableRowId),
+  )
+  // DERIVED, not relocked from an effect. The hazard is two `EditableBlock`s
+  // for one id in a SINGLE commit, and only a value computed during render is
+  // right in the commit that creates it — an effect relocks one render too
+  // late. It also answers the focus question by itself: the tree that now owns
+  // the block renders the editor for it, so there is nothing stranded to clean
+  // up, and a tree unmounting hands the embed back.
+  const isActiveEmbed = useSyncExternalStore(
+    subscribeActiveEmbed,
+    () => getActiveEmbed() === embedInstanceId,
+  )
+  const unlocked = unlockRequested && !renderedByAMountedTree && isActiveEmbed
+  const rowIds = useMemo(() => new Set(rows.map((r) => r.id)), [rows])
+  const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
+  const setFocused = useBlockStore((s) => s.setFocused)
+  const wasInside = useRef(false)
+  // Set on pointerdown ANYWHERE inside this embed, and consumed by the effect
+  // below. Moving the caret from one unlocked row to another is a click, and a
+  // click starts by blurring the editor: `useEditorBlur` step 5 ends in
+  // `setFocused(null)` before the row's own `onClick` ever fires. Read as a
+  // blur, that null relocked the embed mid-click, and since the rows carry no
+  // tab stop and arrow navigation does not descend into an embed, re-unlocking
+  // only ever returned the caret to `firstEditableRowId` — so only the first
+  // row was reachable. Pointerdown precedes blur, which is what makes this a
+  // latch rather than a race.
+  const pointerInside = useRef(false)
+  const notePointerInside = useCallback(() => {
+    pointerInside.current = true
+  }, [])
+  useEffect(() => {
+    if (focusedBlockId != null && rowIds.has(focusedBlockId)) {
+      wasInside.current = true
+      pointerInside.current = false
+      return
+    }
+    if (!wasInside.current) return
+    // Focus is momentarily nowhere because a click inside this embed is still
+    // in flight. Stay unlocked and let that click land.
+    if (focusedBlockId == null && pointerInside.current) {
+      pointerInside.current = false
+      return
+    }
+    wasInside.current = false
+    pointerInside.current = false
+    releaseActiveEmbed(embedInstanceId)
+    setUnlocked(false)
+  }, [focusedBlockId, rowIds, embedInstanceId])
+
+  // Unmounting while holding the slot would strand it, leaving every other
+  // embed permanently unable to unlock. `releaseActiveEmbed` is a no-op unless
+  // this embed still holds it, so a container that lost the slot to a newer
+  // one cannot clear that one on the way out.
+  useEffect(() => () => releaseActiveEmbed(embedInstanceId), [embedInstanceId])
+
+  // No host tree → no roving editor to rove in; no editable row → nothing to
+  // rove ONTO. Either way the control is not offered at all rather than
+  // offered dead.
+  const canEdit =
+    useEmbedRowEditor() != null && firstEditableRowId != null && !renderedByAMountedTree
+  const toggleUnlock = useCallback(() => {
+    if (unlocked) {
+      wasInside.current = false
+      releaseActiveEmbed(embedInstanceId)
+      setUnlocked(false)
+      // Relocking with the editor still roved into a row would strand the
+      // global focus on a block no mounted tree owns: the host page's chords
+      // stay detached (`storeOwnsBlock` in `BlockTree`) and no row renders an
+      // editor, so the keyboard is dead until the user clicks a host row.
+      if (focusedBlockId != null && rowIds.has(focusedBlockId)) setFocused(null)
+      return
+    }
+    // Claim the slot BEFORE the focus move: it relocks whichever embed held
+    // it, so the row that embed was rendering is gone by the time this one's
+    // `setFocused` lands.
+    setActiveEmbed(embedInstanceId)
+    setUnlocked(true)
+    // Unlocking moves the focus INTO the embed. Without it the feature is
+    // pointer-only: embedded rows carry no tab stop, and arrow-key outline
+    // navigation deliberately does not descend into an embed (phase 1), so a
+    // keyboard user who reaches this toggle has no way to reach a row.
+    if (firstEditableRowId != null) setFocused(firstEditableRowId)
+  }, [unlocked, focusedBlockId, rowIds, setFocused, firstEditableRowId, embedInstanceId])
+
+  const pageLabel = sourcePageTitle || t('block.untitled')
+
   return (
     <EmbedShell
       label={t('embed.containerLabel', {
-        page: sourcePageTitle || t('block.untitled'),
+        page: pageLabel,
         title: targetTitle || t('block.untitled'),
       })}
-      strip={t('embed.sourcePrefix', { page: sourcePageTitle || t('block.untitled') })}
+      strip={
+        unlocked
+          ? t('embed.editingPrefix', { page: pageLabel })
+          : t('embed.sourcePrefix', { page: pageLabel })
+      }
       crumbs={crumbs}
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       onOpenSource={onOpenSource}
       testId="embed-container"
+      unlocked={unlocked}
+      onToggleUnlock={canEdit ? toggleUnlock : null}
+      announcement={unlocked ? t('embed.unlockedAnnouncement', { page: pageLabel }) : ''}
+      onPointerDownCapture={notePointerInside}
     >
       {loading && rows.length === 0 ? (
         <p className="px-3 py-2 text-sm text-muted-foreground">{t('embed.loading')}</p>
@@ -383,7 +576,12 @@ function EmbedBody({
         <p className="px-3 py-2 text-sm text-muted-foreground">{t('embed.missingInSource')}</p>
       ) : (
         <EmbedChainContext.Provider value={chainValue}>
-          <EmbeddedBlockTree rows={rows} baseAriaLevel={baseAriaLevel} onNavigate={onNavigate} />
+          <EmbeddedBlockTree
+            rows={rows}
+            baseAriaLevel={baseAriaLevel}
+            onNavigate={onNavigate}
+            unlocked={unlocked}
+          />
         </EmbedChainContext.Provider>
       )}
       {hiddenCount > 0 && (
@@ -414,6 +612,10 @@ function EmbedShell({
   onOpenSource,
   testId,
   action,
+  unlocked = false,
+  onToggleUnlock = null,
+  announcement = '',
+  onPointerDownCapture,
   children,
 }: {
   label: string
@@ -424,6 +626,19 @@ function EmbedShell({
   onOpenSource: (() => void) | null
   testId: string
   action?: React.ReactNode
+  /** #4550 phase 2 — this embed is editable in place right now. */
+  unlocked?: boolean
+  /** `null` in every state with nothing to edit (loading / deleted / stub). */
+  onToggleUnlock?: (() => void) | null
+  /** Polite announcement text; empty while locked. */
+  announcement?: string
+  /**
+   * #4550 phase 2 — fires before the blur a click inside an unlocked embed
+   * causes, so the container can tell "moving between my rows" from "the user
+   * left". Capture phase, because the rows below stop nothing but do own the
+   * click that follows.
+   */
+  onPointerDownCapture?: (() => void) | undefined
   children?: React.ReactNode
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -444,6 +659,40 @@ function EmbedShell({
     [onOpenSource, onToggleCollapse],
   )
 
+  const shellRef = useRef<HTMLDivElement>(null)
+  // Escape is the way OUT of an unlocked embed, and it has to be handled in
+  // the CAPTURE phase: `useBlockKeyboard`'s container listener runs on the way
+  // up, and while the roving editor sits on an embedded row it is holding the
+  // inert callback set — so it would `preventDefault()` an Escape that does
+  // nothing and `stopPropagation()` it, leaving the caret with no key that
+  // moves focus. Tab, Shift+Tab and the arrows are swallowed the same way, so
+  // without this the region is a keyboard trap: a pointer is the only exit,
+  // and `src/lib/editor-preferences.ts` promises the opposite ("Escape exits
+  // the block ... so Tab can move focus away again").
+  //
+  // Escape restructures nothing, so unlike the structural chords it needs no
+  // ownership gate. Relocking through `onToggleUnlock` is the same path the
+  // toggle takes — it clears the focus off the embedded row — and focus then
+  // lands back on the container, which is this region's one tab stop, so Tab
+  // works again from there.
+  const handleEscapeOut = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!unlocked || e.key !== 'Escape' || onToggleUnlock == null) return
+      // The pickers are portaled to `document.body` and never hold focus, so
+      // their Escape arrives here — on the contenteditable inside the shell —
+      // and React's root capture listener runs before ProseMirror's handler.
+      // Without this bail, dismissing a `/`, `[[`, `#` or `::` menu ejected the
+      // user from the region and committed the half-typed trigger to the source
+      // page. `use-block-keyboard.ts` guards its own Escape the same way.
+      if (isSuggestionPopupVisible()) return
+      e.preventDefault()
+      e.stopPropagation()
+      onToggleUnlock()
+      shellRef.current?.focus()
+    },
+    [unlocked, onToggleUnlock],
+  )
+
   return (
     // The container is exactly ONE tab stop: it carries `tabIndex={0}` and the
     // header controls are `tabIndex={-1}`, reachable with the pointer and,
@@ -456,7 +705,12 @@ function EmbedShell({
     // under a plain list is itself an a11y violation.
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the focusable container IS the interactive unit here (Enter = open source, Space = collapse); the handler cannot move to a child without giving the region three tab stops
     <div
-      className={cn('embed-container', collapsed && 'embed-collapsed')}
+      className={cn(
+        'embed-container',
+        collapsed && 'embed-collapsed',
+        unlocked && 'embed-unlocked',
+      )}
+      onPointerDownCapture={onPointerDownCapture}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <fieldset>/<optgroup>/<details> all add form or disclosure semantics this read-only region does not have; role="group" carries the accessible name without them
       role="group"
       aria-label={label}
@@ -473,7 +727,9 @@ function EmbedShell({
       // situation as SortableBlockWrapper's listitem aria-expanded).
       // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; mirrors the collapse button's own aria-expanded for the element that is actually focusable
       aria-expanded={onToggleCollapse ? !collapsed : undefined}
+      ref={shellRef}
       onKeyDown={handleKeyDown}
+      onKeyDownCapture={handleEscapeOut}
       data-testid={testId}
     >
       <header className="embed-header flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
@@ -506,6 +762,27 @@ function EmbedShell({
           )}
         </nav>
         {action}
+        {onToggleUnlock && (
+          // The ONE control in the strip that is its own tab stop. Phase 1
+          // gave the whole region a single stop because it was read-only and
+          // usually skipped past; an editable region's way IN has to be
+          // reachable without first landing on the container and guessing a
+          // key. The other two controls stay opted out.
+          <button
+            type="button"
+            className="embed-unlock-toggle shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+            aria-pressed={unlocked}
+            aria-label={unlocked ? t('embed.lock') : t('embed.unlock')}
+            data-testid="embed-unlock-toggle"
+            onClick={onToggleUnlock}
+          >
+            {unlocked ? (
+              <LockOpen className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        )}
         {onOpenSource && (
           <button
             type="button"
@@ -518,6 +795,18 @@ function EmbedShell({
           </button>
         )}
       </header>
+      {/* The unlock is announced, and the restriction that comes with it is
+          stated where it applies rather than fired as a toast when a chord is
+          swallowed: structural chords are OFF for the whole region, not for
+          the one keystroke that hit the wall. */}
+      <span aria-live="polite" className="sr-only">
+        {announcement}
+      </span>
+      {unlocked && !collapsed && (
+        <p className="embed-edit-hint px-3 pb-1 text-xs text-muted-foreground">
+          {t('embed.editHint')}
+        </p>
+      )}
       {!collapsed && children}
     </div>
   )

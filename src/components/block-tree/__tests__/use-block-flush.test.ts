@@ -625,3 +625,45 @@ describe('useBlockFlush — split path (#3278)', () => {
     await expect(pending).resolves.toBe('BLK_NEW')
   })
 })
+
+/**
+ * #4550 phase 2 — an unlocked embed roves THIS tree's editor onto a block that
+ * lives on another page. Every action `useBlockFlush` closes over is this
+ * page's, so a flush of that block would fire `edit_block` while the
+ * optimistic write silently no-ops, and on the split branch would create the
+ * trailing siblings under the wrong page entirely.
+ */
+describe('useBlockFlush — ownership', () => {
+  it('refuses to flush a block this page store does not own', () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLK', content: 'mine' })] })
+    mockedInvoke.mockImplementation((cmd: string) => strictInvokeFallback(cmd))
+
+    // The editor is mounted on an EMBEDDED block — a real id, just not one of
+    // this page's.
+    const handle = makeHandle('EMBEDDED', 'edited inside an embed')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    expect(result.current()).toBeNull()
+    // Not even unmounted: leaving the editor mounted is what lets the row's
+    // own blur (bound to the SOURCE page's store) do the save correctly.
+    expect(handle.unmount).not.toHaveBeenCalled()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+  })
+
+  it('still flushes a block this page store does own', () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLK', content: 'mine' })] })
+    mockedInvoke.mockImplementation((cmd: string) =>
+      cmd === 'edit_block'
+        ? Promise.resolve({ id: 'BLK', content: 'edited', op_refs: [] })
+        : strictInvokeFallback(cmd),
+    )
+
+    // The paired case: without it the guard above could pass because the hook
+    // never flushes anything at all.
+    const handle = makeHandle('BLK', 'edited')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    expect(result.current()).toBe('edited')
+    expect(handle.unmount).toHaveBeenCalled()
+  })
+})

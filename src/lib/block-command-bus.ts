@@ -68,6 +68,59 @@ interface Registration {
 const registry = new Map<StoreApi<PageBlockState>, Registration>()
 
 /**
+ * Subscribers to registry MEMBERSHIP (a BlockTree mounting or unmounting),
+ * not to any store's contents. #4550 phase 2 needs to re-render when the set
+ * of mounted trees changes; nothing here watches block data.
+ */
+const membershipListeners = new Set<() => void>()
+
+function notifyMembershipChanged(): void {
+  for (const listener of membershipListeners) listener()
+}
+
+/**
+ * Subscribe to BlockTree mount/unmount. Pairs with
+ * {@link blockIsRenderedByAMountedTree} under `useSyncExternalStore`.
+ */
+export function subscribeBlockCommandTargets(onChange: () => void): () => void {
+  membershipListeners.add(onChange)
+  return () => {
+    membershipListeners.delete(onChange)
+  }
+}
+
+/**
+ * True when some mounted `BlockTree` already renders `blockId` (#4550).
+ *
+ * The registry holds exactly one entry per mounted tree, keyed by its page
+ * store, so "a mounted tree owns this block" and "a mounted tree may render an
+ * `EditableBlock` for it" are the same question — `isFocused` is
+ * `focusedBlockId === block.id` and nothing else, in every tree at once.
+ *
+ * An unlocked embed renders the HOST tree's editable row for the focused
+ * embedded block, so offering the unlock for a block a tree ALREADY renders
+ * would put two `EditableBlock`s on one id the moment it is focused: two
+ * `EditorSurface`s and two `id="editor-<id>"` nodes for one roving instance,
+ * which is the invariant-4 violation the design exists to avoid. It is
+ * reachable two ways — a page holding both a block and an embed OF that block
+ * (the `/embed` picker searches the current page too), and the journal
+ * week/stream views, where one mounted day embeds a block from another mounted
+ * day's page. Both are one predicate.
+ *
+ * Deliberately an over-approximation: it answers "owned by a mounted tree",
+ * not "currently on screen", so a collapsed or scrolled-away row counts. The
+ * cheap direction is the safe one — the cost is an unlock control withheld
+ * from an embed the user could have edited in place, and the source page is
+ * one click away in the header.
+ */
+export function blockIsRenderedByAMountedTree(blockId: string): boolean {
+  for (const reg of registry.values()) {
+    if (storeOwnsBlock(reg.store, blockId)) return true
+  }
+  return false
+}
+
+/**
  * Register (or replace) a BlockTree's command handlers under its page store.
  * Returns a cleanup that removes the registration. Called once per BlockTree;
  * re-registering with the same store overwrites the handler set (latest wins),
@@ -77,11 +130,19 @@ export function registerBlockCommandTarget(
   store: StoreApi<PageBlockState>,
   handlers: Partial<Record<BlockCommandName, BlockCommandHandler>>,
 ): () => void {
+  const isNew = !registry.has(store)
   registry.set(store, { store, handlers })
+  // Re-registering under the same store swaps the handler set and changes no
+  // membership, so it must not wake `subscribeBlockCommandTargets` — that
+  // happens on every BlockTree render.
+  if (isNew) notifyMembershipChanged()
   return () => {
     // Only delete if still ours — a later registration under the same store
     // identity must not be torn down by a stale cleanup.
-    if (registry.get(store)?.handlers === handlers) registry.delete(store)
+    if (registry.get(store)?.handlers === handlers) {
+      registry.delete(store)
+      notifyMembershipChanged()
+    }
   }
 }
 
@@ -128,4 +189,5 @@ export function registeredBlockCommandTargetCount(): number {
 /** Test helper: clear all registrations (avoids cross-test leakage). */
 export function __resetBlockCommandBus(): void {
   registry.clear()
+  notifyMembershipChanged()
 }

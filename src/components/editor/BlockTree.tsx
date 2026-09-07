@@ -26,7 +26,15 @@ import {
   type ScreenReaderInstructions,
 } from '@dnd-kit/core'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -58,11 +66,14 @@ import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
 import { BlockZoomBar } from '@/components/editor/BlockZoomBar'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
+import { getActiveEmbed, subscribeActiveEmbed } from '@/components/editor/embed/active-embed'
+import { EmbedRowEditorContext } from '@/components/editor/embed/embed-row-editor-context'
+import { useEmbedRowEditorValue } from '@/components/editor/embed/use-embed-row-editor'
 import { useBlockDialogs } from '@/components/editor/useBlockDialogs'
 import { useFocusedBlockActions } from '@/components/editor/useFocusedBlockActions'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
-import { useBlockKeyboard } from '@/editor/use-block-keyboard'
+import { INERT_BLOCK_KEYBOARD_CALLBACKS, useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
@@ -888,10 +899,35 @@ export function BlockTree({
   // which publishes them into its backing refs in a single post-commit
   // `useLayoutEffect` — the concurrent-rendering-safe replacement for writing
   // refs during render. See `use-editor-event-dispatch.ts` for the rationale.
+  // #4550 phase 2 — is an unlocked embed borrowing this tree's editable row
+  // right now, for a block that is not ours?
+  //
+  // BOTH terms are load-bearing. `storeOwnsBlock` alone is false for any
+  // focused id this store has not loaded yet, which is an ordinary state
+  // during an async page load and would disarm the page's own chords and
+  // slash commands while it lasts. `activeEmbed` alone is true for an embed
+  // unlocked anywhere, including one whose rows THIS tree owns (a same-page
+  // embed) — where the callbacks are correct and must keep working. Together
+  // they name exactly the case: an embed is hosting the roving row, and the
+  // block under it belongs to another page's store.
+  const rovingBlockIsForeign =
+    useSyncExternalStore(subscribeActiveEmbed, getActiveEmbed) != null &&
+    !storeOwnsBlock(pageStore, focusedBlockId)
+  const ownsRovingBlock = !rovingBlockIsForeign
+  // The three content handlers write through the HOST page store, so on a
+  // foreign block the IPC commits while the optimistic update no-ops (that
+  // store does not hold the block) — a committed write with no UI trace until
+  // a reload — and `notifyUndo(rootParentId)` files the undo entry under the
+  // wrong page. `/todo`, `/priority`, `/due`, `/date` and the `[] ` checkbox
+  // and `- ` / `1. ` list syntaxes all route through here. Registering a no-op
+  // instead is the rest of what the embed header's "text edits only" means,
+  // beside the inert keymap below.
+  const whenOwned = <A extends unknown[]>(fn: (...args: A) => void): ((...args: A) => void) =>
+    ownsRovingBlock ? fn : () => {}
   dispatch.on('flush', handleFlush)
-  dispatch.on('slashCommand', handleSlashCommand)
-  dispatch.on('checkbox', handleCheckboxSyntax)
-  dispatch.on('listStyle', handleListStyleSyntax)
+  dispatch.on('slashCommand', whenOwned(handleSlashCommand))
+  dispatch.on('checkbox', whenOwned(handleCheckboxSyntax))
+  dispatch.on('listStyle', whenOwned(handleListStyleSyntax))
   // #2656 — the `::` picker's extension already inserts the `key:: ` inline
   // text; it no longer fires `setProperty({ valueText: '' })` (the real backend
   // rejects an empty value_text, so that produced a "Failed to set property"
@@ -1059,25 +1095,47 @@ export function BlockTree({
     rovingEditor,
   })
 
-  useBlockKeyboard(rovingEditor.editor, {
-    onFocusPrev: handleFocusPrev,
-    onFocusNext: handleFocusNext,
-    onDeleteBlock: handleDeleteBlock,
-    onIndent: handleIndentKey,
-    onDedent: handleDedentKey,
-    onMoveUp: handleMoveUp,
-    onMoveDown: handleMoveDown,
-    onFlush: handleFlush,
-    onMergeWithPrev: handleMergeWithPrev,
-    onEnterSave: handleEnterSave,
-    onEscapeCancel: handleEscapeCancel,
-    onToggleTodo: handleToggleFocusedTodo,
-    onToggleCollapse: handleToggleFocusedCollapse,
-    onShowProperties: handleShowFocusedProperties,
-    onShowHistory: handleShowFocusedHistory,
-    onDuplicate: handleDuplicateFocused,
-    onTurnInto: handleTurnIntoFocused,
-  })
+  // #4550 phase 2 — the STRUCTURAL chords are confined to blocks this tree's
+  // store actually owns. Every callback below acts through the host page
+  // store (`edit`, `splitBlock`, `createBelow`, `indent`, …), so with the
+  // roving editor mounted into an UNLOCKED EMBED's row — a block that lives
+  // on another page — Enter would split, and Backspace merge, against a store
+  // that does not hold it: the optimistic write silently no-ops (`idx < 0`)
+  // while the IPC lands, and `createBelow` places the new sibling on the wrong
+  // page. Plain typing and TipTap's own formatting keymap are untouched —
+  // they never route through here — which is the phase-2 contract: text edits
+  // inside an embed, restructuring only on the source page.
+  const embedRowEditor = useEmbedRowEditorValue(rovingEditor)
+  // The keymap stays ATTACHED on a foreign block and every action goes inert.
+  // Detaching it — which this did at first — removes the interception, not the
+  // behaviour: ProseMirror then handles Enter itself and inserts a paragraph,
+  // which `runUnmountFlush`'s `shouldSplitOnBlur` turns into a real split of
+  // the SOURCE block. The bindings `preventDefault()` before they call back,
+  // so attached-and-inert is what actually swallows the chord.
+  useBlockKeyboard(
+    rovingEditor.editor,
+    ownsRovingBlock
+      ? {
+          onFocusPrev: handleFocusPrev,
+          onFocusNext: handleFocusNext,
+          onDeleteBlock: handleDeleteBlock,
+          onIndent: handleIndentKey,
+          onDedent: handleDedentKey,
+          onMoveUp: handleMoveUp,
+          onMoveDown: handleMoveDown,
+          onFlush: handleFlush,
+          onMergeWithPrev: handleMergeWithPrev,
+          onEnterSave: handleEnterSave,
+          onEscapeCancel: handleEscapeCancel,
+          onToggleTodo: handleToggleFocusedTodo,
+          onToggleCollapse: handleToggleFocusedCollapse,
+          onShowProperties: handleShowFocusedProperties,
+          onShowHistory: handleShowFocusedHistory,
+          onDuplicate: handleDuplicateFocused,
+          onTurnInto: handleTurnIntoFocused,
+        }
+      : INERT_BLOCK_KEYBOARD_CALLBACKS,
+  )
 
   // ── Extracted event listeners (custom DOM events from toolbar) ───────
   useBlockTreeEventListeners({
@@ -1385,123 +1443,131 @@ export function BlockTree({
   return (
     <EditorSurfaceContext.Provider value={editorSurface}>
       {editorHost}
-      <BatchAttachmentsProvider blockIds={windowedBlockIds}>
-        <BatchPropertiesProvider
-          blockIds={windowedBlockIds}
-          invalidationKey={batchPropertiesInvalidationKey}
-        >
-          <BlockZoomBar
-            breadcrumbs={zoomBreadcrumb}
-            onNavigate={handleZoomIn}
-            onZoomToRoot={zoomToRoot}
-          />
-          {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
+      {/* #4550 phase 2 — an unlocked embed renders its focused row through
+          THIS tree's editable row, so the one roving instance (invariant 4)
+          roves into the embed instead of a second editor being mounted
+          there. Published beside the surface it needs, and `null` outside a
+          BlockTree, which is what tells the container there is nothing to
+          unlock into. */}
+      <EmbedRowEditorContext.Provider value={embedRowEditor}>
+        <BatchAttachmentsProvider blockIds={windowedBlockIds}>
+          <BatchPropertiesProvider
+            blockIds={windowedBlockIds}
+            invalidationKey={batchPropertiesInvalidationKey}
+          >
+            <BlockZoomBar
+              breadcrumbs={zoomBreadcrumb}
+              onNavigate={handleZoomIn}
+              onZoomToRoot={zoomToRoot}
+            />
+            {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
           to drop the excess silently. A non-blocking notice (matches the
           SearchPanel capped-notice pattern) tells the user the page is only
           partially displayed. */}
-          {truncatedTotal != null && (
-            <div
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-              role="status"
-              data-testid="page-truncated-notice"
-              className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+            {truncatedTotal != null && (
+              <div
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+                role="status"
+                data-testid="page-truncated-notice"
+                className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+              >
+                {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
+              </div>
+            )}
+            <BlockBatchActionMenu
+              selectedBlockIds={selectedBlockIds}
+              batchInProgress={batchInProgress}
+              batchDeleteConfirm={batchDeleteConfirm}
+              onBatchSetTodo={handleBatchSetTodo}
+              onBatchSetPriority={handleBatchSetPriority}
+              onBatchDelete={handleBatchDelete}
+              onSetBatchDeleteConfirm={setBatchDeleteConfirm}
+              onClearSelection={clearSelected}
+            />
+            <DndContext
+              sensors={dnd.sensors}
+              collisionDetection={closestCenter}
+              measuring={DND_MEASURING}
+              // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
+              // already runs the custom `useAutoScrollOnDrag` RAF loop against the
+              // #main-content container. Running both is additive (jank), and the
+              // built-in one ignores `prefers-reduced-motion`, defeating the custom
+              // loop's reduced-motion opt-out.
+              autoScroll={false}
+              onDragStart={dnd.handleDragStart}
+              onDragMove={dnd.handleDragMove}
+              onDragOver={dnd.handleDragOver}
+              onDragEnd={dnd.handleDragEnd}
+              onDragCancel={dnd.handleDragCancel}
+              accessibility={dndAccessibility}
             >
-              {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
-            </div>
-          )}
-          <BlockBatchActionMenu
-            selectedBlockIds={selectedBlockIds}
-            batchInProgress={batchInProgress}
-            batchDeleteConfirm={batchDeleteConfirm}
-            onBatchSetTodo={handleBatchSetTodo}
-            onBatchSetPriority={handleBatchSetPriority}
-            onBatchDelete={handleBatchDelete}
-            onSetBatchDeleteConfirm={setBatchDeleteConfirm}
-            onClearSelection={clearSelected}
-          />
-          <DndContext
-            sensors={dnd.sensors}
-            collisionDetection={closestCenter}
-            measuring={DND_MEASURING}
-            // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
-            // already runs the custom `useAutoScrollOnDrag` RAF loop against the
-            // #main-content container. Running both is additive (jank), and the
-            // built-in one ignores `prefers-reduced-motion`, defeating the custom
-            // loop's reduced-motion opt-out.
-            autoScroll={false}
-            onDragStart={dnd.handleDragStart}
-            onDragMove={dnd.handleDragMove}
-            onDragOver={dnd.handleDragOver}
-            onDragEnd={dnd.handleDragEnd}
-            onDragCancel={dnd.handleDragCancel}
-            accessibility={dndAccessibility}
-          >
-            <BlockActionsProvider value={blockActions}>
-              <BlockResolversProvider value={blockResolvers}>
-                <BlockListRenderer
-                  visibleItems={dnd.visibleItems}
-                  blocks={blocks}
-                  loading={loading}
-                  rootParentId={rootParentId}
-                  isZoomed={zoomedBlockId !== null}
-                  onExitZoom={zoomToRoot}
-                  focusedBlockId={focusedBlockId}
-                  selectedBlockIds={selectedBlockIds}
-                  projected={dnd.projected}
-                  activeId={dnd.activeId}
-                  overId={dnd.overId}
-                  dropAfter={dnd.dropAfter}
-                  viewport={viewport}
-                  rovingEditor={rovingEditor}
-                  onContainerPointerDown={handleContainerPointerDown}
-                  hasChildrenSet={hasChildrenSet}
-                  collapsedIds={collapsedIds}
-                  hiddenMountCount={hiddenMountCount}
-                  onExpandMount={expandMountLimit}
-                />
-              </BlockResolversProvider>
-            </BlockActionsProvider>
-            <BlockDndOverlay
-              activeBlock={activeBlock}
-              projected={dnd.projected}
-              activeId={dnd.activeId}
-              count={draggingCount}
-            />
-          </DndContext>
+              <BlockActionsProvider value={blockActions}>
+                <BlockResolversProvider value={blockResolvers}>
+                  <BlockListRenderer
+                    visibleItems={dnd.visibleItems}
+                    blocks={blocks}
+                    loading={loading}
+                    rootParentId={rootParentId}
+                    isZoomed={zoomedBlockId !== null}
+                    onExitZoom={zoomToRoot}
+                    focusedBlockId={focusedBlockId}
+                    selectedBlockIds={selectedBlockIds}
+                    projected={dnd.projected}
+                    activeId={dnd.activeId}
+                    overId={dnd.overId}
+                    dropAfter={dnd.dropAfter}
+                    viewport={viewport}
+                    rovingEditor={rovingEditor}
+                    onContainerPointerDown={handleContainerPointerDown}
+                    hasChildrenSet={hasChildrenSet}
+                    collapsedIds={collapsedIds}
+                    hiddenMountCount={hiddenMountCount}
+                    onExpandMount={expandMountLimit}
+                  />
+                </BlockResolversProvider>
+              </BlockActionsProvider>
+              <BlockDndOverlay
+                activeBlock={activeBlock}
+                projected={dnd.projected}
+                activeId={dnd.activeId}
+                count={draggingCount}
+              />
+            </DndContext>
 
-          {/* Floating date picker for /DATE slash command */}
-          {datePickerOpen && (
-            <BlockDatePicker
-              onSelect={(day) => day && handleDatePick(day)}
-              onClose={() => setDatePickerOpen(false)}
-            />
-          )}
+            {/* Floating date picker for /DATE slash command */}
+            {datePickerOpen && (
+              <BlockDatePicker
+                onSelect={(day) => day && handleDatePick(day)}
+                onClose={() => setDatePickerOpen(false)}
+              />
+            )}
 
-          {/* Floating template picker for /TEMPLATE slash command */}
-          {templatePickerOpen && (
-            <TemplatePicker
-              templatePages={templatePages}
-              onSelect={handleTemplateSelect}
-              onClose={() => setTemplatePickerOpen(false)}
-            />
-          )}
+            {/* Floating template picker for /TEMPLATE slash command */}
+            {templatePickerOpen && (
+              <TemplatePicker
+                templatePages={templatePages}
+                onSelect={handleTemplateSelect}
+                onClose={() => setTemplatePickerOpen(false)}
+              />
+            )}
 
-          {/* Block-level dialog mounts: query builder (#215), emoji picker
+            {/* Block-level dialog mounts: query builder (#215), emoji picker
           (#286), block-history sheet, property drawer (#2930). */}
-          <BlockTreeDialogs
-            queryBuilderOpen={queryBuilderOpen}
-            setQueryBuilderOpen={setQueryBuilderOpen}
-            handleQuerySave={handleQuerySave}
-            emojiPickerOpen={emojiPickerOpen}
-            setEmojiPickerOpen={setEmojiPickerOpen}
-            handleEmojiSelect={handleEmojiSelect}
-            historyBlockId={historyBlockId}
-            setHistoryBlockId={setHistoryBlockId}
-            propertyDrawerBlockId={propertyDrawerBlockId}
-            setPropertyDrawerBlockId={setPropertyDrawerBlockId}
-          />
-        </BatchPropertiesProvider>
-      </BatchAttachmentsProvider>
+            <BlockTreeDialogs
+              queryBuilderOpen={queryBuilderOpen}
+              setQueryBuilderOpen={setQueryBuilderOpen}
+              handleQuerySave={handleQuerySave}
+              emojiPickerOpen={emojiPickerOpen}
+              setEmojiPickerOpen={setEmojiPickerOpen}
+              handleEmojiSelect={handleEmojiSelect}
+              historyBlockId={historyBlockId}
+              setHistoryBlockId={setHistoryBlockId}
+              propertyDrawerBlockId={propertyDrawerBlockId}
+              setPropertyDrawerBlockId={setPropertyDrawerBlockId}
+            />
+          </BatchPropertiesProvider>
+        </BatchAttachmentsProvider>
+      </EmbedRowEditorContext.Provider>
     </EditorSurfaceContext.Provider>
   )
 }

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
+import { releaseActiveEmbed, setActiveEmbed } from '@/components/editor/embed/active-embed'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
@@ -149,16 +150,40 @@ let capturedBlockKeyboardOpts:
       [key: string]: unknown
     }
   | undefined
+// #4550 phase 2 — the CALLBACKS argument is the structural-chord gate, not the
+// editor: BlockTree keeps the keymap attached on a block this tree's store does
+// not own and passes the inert set, because the bindings `preventDefault()`
+// before calling back. Detaching would only stop the INTERCEPTION, leaving
+// ProseMirror to insert a paragraph on Enter.
+let capturedBlockKeyboardEditor: unknown
+
+/**
+ * Stands in for the real module constant, so identity comparison works here.
+ * `vi.hoisted` because the `vi.mock` factory below is lifted above it.
+ */
+const INERT_SENTINEL = vi.hoisted(() => ({
+  onFocusPrev: () => {},
+  onFocusNext: () => {},
+  onDeleteBlock: () => {},
+  onIndent: () => {},
+  onDedent: () => {},
+  onFlush: () => null,
+  onMergeWithPrev: () => {},
+  onEnterSave: () => {},
+  onEscapeCancel: () => {},
+}))
 
 vi.mock('@/editor/use-block-keyboard', () => ({
+  INERT_BLOCK_KEYBOARD_CALLBACKS: INERT_SENTINEL,
   useBlockKeyboard: (
-    _editor: unknown,
+    editor: unknown,
     opts: {
       onFocusPrev?: () => void
       onFocusNext?: () => void
       onDeleteBlock?: () => void
     },
   ) => {
+    capturedBlockKeyboardEditor = editor
     capturedBlockKeyboardOpts = opts
   },
 }))
@@ -431,6 +456,7 @@ beforeEach(() => {
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
+  capturedBlockKeyboardEditor = undefined
   capturedOnSelect = undefined
   capturedBlockActions = undefined
   capturedQuerySave = undefined
@@ -8348,5 +8374,94 @@ describe('BlockTree zoom × Ctrl+A × batch actions (#3344)', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
       blockIds: ['Z', 'C1', 'C2', 'S', 'S1'],
     })
+  })
+})
+
+// #4550 phase 2 — an unlocked embed roves THIS tree's single editor onto a
+// block that lives on another page (invariant 4: there is no second editor to
+// give it). Every callback BlockTree wires into `useBlockKeyboard` acts through
+// THIS page's store, so Enter would split, Backspace merge and Tab indent
+// against a store that does not hold the block: the optimistic write no-ops
+// while the IPC lands, and `createBelow` puts the new sibling on the wrong
+// page. Handing `useBlockKeyboard` a null editor detaches every one of those
+// listeners — which is exactly the phase-2 contract, text edits inside an
+// embed and restructuring only on the source page.
+describe('BlockTree structural chords are confined to owned blocks (#4550)', () => {
+  beforeEach(() => {
+    useMockEditor = true
+  })
+  afterEach(() => {
+    useMockEditor = false
+    releaseActiveEmbed('TEST_EMBED')
+  })
+
+  /**
+   * Model the production condition, which is BOTH halves: an embed is hosting
+   * the roving row AND the focused block belongs to another page's store.
+   * `storeOwnsBlock` alone would also be false for a focused id this store has
+   * simply not loaded yet — an ordinary state during an async page load, where
+   * disarming the page's own chords would be a bug of its own.
+   */
+  function focusForeignBlockInAnEmbed(blockId: string) {
+    act(() => {
+      setActiveEmbed('TEST_EMBED')
+      useBlockStore.setState({ focusedBlockId: blockId })
+    })
+  }
+
+  it('keeps the keymap ATTACHED but inert while the focused block is not this page’s', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'B1', content: 'mine' })], loading: false })
+    renderBlockTree()
+
+    // Owned: the chords are live. Without this half the assertion below could
+    // pass because the callbacks were inert in every case.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'B1' })
+    })
+    await waitFor(() => {
+      expect(capturedBlockKeyboardEditor).not.toBeNull()
+    })
+    expect(capturedBlockKeyboardOpts).not.toBe(INERT_SENTINEL)
+
+    // Focus inside an unlocked embed: the id is real, it is just not on this
+    // page. The editor must STAY attached — handing `null` here was the bug.
+    // Without the keymap, ProseMirror handles Enter itself and inserts a
+    // paragraph, which `runUnmountFlush`'s `shouldSplitOnBlur` then turns into
+    // a real split of the SOURCE block. Attached-and-inert swallows the chord,
+    // which is what the embed header's "text edits only" promises.
+    focusForeignBlockInAnEmbed('EMBEDDED')
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts).toBe(INERT_SENTINEL)
+    })
+    expect(capturedBlockKeyboardEditor).not.toBeNull()
+  })
+
+  it('drops a slash command aimed at a block this page does not own', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'B1', content: 'mine' })], loading: false })
+    renderBlockTree({ autoCreateFirstBlock: false })
+
+    // Owned: the command runs. Without this half the assertion below could
+    // pass because `/table` never worked in this harness at all.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'B1' })
+    })
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table' })
+    })
+    expect(mockInsertTable).toHaveBeenCalledTimes(1)
+
+    // Focused inside an unlocked embed. Every slash command writes through
+    // THIS page's store, so on a foreign block the IPC would commit while the
+    // optimistic update no-ops — a write with no UI trace until a reload — and
+    // `notifyUndo(rootParentId)` would file the undo entry under this page.
+    mockInsertTable.mockClear()
+    focusForeignBlockInAnEmbed('EMBEDDED')
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table' })
+    })
+    expect(mockInsertTable).not.toHaveBeenCalled()
   })
 })

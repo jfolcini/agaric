@@ -41,7 +41,10 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 - **Insert**: `/embed`, or type `{{embed` and search. Either way one list covers both kinds of target — a page is a block here — and the block's content becomes the token `{{embed ((ULID))}}`. The `{{embed [[ULID]]}}` form is also accepted when written by hand.
 - **A block embed** renders the target block and every descendant. **A page embed** renders that page's top-level blocks; its header strip shows the page title alone.
 - **The whole block becomes the embed.** Like `{{query …}}`, the token has to be the block's entire content — a mention of the syntax mid-sentence stays text.
-- **Header strip**: reads *Embedded from {page}*, with a collapse chevron and an **Open source** control. The container is one tab stop: **Enter** opens the source, **Space** collapses.
+- **Header strip**: reads *Embedded from {page}*, with an **Edit this embed in place** toggle, a collapse chevron and an **Open source** control. The container itself is one tab stop — **Enter** opens the source, **Space** collapses — and the edit toggle is the one control inside it with a tab stop of its own.
+- **Editing in place**: the toggle unlocks this one embed. The rail takes the accent colour, the strip reads *Editing {page}*, and the caret lands on the first row so the keyboard alone can get in. Edits go to the block on the page that owns it, and every other view of that block updates with them. The unlock is per embed and per session — it is never saved, so a reload, a second view of the same source, or a second embed of the same block all start locked. Clicking away, or the toggle again, returns the embed to read-only.
+- **Text edits only while unlocked.** Enter, Backspace, Tab and the block-move chords do nothing inside an embed: splitting, merging, indenting, moving or deleting a block there would be invisible on the page that actually holds it. The strip says so while unlocked; **Open source** is where you restructure.
+- **Escape leaves, and keeps your edit.** Since Tab does nothing inside an unlocked embed, Escape is what gets you back out: it relocks the embed and puts focus on the container, from where Tab continues through the page as usual. Unlike Escape in an ordinary block, it **saves** rather than discarding — the text you typed belongs to another page, so leaving the region commits it. With a `/`, `[[`, `#` or `::` menu open, Escape closes the menu and leaves you where you are.
 - **The embedded subtree re-bases its indentation to depth 0** inside the container. It does not continue the host page's indent guides, and screen readers announce its rows relative to the host outline, not to the source page's depths.
 - **Live**: editing the source updates every mounted embed of it, including when the source page is open in another tab.
 - **Backlinks**: an embed produces a link edge like any other reference. It is currently *indistinguishable* from a plain reference in the backlinks panel — both read "referenced by".
@@ -50,8 +53,8 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 
 ### Current limitations
 
-- **Read-only.** Edit the source through **Open source**; editing in place is not yet supported.
-- **Arrow-key navigation does not descend into an embed** — Down from the row above lands on the row below it.
+- **No restructuring in place.** Only a row's text is editable inside an embed; every structural change goes through **Open source**.
+- **Arrow-key navigation does not descend into an embed** — Down from the row above lands on the row below it, unlocked or not. The edit toggle is how you get in, and clicking a row is how you move between rows once you are.
 - **Collapse applies to the whole container**, not to branches inside it. Container collapse is stored per host block, so it never touches the source page's own saved layout.
 - Only the first 32 rows of an embed render; the rest are one click away in the source.
 - **Embedded rows render content only.** No todo checkbox, no priority or date chips, no list markers, no properties, and no attachments — just the row's rich text. Embed a page of tasks and you'll see the text with no checkboxes; open the source to interact with any of that.

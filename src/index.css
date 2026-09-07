@@ -912,6 +912,11 @@
   --embed-rail: var(--block-ref-foreground);
   /* Low-contrast ground beneath the embedded rows. */
   --embed-surface: color-mix(in oklab, var(--muted) 45%, transparent);
+  /* #4550 phase 2 — the rail while this one embed is unlocked for editing.
+   * Colour is not the only cue: the strip text changes to "Editing {page}"
+   * and the toggle's `aria-pressed` flips, so the state survives both
+   * greyscale and a screen reader. */
+  --embed-rail-unlocked: var(--primary);
 }
 @media (prefers-contrast: more) {
   :root {
@@ -1523,6 +1528,11 @@
    `prefers-reduced-motion` case needs no separate rule. */
 .embed-container.embed-collapsed .embed-header {
   @apply border-b-0;
+}
+/* #4550 phase 2 — an unlocked embed is editable in place. The rail takes the
+   accent so the one embed that accepts keystrokes is obvious among several. */
+.embed-container.embed-unlocked {
+  border-left-color: var(--embed-rail-unlocked);
 }
 
 /* ── Syntax highlighting — dark mode override ──────────────────────── */

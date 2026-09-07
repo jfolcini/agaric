@@ -35,7 +35,7 @@ import { useCallback } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { runUnmountFlush } from '@/lib/unmount-flush'
-import type { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { storeOwnsBlock, type usePageBlockStoreApi } from '@/stores/page-blocks'
 
 // #2914 — cross-callback handoff of an in-flight multi-block split.
 //
@@ -135,6 +135,15 @@ export function useBlockFlush({
     const handle = rovingEditorRef.current
     if (!handle?.activeBlockId) return null
     const blockId = handle.activeBlockId // capture BEFORE unmount nullifies it
+    // #4550 phase 2 — the editor roves into an unlocked embed's row, which
+    // belongs to ANOTHER page's store. `edit` / `splitBlock` below are this
+    // page's, so flushing a foreign block here would no-op the optimistic
+    // write and, on the split branch, create the trailing siblings under the
+    // WRONG page. The embedded row's own blur (`useEditorBlur`, bound to the
+    // source page's store) and its debounced content commit persist it
+    // correctly, so this returns before unmounting and leaves the editor for
+    // that path to flush.
+    if (!storeOwnsBlock(pageStore, blockId)) return null
     const changed = handle.unmount()
     if (changed !== null) {
       // #2914 — snapshot the pre-split block ids right before `splitBlock`
