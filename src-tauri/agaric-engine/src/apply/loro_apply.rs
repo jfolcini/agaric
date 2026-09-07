@@ -447,9 +447,11 @@ pub async fn hydrate_space_block_into_own_engine(
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
 /// leave the exported CRDT missing this subtree's properties/tags — a peer
 /// importing the export would not receive them. We therefore also replay each
-/// block's `block_properties` and `block_tags` rows into the engine. (`space`
-/// and the reserved keys are column-backed in `blocks`, not `block_properties`,
-/// so they never appear here and need no engine property.)
+/// block's `block_properties` and `block_tags` rows into the engine, plus the
+/// four reserved keys (`todo_state`, `priority`, `due_date`, `scheduled_date`)
+/// from their `blocks` columns: the engine holds them like any other key, and
+/// a peer's import replaces all four columns from the doc, NULL for a key the
+/// doc lacks (#4801). `space` stays out: membership is the doc itself.
 ///
 /// ## Idempotency
 /// Each node is skipped (`read_block(...).is_some()`) if already present, so the
@@ -493,10 +495,15 @@ async fn hydrate_page_subtree_into_engine(
         parent_id: Option<String>,
         // Nullable: the both-`None` create sentinel writes SQL NULL.
         position: Option<i64>,
+        todo_state: Option<String>,
+        priority: Option<String>,
+        due_date: Option<String>,
+        scheduled_date: Option<String>,
     }
     let rows: Vec<SubtreeRow> = sqlx::query_as(concat!(
         agaric_store::descendants_cte_active!(),
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position \
+        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
+                b.todo_state, b.priority, b.due_date, b.scheduled_date \
            FROM descendants d \
            JOIN blocks b ON b.id = d.id \
           ORDER BY d.depth ASC, b.position ASC",
@@ -524,6 +531,10 @@ async fn hydrate_page_subtree_into_engine(
         content,
         parent_id,
         position,
+        todo_state,
+        priority,
+        due_date,
+        scheduled_date,
     } in rows
     {
         // A NULL `position` (the both-`None` create sentinel) maps to the
@@ -540,25 +551,33 @@ async fn hydrate_page_subtree_into_engine(
         // Recover the engine's native `PropertyValue` by the same precedence as
         // `PropertyValue::from(&SetPropertyPayload)` (text→num→date→ref→bool);
         // the `exactly_one_value` CHECK guarantees exactly one column is set.
-        let properties = prop_rows
-            .into_iter()
-            .map(|r| {
-                let pv = if let Some(t) = r.value_text {
-                    PropertyValue::Str(t)
-                } else if let Some(n) = r.value_num {
-                    PropertyValue::Num(n)
-                } else if let Some(d) = r.value_date {
-                    PropertyValue::Str(d)
-                } else if let Some(rf) = r.value_ref {
-                    PropertyValue::Str(rf)
-                } else if let Some(b) = r.value_bool {
-                    PropertyValue::Bool(b != 0)
-                } else {
-                    PropertyValue::Null
-                };
-                (r.key, pv)
-            })
-            .collect();
+        // #4801: the reserved keys are `blocks` columns, stored as `Str` in
+        // the engine (see `reproject_block_properties_from_engine`).
+        let mut properties: Vec<(String, PropertyValue)> = [
+            ("todo_state", todo_state),
+            ("priority", priority),
+            ("due_date", due_date),
+            ("scheduled_date", scheduled_date),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|v| (key.to_owned(), PropertyValue::Str(v))))
+        .collect();
+        properties.extend(prop_rows.into_iter().map(|r| {
+            let pv = if let Some(t) = r.value_text {
+                PropertyValue::Str(t)
+            } else if let Some(n) = r.value_num {
+                PropertyValue::Num(n)
+            } else if let Some(d) = r.value_date {
+                PropertyValue::Str(d)
+            } else if let Some(rf) = r.value_ref {
+                PropertyValue::Str(rf)
+            } else if let Some(b) = r.value_bool {
+                PropertyValue::Bool(b != 0)
+            } else {
+                PropertyValue::Null
+            };
+            (r.key, pv)
+        }));
         let tag_rows = sqlx::query!("SELECT tag_id FROM block_tags WHERE block_id = ?", id)
             .fetch_all(&mut *conn)
             .await?;
