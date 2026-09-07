@@ -60,7 +60,7 @@ export const NAV_TIMEOUT = 60_000
 export const ACTION_TIMEOUT = 60_000
 
 /** Primary nav destinations addressable by their sidebar label. */
-export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Settings'
+export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Search' | 'Settings'
 
 /**
  * Resolve a primary sidebar nav `<button>` by its exact visible label, using a
@@ -70,7 +70,7 @@ export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Settings'
  * heading or a QuickAccessBar chip. See the selector-policy header for the full
  * rationale behind not using `aria/<label>` here.
  */
-function sidebarNavButton(label: NavLabel) {
+function sidebarNavButton(label: NavLabel | 'New Page') {
   const sidebar = $('[data-slot="sidebar"]')
   return sidebar.$(`.//button[.//span[normalize-space(.)="${label}"]]`)
 }
@@ -267,12 +267,13 @@ export async function openJournalBlockEditor(): Promise<void> {
  * attempt so a mid-type ProseMirror re-render can't leave us holding a stale
  * handle. Does NOT commit — the caller presses Enter/Escape after this resolves.
  */
-export async function typeMarkerVerified(text: string): Promise<void> {
+export async function typeMarkerVerified(text: string, readBackTimeout = 3_000): Promise<void> {
   await typeVerified(
     '[data-testid="block-editor"] [contenteditable="true"]',
     text,
     (selector) => $(selector).getText(),
     'block editor',
+    readBackTimeout,
   )
 }
 
@@ -302,6 +303,7 @@ async function typeVerified(
   text: string,
   readBack: (selector: string) => Promise<string>,
   what: string,
+  readBackTimeout = 3_000,
 ): Promise<void> {
   const MAX_TYPE_ATTEMPTS = 3
   const editorSelector = selector
@@ -332,7 +334,7 @@ async function typeVerified(
           lastSeen = (await readBack(editorSelector)).trim()
           return lastSeen === text
         },
-        { timeout: 3_000, interval: 200 },
+        { timeout: readBackTimeout, interval: 200 },
       )
       matched = true
     } catch {
@@ -367,12 +369,194 @@ async function typeVerified(
  * Assumes the Journal view is active (call `navigateTo('Journal')` first if a
  * prior step moved away).
  */
-export async function addBlockWithMarker(marker: string): Promise<void> {
+export async function addBlockWithMarker(marker: string, readBackTimeout?: number): Promise<void> {
   await openJournalBlockEditor()
-  await typeMarkerVerified(marker)
+  await typeMarkerVerified(marker, readBackTimeout)
   await browser.keys(['Enter'])
   await browser.keys(['Escape'])
 
   const committed = blockStaticByMarker(marker)
   await committed.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+}
+
+/**
+ * Every committed block row whose text contains `marker`, resolved ONCE into a
+ * plain array (see the `getElements()` note in `openJournalBlockEditor`). For
+ * a spec that seeds N marked rows and must assert on all N, not just the
+ * first match `blockStaticByMarker` returns.
+ */
+export function blockStaticsByMarker(marker: string) {
+  return $$(`[data-testid="block-static"]*=${marker}`).getElements()
+}
+
+/**
+ * Assert that nothing matching `selector` is in the DOM, after a nav
+ * round-trip re-queried the backend. A reverse `waitForExist` alone would pass
+ * on a page that has not finished rendering yet, so callers put it AFTER the
+ * positive readiness signal of the view (`navigateTo`'s `aria-current`, a
+ * sibling row that must be present) and this re-checks with a fresh query
+ * once the wait resolves.
+ */
+export async function expectAbsent(selector: string, what: string): Promise<void> {
+  await $(selector).waitForExist({
+    reverse: true,
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: `${what} is still present after the round-trip (${selector})`,
+  })
+  const survivors = await $$(selector).getElements()
+  expect(survivors.length).toBe(0)
+}
+
+/**
+ * Click a sidebar ACTION button (not a nav destination): "New Page" creates an
+ * untitled page in the active space and opens it in the page editor
+ * (AppSidebar.tsx footer -> App.tsx handleNewPage -> navigateToPage). Unlike
+ * `navigateTo` there is no `aria-current` to wait on, so readiness is the page
+ * editor's title textbox (`PageTitleEditor`, aria-label `pageHeader.pageTitle`)
+ * plus the auto-created, auto-focused first block's editor
+ * (`use-block-auto-create-first-block.ts`).
+ */
+export async function openNewPage(): Promise<void> {
+  const button = sidebarNavButton('New Page')
+  await button.waitForClickable({ timeout: NAV_TIMEOUT })
+  await button.click()
+  await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+  await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
+    timeout: ACTION_TIMEOUT,
+  })
+}
+
+/**
+ * Re-open a page from the Pages view by its exact title. The title is the
+ * `span.page-browser-item-title` inside the row's `button.page-browser-item`
+ * (PageBrowser/DensityRow.tsx); the button itself also holds the metadata
+ * span, so the match is on the title span and the click bubbles to the
+ * button. The page editor is ready once its title textbox is displayed. This
+ * is the durable-read hop for page-editor specs: PageEditor and its BlockTree
+ * unmount on the way out and re-fetch on the way back.
+ */
+export async function reopenPageByTitle(title: string): Promise<void> {
+  await navigateTo('Pages')
+  const titleSpan = $(
+    `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`,
+  )
+  await titleSpan.waitForClickable({ timeout: NAV_TIMEOUT })
+  await titleSpan.click()
+  await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/**
+ * Wait for a sonner toast whose text contains `text`. Toasts carry no testid
+ * (ui/sonner.tsx); sonner stamps `data-sonner-toast` on each `<li>`.
+ *
+ * The match is done in JS over the resolved elements rather than with WDIO's
+ * `*=` partial-text selector, which compiles to `contains(., "<text>")` and
+ * therefore produces INVALID XPath the moment the expected text contains a
+ * double quote (run 34065136247: `Attached "wdio-paste.png"` — the toast
+ * template `blockTree.attachedFileMessage` quotes the filename — failed with
+ * `invalid selector: The string did not match the expected pattern`).
+ */
+export async function waitForToast(text: string): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const toasts = await $$('[data-sonner-toast]').getElements()
+      for (const toast of toasts) {
+        if ((await toast.getText()).includes(text)) return true
+      }
+      return false
+    },
+    {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: `no toast containing ${JSON.stringify(text)} appeared`,
+    },
+  )
+}
+
+/**
+ * Pick an option from a Radix `Select` by a substring of its text.
+ *
+ * `SelectContent` is portaled to `document.body`, so the option is queried
+ * globally, never chained off the trigger's ancestor. Substring (`*=`) rather
+ * than exact: the SpaceSwitcher options append an aria-hidden hotkey chip
+ * ("Ctrl+1") to the space name, which WDIO's exact-text match would include.
+ * The pointer is moved off the trigger before the option click: the
+ * SpaceSwitcher trigger carries a zero-delay Tooltip whose popper can render
+ * over the open option list and swallow the click (the Playwright
+ * `spaces-management.spec.ts` helper documents the same flake).
+ */
+export async function chooseSelectOption(
+  triggerSelector: string,
+  optionText: string,
+): Promise<void> {
+  const trigger = $(triggerSelector)
+  await trigger.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await trigger.click()
+  await browser.action('pointer').move({ x: 2, y: 2, origin: 'viewport' }).perform()
+  const option = $(`[role="option"]*=${optionText}`)
+  await option.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await option.click()
+  await option.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+}
+
+/**
+ * Paste a file into the FOCUSED block through the app's own paste handler.
+ *
+ * Attachments enter only by paste/drop on the editor (EditableBlock.tsx
+ * `handlePaste` -> `processFileAttachments` -> `add_attachment_with_bytes`);
+ * there is no picker. The event is dispatched on the
+ * `[data-testid="block-editor"]` <section>, which owns React's `onPaste`, and
+ * NOT on the contenteditable inside it: ProseMirror's own paste listener lives
+ * there and, for a files-only DataTransfer, falls through to `capturePaste`,
+ * which steals focus to a hidden div for 50 ms.
+ *
+ * WebKitGTK may refuse a `ClipboardEvent` constructed with `clipboardData`;
+ * the handler reads only `clipboardData.files` and each file's
+ * `name/type/size/arrayBuffer()`, so a plain `Event` with the property
+ * defined on it is an equivalent payload.
+ */
+export async function pasteFileIntoFocusedBlock(
+  base64: string,
+  filename: string,
+  mimeType: string,
+): Promise<void> {
+  await browser.execute(
+    (b64: string, name: string, type: string) => {
+      const bin = atob(b64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const file = new File([bytes], name, { type })
+      const target = document.querySelector('[data-testid="block-editor"]')
+      if (target === null) throw new Error('pasteFileIntoFocusedBlock: no focused block editor')
+      let payload: unknown
+      try {
+        const dt = new DataTransfer()
+        dt.items.add(file)
+        payload = dt.files.length === 1 ? dt : null
+      } catch {
+        payload = null
+      }
+      if (payload === null) {
+        payload = { files: [file], items: [], types: ['Files'], getData: () => '' }
+      }
+      let event: Event | null = null
+      try {
+        const ce = new ClipboardEvent('paste', {
+          clipboardData: payload as DataTransfer,
+          bubbles: true,
+          cancelable: true,
+        })
+        event = ce.clipboardData === payload ? ce : null
+      } catch {
+        event = null
+      }
+      if (event === null) {
+        event = new Event('paste', { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: payload, configurable: true })
+      }
+      target.dispatchEvent(event)
+    },
+    base64,
+    filename,
+    mimeType,
+  )
 }
