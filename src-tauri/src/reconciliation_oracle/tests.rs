@@ -3378,3 +3378,204 @@ fn oracle_tag_grammar_matches_production_3345() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Artefact 9 — `tags_cache` (#3345)
+// ---------------------------------------------------------------------------
+
+const TC_PAGE: &str = "01TCPAGE334500000000000000";
+const TC_SRC_A: &str = "01TCSRCA334500000000000000";
+const TC_SRC_B: &str = "01TCSRCB334500000000000000";
+const TC_SRC_DEAD: &str = "01TCSRCDEAD334500000000000";
+const TC_TAG_USED: &str = "01TCTAGUSED334500000000000";
+const TC_TAG_ZERO: &str = "01TCTAGZERO334500000000000";
+const TC_TAG_NULL: &str = "01TCTAGNULL334500000000000";
+const TC_TAG_DEAD: &str = "01TCTAGDEAD334500000000000";
+const TC_DUP_LO: &str = "01TCDUPAA33450000000000000";
+const TC_DUP_HI: &str = "01TCDUPZZ33450000000000000";
+
+/// Seed a tag block with explicit content (or NULL) and liveness.
+async fn tc_insert_tag(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    content: Option<&str>,
+    deleted_at: Option<i64>,
+) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, deleted_at) \
+         VALUES (?, 'tag', ?, ?, 1, ?, ?)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(TC_PAGE)
+    .bind(TC_PAGE)
+    .bind(deleted_at)
+    .execute(pool)
+    .await
+    .expect("seed tag block");
+}
+
+async fn tc_tag_edge(pool: &sqlx::SqlitePool, block_id: &str, tag_id: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .expect("seed block_tags");
+}
+
+async fn tc_inline_ref(pool: &sqlx::SqlitePool, source_id: &str, tag_id: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+        .bind(source_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .expect("seed block_tag_refs");
+}
+
+/// Every rule in `DESIRED_TAGS_SQL` plus the #626/#1990 dedup, each armed by a
+/// case that must fail it.
+async fn tc_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("tags_cache.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, TC_PAGE, None).await;
+    bl_insert_content(&pool, TC_SRC_A, TC_PAGE, None, "a").await;
+    bl_insert_content(&pool, TC_SRC_B, TC_PAGE, None, "b").await;
+    bl_insert_content(&pool, TC_SRC_DEAD, TC_PAGE, None, "gone").await;
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(TC_SRC_DEAD)
+        .execute(&pool)
+        .await
+        .expect("tombstone the source");
+
+    tc_insert_tag(&pool, TC_TAG_USED, Some("used"), None).await;
+    tc_insert_tag(&pool, TC_TAG_ZERO, Some("zero"), None).await;
+    // NULL content → no row at all (`b.content IS NOT NULL`).
+    tc_insert_tag(&pool, TC_TAG_NULL, None, None).await;
+    // Deleted → no row (`b.deleted_at IS NULL`).
+    tc_insert_tag(&pool, TC_TAG_DEAD, Some("dead"), Some(1)).await;
+    // #1990 — a NON-ASCII case pair. `normalize_tag_name` folds these to one
+    // key; SQLite's `COLLATE NOCASE` folds ASCII only and would keep both,
+    // which is the exact latent hazard #1990 fixed. Smallest id wins.
+    tc_insert_tag(&pool, TC_DUP_LO, Some("Σigma"), None).await;
+    tc_insert_tag(&pool, TC_DUP_HI, Some("σigma"), None).await;
+
+    // TC_SRC_A tags TC_TAG_USED BOTH explicitly and inline: the `UNION` dedups
+    // the pair, so this is ONE usage, not two.
+    tc_tag_edge(&pool, TC_SRC_A, TC_TAG_USED).await;
+    tc_inline_ref(&pool, TC_SRC_A, TC_TAG_USED).await;
+    // A second, distinct live source.
+    tc_inline_ref(&pool, TC_SRC_B, TC_TAG_USED).await;
+    // A DEAD source must not count.
+    tc_tag_edge(&pool, TC_SRC_DEAD, TC_TAG_USED).await;
+
+    seed_fts_index(&pool).await;
+    (pool, dir)
+}
+
+/// **The acceptance criterion.** `tags_cache` reconciles against a from-base
+/// fold, and every rule the fold transcribes is armed.
+#[tokio::test]
+async fn tags_cache_reconciles_and_reports_a_stale_count_3345() {
+    let (pool, _dir) = tc_fixture().await;
+
+    // NON-VACUITY by VALUE. The expected set is exactly three rows, and the
+    // count is 2 — one deduped double-tagged source plus one inline-only
+    // source, with the dead source excluded.
+    let expected = rebuild_tags_cache_from_base(&pool)
+        .await
+        .expect("from-base rebuild");
+    assert_eq!(
+        expected.keys().collect::<Vec<_>>(),
+        vec![TC_DUP_LO, TC_TAG_USED, TC_TAG_ZERO],
+        "a NULL-content tag, a deleted tag, and the LOSER of the duplicate-name \
+         tie-break all get no row; got {expected:#?}"
+    );
+    assert_eq!(
+        expected[TC_TAG_USED].usage_count, 2,
+        "the double-tagged source counts ONCE (UNION, not UNION ALL) and the \
+         tombstoned source not at all"
+    );
+    assert_eq!(
+        expected[TC_TAG_ZERO].usage_count, 0,
+        "an unused tag still gets a row, via the LEFT JOIN + COALESCE arm"
+    );
+    assert_eq!(
+        expected[TC_DUP_LO].name, "Σigma",
+        "the surviving row keeps the raw content column, not the normalised key"
+    );
+
+    // Production's own writer settles it.
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("rebuild_tags_cache");
+    assert_tags_cache_reconciled(&pool, "after production's own rebuild").await;
+
+    // Direction 1 — a drifted count.
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("UPDATE tags_cache SET usage_count = 99 WHERE tag_id = ?")
+        .bind(TC_TAG_USED)
+        .execute(&pool)
+        .await
+        .expect("drift the count");
+    let drift = tags_cache_reconciliation_failure(&pool, "count drifted")
+        .await
+        .expect("oracle must report the drifted count");
+    assert!(
+        drift.contains("tags_cache.usage_count") && drift.contains(TC_TAG_USED),
+        "expected a usage_count divergence naming the tag, got:\n{drift}"
+    );
+
+    // Direction 2 — a row the base rows do not justify.
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("rebuild_tags_cache");
+    // dynamic-sql: test-only fault injection.
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+         VALUES (?, 'ghost', 0, '2026-01-01T00:00:00Z')",
+    )
+    .bind(TC_TAG_DEAD)
+    .execute(&pool)
+    .await
+    .expect("insert a ghost row");
+    let extra = tags_cache_reconciliation_failure(&pool, "ghost row")
+        .await
+        .expect("oracle must report the ghost row");
+    assert!(
+        extra.contains("tags_cache.row") && extra.contains(TC_TAG_DEAD),
+        "expected an extra-row divergence naming the deleted tag, got:\n{extra}"
+    );
+}
+
+/// #1990, pinned on its own: identity is `normalize_tag_name`, not
+/// `COLLATE NOCASE`. Fold the pair with an ASCII-only rule and both survive,
+/// which is the multi-device hazard — the sync engine merges them under one
+/// key while the cache splits them into two rows.
+#[tokio::test]
+async fn tags_cache_dedup_folds_non_ascii_case_variants_3345() {
+    let (pool, _dir) = tc_fixture().await;
+    let expected = rebuild_tags_cache_from_base(&pool)
+        .await
+        .expect("from-base rebuild");
+
+    assert!(
+        expected.contains_key(TC_DUP_LO) && !expected.contains_key(TC_DUP_HI),
+        "`Σigma` and `σigma` are ONE tag under normalize_tag_name, and the smaller \
+         id survives; got {expected:#?}"
+    );
+    // The claim this test exists for: SQLite's NOCASE does NOT fold these, so a
+    // rule based on it would emit two rows and collide on UNIQUE(name).
+    assert_eq!(
+        "Σigma".to_lowercase(),
+        "σigma",
+        "the pair must be a genuine non-ASCII case variant for this to discriminate"
+    );
+}
