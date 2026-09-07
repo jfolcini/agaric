@@ -95,7 +95,8 @@ pub use sql_only_fallback::count as sql_only_fallback_count;
 // multi-root cascade; a post-cascade call hits dead space resolution).
 pub use apply::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_links,
+    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_fts,
+    reindex_restored_cohort_links, remove_deleted_cohort_fts,
 };
 // #2325/#2250: the single collapsed apply-projection entry point. The LOCAL
 // command sites route through this (`advance_cursor = false`) instead of

@@ -173,6 +173,21 @@ pub(super) async fn apply_op_with_mode(
     // reindex sees a cohort that is alive in both projections.
     reindex_restored_cohort_links(pool, &effects.restored_cohort, &effects.restored_ancestors)
         .await;
+    // #4733: and the `fts_blocks` rows of both cohorts, for the same reason —
+    // the `RemoveFtsBlock` / `UpdateFtsBlock` the dispatch table enqueues
+    // reach the seed alone.
+    remove_deleted_cohort_fts(pool, &effects.deleted_cohort).await;
+    let restored: Vec<&str> = effects
+        .restored_cohort
+        .iter()
+        .chain(effects.restored_ancestors.iter())
+        .map(String::as_str)
+        .collect();
+    reindex_restored_cohort_fts(pool, &restored).await;
+    // #4733: the `MoveBlock` tail is the THIRD cascade, and the only one whose
+    // op type enqueues no FTS task at all. One pass in either direction — see
+    // `ApplyEffects::move_fts_cohort`.
+    reindex_restored_cohort_fts(pool, &effects.move_fts_cohort).await;
 
     Ok(())
 }
@@ -344,6 +359,63 @@ pub async fn reindex_restored_cohort_links(
                  unresolved rows stay for the retry sweeper"
             );
         }
+    }
+}
+
+/// #4733 — drop the `fts_blocks` rows of every block a delete tombstoned.
+///
+/// The `DeleteBlock` arm of `invalidations_for_op` enqueues `RemoveFtsBlock`
+/// for the seed and cannot name anything else (it never sees the cohort), so
+/// every descendant of a deleted subtree kept its row until the next full
+/// rebuild — unreachable through search, which filters `deleted_at IS NULL`,
+/// but paying trigram index size and skewing bm25 statistics. `cohort` is the
+/// list the cascade consumed (`ApplyEffects::deleted_cohort`), seed included,
+/// which makes the seed's `RemoveFtsBlock` redundant here. The task still has
+/// to stay: it covers the SEED on the inbound-sync apply path, which runs no
+/// fan-out of its own.
+///
+/// Same call sites, call shape and infallible / log-only contract as
+/// [`reindex_restored_cohort_links`]: the delete has committed, and a leftover
+/// row is the pre-#4733 state, which the next rebuild reconciles.
+pub async fn remove_deleted_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) {
+    if let Err(e) = agaric_store::fts::remove_fts_for_blocks(pool, cohort).await {
+        tracing::warn!(
+            cohort_len = cohort.len(),
+            error = %e,
+            "#4733: FTS removal for a deleted cohort failed; the rows stay until the next rebuild"
+        );
+    }
+}
+
+/// #4733 — re-index the `fts_blocks` rows of every id whose membership a
+/// cascade changed: a restore's descendant cohort and #1884 ancestor chain, or
+/// a `MoveBlock` tail's swept / un-swept subtree. The task the dispatch table
+/// enqueues reaches the seed alone, and for `MoveBlock` there is no task at
+/// all.
+///
+/// ONE list, not the two [`reindex_restored_cohort_links`] takes: that helper
+/// dispatches its two groups differently, this one concatenates them on its
+/// first line. And one direction is not assumed — `reindex_fts_for_ids`
+/// re-derives membership per id, so a live id gains a fresh row and a
+/// tombstoned one loses the row it had, which is what lets the sweep and the
+/// un-sweep share a call. One pass, so the tag/page reference maps are loaded
+/// once rather than per member. Infallible / log-only, like its link
+/// counterpart.
+pub async fn reindex_restored_cohort_fts<S: AsRef<str>>(pool: &SqlitePool, cohort: &[S]) {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let ids: Vec<String> = cohort
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|id| seen.insert(id))
+        .map(str::to_owned)
+        .collect();
+    if let Err(e) = agaric_store::fts::reindex_fts_for_ids(pool, &ids).await {
+        tracing::warn!(
+            cohort_len = ids.len(),
+            error = %e,
+            "#4733: FTS reindex for a restored cohort failed; the members stay unsearchable \
+             until the next rebuild"
+        );
     }
 }
 

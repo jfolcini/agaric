@@ -505,6 +505,24 @@ impl ChainDriver {
             state,
         )
         .await;
+        // #4733: `apply_op`'s THREE post-commit FTS cohort fan-outs, mirrored
+        // for the same reason as the engine fan-outs above — the dispatch
+        // table's `RemoveFtsBlock` / `UpdateFtsBlock` reach the seed alone, and
+        // its `MoveBlock` arm enqueues nothing at all. Without these the oracle
+        // reports every tombstoned descendant's retained row and every revived
+        // descendant's missing one. The move arm matters HERE specifically:
+        // this generator emits `MoveBlock` after `DeleteBlock`, which is the
+        // un-sweep / sweep shape, and a driver missing that call would redden
+        // `reconciliation_failure` on the chains that reach it.
+        crate::materializer::remove_deleted_cohort_fts(pool, &effects.deleted_cohort).await;
+        let restored: Vec<&str> = effects
+            .restored_cohort
+            .iter()
+            .chain(effects.restored_ancestors.iter())
+            .map(String::as_str)
+            .collect();
+        crate::materializer::reindex_restored_cohort_fts(pool, &restored).await;
+        crate::materializer::reindex_restored_cohort_fts(pool, &effects.move_fts_cohort).await;
 
         if let Some((id, parent)) = created {
             // The engine read-back projected at create time can leave

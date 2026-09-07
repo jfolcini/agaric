@@ -1160,3 +1160,397 @@ async fn undo_of_a_tag_rename_reindexes_fts_references_3296() {
          the undo, got {undone:?}"
     );
 }
+
+// ======================================================================
+// #4733 — the delete/restore cohort must move OUT OF and BACK INTO
+// `fts_blocks` as a whole, not one seed at a time.
+// ======================================================================
+
+/// Every `block_id` currently in the index, sorted.
+async fn fts_indexed_ids(pool: &SqlitePool) -> Vec<String> {
+    // dynamic-sql: test-only read-back of the FTS shadow table.
+    let mut ids: Vec<String> = sqlx::query_scalar::<_, String>("SELECT block_id FROM fts_blocks")
+        .fetch_all(pool)
+        .await
+        .expect("read fts_blocks");
+    ids.sort();
+    ids
+}
+
+/// A child block, so the fixture has a real `parent_id` chain to cascade
+/// down (`insert_block_direct` only makes roots).
+async fn insert_child_block(pool: &SqlitePool, id: &str, parent_id: &str, content: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id) VALUES (?, 'content', ?, ?)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(parent_id)
+    .execute(pool)
+    .await
+    .expect("seed a child block");
+}
+
+/// The `deleted_at` a cascade stamped on `block_id`, or `None` while it is live.
+async fn tombstone_of(pool: &SqlitePool, block_id: &str) -> Option<i64> {
+    // dynamic-sql: test-only read-back.
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .expect("read deleted_at")
+}
+
+/// P → C → G, plus an unrelated sibling root. The tests drive `dispatch_op`
+/// (the remote / replay shape: `ApplyOp` → `apply_op` and its post-commit
+/// fan-out) or `BatchApplyOps`; the LOCAL command sites are covered beside
+/// the commands themselves (`commands::blocks::crud`).
+async fn subtree_fixture(pool: &SqlitePool) {
+    insert_block_direct(pool, "FTS-COHORT-P", "content", "parent body").await;
+    insert_child_block(pool, "FTS-COHORT-C", "FTS-COHORT-P", "child body").await;
+    insert_child_block(pool, "FTS-COHORT-G", "FTS-COHORT-C", "grandchild body").await;
+    insert_block_direct(pool, "FTS-COHORT-X", "content", "unrelated body").await;
+    agaric_store::fts::rebuild_fts_index(pool)
+        .await
+        .expect("seed the index the way boot does");
+}
+
+/// **#4733, the removal half.** Deleting a parent tombstones two nested
+/// descendants, and every one of them must leave `fts_blocks`.
+///
+/// The delete arm emits `RemoveFtsBlock` for the seed ALONE and no
+/// `RebuildFtsIndex` follows (it is not a member of
+/// `FULL_CACHE_REBUILD_TASKS`), so before the post-commit cohort fan-out
+/// `FTS-COHORT-C` and `FTS-COHORT-G` kept their rows until the next boot —
+/// paying trigram index size and skewing bm25 corpus statistics for every
+/// live search.
+///
+/// The row set, not a search result, is the observable: every search read
+/// inner-joins `blocks` and filters `deleted_at IS NULL`
+/// (`fts/search/fetch.rs`, `fts/toggle_filter.rs`), so the retained rows
+/// were unreachable and no search assertion here could fail before the fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_of_a_subtree_de_indexes_every_descendant_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec![
+            "FTS-COHORT-C".to_owned(),
+            "FTS-COHORT-G".to_owned(),
+            "FTS-COHORT-P".to_owned(),
+            "FTS-COHORT-X".to_owned(),
+        ],
+        "the fixture must start fully indexed, or the delete has nothing to remove"
+    );
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The cascade really ran: without this the row assertion below could
+    // pass on a fixture where nothing was ever deleted.
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-G").await.is_some(),
+        "the delete must have cascaded to the grandchild"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec!["FTS-COHORT-X".to_owned()],
+        "only the untouched sibling may keep its row"
+    );
+}
+
+/// **#4733, the `MoveBlock` tail — the third cascade.** A remote move can
+/// un-delete a subtree without any `RestoreBlock` op existing, and its rows
+/// have to come back with it.
+///
+/// The merge #4204/#4188/#4390 exist for: device A deletes P (cascading to C
+/// and G) while device B moves C under a live root. Replaying both,
+/// `unsweep_inherited_cohort_after_move` clears C's and G's INHERITED
+/// tombstone — they are live and visible in the tree again. But the
+/// `OpType::MoveBlock` arm of `invalidations_for_op` enqueues no FTS task at
+/// all, deliberately: before #4733 the rule was "a tombstoned block may keep
+/// its row, search filters `deleted_at` at read time", so there was nothing to
+/// repair. Once the delete started REMOVING those rows, that same silence left
+/// C and G live and unfindable until the next boot rebuild.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_un_sweeping_move_re_indexes_the_subtree_it_revived_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&del).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec!["FTS-COHORT-X".to_owned()],
+        "seed: the delete took the whole cohort out of the index"
+    );
+
+    // Device B's move, replayed after A's delete: C leaves the tombstoned
+    // chain for a live root, so the tail un-sweeps C and G.
+    let mv = make_op_record(
+        &pool,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-c"),
+            new_parent_id: Some(BlockId::test_id("fts-cohort-x")),
+            new_position: 0,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&mv).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The un-sweep really ran: without this the row assertion could pass on a
+    // move that never crossed the live/tombstoned line at all.
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-G").await.is_none(),
+        "the un-sweep must have revived the grandchild too"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec![
+            "FTS-COHORT-C".to_owned(),
+            "FTS-COHORT-G".to_owned(),
+            "FTS-COHORT-X".to_owned(),
+        ],
+        "a block the move brought back to life must be findable again; P stays \
+         deleted and stays out"
+    );
+}
+
+/// **#4733, the `MoveBlock` tail's other direction.** The mirror of the test
+/// above, and the reason one list covers both: `sweep_move_under_tombstoned_ancestor`
+/// tombstones a LIVE subtree moved under a tombstoned ancestor, so its rows
+/// must GO — the same op type, the same silence from `invalidations_for_op`,
+/// the opposite obligation. `reindex_fts_for_ids` re-derives membership per id
+/// rather than assuming a direction, which is what lets one pass serve both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sweeping_move_de_indexes_the_subtree_it_buried_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&del).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    // X is live and indexed; moving it under the tombstoned P sweeps it into
+    // P's trash cohort.
+    let mv = make_op_record(
+        &pool,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-x"),
+            new_parent_id: Some(BlockId::test_id("fts-cohort-p")),
+            new_position: 0,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&mv).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-X").await.is_some(),
+        "the sweep must have tombstoned the moved block"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        Vec::<String>::new(),
+        "a block the move buried owes no row either"
+    );
+}
+
+/// **#4733, the restoring half.** Restoring the same seed must put every
+/// descendant back: the removal above is what creates the obligation, so
+/// leaving this arm alone would trade an oversized index for an
+/// unsearchable one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_of_a_subtree_re_indexes_every_descendant_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&del).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    let deleted_at_ref = tombstone_of(&pool, "FTS-COHORT-P")
+        .await
+        .expect("the seed is tombstoned");
+
+    let res = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+            deleted_at_ref,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&res).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-G").await.is_none(),
+        "the restore must have reached the grandchild"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec![
+            "FTS-COHORT-C".to_owned(),
+            "FTS-COHORT-G".to_owned(),
+            "FTS-COHORT-P".to_owned(),
+            "FTS-COHORT-X".to_owned(),
+        ],
+        "every restored block must be searchable again"
+    );
+}
+
+/// **#4733, the ancestor chain.** Restoring a NESTED member un-deletes the
+/// contiguous tombstoned ancestors above it (#1884). Those are live blocks
+/// with content the delete de-indexed, and only a walk that goes UP as well
+/// as down puts them back — the seed-only `UpdateFtsBlock` reaches neither.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_of_a_nested_block_re_indexes_its_un_deleted_ancestors_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&del).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+    let deleted_at_ref = tombstone_of(&pool, "FTS-COHORT-G")
+        .await
+        .expect("the grandchild is tombstoned");
+
+    // Restore the GRANDCHILD, not the seed.
+    let res = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-g"),
+            deleted_at_ref,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&res).await.unwrap();
+    mat.flush_foreground().await.unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The #1884 upward un-delete is what makes this test about ancestors;
+    // assert it rather than assume it.
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-P").await.is_none(),
+        "the restore must have un-deleted the ancestor chain (#1884)"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec![
+            "FTS-COHORT-C".to_owned(),
+            "FTS-COHORT-G".to_owned(),
+            "FTS-COHORT-P".to_owned(),
+            "FTS-COHORT-X".to_owned(),
+        ],
+        "an un-deleted ancestor is live and must be searchable"
+    );
+}
+
+/// **#4733, the batch path.** `handle_foreground_task`'s `BatchApplyOps` arm
+/// does not route through `apply_op`; it runs its own post-commit fan-out
+/// loop, and it is the arm inbound sync delivers through — so both halves
+/// need their own call there (the #4285 link repair's batch test, mirrored).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batched_delete_and_restore_move_the_whole_cohort_4733() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    subtree_fixture(&pool).await;
+
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-p"),
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![del])))
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+    let deleted_at_ref = tombstone_of(&pool, "FTS-COHORT-G")
+        .await
+        .expect("the batch delete must have cascaded to the grandchild");
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec!["FTS-COHORT-X".to_owned()],
+        "BatchApplyOps: only the untouched sibling may keep its row"
+    );
+
+    // Restore the GRANDCHILD so the ancestor chain is exercised on this arm too.
+    let res = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id("fts-cohort-g"),
+            deleted_at_ref,
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![res])))
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+    assert!(
+        tombstone_of(&pool, "FTS-COHORT-P").await.is_none(),
+        "the batch restore must have un-deleted the ancestor chain (#1884)"
+    );
+    assert_eq!(
+        fts_indexed_ids(&pool).await,
+        vec![
+            "FTS-COHORT-C".to_owned(),
+            "FTS-COHORT-G".to_owned(),
+            "FTS-COHORT-P".to_owned(),
+            "FTS-COHORT-X".to_owned(),
+        ],
+        "BatchApplyOps: the restored block and its un-deleted ancestors must be searchable"
+    );
+}

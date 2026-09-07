@@ -13,8 +13,10 @@
 //!
 //! - [`update_fts_for_block_with_maps`] / [`update_fts_for_block_split_with_maps`]
 //!   — single-block upsert (DELETE then INSERT in one transaction).
-//! - [`reindex_fts_references`] — batch DELETE of the chunk's ids, then a
-//!   multi-row INSERT.
+//! - [`reindex_fts_for_ids`] — batch DELETE of the chunk's ids, then a
+//!   multi-row INSERT. Shared by [`reindex_fts_references`] and the
+//!   restore cohort fan-out (#4733).
+//! - [`remove_fts_for_blocks`] — one batched DELETE, for a deleted cohort.
 //! - [`rebuild_fts_index_impl`] / [`rebuild_fts_index_split_impl`] — full
 //!   `DELETE FROM fts_blocks` up front, then chunked INSERTs.
 //!
@@ -279,6 +281,31 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
     Ok(())
 }
 
+/// Remove the `fts_blocks` rows of every id in `ids` in one statement.
+///
+/// #4733: a `DeleteBlock` tombstones its whole cohort but the `RemoveFtsBlock`
+/// task names only the seed, so the post-commit fan-out passes the cohort the
+/// cascade actually consumed through here. A DELETE only — no stripping, no
+/// reference maps — because the rows' new state is "absent", and
+/// [`reindex_fts_for_ids`]'s per-id re-derivation would pay a full scan of
+/// every tag and page block to reach the same answer.
+pub async fn remove_fts_for_blocks<S: AsRef<str>>(
+    pool: &SqlitePool,
+    ids: &[S],
+) -> Result<(), AppError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let ids_json = serde_json::to_string(&ids.iter().map(AsRef::as_ref).collect::<Vec<_>>())?;
+    sqlx::query!(
+        "DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))",
+        ids_json
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Reindex FTS for all blocks that reference the given tag or page block.
 ///
 /// When a tag/page is renamed (edited), the FTS entries for every block that
@@ -336,7 +363,25 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         .filter(|bid| seen.insert(bid.clone()))
         .collect();
 
-    if unique_ids.is_empty() {
+    reindex_fts_for_ids(pool, &unique_ids).await
+}
+
+/// Re-derive the `fts_blocks` rows of `ids` from `blocks`, in chunks.
+///
+/// The membership rule is applied per id rather than assumed by the caller:
+/// an id that is live and has content gets exactly one freshly stripped row,
+/// and one that is tombstoned, content-less or gone from `blocks` gets none.
+/// So the same pass both ADDS and REMOVES, which is what lets the reference
+/// reindex above and the restore cohort fan-out (#4733) share it.
+///
+/// One transaction per `FTS_REINDEX_CHUNK` ids, committed independently, so a
+/// tag rename or a subtree restore touching tens of thousands of blocks does
+/// not hold the single writer for seconds. A later chunk failing leaves the
+/// earlier ones committed — acceptable for an eventually-consistent cache,
+/// which the next maintainer or rebuild reconciles.
+#[tracing::instrument(skip_all, err)]
+pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<(), AppError> {
+    if ids.is_empty() {
         return Ok(());
     }
 
@@ -347,7 +392,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     // Chunk the reindex into FTS_REINDEX_CHUNK-sized batches with a
     // fresh transaction per chunk. See the function-level rustdoc for the
     // rationale and partial-failure semantics.
-    for chunk in unique_ids.chunks(FTS_REINDEX_CHUNK) {
+    for chunk in ids.chunks(FTS_REINDEX_CHUNK) {
         let ids_json = serde_json::to_string(chunk)?;
 
         let mut tx =

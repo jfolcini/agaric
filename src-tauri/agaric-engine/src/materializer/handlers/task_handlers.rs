@@ -224,6 +224,33 @@ pub async fn handle_foreground_task(
                 .await;
             }
 
+            // #4733: the FTS half of the same cohorts, ONCE over the batch.
+            // `reindex_fts_for_ids` loads the tag and page reference maps per
+            // CALL — a full scan of both — so a batch carrying N restore ops
+            // would pay N of them inside the loop above. The removal is a
+            // single batched DELETE for the same reason.
+            let batch_deleted: Vec<&str> = per_record_effects
+                .iter()
+                .flat_map(|e| e.deleted_cohort.iter())
+                .map(String::as_str)
+                .collect();
+            let batch_restored: Vec<&str> = per_record_effects
+                .iter()
+                .flat_map(|e| {
+                    e.restored_cohort
+                        .iter()
+                        .chain(e.restored_ancestors.iter())
+                        // #4733: the `MoveBlock` tail's cohort rides the same
+                        // pass — `reindex_fts_for_ids` re-derives membership
+                        // per id, so a swept id loses its row and an un-swept
+                        // one gains a fresh one, from one list.
+                        .chain(e.move_fts_cohort.iter())
+                })
+                .map(String::as_str)
+                .collect();
+            super::apply::remove_deleted_cohort_fts(pool, &batch_deleted).await;
+            super::apply::reindex_restored_cohort_fts(pool, &batch_restored).await;
+
             Ok(())
         }
         MaterializeTask::Barrier(notify) => {
