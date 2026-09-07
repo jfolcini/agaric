@@ -50,16 +50,24 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
 
   const { agendaCounts, agendaCountsBySource, backlinkCounts } = useBatchCounts(entries)
 
-  // Build day-of-week headers based on weekStartsOn
+  // Day-of-week headers.
+  //
+  // #4555 — `getDateLocale()` used to be called INSIDE this memo, whose
+  // deps were `[weekStartsOn]`. It resolves off `i18n.language`, which the
+  // dependency array could not see, so a language switch left the English
+  // weekday row sitting over a Spanish month. Resolving it during render
+  // makes it a dependency the linter can check, and the resolved `Locale`
+  // is referentially stable per language, so the memo still only recomputes
+  // when something really changed.
+  const dateLocale = getDateLocale()
   const dayHeaders = useMemo(() => {
     const headers: string[] = []
     const refDate = startOfWeek(new Date(), { weekStartsOn })
-    const locale = getDateLocale()
     for (let i = 0; i < 7; i++) {
-      headers.push(format(addDays(refDate, i), 'EEE', { locale }))
+      headers.push(format(addDays(refDate, i), 'EEE', { locale: dateLocale }))
     }
     return headers
-  }, [weekStartsOn])
+  }, [weekStartsOn, dateLocale])
 
   // Split entries into weeks (rows of 7)
   const weeks = useMemo(() => {

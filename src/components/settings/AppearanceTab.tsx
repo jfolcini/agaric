@@ -1,5 +1,5 @@
 /**
- * AppearanceTab — theme + font size + week-start preference selectors.
+ * AppearanceTab — language + theme + font size + week-start preference selectors.
  *
  * Delegates each preference to its shared hook. The hooks are
  * localStorage-backed and re-read across windows via synthetic `storage`
@@ -24,11 +24,13 @@ import {
   type JournalDateFormat,
   useJournalDateFormat,
 } from '@/hooks/useJournalDateFormat'
+import { useLanguage } from '@/hooks/useLanguage'
 import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
+import { type LanguagePreference } from '@/lib/i18n/locales'
 import { notify } from '@/lib/notify'
 
 /**
@@ -66,6 +68,9 @@ function selectToTheme(value: string): ThemePreference {
 
 export function AppearanceTab(): React.ReactElement {
   const { t } = useTranslation()
+  // #4555 — the UI language. `system` follows the device; the other values
+  // pin a locale. Anything not yet translated falls back to English.
+  const { language, setLanguage } = useLanguage()
   const { theme, setTheme } = useTheme()
   const { motion, setMotion } = useMotionPreference()
   const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
@@ -77,6 +82,13 @@ export function AppearanceTab(): React.ReactElement {
   // #1448 — DISPLAY-ONLY journal date format. The stored journal page content
   // stays ISO `yyyy-MM-dd`; this only changes how titles are rendered.
   const { journalDateFormat, setJournalDateFormat } = useJournalDateFormat()
+
+  const handleLanguageChange = useCallback(
+    (value: string) => {
+      setLanguage(value as LanguagePreference)
+    },
+    [setLanguage],
+  )
 
   const handleThemeChange = useCallback(
     (value: string) => {
@@ -143,6 +155,25 @@ export function AppearanceTab(): React.ReactElement {
 
   return (
     <div className="space-y-6">
+      {/* Language (#4555). Above Theme because it changes every other label
+          on this screen. */}
+      <FormField
+        label={t('settings.languageLabel')}
+        htmlFor="language-select"
+        description={t('settings.languageHelp')}
+      >
+        <Select value={language} onValueChange={handleLanguageChange}>
+          <SelectTrigger id="language-select" aria-label={t('settings.languageLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="system">{t('settings.languageSystem')}</SelectItem>
+            <SelectItem value="en">{t('settings.languageEnglish')}</SelectItem>
+            <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </FormField>
+
       {/* Theme selector */}
       <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
         <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>

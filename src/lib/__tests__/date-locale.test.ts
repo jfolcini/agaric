@@ -15,13 +15,9 @@
 import { enUS, es } from 'date-fns/locale'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  __registerDateLocaleForTests,
-  __unregisterDateLocaleForTests,
-  getAppLocaleTag,
-  getDateLocale,
-} from '@/lib/date-locale'
+import { getAppLocaleTag, getDateLocale } from '@/lib/date-locale'
 import { i18n } from '@/lib/i18n'
+import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
 
 describe('getAppLocaleTag', () => {
   afterEach(async () => {
@@ -70,13 +66,13 @@ describe('getDateLocale', () => {
   })
 
   it('tracks a temporarily-registered locale keyed on i18n.language', async () => {
-    __registerDateLocaleForTests(TEST_TAG, es)
+    registerDateLocale(TEST_TAG, es)
     await i18n.changeLanguage(TEST_TAG)
     expect(getDateLocale()).toBe(es)
   })
 
   it('reverts when i18n.language changes back', async () => {
-    __registerDateLocaleForTests(TEST_TAG, es)
+    registerDateLocale(TEST_TAG, es)
     await i18n.changeLanguage(TEST_TAG)
     expect(getDateLocale()).toBe(es)
     await i18n.changeLanguage('en')

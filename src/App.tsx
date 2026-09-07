@@ -26,6 +26,7 @@ import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useFontSize } from '@/hooks/useFontSize'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useLanguage } from '@/hooks/useLanguage'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
@@ -212,6 +213,10 @@ function App() {
   // Apply the global animation-speed preference app-wide from boot (the Settings
   // Select mounts the same hook for the control). #animation-speed-tuning
   useMotionPreference()
+  // Apply the UI-language preference app-wide (#4555). `main.tsx` already
+  // resolved it before first paint; mounting the hook here is what picks up
+  // a change made in ANOTHER window, where no Settings tab is mounted.
+  useLanguage()
   const { syncing, syncAll } = useSyncTrigger()
   // Mutual-exclusion gates for the App-level search overlays. When
   // the mobile search sheet is showing a given segment it mounts the

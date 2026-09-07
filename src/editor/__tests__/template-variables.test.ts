@@ -2,8 +2,8 @@ import { es } from 'date-fns/locale'
 import { describe, expect, it } from 'vitest'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
-import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import { i18n } from '@/lib/i18n'
+import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
 
 // #4555 — falsification helper: see the matching comment in
 // `src/lib/__tests__/date-utils.test.ts` for why a plain 'xx' tag (rather
@@ -11,7 +11,7 @@ import { i18n } from '@/lib/i18n'
 const TEST_LOCALE_TAG = 'xx'
 
 async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
-  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  registerDateLocale(TEST_LOCALE_TAG, es)
   await i18n.changeLanguage(TEST_LOCALE_TAG)
   try {
     return await run()

@@ -9,12 +9,17 @@
  * The English string catalog lives in sibling namespace files
  * (common.ts, agenda.ts, editor.ts, …). Each exports a flat
  * `Record<string, string>` of dotted keys. They are merged
- * verbatim into a single `en.translation` resource here.
+ * verbatim into a single `en.translation` resource here. English is
+ * statically bundled because it is `fallbackLng`, and a fallback that has
+ * to be loaded is a fallback that can fail. Every other locale lives under
+ * `src/lib/i18n/<locale>/` and arrives via `loadLocale()` below.
  *
- * To add a new key: pick the namespace file that matches the key's
- * first segment and add the entry there. Do NOT add new locale
- * resources — this is a single-locale app (lng/fallbackLng pinned
- * to 'en').
+ * To add a new key: pick the namespace file that matches the key's first
+ * segment and add the entry there. English is the source of truth for
+ * wording; a locale with no translation for that key yet needs no entry at
+ * all — `fallbackLng: 'en'` renders the English string. Do NOT hand-roll a
+ * locale resource outside the registry in `locales.ts`, and do NOT build a
+ * parallel resource tree next to the namespace files.
  */
 
 import i18n from 'i18next'
@@ -26,6 +31,7 @@ import { common } from '@/lib/i18n/common'
 import { editor } from '@/lib/i18n/editor'
 import { errors } from '@/lib/i18n/errors'
 import { history } from '@/lib/i18n/history'
+import { DEFAULT_LOCALE } from '@/lib/i18n/locales'
 import { pages } from '@/lib/i18n/pages'
 import { properties } from '@/lib/i18n/properties'
 import { references } from '@/lib/i18n/references'
@@ -60,8 +66,8 @@ const resources = {
 // inline, so `init` resolves on its own and cannot reject.
 void i18n.use(initReactI18next).init({
   resources,
-  lng: 'en',
-  fallbackLng: 'en',
+  lng: DEFAULT_LOCALE,
+  fallbackLng: DEFAULT_LOCALE,
   interpolation: {
     escapeValue: false, // React already escapes
   },
@@ -85,11 +91,6 @@ void i18n.use(initReactI18next).init({
  * component mounts and must own the FIRST paint, not just react to later
  * ones — so it subscribes directly to i18next's own event bus instead,
  * which is available immediately after `init()` and needs no React tree.
- *
- * Phase 0 keeps `lng` pinned to `'en'` (no language switch exists yet), so
- * `languageChanged` never actually fires in production today — this
- * listener is dormant machinery, wired and tested now so it is provably
- * correct before Phase 1 ever calls `changeLanguage()`.
  */
 function applyDocumentLang(lng: string): void {
   if (typeof document === 'undefined') return

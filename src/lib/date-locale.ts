@@ -15,29 +15,20 @@
  * non-English dates: still two languages in one view). Both `Intl` and
  * `date-fns` must resolve from the SAME source as the UI text itself:
  * `i18n.language`. That is `getAppLocaleTag()` below, and it is what
- * `getDateLocale()` is keyed on. Since `src/lib/i18n/index.ts` pins `lng` to
- * `'en'` (Phase 0 ships no second locale), `i18n.language` is always
- * `'en'` today — so every date renders English, matching the English UI.
- * That is the correct Phase 0 end state: one honest locale, not "dates
- * follow the OS, UI follows English" repackaged.
+ * `getDateLocale()` is keyed on.
  *
- * `DATE_LOCALES` therefore holds exactly one entry (`en`) — a Spanish
- * `date-fns/locale` import would be dead code today (no code path can ever
- * select it, since `i18n.language` can never be `'es'`) plus ~1KB of
- * unused Spanish calendar vocabulary in the bundle. The map is a plain
- * mutable `Record`, not `as const`, specifically so Phase 1's
- * `SUPPORTED_LOCALES` registry can add entries here without restructuring
- * this module.
+ * The tag → `date-fns` `Locale` map itself lives in `@/lib/i18n/locales`,
+ * not here: a lazily-loaded catalog chunk registers its own locale into it,
+ * and this module imports `@/lib/i18n`, so holding the map here would make
+ * that registration an import cycle. This module owns the RESOLUTION
+ * against the current language; `locales.ts` owns the per-locale data.
  */
 
 import type { Locale } from 'date-fns'
 import { enUS } from 'date-fns/locale'
 
 import { i18n } from '@/lib/i18n'
-
-const DATE_LOCALES: Record<string, Locale> = {
-  en: enUS,
-}
+import { lookupDateLocale } from '@/lib/i18n/locales'
 
 /**
  * The app's current language tag — `i18n.language` itself, the same value
@@ -60,22 +51,5 @@ export function getAppLocaleTag(): string {
  * `fallbackLng: 'en'` should already agree).
  */
 export function getDateLocale(): Locale {
-  return DATE_LOCALES[getAppLocaleTag()] ?? enUS
-}
-
-/**
- * Test-only: register a synthetic locale under `tag` so falsification
- * tests can prove `getDateLocale()`/`getAppLocaleTag()` track
- * `i18n.language` — by driving `i18n.changeLanguage(tag)` — without
- * shipping a real second locale (Phase 0 ships English only). Never called
- * from production code. Mirrors `__resetPriorityLevelsForTests` in
- * `priority-levels.ts`.
- */
-export function __registerDateLocaleForTests(tag: string, locale: Locale): void {
-  DATE_LOCALES[tag] = locale
-}
-
-/** Test-only: undo `__registerDateLocaleForTests`. */
-export function __unregisterDateLocaleForTests(tag: string): void {
-  delete DATE_LOCALES[tag]
+  return lookupDateLocale(getAppLocaleTag()) ?? enUS
 }

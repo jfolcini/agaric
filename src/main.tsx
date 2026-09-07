@@ -2,16 +2,21 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import '@/lib/i18n'
+import { App } from '@/App.tsx'
 
 import '@/index.css'
-import { App } from '@/App.tsx'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PrimaryFocusProvider } from '@/hooks/usePrimaryFocus'
 import { useTooltipDelay } from '@/hooks/useTooltipDelay'
+import { resolveLocale } from '@/lib/i18n/locales'
+// i18next initialises as a side effect of importing this module. Import
+// order here does not matter — every module that resolves a string imports
+// it too, so its body has run before any of them evaluate.
+import { setLocale } from '@/lib/i18n/set-locale'
 import { logger } from '@/lib/logger'
 import { initFrontendObservability } from '@/lib/observability'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
 
 /**
@@ -139,6 +144,20 @@ async function main() {
       err,
     )
   }
+
+  // #4555 — resolve the stored language preference and load its catalog
+  // BEFORE the first render, so a Spanish user's first paint is Spanish
+  // rather than an English frame that swaps a tick later. English is
+  // statically bundled, so for the default this awaits an already-resolved
+  // promise and costs nothing. `setLocale` handles its own failure (it logs
+  // and stays on English) — a locale chunk that won't load must never keep
+  // the app from mounting.
+  //
+  // The preference is read HERE rather than inside `@/lib/i18n`: that module
+  // is imported by almost everything, and an edge from it to
+  // `@/lib/preferences` puts `useLocalStoragePreference` (and React) in
+  // every consumer's graph, including the vitest setup's.
+  await setLocale(resolveLocale(readPreference(PREFERENCES.language)))
 
   const rootEl = document.getElementById('root')
   if (!rootEl) throw new Error('Root element not found')

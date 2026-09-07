@@ -1,7 +1,6 @@
 import { es } from 'date-fns/locale'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import {
   dueDateColor,
   formatCompactDate,
@@ -19,6 +18,7 @@ import {
   isDateFormattedPage,
 } from '@/lib/date-utils'
 import { i18n } from '@/lib/i18n'
+import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
 
 /**
  * #3752 EQUIVALENCE LEDGER — `date-utils.ts` mutants no input can distinguish
@@ -63,7 +63,7 @@ import { i18n } from '@/lib/i18n'
 const TEST_LOCALE_TAG = 'xx'
 
 async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
-  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  registerDateLocale(TEST_LOCALE_TAG, es)
   await i18n.changeLanguage(TEST_LOCALE_TAG)
   try {
     return await run()
