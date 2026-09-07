@@ -1965,6 +1965,20 @@
   background-color: var(--muted-foreground);
 }
 
+/* ── Tooltips never swallow a click ────────────────────────────
+ * Radix wraps every popper in a positioned `data-radix-popper-content-wrapper`
+ * div that hit-tests, so an open tooltip intercepts clicks on whatever it
+ * covers. Closing a Select restores focus to its trigger, which reopens that
+ * trigger's tooltip: the SpaceSwitcher's shortcut hint is tall enough to cover
+ * the first sidebar nav item, so the click after a mouse space switch landed on
+ * the tooltip and did nothing. Nothing inside a tooltip is interactive, and
+ * `pointer-events` inherits, so opting the wrapper out fixes the content too.
+ * Scoped by `:has()` to tooltip poppers — Select/Popover/Dropdown poppers, which
+ * must stay clickable, do not match. */
+[data-radix-popper-content-wrapper]:has(> [data-slot='tooltip-content']) {
+  pointer-events: none;
+}
+
 /* ── Animation/transition token utilities ──────────────────── */
 @utility duration-fast {
   transition-duration: var(--duration-fast);

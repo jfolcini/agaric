@@ -1,4 +1,4 @@
-# Session 1556 — the widened real-backend lane, made green
+# Session 1575 — the widened real-backend lane, made green
 
 Branch `fix/4671-real-backend-e2e-widen`, part 1 of #4671. The eight new
 specs from the two earlier commits were dispatched to the weekly lane and
@@ -80,7 +80,44 @@ causes the first run had hidden behind their earlier failures:
    Enter+Escape, which removes the `delete_block` entirely and puts a
    round-trip's worth of time between the block's ops and the checkbox's.
 
+## Third red run — and the production bug behind it
+
+[34090532222](https://github.com/jfolcini/agaric/actions/runs/34090532222) —
+`13 passed, 1 failed`. The two fixes above hold. The last failure is not a spec
+problem at all:
+
+6. **`space-scoped-tag`** — `element (".//button[.//span[normalize-space(.)=
+   "Journal"]]") still not clickable after 60000ms`. Radix portals every popper
+   into a positioned `[data-radix-popper-content-wrapper]`, and that wrapper
+   hit-tests. Closing a Select restores focus to its trigger; the SpaceSwitcher's
+   trigger carries a tooltip, so the tooltip re-opens on that focus, and its
+   shortcut hint is tall enough to cover the first sidebar nav item. The click
+   after a mouse space switch landed on the tooltip and did nothing.
+
+   Nothing inside a tooltip is interactive and `pointer-events` inherits, so
+   opting the wrapper out fixes the content too. Scoped by `:has()` to tooltip
+   poppers — Select/Popover/Dropdown poppers must stay clickable and do not
+   match.
+
+   This is a real user-facing defect, not a test artefact: any click under an
+   open tooltip was being eaten. It is the third production bug this lane has
+   surfaced (after #4805), which is the argument #4671 is making.
+
 ## Verification
 
-Pending: re-dispatched to the weekly lane. This section names the green run
-once it concludes; no spec is claimed to pass before then.
+`e2e/tooltip-pointer-events.spec.ts` guards the fix per-PR, since the
+real-backend lane is `schedule` + `workflow_dispatch` only until #4671 lands
+(`e2e/AGENTS.md` invariant 4: a spec there needs a per-PR partner or it does not
+guard the PR that reintroduces the bug).
+
+It asserts the MECHANISM — `elementFromPoint` over the tooltip's own centre must
+not return the tooltip — rather than that one particular click lands. The first
+draft did the latter, clicking the nav item after the Select closed, and it
+**passed against a reverted fix**: whether the tooltip actually covers that
+button depends on viewport height and on how many spaces exist. That version was
+worth nothing and is recorded here so nobody rewrites it that way. The mechanism
+assertion reddens on the revert (`hitsTooltip` `Expected: false / Received:
+true`) and is green with it; restored and `cmp`-verified.
+
+The weekly lane itself is re-dispatched with this commit; this section names the
+green run once it concludes, and no spec is claimed to pass there before then.
