@@ -518,6 +518,7 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
         fts_tombstoned_blocks: 0,
         date_column_rows: 0,
         block_tag_edges: 0,
+        derived_space_rows: 0,
         distinct_block_spaces: 0,
     };
 
@@ -1011,6 +1012,229 @@ async fn reparent_block(pool: &sqlx::SqlitePool, id: &str, new_parent: Option<&s
 }
 
 // ---------------------------------------------------------------------------
+// `blocks.space_id` — the derived space column (#3345 Artefact 9)
+// ---------------------------------------------------------------------------
+
+const SPACE_X: &str = "SPACE_X";
+const SPACE_Y: &str = "SPACE_Y";
+/// A block already carrying its page's space — the settled state a create
+/// reaches once its `SetBlockPageId` has run.
+const B_CHILD: &str = "B_CHILD";
+/// A top-level tag OWNS its `space_id` (no page to derive from); the fold must
+/// leave it alone, or a rebuild written the same way would null it (#533).
+const SPACE_TAG: &str = "SPACE_TAG";
+
+/// Write one block's `space_id` directly. The fixture's way of giving a page
+/// its authoritative value, and the fault injection for a `space` op whose
+/// page-group write reached the page row and nothing under it.
+async fn set_block_space(pool: &sqlx::SqlitePool, id: &str, space: Option<&str>) {
+    // dynamic-sql: test-only fixture seed / fault injection (not a production query path).
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(space)
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("set block space");
+}
+
+async fn stored_space(pool: &sqlx::SqlitePool, id: &str) -> Option<String> {
+    // dynamic-sql: static SQL, test-only read-back.
+    sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("read space_id")
+}
+
+/// [`page_fixture`] with spaces. `PAGE_A` is in `SPACE_X`; `PAGE_B` and
+/// `NESTED_PAGE` are in `SPACE_Y`, so the nested-page boundary changes the
+/// answer, not just the owner. The content blocks under them are left with the
+/// NULL `space_id` a fresh create carries until its post-commit stamp runs —
+/// except `B_CHILD`, already stamped. `ORPHAN` keeps a stale value and
+/// `SPACE_TAG` its own: both must be tolerated, and are asserted to be.
+async fn space_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let (pool, dir) = page_fixture().await;
+    for space in [SPACE_X, SPACE_Y] {
+        bl_insert_page(&pool, space, None).await;
+        bl_register_space(&pool, space).await;
+    }
+    set_block_space(&pool, PAGE_A, Some(SPACE_X)).await;
+    set_block_space(&pool, PAGE_B, Some(SPACE_Y)).await;
+    set_block_space(&pool, NESTED_PAGE, Some(SPACE_Y)).await;
+    set_block_space(&pool, ORPHAN, Some(SPACE_X)).await;
+    bl_insert_content(&pool, B_CHILD, PAGE_B, Some(SPACE_Y), "body").await;
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'tag', 'urgent', NULL, 0, NULL, ?)",
+    )
+    .bind(SPACE_TAG)
+    .bind(SPACE_Y)
+    .execute(&pool)
+    .await
+    .expect("seed tag block");
+    seed_fts_index(&pool).await;
+    settle_pages_cache(&pool).await;
+    (pool, dir)
+}
+
+/// **`blocks.space_id`.** Every non-page block with a page ancestor must carry
+/// its owning page's `space_id` — both directions of the value, NULL included.
+///
+/// The injected states are the real ones. A created block's column is NULL
+/// until the post-commit `SetBlockPageId` task stamps it, so a task that never
+/// runs (or a create arm that never enqueues it) leaves exactly the first
+/// state. The second is a `space` op whose page-group write reached the page
+/// row and not the rows under it; the third is the same op clearing the page.
+/// Production's own arms repair each — the create arm's
+/// `set_block_space_id_from_parent` and the vault-wide `rebuild_space_ids` —
+/// which is the other half of the claim: the fold agrees with production on a
+/// tree with a two-level climb, a nested-page boundary in a DIFFERENT space,
+/// an orphan and a top-level tag, so a report from it is a bug and not an
+/// opinion.
+#[tokio::test]
+async fn block_space_ids_reconcile_and_report_a_missed_stamp_3345() {
+    let (pool, _dir) = space_fixture().await;
+
+    // NON-VACUITY, by value: the derived set must be exactly the four content
+    // blocks under a page, each attributed to its NEAREST page's space — a
+    // fold that climbed through NESTED_PAGE to PAGE_A would still count 4.
+    let expect = |page: &str, space: &str| DerivedSpace {
+        owning_page: page.to_owned(),
+        space_id: Some(space.to_owned()),
+    };
+    let derived = rebuild_block_space_ids_from_base(&pool)
+        .await
+        .expect("space rebuild");
+    assert_eq!(
+        derived,
+        [
+            (A_CHILD, expect(PAGE_A, SPACE_X)),
+            (A_GRAND, expect(PAGE_A, SPACE_X)),
+            (B_CHILD, expect(PAGE_B, SPACE_Y)),
+            (N_CHILD, expect(NESTED_PAGE, SPACE_Y)),
+        ]
+        .into_iter()
+        .map(|(id, d)| (id.to_owned(), d))
+        .collect::<std::collections::BTreeMap<_, _>>(),
+        "the fold must derive exactly the content blocks under a page, from the nearest \
+         page, and leave pages, the orphan and the tag out"
+    );
+    let coverage = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (coverage.derived_space_rows, coverage.distinct_block_spaces),
+        (4, 2),
+        "four derived rows across two spaces, got {coverage:?}"
+    );
+
+    // Direction 1 — MISSING stamp: three created blocks whose SetBlockPageId
+    // never ran. The report names the block, the page it should have
+    // inherited from, and the NULL it holds.
+    let missing = reconciliation_failure(&pool, "created blocks whose SetBlockPageId never ran")
+        .await
+        .expect("oracle must report the unstamped blocks");
+    assert!(
+        missing.contains(&format!("blocks.space_id [{A_CHILD}]")),
+        "expected a space divergence naming the first unstamped block, got:\n{missing}"
+    );
+    assert!(
+        missing.contains(&format!(
+            "rebuilt-from-base: {SPACE_X} (owning page {PAGE_A}'s space_id)"
+        )) && missing.contains("incremental state: NULL"),
+        "the report must name the page's space and the NULL, got:\n{missing}"
+    );
+    assert!(
+        missing.contains("in 3 place(s)"),
+        "A_CHILD, A_GRAND and N_CHILD are all unstamped; B_CHILD is not, got:\n{missing}"
+    );
+
+    // Production's create arm, in production's order: a child copies its
+    // PARENT's column, so the parent must be stamped first.
+    for id in [A_CHILD, A_GRAND, N_CHILD] {
+        agaric_store::cache::set_block_space_id_from_parent(&pool, id)
+            .await
+            .expect("set_block_space_id_from_parent");
+    }
+    assert_reconciled(
+        &pool,
+        "after the SetBlockPageId space half ran for each block",
+    )
+    .await;
+    assert_eq!(
+        stored_space(&pool, N_CHILD).await.as_deref(),
+        Some(SPACE_Y),
+        "the block under the nested page inherits the NESTED page's space, not PAGE_A's"
+    );
+
+    // Direction 2 — STALE value: PAGE_A moved to SPACE_Y but its group did
+    // not follow. Both spaces are named so the reader sees which way it
+    // drifted.
+    set_block_space(&pool, PAGE_A, Some(SPACE_Y)).await;
+    let stale = reconciliation_failure(&pool, "page moved space, group left behind")
+        .await
+        .expect("oracle must report the stale group");
+    assert!(
+        stale.contains(&format!("blocks.space_id [{A_CHILD}]"))
+            && stale.contains(&format!(
+                "rebuilt-from-base: {SPACE_Y} (owning page {PAGE_A}'s space_id)"
+            ))
+            && stale.contains(&format!("incremental state: {SPACE_X}")),
+        "expected a stale-space divergence naming both spaces, got:\n{stale}"
+    );
+    assert!(
+        stale.contains("in 2 place(s)"),
+        "A_CHILD and A_GRAND follow PAGE_A; N_CHILD follows NESTED_PAGE and must not be \
+         reported, got:\n{stale}"
+    );
+    settle_block_space_ids_rebuild(&pool)
+        .await
+        .expect("rebuild_space_ids");
+    assert_reconciled(
+        &pool,
+        "after the vault-wide rebuild propagated the page's new space",
+    )
+    .await;
+
+    // Direction 3 — the page LOST its space (a DeleteProperty(space) that
+    // stopped at the page row): the child must go NULL too.
+    set_block_space(&pool, PAGE_B, None).await;
+    let cleared = reconciliation_failure(&pool, "page space cleared, child still stamped")
+        .await
+        .expect("oracle must report the child that outlived its page's space");
+    assert!(
+        cleared.contains(&format!("blocks.space_id [{B_CHILD}]"))
+            && cleared.contains(&format!(
+                "rebuilt-from-base: NULL (owning page {PAGE_B} carries no space_id)"
+            ))
+            && cleared.contains(&format!("incremental state: {SPACE_Y}")),
+        "expected the NULL-expected direction, got:\n{cleared}"
+    );
+    assert!(
+        cleared.contains("in 1 place(s)"),
+        "only B_CHILD hangs off PAGE_B, got:\n{cleared}"
+    );
+    settle_block_space_ids_rebuild(&pool)
+        .await
+        .expect("rebuild_space_ids");
+    assert_reconciled(&pool, "after the rebuild cleared the child").await;
+
+    // Out of scope, and shown to be rather than assumed: the orphan's stale
+    // value and the tag's own survived every rebuild above (production leaves
+    // them alone) and the oracle never reported either.
+    assert_eq!(stored_space(&pool, ORPHAN).await.as_deref(), Some(SPACE_X));
+    assert_eq!(
+        stored_space(&pool, SPACE_TAG).await.as_deref(),
+        Some(SPACE_Y)
+    );
+    let end = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (end.derived_space_rows, end.distinct_block_spaces),
+        (3, 1),
+        "B_CHILD now derives NULL and everything else is in SPACE_Y, got {end:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // `page_link_cache` — the page-level `block_links` roll-up (#3296)
 // ---------------------------------------------------------------------------
 
@@ -1459,20 +1683,36 @@ async fn block_links_oracle_audits_the_base_table_against_content_3955() {
         .expect("reindex_block_links");
 
     // THE BLIND SPOT ITSELF, asserted rather than described. Settle every
-    // roll-up production would settle and the PRE-EXISTING oracle is green —
-    // and it stays green with #3894 reverted, because `block_links` is a base
-    // table to both of its link artefacts: the dropped row is missing from the
-    // expected AND the actual side, so the wrong answer is consistent. That is
-    // why the assertion below cannot be replaced by `assert_reconciled`.
+    // roll-up production would settle and the PRE-EXISTING oracle is green on
+    // every link artefact — and it stays green with #3894 reverted, because
+    // `block_links` is a base table to both of them: the dropped row is
+    // missing from the expected AND the actual side, so the wrong answer is
+    // consistent. That is why the assertion below cannot be replaced by
+    // `assert_block_links_reconciled`.
+    //
+    // The ONE thing `reconcile` does see is `BL_TGT_PENDING`'s NULL
+    // `space_id` — the stamping window this fixture deliberately holds open
+    // (#3903), which Artefact 9 exists to name. Pinning it as the ONLY
+    // divergence keeps both claims exact: the link roll-ups reconcile, and the
+    // space artefact reports the window rather than being silenced by a
+    // stamp that would also erase the page-fallback target the counters above
+    // assert on.
     settle_pages_cache(&pool).await;
     settle_page_link_cache_rebuild(&pool)
         .await
         .expect("page_link_cache rebuild");
-    assert_reconciled(
-        &pool,
-        "every roll-up settled — reconcile() sees nothing here",
-    )
-    .await;
+    let seen: Vec<(&str, String)> = reconcile(&pool)
+        .await
+        .expect("reconcile")
+        .into_iter()
+        .map(|d| (d.artefact, d.key))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![("blocks.space_id", BL_TGT_PENDING.to_owned())],
+        "every roll-up settled — reconcile() must see nothing but the deliberately \
+         unstamped target's space window"
+    );
 
     // #3955 ACCEPTANCE, and FIRST on purpose: this must be the assertion that
     // fires on a tree with #3894 reverted, naming `BL_SRC -> BL_TGT_PENDING`

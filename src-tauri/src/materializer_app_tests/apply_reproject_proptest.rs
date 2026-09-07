@@ -63,6 +63,7 @@
 //!   `block_properties` / `block_links` SQL state.
 
 use crate::db::init_pool;
+use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_engine::loro::projection::reproject_dense_positions;
 use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -80,7 +81,7 @@ use agaric_sync::sync_protocol::loro_sync::{
 use agaric_sync::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use proptest::prelude::*;
 use sqlx::SqlitePool;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
@@ -332,6 +333,19 @@ fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
                     | OpPayload::AddAttachment(_)
                     | OpPayload::DeleteAttachment(_)
             )
+            // #3345: `SetProperty(space)` is RE-TARGETED onto `PAGE_ID` below,
+            // but `DeleteProperty` cannot be — `project_delete_property_to_sql`
+            // clears `WHERE id = ? OR page_id = ?`, so re-targeting it would
+            // null the whole page group's space and trip B5's own zero
+            // `sql_only_fallback` guard on the next op. Dropping it is what is
+            // left, and it costs nothing: production can never emit this pair.
+            // The R17 guard means the command layer only ever writes `space` on
+            // a page, so a `DeleteProperty(space)` on a CONTENT block is a
+            // shape only the generator can build — and one the new
+            // `blocks.space_id` artefact correctly reports, because
+            // `invalidations_for_op` returns no `SetBlockPageId` for
+            // `DeleteProperty` and nothing re-derives the cleared column.
+            && !matches!(p, OpPayload::DeleteProperty(dp) if dp.key == SPACE_PROPERTY_KEY)
         })
         .map(|p| match p {
             OpPayload::CreateBlock(mut c) if c.parent_id.is_none() => {
@@ -1115,9 +1129,17 @@ proptest! {
             // count towards what this chain can drive. Edges written before a
             // migration survive it (nothing re-indexes an unchanged block), so
             // the PEAK counters below still see them.
-            let chain_links = {
+            //
+            // #3345 Artefact 9 rides the SAME walk: `chain_derived_spaces` is
+            // how many spaces the chain carries a DERIVED row through — the
+            // space the group sits in at each create, plus every space a
+            // migration moves an already-created block into. A migration
+            // before the first create moves nothing the oracle audits, so it
+            // reads as one space.
+            let (chain_links, chain_derived_spaces) = {
                 let mut current_space = SPACE_ID;
                 let mut n = 0usize;
+                let mut derived_spaces: BTreeSet<&str> = BTreeSet::new();
                 for p in &payloads {
                     match p {
                         OpPayload::SetProperty(sp) if sp.key == SPACE_PROPERTY_KEY => {
@@ -1125,11 +1147,15 @@ proptest! {
                                 .value_ref
                                 .as_ref()
                                 .map_or(SPACE_ID, |r| if r.as_str() == SPACE_2_ID { SPACE_2_ID } else { SPACE_ID });
+                            if !derived_spaces.is_empty() {
+                                derived_spaces.insert(current_space);
+                            }
                         }
-                        OpPayload::CreateBlock(c)
-                            if c.content.contains(LINK_PAGE_ID) && current_space == SPACE_ID =>
-                        {
-                            n += 1;
+                        OpPayload::CreateBlock(c) => {
+                            derived_spaces.insert(current_space);
+                            if c.content.contains(LINK_PAGE_ID) && current_space == SPACE_ID {
+                                n += 1;
+                            }
                         }
                         OpPayload::EditBlock(e)
                             if e.to_text.contains(LINK_PAGE_ID) && current_space == SPACE_ID =>
@@ -1139,17 +1165,15 @@ proptest! {
                         _ => {}
                     }
                 }
-                n
+                (n, derived_spaces.len())
             };
 
             let chain_moves = payloads
                 .iter()
                 .filter(|p| matches!(p, OpPayload::MoveBlock(_)))
                 .count();
-            // #4679: what the chain can drive on the three newly reachable
-            // artefacts — a date column write, a tag edge, and a page-group
-            // migration INTO the second space (a `SetProperty(space)` naming
-            // the space the group is already in is a legitimate no-op).
+            // #4679: what the chain can drive on the artefacts that still have
+            // no oracle — a date column write and a tag edge.
             let chain_date_sets = payloads
                 .iter()
                 .filter(|p| matches!(p, OpPayload::SetProperty(sp)
@@ -1158,12 +1182,6 @@ proptest! {
             let chain_tag_adds = payloads
                 .iter()
                 .filter(|p| matches!(p, OpPayload::AddTag(_)))
-                .count();
-            let chain_space_moves = payloads
-                .iter()
-                .filter(|p| matches!(p, OpPayload::SetProperty(sp)
-                    if sp.key == SPACE_PROPERTY_KEY
-                        && sp.value_ref.as_ref().is_some_and(|r| r.as_str() == SPACE_2_ID)))
                 .count();
 
             let mut peak_child_count: i64 = 0;
@@ -1174,7 +1192,8 @@ proptest! {
             let mut same_page_move_hints: usize = 0;
             let mut peak_date_rows: i64 = 0;
             let mut peak_tag_edges: i64 = 0;
-            let mut peak_distinct_spaces: i64 = 0;
+            let mut peak_derived_space_rows: i64 = 0;
+            let mut derived_spaces_seen: BTreeSet<String> = BTreeSet::new();
             let mut space_maintainers_run: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
@@ -1223,11 +1242,19 @@ proptest! {
                     same_page_move_hints += 1;
                 }
 
+                // Every settle below fails through `TestCaseError` rather than
+                // `.expect`: a dispatch-table error (an unparseable payload, a
+                // maintainer that errors) is then a counter-example proptest can
+                // SHRINK to the op that caused it, instead of a panic that
+                // reports the whole 14-op chain.
+                let settle_failed = |what: &str, e: AppError| {
+                    TestCaseError::fail(format!("{what} at op #{index} ({op_type}): {e}"))
+                };
                 if deferred {
                     // Production's deferred cohort pass — the DECREMENT arm.
                     crate::reconciliation_oracle::settle_deferred_pages_cache_counts(&pool)
                         .await
-                        .expect("deferred pages_cache count pass");
+                        .map_err(|e| settle_failed("deferred pages_cache count pass", e))?;
                 }
 
                 // #3296/#3345: `page_link_cache` has NO synchronous arm — its
@@ -1245,7 +1272,7 @@ proptest! {
                         &pool, &record, None, move_same_page,
                     )
                     .await
-                    .expect("page_link_cache fan-out");
+                    .map_err(|e| settle_failed("page_link_cache fan-out", e))?;
 
                 // #3345 Artefact 8: `fts_blocks` has no synchronous arm either
                 // — the same dispatch table decides whether the four FTS tasks
@@ -1257,20 +1284,22 @@ proptest! {
                 fts_maintainers_run +=
                     crate::reconciliation_oracle::settle_fts_for_op(&pool, &record, None)
                         .await
-                        .expect("fts_blocks fan-out");
+                        .map_err(|e| settle_failed("fts_blocks fan-out", e))?;
 
-                // #4679: `blocks.space_id` on a created block has no
-                // synchronous arm either — the driver no longer stamps it. Same
-                // rule: ask the dispatch table, run what it names. Only the
-                // fan-out is asserted on below; the column's VALUE is pinned by
-                // `peak_distinct_spaces` and by
-                // `set_block_space_id_from_parent_inherits_space_533`.
+                // #4679/#3345: the driver no longer stamps `blocks.space_id`,
+                // so production's own writers are the only ones: the apply
+                // kernel's in-tx stamp from the owning page
+                // (`maintain_pages_cache_counts_after_op`'s Create arm) and
+                // the post-commit `SetBlockPageId` re-stamp. Same rule for the
+                // latter: ask the dispatch table, run what it names. See
+                // `settle_block_space_ids_for_op` for why skipping either ONE
+                // of the two writers leaves this property green.
                 space_maintainers_run +=
                     crate::reconciliation_oracle::settle_block_space_ids_for_op(
                         &pool, &record, None,
                     )
                     .await
-                    .expect("space_id fan-out");
+                    .map_err(|e| settle_failed("space_id fan-out", e))?;
 
                 let context = format!("op #{index} ({op_type})");
                 if let Some(report) =
@@ -1285,12 +1314,22 @@ proptest! {
                 peak_page_link_rows = peak_page_link_rows.max(page_link_cache_rows(&pool).await);
                 // #4679: peaks, not end-of-chain values — a later
                 // DeleteProperty / RemoveTag / migration back can undo each.
+                // `TestCaseError` for the same reason as the three settles
+                // above: a failure here shrinks to the op that caused it
+                // instead of aborting the whole run at full chain length.
                 let now = crate::reconciliation_oracle::oracle_coverage(&pool)
                     .await
-                    .expect("per-op oracle coverage");
+                    .map_err(|e| TestCaseError::fail(format!("per-op oracle coverage: {e}")))?;
                 peak_date_rows = peak_date_rows.max(now.date_column_rows);
                 peak_tag_edges = peak_tag_edges.max(now.block_tag_edges);
-                peak_distinct_spaces = peak_distinct_spaces.max(now.distinct_block_spaces);
+                peak_derived_space_rows = peak_derived_space_rows.max(now.derived_space_rows);
+                // The fold's VALUES, unioned across the chain: the one page
+                // group is in exactly one space at any op, so a per-op peak of
+                // `distinct_block_spaces` can never exceed 1 here.
+                let derived = crate::reconciliation_oracle::rebuild_block_space_ids_from_base(&pool)
+                    .await
+                    .map_err(|e| settle_failed("space_id from-base fold", e))?;
+                derived_spaces_seen.extend(derived.into_values().filter_map(|d| d.space_id));
             }
 
             // ENGINE-PATH GUARD (#891): no op silently degraded to sql_only.
@@ -1453,23 +1492,16 @@ proptest! {
                 "fts_blocks must hold the seeded blocks for the oracle to observe anything, got {:?}",
                 coverage
             );
-            // #4679 non-vacuity for the three artefacts this issue made
-            // reachable. None of them has an oracle yet (#3345 takes them
-            // next); what is pinned here is that the GENERATOR now produces
-            // them, so an oracle written against B6 cannot pass unconditionally
-            // the way one would have before:
+            // #4679 non-vacuity for the two artefacts it made reachable that
+            // still have NO oracle (#3345 takes them next). What is pinned is
+            // that the GENERATOR produces them, so an oracle written against
+            // B6 cannot pass unconditionally the way one would have before:
             //
             //  * a date op leaves a non-NULL `due_date` / `scheduled_date`
             //    column (before #4679 it projected a column CLEAR, so this
             //    peak was provably 0 on every chain);
             //  * a tag op leaves a `block_tags` row (before #4679 B6 dropped
-            //    every tag op);
-            //  * a `SetProperty(space)` naming the second space leaves the
-            //    page group there, so two distinct spaces are observable;
-            //  * a create asks production's table for the `SetBlockPageId`
-            //    task and its space half actually moves `blocks.space_id`
-            //    (NULL → the parent's space) — the harness no longer writes
-            //    that column, so a zero here would mean nothing does.
+            //    every tag op).
             prop_assert!(
                 chain_date_sets == 0 || peak_date_rows > 0,
                 "chain set a reserved date key {} times but no live block ever carried a \
@@ -1481,16 +1513,31 @@ proptest! {
                 "chain added {} tag edges but block_tags never held a row",
                 chain_tag_adds
             );
+            // #3345 Artefact 9 non-vacuity, from the SAME fold the oracle
+            // diffs: the rebuild assigned at least one chain block a space (a
+            // zero means the diff compared `{}` against `{}`), and when the
+            // chain both created a block and migrated the group with one
+            // present, the folded values were seen in BOTH spaces. Per-op
+            // `distinct_block_spaces` cannot say the latter — one page group
+            // is in one space at a time — hence the union across the chain.
             prop_assert!(
-                chain_space_moves == 0 || peak_distinct_spaces > 1,
-                "chain migrated the page group into SPACE_2_ID {} times but blocks.space_id \
-                 never held two distinct spaces — the migration did not land",
-                chain_space_moves
+                chain_creates == 0 || peak_derived_space_rows > 0,
+                "chain created {} blocks but the from-base space fold never assigned any of \
+                 them a space — the space_id diff compared empty against empty",
+                chain_creates
+            );
+            prop_assert!(
+                chain_derived_spaces < 2 || derived_spaces_seen.len() > 1,
+                "chain blocks were carried through {} spaces but the from-base fold only ever \
+                 assigned {:?} — the migration never reached a derived row",
+                chain_derived_spaces,
+                derived_spaces_seen
             );
             prop_assert!(
                 chain_creates == 0 || space_maintainers_run > 0,
                 "chain created {} blocks but production's fan-out table asked for ZERO \
-                 SetBlockPageId tasks — nothing would ever fill blocks.space_id",
+                 SetBlockPageId tasks — the post-commit space re-stamp was never run, so \
+                 the settle audited nothing",
                 chain_creates
             );
             Ok(())
