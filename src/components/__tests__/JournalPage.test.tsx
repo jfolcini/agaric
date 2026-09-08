@@ -22,7 +22,8 @@ import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'dat
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeDailyPage } from '@/__tests__/fixtures'
+import { emptyPage, makeBlockRow, makeDailyPage, withOps } from '@/__tests__/fixtures'
+import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
 vi.mock('@/components/editor/BlockTree', () => ({
@@ -148,6 +149,7 @@ import {
   MIN_JOURNAL_DATE,
 } from '@/components/JournalPage'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import type { BlockRow } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -196,6 +198,24 @@ function bug48EmptyResponse(cmd: string): unknown {
  * one-liner — that pattern still works for legacy paginated commands
  * But breaks the commands which expect non-envelope shapes.
  */
+/**
+ * Command-keyed `invoke` over the same journal defaults, for the two tests
+ * that need one command to stall or reject.
+ *
+ * #4668 — the positional `mockReturnValueOnce` / `mockRejectedValueOnce` this
+ * replaces applied to whichever command happened to fire first, not to the
+ * journal fetch the test names.
+ */
+function stubJournal(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      get_journal_page_by_date: () => null,
+      list_journal_pages_in_range: () => [],
+      ...handlers,
+    }),
+  )
+}
+
 function mockEmptyResponses(): void {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     const bug48 = bug48EmptyResponse(cmd)
@@ -927,28 +947,32 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
       const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
-      mockJournalPages([dailyPage])
+      // #4668 — `create_block` returns `WithOps<BlockRow>`; the positional
+      // literal this replaces was a partial row with no `op_refs` envelope,
+      // and it was queued for whichever command happened to fire first.
+      stubJournal({
+        list_journal_pages_in_range: () => [dailyPage],
+        get_journal_page_by_date: (args) => (args['date'] === todayStr ? dailyPage : null),
+        create_block: () =>
+          withOps(
+            makeBlockRow({
+              id: 'B2',
+              block_type: 'text',
+              content: '',
+              parent_id: 'DP1',
+              position: 1,
+            }),
+          ),
+        list_blocks: () => emptyPage,
+        list_unfinished_tasks: () => emptyPage,
+        load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+      })
 
       renderJournal()
 
       await waitFor(() => {
         expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
       })
-
-      mockedInvoke
-        .mockResolvedValueOnce({
-          id: 'B2',
-          block_type: 'text',
-          content: '',
-          parent_id: 'DP1',
-          position: 1,
-        })
-        .mockResolvedValueOnce({
-          items: [],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        })
 
       const sections = screen.getAllByRole('region', { name: /^Journal for / })
       const todaySection = sections[0] as HTMLElement
@@ -1162,7 +1186,11 @@ describe('JournalPage', () => {
   // ── Loading state ───────────────────────────────────────────────────
 
   it('shows loading state while fetching pages', () => {
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    // The journal fetch never resolves, so the skeleton stays up.
+    stubJournal({
+      list_journal_pages_in_range: () => new Promise<BlockRow[]>(() => {}),
+      get_journal_page_by_date: () => new Promise<never>(() => {}),
+    })
 
     const { container } = renderJournal()
 
@@ -1175,7 +1203,16 @@ describe('JournalPage', () => {
   // ── Error handling ──────────────────────────────────────────────────
 
   it('shows empty state when page listing fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Failed to load'))
+    // The backend is down for the whole journal load: the range listing, the
+    // auto-create probe's page creation, and the overdue-task read all fail.
+    // The positional `mockRejectedValueOnce` this replaces only covered the
+    // first invoke; the rest were answered by the previous test's leaked
+    // catch-all implementation (`vi.clearAllMocks()` does not reset one).
+    stubJournal({
+      list_journal_pages_in_range: () => Promise.reject(new Error('Failed to load')),
+      create_page_in_space: () => Promise.reject(new Error('Failed to load')),
+      list_unfinished_tasks: () => Promise.reject(new Error('Failed to load')),
+    })
 
     renderJournal()
 

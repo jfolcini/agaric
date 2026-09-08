@@ -14,6 +14,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage } from '@/__tests__/fixtures'
+import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { SearchPanel } from '@/components/SearchPanel'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { t } from '@/lib/i18n'
@@ -36,7 +38,13 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+/** Command-keyed `invoke`, with the search itself resolving empty by default. */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ search_blocks: () => emptyPage, ...handlers }),
+  )
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -44,7 +52,7 @@ beforeEach(() => {
   _resetPropertyKeysCacheForTest()
   clearPathHistory('SPACE_TEST')
   useSearchHistoryStore.setState({ bySpace: {} })
-  mockedInvoke.mockResolvedValue(emptyPage)
+  stubInvoke()
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
@@ -312,14 +320,13 @@ describe('SearchPanel autocomplete (Phase 1)', () => {
 describe('SearchPanel autocomplete dynamic sources (Phase 2)', () => {
   it('surfaces tag suggestions from listTagsByPrefix when typing `tag:#`', async () => {
     vi.useFakeTimers()
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_tags_by_prefix') {
-        return [
-          { tag_id: 'TAG1', name: 'project-x', color: null },
-          { tag_id: 'TAG2', name: 'project-y', color: null },
-        ]
-      }
-      return emptyPage
+    // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+    // `usage_count` / `updated_at` are not optional.
+    stubInvoke({
+      list_tags_by_prefix: () => [
+        { tag_id: 'TAG1', name: 'project-x', usage_count: 3, updated_at: '2025-01-01T00:00:00Z' },
+        { tag_id: 'TAG2', name: 'project-y', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ],
     })
 
     render(<SearchPanel />)
@@ -397,10 +404,7 @@ describe('SearchPanel autocomplete dynamic sources (Phase 2)', () => {
   })
 
   it('surfaces property-key suggestions from listPropertyKeys when typing `prop:`', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_property_keys') return ['status', 'effort', 'owner']
-      return emptyPage
-    })
+    stubInvoke({ list_property_keys: () => ['status', 'effort', 'owner'] })
 
     render(<SearchPanel />)
     const input = getInput()

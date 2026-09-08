@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, emptyPage, makePage } from '@/__tests__/fixtures'
+import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
@@ -118,25 +118,16 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
-  })
+  stubPageList([])
 })
 
 describe('PageBrowser', () => {
   describe('starred pages', () => {
     it('renders star icon on each page', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Page One' }),
-          makePage({ id: 'P2', content: 'Page Two' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Page One' }),
+        makePage({ id: 'P2', content: 'Page Two' }),
+      ])
 
       render(<PageBrowser />)
 
@@ -151,12 +142,7 @@ describe('PageBrowser', () => {
     // pairs with the multi-page case below which asserts the row jump.
     it('clicking star toggles starred state and persists to localStorage', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Starrable Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'Starrable Page' })])
 
       render(<PageBrowser />)
 
@@ -185,16 +171,11 @@ describe('PageBrowser', () => {
     // of the list under the "Starred" group header.
     it('clicking star moves the page to the top under the Starred header', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -233,17 +214,12 @@ describe('PageBrowser', () => {
     // independently per group.
     it('alphabetical sort applies inside each group independently', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P3', 'P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Cherry' }),
-          makePage({ id: 'P2', content: 'Apple' }),
-          makePage({ id: 'P3', content: 'Banana' }),
-          makePage({ id: 'P4', content: 'Durian' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Cherry' }),
+        makePage({ id: 'P2', content: 'Apple' }),
+        makePage({ id: 'P3', content: 'Banana' }),
+        makePage({ id: 'P4', content: 'Durian' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -313,16 +289,11 @@ describe('PageBrowser', () => {
 
     it('toggling star round-trips a page between groups', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -353,15 +324,10 @@ describe('PageBrowser', () => {
 
     it('namespaced pages render under the unified Pages section alongside Starred', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/project-a' }),
-          makePage({ id: 'P2', content: 'work/project-b' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'work/project-a' }),
+        makePage({ id: 'P2', content: 'work/project-b' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('project-a')
@@ -379,15 +345,10 @@ describe('PageBrowser', () => {
     })
 
     it('zero-starred hides the Starred header', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -400,15 +361,10 @@ describe('PageBrowser', () => {
 
     it('all-starred hides the Pages header', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -419,12 +375,7 @@ describe('PageBrowser', () => {
 
     it('single-page vault renders flat with no headers', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Solo' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'Solo' })])
 
       render(<PageBrowser />)
       await screen.findByText('Solo')
@@ -436,16 +387,11 @@ describe('PageBrowser', () => {
     it('search narrows both groups; emptied group hides its header', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'StarredApple' }),
-          makePage({ id: 'P2', content: 'OtherBanana' }),
-          makePage({ id: 'P3', content: 'OtherCherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'StarredApple' }),
+        makePage({ id: 'P2', content: 'OtherBanana' }),
+        makePage({ id: 'P3', content: 'OtherCherry' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('StarredApple')
@@ -466,16 +412,11 @@ describe('PageBrowser', () => {
 
     it('Starred header carries count in its accessible name', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -500,15 +441,10 @@ describe('PageBrowser', () => {
 
     it('viewport aria-label switches to grouped variant when starred exist', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -518,15 +454,10 @@ describe('PageBrowser', () => {
     })
 
     it('viewport aria-label stays plain when no starred pages', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -537,16 +468,11 @@ describe('PageBrowser', () => {
 
     it('keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P2']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -584,15 +510,10 @@ describe('PageBrowser', () => {
 
     it('a11y audit passes on grouped state', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Starred Page' }),
-          makePage({ id: 'P2', content: 'Normal Page' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Starred Page' }),
+        makePage({ id: 'P2', content: 'Normal Page' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Starred Page')
@@ -608,15 +529,10 @@ describe('PageBrowser', () => {
     it('a11y audit passes on filtered state with grouping', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Starred Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Starred Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Starred Apple')
@@ -639,15 +555,10 @@ describe('PageBrowser', () => {
 
     it('starred (non-namespaced) and namespaced pages coexist', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'work/foo' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'work/foo' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -667,15 +578,10 @@ describe('PageBrowser', () => {
     })
 
     it('top-level flat pages and namespace roots interleave under Pages alphabetically', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Inbox' }),
-          makePage({ id: 'P2', content: 'work/foo' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Inbox' }),
+        makePage({ id: 'P2', content: 'work/foo' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Inbox')
@@ -697,15 +603,10 @@ describe('PageBrowser', () => {
 
     it('a starred-and-namespaced page renders TWICE — once in Starred, once nested in Pages', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/foo' }),
-          makePage({ id: 'P2', content: 'Inbox' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'work/foo' }),
+        makePage({ id: 'P2', content: 'Inbox' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Inbox')
@@ -726,12 +627,7 @@ describe('PageBrowser', () => {
     it('star toggle from either copy of a duplicated row updates BOTH copies', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'work/foo' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'work/foo' })])
 
       render(<PageBrowser />)
       await screen.findByText('work/foo')
@@ -756,15 +652,10 @@ describe('PageBrowser', () => {
     it('filter narrows Pages to empty → Pages header hides, Starred remains', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'StarredApple' }),
-          makePage({ id: 'P2', content: 'work/foo' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'StarredApple' }),
+        makePage({ id: 'P2', content: 'work/foo' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('StarredApple')
@@ -784,15 +675,10 @@ describe('PageBrowser', () => {
     it('filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'StarredApple' }),
-          makePage({ id: 'P2', content: 'work/foo' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'StarredApple' }),
+        makePage({ id: 'P2', content: 'work/foo' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('StarredApple')
@@ -808,15 +694,10 @@ describe('PageBrowser', () => {
 
     it('keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/foo' }),
-          makePage({ id: 'P2', content: 'Inbox' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'work/foo' }),
+        makePage({ id: 'P2', content: 'Inbox' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Inbox')
@@ -868,7 +749,7 @@ describe('PageBrowser', () => {
     })
 
     it('empty vault renders the EmptyState component (no section chrome)', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubPageList([])
 
       render(<PageBrowser />)
       // EmptyState renders a translation key that includes "No pages
@@ -887,15 +768,10 @@ describe('PageBrowser', () => {
 
     it('a11y audit passes on the unified Starred + Pages layout with namespaced rows', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/project-a' }),
-          makePage({ id: 'P2', content: 'work/project-b' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'work/project-a' }),
+        makePage({ id: 'P2', content: 'work/project-b' }),
+      ])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('project-a')
@@ -915,15 +791,10 @@ describe('PageBrowser', () => {
     it('star buttons pass a11y audit', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
 
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Starred Page' }),
-          makePage({ id: 'P2', content: 'Normal Page' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Starred Page' }),
+        makePage({ id: 'P2', content: 'Normal Page' }),
+      ])
 
       const { container } = render(<PageBrowser />)
 
@@ -935,12 +806,7 @@ describe('PageBrowser', () => {
 
     // ScrollArea replaces bare overflow-y-auto on the page list
     it('page list is wrapped in a ScrollArea viewport', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'A page' })])
 
       const { container } = render(<PageBrowser />)
 

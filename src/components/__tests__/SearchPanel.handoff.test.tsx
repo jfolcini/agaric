@@ -19,6 +19,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
@@ -49,10 +51,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
   localStorage.clear()
   // The migrated useSearchResults drives the module-level singleton queryClient;
   // clear it between tests so cached search entries can't bleed across cases.
@@ -86,8 +87,6 @@ afterEach(() => {
 
 describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
   it('seeds the input and fires the search for a non-empty handoff, then clears the slot', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
-
     // The palette wrote a handoff query before the panel mounts.
     useCommandPaletteStore.setState({ pendingViewQuery: 'hello' })
 
@@ -111,8 +110,6 @@ describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
   })
 
   it('clears the slot but seeds nothing for an empty-string handoff', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
-
     // The "Search everywhere" command writes `''` to land the
     // user on this panel with a clean input. Slot must still be cleared.
     useCommandPaletteStore.setState({ pendingViewQuery: '' })
@@ -132,7 +129,6 @@ describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
   })
 
   it('has no a11y violations on the seeded panel', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
     useCommandPaletteStore.setState({ pendingViewQuery: 'hello' })
     const { container } = render(<SearchPanel />)
     await waitFor(async () => {

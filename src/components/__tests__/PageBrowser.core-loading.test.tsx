@@ -8,10 +8,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makePage } from '@/__tests__/fixtures'
-import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow, emptyPage, makePage } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
+import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -61,6 +67,48 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
+type PageList = CommandReturns['list_pages_with_metadata']
+
+/**
+ * The `list_pages_with_metadata` envelope for a set of pages.
+ *
+ * #4668 — this file used to hand the command `BlockRow`s. The command returns
+ * `PageWithMetadataRow`, which specta renames to camelCase and which carries
+ * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
+ * `childBlockCount`, `flags`) no `BlockRow` has, so every row the component
+ * read those from was `undefined` in the test and populated in production.
+ */
+function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+    ...rest,
+  }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
+ * consumed in call order regardless of command, so any speculative fetch
+ * (the create form's `list_all_pages_in_space` read, a hover prefetch) could
+ * take the slot meant for the page query.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        list_all_pages_in_space: () => [],
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -87,23 +135,15 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-    return pageRowInvokeFallback(cmd)
-  })
+  stubInvoke()
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    const page = {
-      items: [makePage({ id: 'P1', content: 'Accessible page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
+    })
 
     const { container } = render(<PageBrowser />)
 
@@ -115,7 +155,7 @@ describe('PageBrowser', () => {
     expect(results).toHaveNoViolations()
   })
   it('calls list_pages_with_metadata on mount', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({ list_pages_with_metadata: () => emptyPage })
 
     render(<PageBrowser />)
 
@@ -128,16 +168,13 @@ describe('PageBrowser', () => {
     })
   })
   it('renders pages when data is returned', async () => {
-    const page = {
-      items: [
-        makePage({ id: 'P1', content: 'First page' }),
-        makePage({ id: 'P2', content: 'Second page' }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([
+          makePage({ id: 'P1', content: 'First page' }),
+          makePage({ id: 'P2', content: 'Second page' }),
+        ]),
+    })
 
     render(<PageBrowser />)
 
@@ -145,7 +182,7 @@ describe('PageBrowser', () => {
     expect(screen.getByText('Second page')).toBeInTheDocument()
   })
   it('renders empty state when no pages exist', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({ list_pages_with_metadata: () => emptyPage })
 
     render(<PageBrowser />)
 
@@ -157,10 +194,8 @@ describe('PageBrowser', () => {
   // first page" CTA. A user with 5,000 pages was told their vault was empty.
   describe('load failure (#3306)', () => {
     it('renders an error state with a retry instead of "No pages yet"', async () => {
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') return Promise.reject(new Error('write pool busy'))
-        return pageRowInvokeFallback(cmd)
+      stubInvoke({
+        list_pages_with_metadata: () => Promise.reject(new Error('write pool busy')),
       })
 
       render(<PageBrowser />)
@@ -174,19 +209,12 @@ describe('PageBrowser', () => {
     it('retries the failed load when Retry is clicked', async () => {
       const user = userEvent.setup()
       let attempt = 0
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
+      stubInvoke({
+        list_pages_with_metadata: () => {
           attempt += 1
           if (attempt === 1) return Promise.reject(new Error('write pool busy'))
-          return Promise.resolve({
-            items: [makePage({ id: 'P1', content: 'Recovered page' })],
-            next_cursor: null,
-            has_more: false,
-            total_count: 1,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
+          return pageList([makePage({ id: 'P1', content: 'Recovered page' })], { total_count: 1 })
+        },
       })
 
       render(<PageBrowser />)
@@ -198,7 +226,7 @@ describe('PageBrowser', () => {
     })
 
     it('still shows the empty state when the load genuinely succeeds with no pages', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ list_pages_with_metadata: () => emptyPage })
 
       render(<PageBrowser />)
 
@@ -209,7 +237,7 @@ describe('PageBrowser', () => {
 
   it('shows skeleton loaders during initial load', () => {
     // Mock that never resolves — keeps loading state
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    stubInvoke({ list_pages_with_metadata: () => new Promise<PageList>(() => {}) })
 
     const { container } = render(<PageBrowser />)
 
@@ -218,32 +246,27 @@ describe('PageBrowser', () => {
     expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
   it('shows Untitled for pages with null content', async () => {
-    const page = {
-      items: [makePage({ id: 'P1', content: null })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: null })]),
+    })
 
     render(<PageBrowser />)
 
     expect(await screen.findByText('Untitled')).toBeInTheDocument()
   })
   it('uses cursor-based pagination with Load More', async () => {
-    const page1 = {
-      items: [makePage({ id: 'P1', content: 'Page 1' })],
+    const page1 = pageList([makePage({ id: 'P1', content: 'Page 1' })], {
       next_cursor: 'cursor_abc',
       has_more: true,
-      total_count: null,
-    }
-    const page2 = {
-      items: [makePage({ id: 'P2', content: 'Page 2' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+    })
+    const page2 = pageList([makePage({ id: 'P2', content: 'Page 2' })])
+    let fetches = 0
+    stubInvoke({
+      list_pages_with_metadata: () => {
+        fetches += 1
+        return fetches === 1 ? page1 : page2
+      },
+    })
 
     render(<PageBrowser />)
 
@@ -284,13 +307,9 @@ describe('PageBrowser', () => {
   it('fires onPageSelect callback when a page is clicked', async () => {
     const user = userEvent.setup()
     const onPageSelect = vi.fn()
-    const page = {
-      items: [makePage({ id: 'P1', content: 'Click me' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Click me' })]),
+    })
 
     render(<PageBrowser onPageSelect={onPageSelect} />)
 
@@ -302,16 +321,17 @@ describe('PageBrowser', () => {
   describe('new page loading state', () => {
     it('disables "New Page" button during creation', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      // `create_page_in_space` never resolves, so the button stays disabled.
+      stubInvoke({
+        list_pages_with_metadata: () => emptyPage,
+        create_page_in_space: () => new Promise<string>(() => {}),
+      })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      // Mock create_page_in_space to return a pending promise (never resolves)
-      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Test Page')
@@ -325,27 +345,20 @@ describe('PageBrowser', () => {
 
     it('re-enables "New Page" button after creation completes', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      // Mock create_page_in_space to resolve on demand.
+      let resolveCreate!: (v: string) => void
+      const p = new Promise<string>((r) => {
+        resolveCreate = r
+      })
+      stubInvoke({
+        list_pages_with_metadata: () => emptyPage,
+        create_page_in_space: () => p,
+      })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      // Mock create_page_in_space to resolve
-      let resolveCreate!: (v: unknown) => void
-      const p = new Promise((r) => {
-        resolveCreate = r
-      })
-      // Keyed on the command: the create form's page-list read (#4723) runs
-      // first and would otherwise consume a positional `Once` value.
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'create_page_in_space') return p
-        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-        if (cmd === 'list_pages_with_metadata') return Promise.resolve(emptyPage)
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        return pageRowInvokeFallback(cmd)
       })
 
       const input = screen.getByPlaceholderText('New page name...')

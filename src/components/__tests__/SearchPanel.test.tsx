@@ -22,6 +22,12 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage, makeBlockRow } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
@@ -58,9 +64,17 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+type SearchPage = CommandReturns['search_blocks']
+type SearchRow = SearchPage['items'][number]
 
-const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
+/**
+ * A complete {@link SearchRow}.
+ *
+ * #4668 — the four TODO/date columns below are NOT optional on
+ * `SearchBlockRow`; this factory omitted all four, so every row the panel
+ * rendered in a test was missing fields the backend always sends.
+ */
+const makeSearchResult = (overrides: Partial<SearchRow> = {}): SearchRow => ({
   id: 'BLOCK1',
   block_type: 'content',
   content: 'test content',
@@ -68,8 +82,24 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
   page_id: null,
   position: 1,
   deleted_at: null,
+  todo_state: null,
+  priority: null,
+  due_date: null,
+  scheduled_date: null,
   ...overrides,
 })
+
+/** The `search_blocks` envelope for a set of rows. */
+function searchPage(items: SearchRow[], rest: Partial<SearchPage> = {}): SearchPage {
+  return { items, next_cursor: null, has_more: false, total_count: null, ...rest }
+}
+
+/** Command-keyed `invoke`, with the search itself resolving empty by default. */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ search_blocks: () => emptyPage, ...handlers }),
+  )
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -188,11 +218,8 @@ describe('SearchPanel', () => {
   })
 
   it('searches via form submit', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     render(<SearchPanel />)
@@ -235,11 +262,8 @@ describe('SearchPanel', () => {
   it('searches via button click', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValue({
-      items: [makeSearchResult({ id: 'B2', content: 'button result' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult({ id: 'B2', content: 'button result' })]),
     })
 
     render(<SearchPanel />)
@@ -283,7 +307,7 @@ describe('SearchPanel', () => {
   })
 
   it('shows "No results found." for empty results', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke()
 
     render(<SearchPanel />)
 
@@ -297,7 +321,7 @@ describe('SearchPanel', () => {
 
   it('shows skeleton loaders while loading', () => {
     // Never resolve to keep loading state
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    stubInvoke({ search_blocks: () => new Promise<SearchPage>(() => {}) })
 
     const { container } = render(<SearchPanel />)
 
@@ -324,7 +348,13 @@ describe('SearchPanel', () => {
       total_count: null,
     }
 
-    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+    let fetches = 0
+    stubInvoke({
+      search_blocks: () => {
+        fetches += 1
+        return fetches === 1 ? page1 : page2
+      },
+    })
 
     render(<SearchPanel />)
 
@@ -376,11 +406,8 @@ describe('SearchPanel', () => {
   it('debounces search on input change', async () => {
     vi.useFakeTimers()
 
-    mockedInvoke.mockResolvedValue({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     render(<SearchPanel />)
@@ -423,11 +450,8 @@ describe('SearchPanel', () => {
   })
 
   it('clears results when input cleared', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     render(<SearchPanel />)
@@ -452,11 +476,8 @@ describe('SearchPanel', () => {
   // and clearing it resets the input value (and in turn the results).
   it('shows clear button when typing and resets on click', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     const { container } = render(<SearchPanel />)
@@ -559,7 +580,7 @@ describe('SearchPanel', () => {
   })
 
   it('does not crash on search error', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+    stubInvoke({ search_blocks: () => Promise.reject(new Error('backend error')) })
 
     render(<SearchPanel />)
 
@@ -588,11 +609,13 @@ describe('SearchPanel', () => {
     const user = userEvent.setup()
 
     // First search fails, the retry succeeds.
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error')).mockResolvedValueOnce({
-      items: [makeSearchResult({ content: 'recovered result' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    let attempts = 0
+    stubInvoke({
+      search_blocks: () => {
+        attempts += 1
+        if (attempts === 1) return Promise.reject(new Error('backend error'))
+        return searchPage([makeSearchResult({ content: 'recovered result' })])
+      },
     })
 
     render(<SearchPanel />)
@@ -619,7 +642,7 @@ describe('SearchPanel', () => {
   })
 
   it('error card with Try again button has no a11y violations', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+    stubInvoke({ search_blocks: () => Promise.reject(new Error('backend error')) })
 
     const { container } = render(<SearchPanel />)
 
@@ -661,19 +684,17 @@ describe('SearchPanel', () => {
       has_more: false,
       total_count: null,
     }
-    const parentBlock = {
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page Title',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-    }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') return searchResults
-      if (cmd === 'get_block') return parentBlock
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
+    stubInvoke({
+      search_blocks: () => searchResults,
+      // #4668 — `get_block` returns a full `BlockRow`.
+      get_block: () =>
+        makeBlockRow({
+          id: 'PARENT1',
+          block_type: 'page',
+          content: 'Parent Page Title',
+          position: 0,
+        }),
+      batch_resolve: () => [],
     })
 
     render(<SearchPanel />)
@@ -702,18 +723,16 @@ describe('SearchPanel', () => {
     const user = userEvent.setup()
 
     // search_blocks returns a page block
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        makeSearchResult({
-          id: 'PAGE1',
-          parent_id: null,
-          content: 'My Page',
-          block_type: 'page',
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'PAGE1',
+            parent_id: null,
+            content: 'My Page',
+            block_type: 'page',
+          }),
+        ]),
     })
 
     render(<SearchPanel />)
@@ -743,18 +762,16 @@ describe('SearchPanel', () => {
     const user = userEvent.setup()
 
     // search_blocks returns a root block with no parent_id
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        makeSearchResult({
-          id: 'ROOT1',
-          parent_id: null,
-          content: 'root block',
-          block_type: 'content',
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'ROOT1',
+            parent_id: null,
+            content: 'root block',
+            block_type: 'content',
+          }),
+        ]),
     })
 
     render(<SearchPanel />)
@@ -794,11 +811,10 @@ describe('SearchPanel', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') return searchResults
-      if (cmd === 'get_block') throw new Error('fail')
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
+    stubInvoke({
+      search_blocks: () => searchResults,
+      get_block: () => Promise.reject(new Error('fail')),
+      batch_resolve: () => [],
     })
 
     render(<SearchPanel />)
@@ -828,61 +844,49 @@ describe('SearchPanel', () => {
 
     // Two results in two distinct pages so both rows render and each owns a
     // separate parent lookup.
-    mockedInvoke.mockImplementationOnce(async () => ({
-      items: [
-        makeSearchResult({
-          id: 'CHILD_A',
-          parent_id: 'PARENT_A',
-          page_id: 'PARENT_A',
-          content: 'content A',
-          block_type: 'content',
-        }),
-        makeSearchResult({
-          id: 'CHILD_B',
-          parent_id: 'PARENT_B',
-          page_id: 'PARENT_B',
-          content: 'content B',
-          block_type: 'content',
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }))
+    const searchResults = searchPage([
+      makeSearchResult({
+        id: 'CHILD_A',
+        parent_id: 'PARENT_A',
+        page_id: 'PARENT_A',
+        content: 'content A',
+        block_type: 'content',
+      }),
+      makeSearchResult({
+        id: 'CHILD_B',
+        parent_id: 'PARENT_B',
+        page_id: 'PARENT_B',
+        content: 'content B',
+        block_type: 'content',
+      }),
+    ])
 
     // Controlled deferreds for the two parent lookups, keyed by blockId.
-    let resolveA!: (v: unknown) => void
-    let resolveB!: (v: unknown) => void
-    const pendingA = new Promise((res) => {
+    type Block = CommandReturns['get_block']
+    let resolveA!: (v: Block) => void
+    let resolveB!: (v: Block) => void
+    const pendingA = new Promise<Block>((res) => {
       resolveA = res
     })
-    const pendingB = new Promise((res) => {
+    const pendingB = new Promise<Block>((res) => {
       resolveB = res
     })
-    const parentA = {
+    const parentA = makeBlockRow({
       id: 'PARENT_A',
       block_type: 'page',
       content: 'Parent A Title',
-      parent_id: null,
       position: 0,
-      deleted_at: null,
-    }
-    const parentB = {
+    })
+    const parentB = makeBlockRow({
       id: 'PARENT_B',
       block_type: 'page',
       content: 'Parent B Title',
-      parent_id: null,
       position: 0,
-      deleted_at: null,
-    }
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'get_block') {
-        const blockId = (args as { blockId?: string } | undefined)?.blockId
-        if (blockId === 'PARENT_A') return pendingA
-        if (blockId === 'PARENT_B') return pendingB
-      }
-      return emptyPage
+    })
+    stubInvoke({
+      search_blocks: () => searchResults,
+      batch_resolve: () => [],
+      get_block: (args) => (args['blockId'] === 'PARENT_A' ? pendingA : pendingB),
     })
 
     // Count navigations by wrapping the store action the hook reads at render.
@@ -947,7 +951,7 @@ describe('SearchPanel', () => {
 
   it('handles very long search query (>500 chars)', async () => {
     const longQuery = 'a'.repeat(501)
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke()
 
     render(<SearchPanel />)
 
@@ -987,7 +991,7 @@ describe('SearchPanel', () => {
   })
 
   it('handles special characters in search query', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke()
 
     render(<SearchPanel />)
 
@@ -1028,11 +1032,8 @@ describe('SearchPanel', () => {
   it('debounces rapid-fire typing and only fires for the final value', async () => {
     vi.useFakeTimers()
 
-    mockedInvoke.mockResolvedValue({
-      items: [makeSearchResult({ content: 'final result' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult({ content: 'final result' })]),
     })
 
     render(<SearchPanel />)
@@ -1104,10 +1105,9 @@ describe('SearchPanel', () => {
       total_count: null,
     }
 
-    mockedInvoke
-      .mockResolvedValueOnce(page1)
-      .mockResolvedValueOnce(page2)
-      .mockResolvedValueOnce(page3)
+    const pages = [page1, page2, page3]
+    let fetches = 0
+    stubInvoke({ search_blocks: () => pages[fetches++] ?? page3 })
 
     render(<SearchPanel />)
 
@@ -1144,7 +1144,7 @@ describe('SearchPanel', () => {
 
   it('shows spinner during loading state (not just typing)', () => {
     // Never resolve to keep loading state
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    stubInvoke({ search_blocks: () => new Promise<SearchPage>(() => {}) })
 
     const { container } = render(<SearchPanel />)
 
@@ -1164,8 +1164,8 @@ describe('SearchPanel', () => {
     // the breadcrumb `batch_resolve` from consuming that pending promise (a
     // positional once-queue would let it, and the click would then resolve
     // instantly → the loading state never appears).
-    let resolveGetBlock!: (value: unknown) => void
-    const getBlockPending = new Promise((resolve) => {
+    let resolveGetBlock!: (value: CommandReturns['get_block']) => void
+    const getBlockPending = new Promise<CommandReturns['get_block']>((resolve) => {
       resolveGetBlock = resolve
     })
     const searchResults = {
@@ -1182,11 +1182,10 @@ describe('SearchPanel', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') return searchResults
-      if (cmd === 'get_block') return getBlockPending
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
+    stubInvoke({
+      search_blocks: () => searchResults,
+      get_block: () => getBlockPending,
+      batch_resolve: () => [],
     })
 
     render(<SearchPanel />)
@@ -1209,14 +1208,9 @@ describe('SearchPanel', () => {
     })
 
     // Resolve the pending get_block call
-    resolveGetBlock({
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-    })
+    resolveGetBlock(
+      makeBlockRow({ id: 'PARENT1', block_type: 'page', content: 'Parent Page', position: 0 }),
+    )
 
     await waitFor(() => {
       expect(resultRow).not.toHaveAttribute('aria-disabled', 'true')
@@ -1237,11 +1231,8 @@ describe('SearchPanel', () => {
   })
 
   it('results container has role=listbox', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     render(<SearchPanel />)
@@ -1260,11 +1251,8 @@ describe('SearchPanel', () => {
   // both surfaces here to lock in the a11y model rather than the old
   // single-listbox label.
   it('results region + per-group listbox aria-labels resolve via t() ()', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult()],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult()]),
     })
 
     render(<SearchPanel />)
@@ -1331,18 +1319,16 @@ describe('SearchPanel', () => {
   it('updates recent pages in the store when clicking a search result (page type)', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        makeSearchResult({
-          id: 'PAGE1',
-          parent_id: null,
-          content: 'My Page',
-          block_type: 'page',
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'PAGE1',
+            parent_id: null,
+            content: 'My Page',
+            block_type: 'page',
+          }),
+        ]),
     })
 
     render(<SearchPanel />)
@@ -1388,19 +1374,17 @@ describe('SearchPanel', () => {
       has_more: false,
       total_count: null,
     }
-    const parentBlock = {
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page Title',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-    }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') return searchResults
-      if (cmd === 'get_block') return parentBlock
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
+    stubInvoke({
+      search_blocks: () => searchResults,
+      // #4668 — `get_block` returns a full `BlockRow`.
+      get_block: () =>
+        makeBlockRow({
+          id: 'PARENT1',
+          block_type: 'page',
+          content: 'Parent Page Title',
+          position: 0,
+        }),
+      batch_resolve: () => [],
     })
 
     render(<SearchPanel />)
@@ -1456,11 +1440,9 @@ describe('SearchPanel', () => {
 
   // --- PageLink breadcrumb navigation ---
   it('shows visible result count after search', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult(), makeSearchResult({ id: 'B2', content: 'second result' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([makeSearchResult(), makeSearchResult({ id: 'B2', content: 'second result' })]),
     })
 
     render(<SearchPanel />)
@@ -1479,11 +1461,8 @@ describe('SearchPanel', () => {
   })
 
   it('renders search results with rich content (no mark highlight)', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeSearchResult({ content: 'the test content here' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => searchPage([makeSearchResult({ content: 'the test content here' })]),
     })
 
     render(<SearchPanel />)
@@ -1503,25 +1482,23 @@ describe('SearchPanel', () => {
   it('clicking page title in breadcrumb navigates to the page', async () => {
     const user = userEvent.setup()
 
-    // search_blocks returns a block with parent_id
-    mockedInvoke.mockResolvedValueOnce({
-      items: [
-        makeSearchResult({
-          id: 'CHILD1',
-          parent_id: 'PARENT1',
-          page_id: 'PARENT1',
-          content: 'child with breadcrumb',
-          block_type: 'content',
-        }),
+    // search_blocks returns a block with parent_id; batch_resolve returns the
+    // parent page title.
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'CHILD1',
+            parent_id: 'PARENT1',
+            page_id: 'PARENT1',
+            content: 'child with breadcrumb',
+            block_type: 'content',
+          }),
+        ]),
+      batch_resolve: () => [
+        { id: 'PARENT1', title: 'Breadcrumb Page', block_type: 'page', deleted: false },
       ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
     })
-    // batch_resolve returns the parent page title
-    mockedInvoke.mockResolvedValueOnce([
-      { id: 'PARENT1', title: 'Breadcrumb Page', block_type: 'page', deleted: false },
-    ])
 
     render(<SearchPanel />)
 
@@ -1557,11 +1534,7 @@ describe('SearchPanel', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') return searchResults
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
-    })
+    stubInvoke({ search_blocks: () => searchResults, batch_resolve: () => [] })
 
     render(<SearchPanel />)
 
@@ -1601,14 +1574,13 @@ describe('SearchPanel', () => {
     }
 
     let searchCall = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'search_blocks') {
+    stubInvoke({
+      search_blocks: () => {
         searchCall += 1
         return searchCall === 1 ? page1 : page2
-      }
+      },
       // `batch_resolve` returns an empty array — GHOST is unresolvable.
-      if (cmd === 'batch_resolve') return []
-      return emptyPage
+      batch_resolve: () => [],
     })
 
     render(<SearchPanel />)
@@ -1649,14 +1621,19 @@ describe('SearchPanel', () => {
       // Phase 1 — results are page-grouped now. Share a
       // `page_id` so both rows land in the same listbox; the
       // keyboard-nav assertion is unchanged.
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({ id: 'B1', content: 'result1', page_id: 'P_NAV' }),
-          makeSearchResult({ id: 'B2', content: 'result2', page_id: 'P_NAV' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([
+            makeSearchResult({ id: 'B1', content: 'result1', page_id: 'P_NAV' }),
+            makeSearchResult({ id: 'B2', content: 'result2', page_id: 'P_NAV' }),
+          ]),
+        // #4668 — the page ids below name no real page, so the breadcrumb
+        // effect's `batch_resolve` comes back empty. It used to be answered by
+        // the previous test's leaked catch-all (`vi.clearAllMocks()` does not
+        // reset implementations), which handed it a `PageResponse` where
+        // `ResolvedBlock[]` was expected and put the breadcrumb path in its
+        // error branch for the whole suite.
+        batch_resolve: () => [],
       })
 
       render(<SearchPanel />)
@@ -1693,19 +1670,28 @@ describe('SearchPanel', () => {
     it('navigates to result on Enter key', async () => {
       const user = userEvent.setup()
 
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({
-            id: 'B1',
-            content: 'enter result',
-            parent_id: 'PARENT1',
-            page_id: 'PARENT1',
-            block_type: 'content',
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([
+            makeSearchResult({
+              id: 'B1',
+              content: 'enter result',
+              parent_id: 'PARENT1',
+              page_id: 'PARENT1',
+              block_type: 'content',
+            }),
+          ]),
+        batch_resolve: () => [],
+        // #4668 — `get_block` returns a full `BlockRow`; the literal here was
+        // missing `todo_state` / `priority` / `due_date` / `scheduled_date` /
+        // `page_id`.
+        get_block: () =>
+          makeBlockRow({
+            id: 'PARENT1',
+            block_type: 'page',
+            content: 'Parent Page',
+            position: 0,
           }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
       })
 
       render(<SearchPanel />)
@@ -1715,16 +1701,6 @@ describe('SearchPanel', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('listbox')).toBeInTheDocument()
-      })
-
-      // Mock get_block for parent lookup
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'PARENT1',
-        block_type: 'page',
-        content: 'Parent Page',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
       })
 
       const listbox = screen.getByRole('listbox')
@@ -1750,14 +1726,19 @@ describe('SearchPanel', () => {
 
       // Phase 1 — share `page_id` so both rows are in one
       // listbox (page-grouped layout).
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({ id: 'B1', content: 'highlight result', page_id: 'P_HL' }),
-          makeSearchResult({ id: 'B2', content: 'other result', page_id: 'P_HL' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([
+            makeSearchResult({ id: 'B1', content: 'highlight result', page_id: 'P_HL' }),
+            makeSearchResult({ id: 'B2', content: 'other result', page_id: 'P_HL' }),
+          ]),
+        // #4668 — the page ids below name no real page, so the breadcrumb
+        // effect's `batch_resolve` comes back empty. It used to be answered by
+        // the previous test's leaked catch-all (`vi.clearAllMocks()` does not
+        // reset implementations), which handed it a `PageResponse` where
+        // `ResolvedBlock[]` was expected and put the breadcrumb path in its
+        // error branch for the whole suite.
+        batch_resolve: () => [],
       })
 
       render(<SearchPanel />)
@@ -1797,15 +1778,20 @@ describe('SearchPanel', () => {
       // Phase 1 — single page-group so Home/End walk the same
       // listbox (the keyboard hook is per-group; Home/End within one
       // group covers the same behaviour).
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({ id: 'B1', content: 'first', page_id: 'P_HE' }),
-          makeSearchResult({ id: 'B2', content: 'second', page_id: 'P_HE' }),
-          makeSearchResult({ id: 'B3', content: 'third', page_id: 'P_HE' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([
+            makeSearchResult({ id: 'B1', content: 'first', page_id: 'P_HE' }),
+            makeSearchResult({ id: 'B2', content: 'second', page_id: 'P_HE' }),
+            makeSearchResult({ id: 'B3', content: 'third', page_id: 'P_HE' }),
+          ]),
+        // #4668 — the page ids below name no real page, so the breadcrumb
+        // effect's `batch_resolve` comes back empty. It used to be answered by
+        // the previous test's leaked catch-all (`vi.clearAllMocks()` does not
+        // reset implementations), which handed it a `PageResponse` where
+        // `ResolvedBlock[]` was expected and put the breadcrumb path in its
+        // error branch for the whole suite.
+        batch_resolve: () => [],
       })
 
       render(<SearchPanel />)
@@ -1844,12 +1830,7 @@ describe('SearchPanel', () => {
         makeSearchResult({ id: `B${i}`, content: `result ${i}`, page_id: 'P_PG' }),
       )
 
-      mockedInvoke.mockResolvedValueOnce({
-        items,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubInvoke({ search_blocks: () => searchPage(items), batch_resolve: () => [] })
 
       render(<SearchPanel />)
 
@@ -1940,7 +1921,7 @@ describe('SearchPanel', () => {
         availableSpaces: [{ id: 'SPACE_WORK', name: 'Work', accent_color: null }],
         isReady: true,
       })
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
 
       render(<SearchPanel />)
 
@@ -1975,7 +1956,14 @@ describe('SearchPanel', () => {
         has_more: true,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page1)
+      let fetches = 0
+      stubInvoke({
+        search_blocks: () => {
+          fetches += 1
+          // Stall the SECOND fetch so the button stays in its loading state.
+          return fetches === 1 ? page1 : new Promise<SearchPage>(() => {})
+        },
+      })
 
       render(<SearchPanel />)
 
@@ -1987,8 +1975,6 @@ describe('SearchPanel', () => {
       // Idle state: aria-busy should be 'false' (LoadMoreButton primitive sets it).
       expect(loadMoreBtn).toHaveAttribute('aria-busy', 'false')
 
-      // Stall the next fetch so the button stays in loading state.
-      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
       await user.click(loadMoreBtn)
 
       // Loading state: aria-busy must flip to 'true'.
@@ -2002,11 +1988,9 @@ describe('SearchPanel', () => {
     // Sub-fix 2: aria-live on a separate status div above the listbox,
     // NOT wrapping the listbox.
     it('puts aria-live on a separate status div, not wrapping the listbox', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeSearchResult({ id: 'B1', content: 'live region result' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([makeSearchResult({ id: 'B1', content: 'live region result' })]),
       })
 
       render(<SearchPanel />)
@@ -2032,7 +2016,7 @@ describe('SearchPanel', () => {
       vi.useFakeTimers()
 
       // Stall the fetch so we observe the searching state.
-      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+      stubInvoke({ search_blocks: () => new Promise<SearchPage>(() => {}) })
 
       render(<SearchPanel />)
       const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -2079,23 +2063,15 @@ describe('SearchPanel', () => {
       // after the search completes — use a persistent mock so both calls
       // resolve to the alias hit.
       mockResolvePageByAlias.mockResolvedValue(['ALIASPAGE', null])
-      const aliasBlock = {
+      const aliasBlock = makeBlockRow({
         id: 'ALIASPAGE',
         block_type: 'page',
         content: 'Aliased Page',
-        parent_id: null,
-        page_id: null,
         position: 0,
-        deleted_at: null,
-      }
+      })
       // search_blocks (empty), then get_block resolves the alias hit on
       // every effect re-run.
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'search_blocks') return emptyPage
-        if (cmd === 'get_block') return aliasBlock
-        if (cmd === 'batch_resolve') return []
-        return emptyPage
-      })
+      stubInvoke({ get_block: () => aliasBlock, batch_resolve: () => [] })
 
       render(<SearchPanel />)
 
@@ -2118,14 +2094,12 @@ describe('SearchPanel', () => {
     // Sub-fix 6: Results count is rendered inside an aria-live="polite"
     // status region (the same one from sub-fix 2).
     it('announces the results count via the aria-live status region', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makeSearchResult({ id: 'B1', content: 'one' }),
-          makeSearchResult({ id: 'B2', content: 'two' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([
+            makeSearchResult({ id: 'B1', content: 'one' }),
+            makeSearchResult({ id: 'B2', content: 'two' }),
+          ]),
       })
 
       render(<SearchPanel />)
@@ -2153,7 +2127,7 @@ describe('SearchPanel', () => {
   // =========================================================================
   describe(' aria-live status text', () => {
     it('announces "No results" when a search returns zero results', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
 
       render(<SearchPanel />)
 
@@ -2170,11 +2144,9 @@ describe('SearchPanel', () => {
     })
 
     it('announces "Search cleared" after clearing a previous search', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makeSearchResult({ id: 'B1', content: 'previous result' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        search_blocks: () =>
+          searchPage([makeSearchResult({ id: 'B1', content: 'previous result' })]),
       })
 
       render(<SearchPanel />)
@@ -2335,11 +2307,12 @@ describe('SearchPanel', () => {
   // recovery when filter chips over-constrain to zero results.
   describe('no-results recovery action (#1103)', () => {
     it('shows a "Clear filters" button when filters are active and zero results', async () => {
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === 'list_tags_by_prefix') {
-          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-        }
-        return emptyPage
+      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // `usage_count` / `updated_at` are not optional.
+      stubInvoke({
+        list_tags_by_prefix: () => [
+          { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+        ],
       })
       render(<SearchPanel />)
 
@@ -2357,11 +2330,12 @@ describe('SearchPanel', () => {
 
     it('clicking "Clear filters" clears the active filters (calls handleClearAllFilters)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === 'list_tags_by_prefix') {
-          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-        }
-        return emptyPage
+      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // `usage_count` / `updated_at` are not optional.
+      stubInvoke({
+        list_tags_by_prefix: () => [
+          { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+        ],
       })
       render(<SearchPanel />)
 
@@ -2391,7 +2365,7 @@ describe('SearchPanel', () => {
     })
 
     it('shows only the message (no button) when there are no active filters', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
       render(<SearchPanel />)
 
       const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -2409,11 +2383,12 @@ describe('SearchPanel', () => {
     })
 
     it('no-results state with an active filter has no axe violations', async () => {
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === 'list_tags_by_prefix') {
-          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-        }
-        return emptyPage
+      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // `usage_count` / `updated_at` are not optional.
+      stubInvoke({
+        list_tags_by_prefix: () => [
+          { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+        ],
       })
       const { container } = render(<SearchPanel />)
 
@@ -2451,7 +2426,7 @@ describe('SearchPanel', () => {
       container.querySelector('[data-slot="filter-pill"]')
 
     it('marks an unknown custom priority level invalid before hydration', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubInvoke()
       const user = userEvent.setup()
       const { container } = render(<SearchPanel />)
 
@@ -2468,7 +2443,7 @@ describe('SearchPanel', () => {
     })
 
     it('re-parses the pending priority: token as valid when the vocabulary hydrates after mount', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubInvoke()
       const user = userEvent.setup()
       const { container } = render(<SearchPanel />)
 
@@ -2497,7 +2472,7 @@ describe('SearchPanel', () => {
       // Guards against the re-parse blanket-accepting: hydration must re-validate
       // against the NEW vocabulary, not simply clear every invalid chip. `banana`
       // is in neither the default nor the hydrated levels, so it stays invalid.
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubInvoke()
       const user = userEvent.setup()
       const { container } = render(<SearchPanel />)
 

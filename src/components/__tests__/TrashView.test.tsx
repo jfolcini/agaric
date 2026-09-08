@@ -26,6 +26,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makeBlock } from '@/__tests__/fixtures'
+import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
 import { MAX_TRASH_BATCH_IDS } from '@/lib/ipc-helpers'
@@ -63,20 +64,33 @@ vi.mock('@/lib/announcer', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 /**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #4668 — the hand-rolled `mockImplementation` dispatchers this replaced all
+ * ended in `return undefined`, which `unwrap` reports as a successful empty
+ * response for every command the test forgot to model. Anything unlisted here
+ * now fails the test by name instead.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>) {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/**
  * Helper: mock invoke to return items on list_trash and empty [] on batch_resolve.
  * Returns the page so callers can reference it.
  */
 function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = false) {
+  // #4668 — `PageResponse` always carries `total_count`; this literal omitted it.
   const page = {
     items,
     next_cursor: hasMore ? 'cursor_next' : null,
     has_more: hasMore,
+    total_count: null,
   }
-  mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-    if (cmd === 'list_trash') return page
-    if (cmd === 'batch_resolve') return []
-    if (cmd === 'trash_descendant_counts') return {}
-    return undefined
+  stubInvoke({
+    list_trash: () => page,
+    batch_resolve: () => [],
+    trash_descendant_counts: () => ({}),
   })
   return page
 }
@@ -96,7 +110,12 @@ beforeEach(() => {
 
 describe('TrashView', () => {
   it('calls listTrash on mount', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({
+      list_trash: () => emptyPage,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -112,7 +131,12 @@ describe('TrashView', () => {
   })
 
   it('renders empty state when no deleted blocks', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({
+      list_trash: () => emptyPage,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -126,15 +150,14 @@ describe('TrashView', () => {
   // the backend rather than serving its (possibly stale) cached trash.
   it('refetches trash on returning to a previously-visited space (staleTime: 0)', async () => {
     const callsBySpace: Record<string, number> = {}
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: (args) => {
         const sid = (args as { scope: { space_id: string } }).scope.space_id
         callsBySpace[sid] = (callsBySpace[sid] ?? 0) + 1
-        return { items: [], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      return undefined
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      },
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
     })
     useSpaceStore.setState({
       availableSpaces: [
@@ -185,11 +208,13 @@ describe('TrashView', () => {
   it('restore calls restoreBlock with correct deleted_at_ref', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: 1736942400000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -273,11 +298,13 @@ describe('TrashView', () => {
   it('purge executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_block: () => ({ block_id: 'B1', purged_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -322,13 +349,15 @@ describe('TrashView', () => {
       total_count: null,
     }
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: () => {
         callCount++
         return callCount === 1 ? page1 : page2
-      }
-      if (cmd === 'batch_resolve') return []
-      return undefined
+      },
+      batch_resolve: () => [],
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -351,7 +380,12 @@ describe('TrashView', () => {
   })
 
   it('hides Load More button when no more pages', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({
+      list_trash: () => emptyPage,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -362,11 +396,13 @@ describe('TrashView', () => {
   it('removes block from list after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -395,11 +431,13 @@ describe('TrashView', () => {
       block_type: 'page',
       deleted_at: 1736899200000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     const changes: NameChange[] = []
@@ -422,11 +460,13 @@ describe('TrashView', () => {
       block_type: 'content',
       deleted_at: 1736899200000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     const changes: NameChange[] = []
@@ -452,7 +492,12 @@ describe('TrashView', () => {
   // appear here." over the failure. A user could reasonably read that as "my
   // deleted items were purged", and the only error signal was a ~4s toast.
   it('shows an error state with a retry instead of the empty state on a failed load', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('DB error'))
+    stubInvoke({
+      list_trash: () => Promise.reject(new Error('DB error')),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -474,14 +519,16 @@ describe('TrashView', () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'recovered item', deleted_at: 1736899200000 })
     let attempt = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: () => {
         attempt += 1
         if (attempt === 1) throw new Error('DB error')
-        return { items: [block], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'batch_resolve') return []
-      return undefined
+        return { items: [block], next_cursor: null, has_more: false, total_count: null }
+      },
+      batch_resolve: () => [],
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -495,11 +542,15 @@ describe('TrashView', () => {
   it('handles failed restore gracefully', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') throw new Error('Restore failed')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => {
+        throw new Error('Restore failed')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -521,11 +572,15 @@ describe('TrashView', () => {
   it('handles failed purge gracefully', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_block') throw new Error('Purge failed')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_block: () => {
+        throw new Error('Purge failed')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -552,11 +607,13 @@ describe('TrashView', () => {
   it('shows success toast after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -572,11 +629,13 @@ describe('TrashView', () => {
   it('shows success toast after successful purge', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_block') return { block_id: 'B1', purged_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_block: () => ({ block_id: 'B1', purged_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -600,11 +659,13 @@ describe('TrashView', () => {
       ...makeBlock({ id: 'P1', content: 'My Page', deleted_at: 1736942400000 }),
       block_type: 'page',
     }
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'P1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'P1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -625,11 +686,13 @@ describe('TrashView', () => {
       content: 'content text',
       deleted_at: 1736942400000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_block') return { block_id: 'C1', restored_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'C1', restored_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     const versionBefore = useResolveStore.getState().version
@@ -779,11 +842,13 @@ describe('TrashView', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -819,11 +884,13 @@ describe('TrashView', () => {
   it('shows singular batch restore toast when exactly 1 item is selected', async () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -845,11 +912,13 @@ describe('TrashView', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -893,11 +962,13 @@ describe('TrashView', () => {
   it('shows singular batch purge dialog title and toast when exactly 1 item is selected', async () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -971,11 +1042,14 @@ describe('TrashView', () => {
         page_id: 'P1',
       }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve')
-        return [{ id: 'P1', title: 'My Parent Page', block_type: 'page', deleted: false }]
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [
+        { id: 'P1', title: 'My Parent Page', block_type: 'page', deleted: false },
+      ],
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -994,11 +1068,14 @@ describe('TrashView', () => {
         page_id: 'P_DELETED',
       }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve')
-        return [{ id: 'P_DELETED', title: 'Old Page', block_type: 'page', deleted: true }]
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [
+        { id: 'P_DELETED', title: 'Old Page', block_type: 'page', deleted: true },
+      ],
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1016,10 +1093,12 @@ describe('TrashView', () => {
         page_id: 'P_MISSING',
       }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return [] // page not found
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [], // page not found,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1105,7 +1184,12 @@ describe('TrashView', () => {
   })
 
   it('does not render filter input when trash is empty', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({
+      list_trash: () => emptyPage,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -1333,7 +1417,12 @@ describe('TrashView', () => {
   })
 
   it('does not render Empty Trash and Restore All header buttons when trash is empty', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubInvoke({
+      list_trash: () => emptyPage,
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
+    })
 
     render(<TrashView />)
 
@@ -1430,20 +1519,21 @@ describe('TrashView', () => {
   // multi-select `purge_blocks_by_ids` path), not some other set.
   it('calls purge_blocks_by_ids (never purge_all_deleted) with the space-scoped ids on Empty Trash confirmation', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [
-            makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
-            makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [
+          makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+          makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1486,15 +1576,17 @@ describe('TrashView', () => {
         space: 'SPACE_OTHER',
       },
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: (args) => {
         const { scope } = args as { scope: { kind: string; space_id?: string } }
         const items = trashFixture.filter((b) => b.space === scope.space_id)
         return { items, next_cursor: null, has_more: false, total_count: null }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+      },
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1524,8 +1616,8 @@ describe('TrashView', () => {
   // `cursor: 'CUR'`.
   it('drains every list_trash page for the active space before purging', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: (args) => {
         const { cursor, scope } = args as { cursor: string | null; scope: unknown }
         expect(scope).toEqual({ kind: 'active', space_id: 'SPACE_TEST' })
         if (cursor == null) {
@@ -1542,10 +1634,12 @@ describe('TrashView', () => {
           has_more: false,
           total_count: null,
         }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+      },
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1563,17 +1657,18 @@ describe('TrashView', () => {
 
   it('shows success toast with count after empty trash', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 5 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 5 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1592,17 +1687,18 @@ describe('TrashView', () => {
   // ("Trash emptied (1 items...)"). Pins the singular wording explicitly.
   it('shows singular success toast when empty trash affects exactly 1 item', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1618,17 +1714,20 @@ describe('TrashView', () => {
 
   it('shows error toast on empty trash failure', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
+        throw new Error('DB error')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1670,16 +1769,22 @@ describe('TrashView', () => {
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
     )
     let purgeCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') {
+    stubInvoke({
+      list_trash: () => ({
+        items: trashItems,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
         purgeCalls += 1
         if (purgeCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
         throw new Error('db error on second chunk')
-      }
-      return undefined
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1720,16 +1825,22 @@ describe('TrashView', () => {
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
     )
     let purgeCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') {
+    stubInvoke({
+      list_trash: () => ({
+        items: trashItems,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
         purgeCalls += 1
         if (purgeCalls === 1) return { affected_count: 1 }
         throw new Error('db error on second chunk')
-      }
-      return undefined
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1769,16 +1880,22 @@ describe('TrashView', () => {
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
     )
     let purgeCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') {
+    stubInvoke({
+      list_trash: () => ({
+        items: trashItems,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
         purgeCalls += 1
         if (purgeCalls === 1) return { affected_count: 1 }
         throw new Error('db error on second chunk')
-      }
-      return undefined
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1825,20 +1942,21 @@ describe('TrashView', () => {
   // exactly the ids the space-scoped `list_trash` reported.
   it('calls restore_blocks_by_ids (never restore_all_deleted) with the space-scoped ids on Restore All confirmation', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [
-            makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
-            makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [
+          makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+          makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1882,15 +2000,17 @@ describe('TrashView', () => {
         space: 'SPACE_OTHER',
       },
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: (args) => {
         const { scope } = args as { scope: { kind: string; space_id?: string } }
         const items = trashFixture.filter((b) => b.space === scope.space_id)
         return { items, next_cursor: null, has_more: false, total_count: null }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+      },
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1916,8 +2036,8 @@ describe('TrashView', () => {
   // `cursor` argument rather than call order.
   it('drains every list_trash page for the active space before restoring', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: (args) => {
         const { cursor, scope } = args as { cursor: string | null; scope: unknown }
         expect(scope).toEqual({ kind: 'active', space_id: 'SPACE_TEST' })
         if (cursor == null) {
@@ -1934,10 +2054,12 @@ describe('TrashView', () => {
           has_more: false,
           total_count: null,
         }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+      },
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1956,17 +2078,18 @@ describe('TrashView', () => {
 
   it('shows success toast with count after restore all', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 3 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 3 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -1985,17 +2108,18 @@ describe('TrashView', () => {
   // singular wording for a 1-item restore-all.
   it('shows singular success toast when restore all affects exactly 1 item', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2012,17 +2136,20 @@ describe('TrashView', () => {
 
   it('shows error toast on restore all failure', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') throw new Error('DB error')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => {
+        throw new Error('DB error')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2067,15 +2194,18 @@ describe('TrashView', () => {
       content: 'lonely root',
       deleted_at: 1736812800000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash')
-        return { items: [block1, block2], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') {
+    stubInvoke({
+      list_trash: () => ({
+        items: [block1, block2],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      trash_descendant_counts: (args) => {
         expect(args).toEqual({ rootIds: ['R1', 'R2'] })
         return { R1: 3 }
-      }
-      return undefined
+      },
     })
 
     render(<TrashView />)
@@ -2099,17 +2229,15 @@ describe('TrashView', () => {
       content: 'lonely root',
       deleted_at: 1736812800000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [blockWithKids, lonelyBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return { R1: 3 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [blockWithKids, lonelyBlock],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({ R1: 3 }),
     })
 
     render(<TrashView />)
@@ -2124,11 +2252,15 @@ describe('TrashView', () => {
 
   it('renders singular "+1 block" for roots with exactly one descendant', async () => {
     const single = makeBlock({ id: 'R1', content: 'root + 1', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [single], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return { R1: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [single],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({ R1: 1 }),
     })
 
     render(<TrashView />)
@@ -2139,11 +2271,10 @@ describe('TrashView', () => {
 
   it('renders no batch-count badge when counts returns empty map', async () => {
     const block = makeBlock({ id: 'R1', content: 'root', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2159,12 +2290,11 @@ describe('TrashView', () => {
       content: 'root with kids',
       deleted_at: 1736899200000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return { R1: 5 }
-      if (cmd === 'restore_block') return { block_id: 'R1', restored_count: 6 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({ R1: 5 }),
+      restore_block: () => ({ block_id: 'R1', restored_count: 6 }),
     })
 
     render(<TrashView />)
@@ -2183,11 +2313,12 @@ describe('TrashView', () => {
 
   it('logs warning and keeps list usable when count fetch fails', async () => {
     const block = makeBlock({ id: 'R1', content: 'root', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') throw new Error('DB unavailable')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => {
+        throw new Error('DB unavailable')
+      },
     })
 
     render(<TrashView />)
@@ -2207,12 +2338,14 @@ describe('TrashView screen reader announcements', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
       // Single-IPC batch restore.
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2235,12 +2368,14 @@ describe('TrashView screen reader announcements', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
       // Single-IPC batch purge.
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+      purge_blocks_by_ids: () => ({ affected_count: 2 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2268,11 +2403,15 @@ describe('TrashView screen reader announcements', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'restore_blocks_by_ids') throw new Error('DB error')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => {
+        throw new Error('DB error')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2319,11 +2458,15 @@ describe('TrashView screen reader announcements', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
+        throw new Error('DB error')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2365,18 +2508,20 @@ describe('TrashView screen reader announcements', () => {
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
     let listTrashCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash') {
+    stubInvoke({
+      list_trash: () => {
         listTrashCalls += 1
-        return { items: blocks, next_cursor: null, has_more: false }
-      }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') {
+        return { items: blocks, next_cursor: null, has_more: false, total_count: null }
+      },
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
         // Raw AppError wire shape (unwrap() throws it verbatim) — B2 was
         // restored elsewhere between the listing render and this purge.
         throw { kind: 'invalid_operation', message: 'batch contains a live block' }
-      }
-      return undefined
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2413,17 +2558,18 @@ describe('TrashView screen reader announcements', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 5 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => ({ affected_count: 5 }),
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2440,17 +2586,20 @@ describe('TrashView screen reader announcements', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
-      if (cmd === 'list_trash')
-        return {
-          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'purge_blocks_by_ids') throw new Error('DB error')
-      return undefined
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_blocks_by_ids: () => {
+        throw new Error('DB error')
+      },
+      // The rows below have no trashed descendants; before #4668 this
+      // command fell through to a fallback resolving `undefined`.
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2477,11 +2626,10 @@ describe('TrashView  batch toolbar interaction', () => {
       content: 'root with kids',
       deleted_at: 1736899200000,
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return { R1: 4 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({ R1: 4 }),
     })
 
     render(<TrashView />)
@@ -2500,13 +2648,12 @@ describe('TrashView  batch toolbar interaction', () => {
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
       // Single-IPC batch restore.
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      return undefined
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
     })
 
     render(<TrashView />)
@@ -2534,11 +2681,10 @@ describe('TrashView  batch toolbar interaction', () => {
   it('Shift+Delete opens the batch purge confirmation dialog', async () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2557,12 +2703,11 @@ describe('TrashView  batch toolbar interaction', () => {
   it('toolbar shortcuts do nothing when nothing is selected', async () => {
     const user = userEvent.setup()
     const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
 
     render(<TrashView />)
@@ -2581,11 +2726,10 @@ describe('TrashView  batch toolbar interaction', () => {
   it('aria-keyshortcuts are advertised on the batch action buttons', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
     })
 
     render(<TrashView />)
@@ -2610,15 +2754,14 @@ describe('TrashView  batch toolbar interaction', () => {
       makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: 1736899200000 }),
     )
     let restoreCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_blocks_by_ids') {
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+      restore_blocks_by_ids: () => {
         restoreCalls++
         return { affected_count: 6 }
-      }
-      return undefined
+      },
     })
 
     render(<TrashView />)
@@ -2650,12 +2793,11 @@ describe('TrashView  batch toolbar interaction', () => {
     const blocks = Array.from({ length: 3 }, (_, i) =>
       makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: 1736899200000 }),
     )
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 3 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+      restore_blocks_by_ids: () => ({ affected_count: 3 }),
     })
 
     render(<TrashView />)
@@ -2684,12 +2826,11 @@ describe('TrashView  batch toolbar interaction', () => {
     const blocks = Array.from({ length: 6 }, (_, i) =>
       makeBlock({ id: `B${i}`, content: `item ${i}`, deleted_at: 1736899200000 }),
     )
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'trash_descendant_counts') return {}
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 6 }
-      return undefined
+    stubInvoke({
+      list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+      restore_blocks_by_ids: () => ({ affected_count: 6 }),
     })
 
     render(<TrashView />)

@@ -10,10 +10,16 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makePage } from '@/__tests__/fixtures'
-import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow, emptyPage, makePage, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
+import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -63,6 +69,46 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
+type PageList = CommandReturns['list_pages_with_metadata']
+
+/**
+ * The `list_pages_with_metadata` envelope for a set of pages.
+ *
+ * #4668 — this file used to hand the command `BlockRow`s. It returns
+ * `PageWithMetadataRow`, which specta renames to camelCase and which carries
+ * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
+ * `childBlockCount`, `flags`) no `BlockRow` has.
+ */
+function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+    ...rest,
+  }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
+ * consumed in call order regardless of command, so any speculative fetch
+ * could take the slot meant for the page query, and a re-fetch after the
+ * queue drained fell through to a fallback resolving `undefined`.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 /** Find the trash (delete) button within a page row via its aria-label. */
 function findTrashButton(row: HTMLElement): HTMLButtonElement {
   return within(row).getByRole('button', { name: /delete page/i })
@@ -94,22 +140,15 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
-  })
+  stubInvoke()
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    const page = {
-      items: [makePage({ id: 'P1', content: 'Accessible page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
+    })
 
     const { container } = render(<PageBrowser />)
 
@@ -121,11 +160,8 @@ describe('PageBrowser', () => {
     expect(results).toHaveNoViolations()
   })
   it('page item button has focus-visible ring classes', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'Focus Page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Focus Page' })]),
     })
 
     render(<PageBrowser />)
@@ -140,11 +176,8 @@ describe('PageBrowser', () => {
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
   })
   it('focused page row highlights with bg only — focus ring lives on the inner button', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'Inset Page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Inset Page' })]),
     })
 
     render(<PageBrowser />)
@@ -175,11 +208,9 @@ describe('PageBrowser', () => {
     expect(innerBtn?.className).toContain('focus-visible:ring-inset')
   })
   it('star-toggle and delete buttons have ring-inset focus rings', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'Inset Buttons Page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([makePage({ id: 'P1', content: 'Inset Buttons Page' })]),
     })
 
     render(<PageBrowser />)
@@ -194,19 +225,15 @@ describe('PageBrowser', () => {
   })
   it('delete button is disabled while deletion is in progress', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'Deleting Page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    // `delete_block` never resolves, so the trash button stays disabled.
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Deleting Page' })]),
+      delete_block: () => new Promise<never>(() => {}),
     })
 
     render(<PageBrowser />)
 
     await screen.findByText('Deleting Page')
-
-    // Mock delete_block to return a pending promise (never resolves)
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
     // Open dialog
     const pageRow = screen.getByText('Deleting Page').closest('.group') as HTMLElement
@@ -224,24 +251,22 @@ describe('PageBrowser', () => {
   })
   it('success toast offers Undo after delete', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'Toast Page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    // #4668 — `delete_block` returns `WithOps<DeleteResponse>`, and
+    // `deleted_at` has been epoch ms, not an ISO string, since migration 0081.
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Toast Page' })]),
+      delete_block: () =>
+        withOps({
+          block_id: 'P1',
+          deleted_at: 1736899200000,
+          descendants_affected: 1,
+          affected_page_ids: ['P1'],
+        }),
     })
 
     render(<PageBrowser />)
 
     await screen.findByText('Toast Page')
-
-    // Mock delete_block response
-    mockedInvoke.mockResolvedValueOnce({
-      block_id: 'P1',
-      deleted_at: '2025-01-15T00:00:00Z',
-      descendants_affected: 0,
-      affected_page_ids: [],
-    })
 
     // Open dialog and confirm
     const pageRow = screen.getByText('Toast Page').closest('.group') as HTMLElement
@@ -261,11 +286,11 @@ describe('PageBrowser', () => {
     expect(options?.action?.onClick).toBeTypeOf('function')
   })
   it('page name has title attribute for accessibility', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makePage({ id: 'P1', content: 'A very long page name that should be truncated' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([
+          makePage({ id: 'P1', content: 'A very long page name that should be truncated' }),
+        ]),
     })
 
     render(<PageBrowser />)
@@ -275,14 +300,12 @@ describe('PageBrowser', () => {
   })
   describe(' aria-activedescendant on keyboard nav', () => {
     it('grid container exposes aria-activedescendant matching the focused row id', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Apple' }),
+            makePage({ id: 'P2', content: 'Banana' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -302,15 +325,13 @@ describe('PageBrowser', () => {
 
     it('arrow-down updates aria-activedescendant to the next row id', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Apple' }),
+            makePage({ id: 'P2', content: 'Banana' }),
+            makePage({ id: 'P3', content: 'Cherry' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -342,15 +363,13 @@ describe('PageBrowser', () => {
       // chain: one row per page, ids unique, and the id the grid points
       // at actually resolving to an element in the DOM.
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Agaric' }),
-          makePage({ id: 'P2', content: 'Agaric' }),
-          makePage({ id: 'P3', content: 'Solo' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Agaric' }),
+            makePage({ id: 'P2', content: 'Agaric' }),
+            makePage({ id: 'P3', content: 'Solo' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -383,7 +402,7 @@ describe('PageBrowser', () => {
     // (inline fallback when no provider is present) so existing tests
     // querying the create-page form continue to work.
     it('no sticky top-0 wrapper div, but header content still renders', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ list_pages_with_metadata: () => emptyPage })
       const { container } = render(<PageBrowser />)
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
