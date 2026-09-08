@@ -118,3 +118,34 @@ siblings, with `makePage` and `makeDailyPage` rebuilt on top of `makeBlockRow`
 so the `BlockRow` field list is written once. `withOps`' `opRefs` parameter had
 no caller and `makePageWithMetadataRow` had exactly one, in its own file — the
 first is deleted, the second is module-local.
+
+## Fourth round: three files were opting out, and the drift was still there
+
+`stubInvoke` in `usePageDeleteAction.test.tsx`, `PageBrowser.crud.test.tsx` and
+`PageEditor.test.tsx` was annotated `Readonly<Record<string, InvokeHandler>>`,
+whose `unknown` return makes every handler passed through it unchecked — an
+unknown command name and a wrong shape both compile. Retyping them to
+`Readonly<TypedInvokeHandlers>` reddened 22 sites, all of them real:
+`delete_block` answering `deleted_at: '2026-01-01T00:00:00Z'` when
+`DeleteResponse.deleted_at` is epoch ms, every mutating stub missing its
+`op_refs` envelope, and five `list_pages_with_metadata` stubs returning
+snake_case `BlockRow`s. That is the same drift this PR's description names as
+its headline find, sitting unfixed behind an opt-out — and invisible to the
+ratchet too, since these files use `mockImplementation` rather than a stub
+literal.
+
+## The ratchet stops reading prose
+
+The count was textual over raw source, so it saw comments and error messages.
+That cost two hand-exclusions and a population fence, and the file still had to
+exclude itself — with the exclusion's liveness depending on how its own doc
+comment happened to be worded.
+
+`scripts/lib/js-scanner.mjs`'s `stripComments` is the repo's sanctioned answer,
+already used by two other vitest guards, and its header says not to hand-roll a
+rival. Running the source through it first deletes the self-exclusion outright.
+Proven both ways: adding a sentence to this file that names the stub expression
+on purpose no longer moves the number, and a simulated migration still reddens
+at 84 vs 85. The `*.test.ts(x)` fence stays, because `stripComments`
+deliberately leaves strings alone and `helpers/invoke.ts` names the expression
+inside an error message.

@@ -19,20 +19,20 @@
  * count, because that seam is typed against the generated command return types
  * and fails `npm run typecheck` on drift.
  *
- * ## The metric reads prose, so the population is fenced twice
+ * ## Comments are not code
  *
- * The match is textual: any file that SPELLS the stub expression counts, even
- * in a comment or an error message. `src/__tests__/helpers/invoke.ts` and
- * `src/test-setup.ts` both do, and neither stubs anything — counting every
- * `.ts` made them permanent members no migration could remove. Restricting the
- * walk to `*.test.ts(x)` drops them by a positive rule about the population the
- * metric is actually over.
+ * The match is textual, so a file that merely SPELLS the stub expression in
+ * prose would count — including this one, whose whole subject is that
+ * expression. Rather than excluding files by name, the source goes through
+ * `scripts/lib/js-scanner.mjs`'s `stripComments` first: the repo's sanctioned
+ * tokenizer, already used by two other vitest guards, and the one its own
+ * header says not to hand-roll a rival to.
  *
- * That leaves this file. Its subject IS `vi.mocked(invoke).mockResolvedValue(…)`,
- * so the sentence you are reading counts itself, and the exclusion below is
- * live: delete it and the number goes 85 -> 86 with nothing migrated. Whether
- * it fires depends on how this comment happens to be worded, which is why the
- * exclusion is explicit rather than left to phrasing.
+ * Strings survive that (deliberately — it only blanks comments), so the walk
+ * is also fenced to `*.test.ts(x)`. That drops `helpers/invoke.ts`, which
+ * names the expression inside an error message, and `test-setup.ts`; neither
+ * stubs anything, and counting them made them permanent members no migration
+ * could remove.
  *
  * ## Why an equality rather than a ceiling
  *
@@ -54,6 +54,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
+
+// @ts-expect-error -- untyped JS helper, the repo's sanctioned tokenizer (#3991)
+import { stripComments } from '../../scripts/lib/js-scanner.mjs'
 
 /**
  * Files still handing the invoke mock a hand-written literal.
@@ -99,9 +102,7 @@ function handStubsInvoke(source: string): boolean {
 
 describe('#4668 hand-stubbed invoke ratchet', () => {
   it('the number of files handing invoke a literal only goes down', () => {
-    const files = walk('src')
-      .filter((f) => !f.endsWith('hand-stub-ratchet.test.ts'))
-      .filter((f) => handStubsInvoke(readFileSync(f, 'utf8')))
+    const files = walk('src').filter((f) => handStubsInvoke(stripComments(readFileSync(f, 'utf8'))))
 
     expect(files.length, `hand-stubbing files:\n${files.join('\n')}`).toBe(HAND_STUB_FILE_BASELINE)
   })

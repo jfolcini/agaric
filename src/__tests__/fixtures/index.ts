@@ -107,36 +107,6 @@ export function withOps<T>(value: T): WithOps<T> {
   return { op_refs: [], ...value }
 }
 
-/**
- * A complete {@link PageWithMetadataRow}.
- *
- * Note the casing: specta renames this struct's fields to camelCase, while
- * {@link BlockRow} stays snake_case. Stubs for `list_pages_with_metadata` were
- * returning `BlockRow`-shaped objects — a different shape in both field names
- * and content, which the suite could not notice because nothing typed the seam.
- */
-function makePageWithMetadataRow(
-  overrides: Partial<PageWithMetadataRow> & Pick<PageWithMetadataRow, 'id'>,
-): PageWithMetadataRow {
-  return {
-    blockType: 'page',
-    content: null,
-    parentId: null,
-    position: 1,
-    deletedAt: null,
-    todoState: null,
-    priority: null,
-    dueDate: null,
-    scheduledDate: null,
-    pageId: null,
-    lastModifiedAt: null,
-    inboundLinkCount: 0,
-    childBlockCount: 0,
-    flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
-    ...overrides,
-  }
-}
-
 /** A complete {@link PageHeading} (snake_case, unlike the metadata row). */
 export function makePageHeading(
   overrides: Partial<PageHeading> & Pick<PageHeading, 'id'>,
@@ -162,7 +132,7 @@ export function makePageHeading(
  * typed the seam (#4668).
  */
 export function asPageWithMetadataRow(row: BlockRow): PageWithMetadataRow {
-  return makePageWithMetadataRow({
+  return {
     id: row.id,
     blockType: row.block_type,
     content: row.content,
@@ -174,5 +144,10 @@ export function asPageWithMetadataRow(row: BlockRow): PageWithMetadataRow {
     dueDate: row.due_date,
     scheduledDate: row.scheduled_date,
     pageId: row.page_id,
-  })
+    // The metadata columns no `BlockRow` has.
+    lastModifiedAt: null,
+    inboundLinkCount: 0,
+    childBlockCount: 0,
+    flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+  }
 }

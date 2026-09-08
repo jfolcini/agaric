@@ -138,8 +138,8 @@ vi.mock('lucide-react', () => ({
 
 import { toast } from 'sonner'
 
-import { makeBlock, makePage } from '@/__tests__/fixtures'
-import type { InvokeHandler } from '@/__tests__/helpers/invoke'
+import { makeBlock, makeBlockRow, makePage, withOps } from '@/__tests__/fixtures'
+import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageEditor } from '@/components/pages/PageEditor'
 import { t } from '@/lib/i18n'
@@ -156,7 +156,7 @@ const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 
 /** `mockInvokeCommands` plus the `get_block` every PageEditor mount issues (#4725). */
-function stubInvoke(handlers: Readonly<Record<string, InvokeHandler>> = {}): void {
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
       get_block: (args) => makePage({ id: args['blockId'] as string }),
@@ -291,13 +291,15 @@ describe('PageEditor', () => {
 
     // Mock createBlock response for the new block
     stubInvoke({
-      create_block: () => ({
-        id: 'B2',
-        block_type: 'content',
-        content: '',
-        parent_id: 'PAGE_1',
-        position: 1,
-      }),
+      create_block: () =>
+        withOps(
+          makeBlockRow({
+            id: 'B2',
+            content: '',
+            parent_id: 'PAGE_1',
+            position: 1,
+          }),
+        ),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -354,13 +356,15 @@ describe('PageEditor', () => {
     // there is no longer a follow-up list_blocks IPC; the row is spliced
     // into the local store via pageStore.appendBlock(row).
     stubInvoke({
-      create_block: () => ({
-        id: 'B1',
-        block_type: 'content',
-        content: '',
-        parent_id: 'PAGE_1',
-        position: 0,
-      }),
+      create_block: () =>
+        withOps(
+          makeBlockRow({
+            id: 'B1',
+            content: '',
+            parent_id: 'PAGE_1',
+            position: 0,
+          }),
+        ),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -398,13 +402,15 @@ describe('PageEditor', () => {
 
     // Mock createBlock response — the new block should be under PAGE_1
     stubInvoke({
-      create_block: () => ({
-        id: 'B4',
-        block_type: 'content',
-        content: '',
-        parent_id: 'PAGE_1',
-        position: 1,
-      }),
+      create_block: () =>
+        withOps(
+          makeBlockRow({
+            id: 'B4',
+            content: '',
+            parent_id: 'PAGE_1',
+            position: 1,
+          }),
+        ),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -597,13 +603,15 @@ describe('PageEditor BlockTree auto-creation prop', () => {
     // Mock createBlock only — splices the returned row
     // into the per-page store instead of triggering a follow-up list_blocks.
     stubInvoke({
-      create_block: () => ({
-        id: 'FIRST_BLOCK',
-        block_type: 'content',
-        content: '',
-        parent_id: 'PAGE_1',
-        position: 0,
-      }),
+      create_block: () =>
+        withOps(
+          makeBlockRow({
+            id: 'FIRST_BLOCK',
+            content: '',
+            parent_id: 'PAGE_1',
+            position: 0,
+          }),
+        ),
     })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)

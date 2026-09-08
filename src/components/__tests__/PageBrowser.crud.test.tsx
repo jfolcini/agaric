@@ -9,8 +9,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makePage } from '@/__tests__/fixtures'
-import { type InvokeHandler, mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow, emptyPage, makePage, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -73,7 +73,12 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 
 /** The `list_pages_with_metadata` response shape for a set of pages. */
 function pageList(...items: ReturnType<typeof makePage>[]) {
-  return { items, next_cursor: null, has_more: false, total_count: null }
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  }
 }
 
 /**
@@ -99,7 +104,7 @@ function pageList(...items: ReturnType<typeof makePage>[]) {
  * calls, and unlisted commands hit the strict fallback and fail the test by
  * name instead of resolving to a phantom success.
  */
-function stubInvoke(overrides: Readonly<Record<string, InvokeHandler>> = {}) {
+function stubInvoke(overrides: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
       // Every PageBrowser render issues the page query.
@@ -234,12 +239,16 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       stubInvoke({
         list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'To Be Deleted' })),
-        delete_block: () => ({
-          block_id: 'P1',
-          deleted_at: '2025-01-15T00:00:00Z',
-          descendants_affected: 0,
-          affected_page_ids: [],
-        }),
+        delete_block: () =>
+          withOps({
+            block_id: 'P1',
+
+            deleted_at: 1767225600000,
+
+            descendants_affected: 0,
+
+            affected_page_ids: [],
+          }),
       })
 
       render(<PageBrowser />)
@@ -270,19 +279,19 @@ describe('PageBrowser', () => {
       let deleted = false
       stubInvoke({
         list_pages_with_metadata: () => ({
-          items: deleted ? [] : [restoredPage],
+          items: deleted ? [] : [asPageWithMetadataRow(restoredPage)],
           next_cursor: null,
           has_more: false,
           total_count: deleted ? 0 : 1,
         }),
         delete_block: () => {
           deleted = true
-          return {
+          return withOps({
             block_id: 'P1',
-            deleted_at: '2025-01-15T00:00:00Z',
+            deleted_at: 1767225600000,
             descendants_affected: 0,
             affected_page_ids: [],
-          }
+          })
         },
         restore_blocks_by_ids: () => {
           deleted = false
