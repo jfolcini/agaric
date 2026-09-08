@@ -84,7 +84,7 @@ one commit if that trade ever stops looking right.
 ## Review round: the one field nothing typed
 
 `SetPropertyParams` (`useBlockPropertyIpc.ts`) declares four value fields. The
-deleted wrapper's own param type declared five. `buildSetPropertyParams`
+deleted wrapper's own param type declared five. `buildInitParams`
 returns `{ valueBool: false }` for a `value_type: 'boolean'` definition, and
 because that is a variable rather than a fresh literal there is no
 excess-property check — so `valueBool` reached the backend through the
@@ -119,3 +119,31 @@ call sites, because an empty id deserialises into a never-matching filter that
 silently returns nothing. Deleting the wrapper deleted its test, and removing
 the throw would have gone green. `src/lib/__tests__/space-scope.test.ts`
 restores it; deleting the guard reddens it.
+
+## One declaration for `SetPropertyParams`
+
+`property-save-utils.ts` kept a private copy of the shape, "so this module stays
+free of hook imports". That hand-sync is what dropped `valueBool`:
+`buildInitParams` returns the LOCAL type and is passed to the hook's
+`setProperty` as a variable, so no excess-property check fires and a field added
+to one side is silently ignored by the other.
+
+The reviewer's fix was to import the hook's type here. That direction breaks the
+tier ratchet (lib < hooks), so the declaration moved the other way — it lives in
+`lib/property-save-utils.ts` and the hook imports and re-exports it. One
+declaration either way; this is the one the layering allows.
+
+## Pinning a scope that actually distinguishes something
+
+`DonePanel.test.tsx` asserted the `SpaceScope` argument as `expect.anything()`.
+It now sets an active space in `beforeEach` and pins
+`{ kind: 'active', space_id: 'SPACE_1' }` — which is load-bearing: replacing
+`toSpaceScope(currentSpaceId)` with a hardcoded `{ kind: 'global' }` reddens two
+assertions.
+
+`useDuePanelData.test.ts`'s equivalent pins are NOT load-bearing in the same
+way, and the log should say so. Swapping `requireActiveScope` for `toSpaceScope`
+there still passes, because `listBlocksForAgenda` short-circuits on `!spaceId`
+before either helper runs — the only input they disagree on never reaches them.
+The literal is still better than `expect.anything()`, but it guards nothing that
+could go wrong.

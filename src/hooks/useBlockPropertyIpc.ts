@@ -29,24 +29,13 @@ import { useCallback } from 'react'
 import { unwrap } from '@/lib/app-error'
 import type { BlockRow, WithOps } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import type { SetPropertyParams } from '@/lib/property-save-utils'
 import {
   getProperties as getPropertiesIpc,
   listPropertyDefs as listPropertyDefsIpc,
 } from '@/lib/tauri'
 
-/** Named-param shape the drawer writes properties with. */
-export interface SetPropertyParams {
-  blockId: string
-  key: string
-  valueText?: string | null | undefined
-  valueNum?: number | null | undefined
-  valueDate?: string | null | undefined
-  valueRef?: string | null | undefined
-  // `buildSetPropertyParams` returns this for a `value_type: 'boolean'`
-  // definition; it reached the backend through the retired wrapper's own
-  // param type, never through this interface (#4412).
-  valueBool?: boolean | null | undefined
-}
+export type { SetPropertyParams }
 
 export interface UseBlockPropertyIpcReturn {
   /** Fetch all property rows for the given block. Throws on IPC failure. */

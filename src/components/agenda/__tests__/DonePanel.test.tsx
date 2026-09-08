@@ -23,6 +23,7 @@ import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/tauri', () => ({
   getBlock: vi.fn(),
@@ -151,6 +152,9 @@ beforeEach(() => {
   mockNavigateToPage.mockClear()
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
+  // An ACTIVE space, so the scope assertions below distinguish
+  // `toSpaceScope(currentSpaceId)` from a hardcoded `{ kind: 'global' }`.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 describe('DonePanel', () => {
@@ -372,7 +376,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_page2' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -439,7 +443,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'completed_at', valueDate: '2025-06-15' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -458,7 +462,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       expect(mockedQueryByProperty).toHaveBeenCalledWith(
         expect.objectContaining({ key: 'completed_at', valueDate: '2025-06-16' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -710,7 +714,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ contentNonEmpty: true }),
-      expect.anything(),
+      { kind: 'active', space_id: 'SPACE_1' },
     )
   })
 
@@ -737,7 +741,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ excludeParentId: 'PAGE_1', contentNonEmpty: true }),
-      expect.anything(),
+      { kind: 'active', space_id: 'SPACE_1' },
     )
   })
 
