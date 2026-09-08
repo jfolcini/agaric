@@ -3,10 +3,12 @@
  *
  * A bookmark IS a pinned recent page: `recent-pages` already owns the whole
  * model — `togglePinRecentPage`, pin-first ordering, and the exemption that
- * keeps pinned entries out of the `MAX_RETAINED` eviction — and the same
- * pins are surfaced by SearchPanel, CommandPalette and the PageBrowser
- * grouping (#1149). This section is the sidebar view over that state; it
- * adds no store and no second list.
+ * keeps pinned entries out of the `MAX_RETAINED` eviction. This section is the
+ * sidebar view over that state; it adds no store and no second list.
+ *
+ * The command palette's inline Pin button is the only place a page can be
+ * pinned; SearchPanel renders the same recents read-only, and the PageBrowser
+ * never reads the flag. So `bookmarks.emptyHint` names the palette alone.
  *
  * Consequences the section inherits, deliberately: bookmarks are per-space
  * (the store partitions by space id) and device-local (the store persists to
