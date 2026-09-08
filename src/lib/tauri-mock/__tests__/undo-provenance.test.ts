@@ -169,4 +169,19 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
 
     expect(blocks.get(A)?.['content']).toBe('original')
   })
+
+  it('a positional undo of a tag op stamps remove_tag, not edit_block', () => {
+    // The effect chain covers the five block-row types and defaulted to
+    // `edit_block` for everything else, so undoing a tag or property op
+    // labelled the reverse row `edit_block`. Since the row is now one History
+    // displays and the #763 digest compares, that label is observable.
+    const TAG = '000000000000000000000TAGZZ'
+    blocks.set(TAG, makeBlock(TAG, 'tag', 'sometag', null, 99))
+    dispatch('add_tag', { blockId: A, tagId: TAG })
+
+    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+
+    expect(opLog.at(-1)?.op_type).toBe('remove_tag')
+    expect(opLog.at(-1)?.is_undo).toBe(true)
+  })
 })

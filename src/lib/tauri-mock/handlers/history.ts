@@ -320,10 +320,9 @@ export const historyHandlers = {
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`, plus a `block_id`
       // for the history readers.
-      const revertedPayload = JSON.parse(target.payload) as Record<string, unknown>
       const newOp = pushOp(
         reverseOpTypeFor(target.op_type),
-        { reverted: target, block_id: revertedPayload['block_id'] },
+        { reverted: target, block_id: stash['block_id'] },
         true,
       )
       results.push(newOp)
@@ -364,7 +363,13 @@ export const historyHandlers = {
     const target = reApplied ?? picked
 
     const payload = JSON.parse(target.payload) as Record<string, unknown>
-    let reverseOpType = 'edit_block'
+    // The shared table, not a local default. The if/else below owns the EFFECT
+    // and covers the five block-row types; its `reverseOpType` local defaulted
+    // to `edit_block`, so a positional undo of a `set_property` / `add_tag` /
+    // `remove_tag` op stamped `edit_block` on the reverse row. Since #4868 that
+    // row is one History displays and the #763 op-log digest compares, so the
+    // wrong type is now observable rather than inert.
+    const reverseOpType = reverseOpTypeFor(target.op_type)
     // #3331 — the two soft-delete lifecycle arms are COHORT operations on the
     // backend (`reverse_create_block` → `DeleteBlock` cascades the active
     // subtree; `reverse_delete_block` → `RestoreBlock { deleted_at_ref }`
@@ -374,14 +379,11 @@ export const historyHandlers = {
     // forward `delete_block` / `restore_block` handlers use.
     if (target.op_type === 'create_block') {
       deleteCohort(blocks, payload['block_id'] as string, nextCohortMarker())
-      reverseOpType = 'delete_block'
     } else if (target.op_type === 'delete_block') {
       restoreCohort(blocks, payload['block_id'] as string)
-      reverseOpType = 'restore_block'
     } else if (target.op_type === 'edit_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['content'] = (payload['from_text'] as string | null) ?? null
-      reverseOpType = 'edit_block'
     } else if (target.op_type === 'move_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) {
@@ -423,11 +425,9 @@ export const historyHandlers = {
         // insert already renumbered it).
         if (curParentId !== oldParentId) renumberLiveSiblings(curParentId)
       }
-      reverseOpType = 'move_block'
     } else if (target.op_type === 'restore_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['deleted_at'] = new Date().toISOString()
-      reverseOpType = 'delete_block'
     }
 
     // #4868 — the GENUINE reverse op type with `is_undo`, the way the backend
