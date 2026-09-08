@@ -19,6 +19,7 @@ import { axe } from 'vitest-axe'
 import { App } from '@/App'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
+import type { BugReport } from '@/lib/bindings'
 import { markGestureCoachMarkSeen } from '@/lib/gesture-coachmark'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -2384,12 +2385,15 @@ describe('App', () => {
   // bug" button. The dialog must open with the supplied detail
   // (message → initialTitle, stack → initialDescription) pre-filled.
   describe('bug-report event listener', () => {
-    const sampleMetadata = {
+    // Typed, not inferred: the shape is an IPC contract, and an untyped
+    // literal lets the fixture go stale silently (#4854).
+    const sampleMetadata: BugReport = {
       app_version: '0.1.0',
       os: 'linux',
       arch: 'x86_64',
       device_id: 'DEV-XYZ',
       recent_errors: [],
+      retry_queue: { depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] },
     }
 
     beforeEach(() => {

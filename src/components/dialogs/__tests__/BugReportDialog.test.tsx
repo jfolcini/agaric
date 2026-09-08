@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import type { BugReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 
@@ -57,12 +58,16 @@ vi.mock('@/lib/clipboard', () => ({
 }))
 const mockedWriteText = vi.mocked(writeText)
 
-const sampleMetadata = {
+// Typed, not inferred: the shape is an IPC contract, and an untyped literal
+// let this fixture go stale silently — #4854's new field turned 32 tests red at
+// runtime while `tsc` stayed green.
+const sampleMetadata: BugReport = {
   app_version: '0.1.0',
   os: 'linux',
   arch: 'x86_64',
   device_id: 'DEV-XYZ',
   recent_errors: ['2025-01-01 ERROR [agaric] kaboom'],
+  retry_queue: { depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] },
 }
 
 function setupDefaultIpcMocks() {

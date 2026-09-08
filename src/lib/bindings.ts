@@ -1710,6 +1710,12 @@ export type BugReport = {
 	 *  path there is no user-facing redact toggle on the issue-body path.
 	 */
 	recent_errors: string[],
+	/**
+	 *  #4854 — the derived-state backstop's own backlog, or `None` when the
+	 *  read failed. `None` and a zero `depth` are different answers and the
+	 *  report must not conflate them.
+	 */
+	retry_queue: RetryQueueSummary | null,
 };
 
 export type BulkTrashResponse = {
@@ -3427,6 +3433,43 @@ export type RestoreToOpResult = {
 	non_reversible_skipped: number,
 	/**  Individual undo results for each reverted op. */
 	results: UndoResult[],
+};
+
+/**
+ *  `materializer_retry_queue` reduced to the shape a bug report can carry.
+ * 
+ *  #4854 — derived views (`pages_cache`, `fts_blocks`, `block_links`,
+ *  `agenda_cache`, `blocks.space_id`) are rebuilt by background tasks, and a
+ *  task that failed or that a saturated queue shed lands in this table to be
+ *  retried with backoff. A vault whose queue is deep, or whose oldest entry is
+ *  old, is a vault whose derived state is behind — which is what a "my page
+ *  count is wrong" report looks like from the inside. Nothing here audits or
+ *  rebuilds anything; it reports the backstop's own state, which the vault
+ *  already maintains.
+ * 
+ *  Deliberately carries no `block_id` and no `last_error`: the frontend embeds
+ *  this metadata verbatim into a prefilled PUBLIC GitHub issue body
+ *  (`src/lib/bug-report.ts::formatReportBody`), where an id identifies the
+ *  user's content and an error string can quote it. `task_kinds` carries the
+ *  `RetryKind` VARIANT for the same reason — see the query.
+ */
+export type RetryQueueSummary = {
+	/**  Rows in the table. */
+	depth: number,
+	/**  Age of the oldest row, in ms. `None` only when `depth` is 0. */
+	oldest_age_ms: number | null,
+	/**
+	 *  Highest `attempts` across the table — a row that keeps failing has
+	 *  climbed the backoff to the 1 h cap and is not coming back on its own.
+	 */
+	max_attempts: number,
+	/**
+	 *  Distinct `RetryKind` VARIANTS present, sorted — never the raw
+	 *  `task_kind` column, which embeds `(device_id, seq)` for `ApplyOp`.
+	 *  Says WHICH derived artefact is behind, which is the difference between
+	 *  "search is stale" and "the page tree is stale".
+	 */
+	task_kinds: string[],
 };
 
 /**

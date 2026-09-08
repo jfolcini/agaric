@@ -67,6 +67,12 @@ export const systemHandlers = {
     arch: 'mock',
     device_id: 'mock-device-id',
     recent_errors: [],
+    // #4854 — an empty summary, not `null`. The mock has no materializer and
+    // so no `materializer_retry_queue` (it is UNMODELED in
+    // `check-migration-mock-contract.py`), but a backend vault with nothing
+    // queued answers exactly this, and `null` means "the read failed" — a
+    // different claim the mock has no grounds to make.
+    retry_queue: { depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] },
   }),
 
   read_logs_for_report: () => [],

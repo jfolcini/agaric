@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT CASE WHEN instr(task_kind, ':') > 0 THEN substr(task_kind, 1, instr(task_kind, ':') - 1) ELSE task_kind END AS \"kind!: String\" FROM materializer_retry_queue ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "kind!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1a7d08d42187361887848a96263d74dfe9c4c9898faca71d4cfafc9eb4a8e79"
+}
