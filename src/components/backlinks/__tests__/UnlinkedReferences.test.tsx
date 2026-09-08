@@ -48,6 +48,7 @@ import { t } from '@/lib/i18n'
 // `commands.listUnlinkedReferences`, so its spy resolves/rejects with the bare
 // `GroupedBacklinkResponse` and the shim adds the envelope.
 const {
+  mockBatchResolve,
   mockGetPageAliases,
   mockListPropertyKeys,
   mockListTagsByPrefix,
@@ -57,6 +58,7 @@ const {
   mockListTagsByPrefix: vi.fn(),
   mockListUnlinkedReferences: vi.fn(),
   mockGetPageAliases: vi.fn(),
+  mockBatchResolve: vi.fn(),
 }))
 
 vi.mock('@/lib/tauri', () => ({
@@ -76,6 +78,10 @@ vi.mock('@/lib/bindings', async () => {
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPageAliases: (...args: unknown[]) =>
         mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
+      // Backs `useBacklinkResolution`, which turns the `[[ULID]]` tokens in a
+      // matched block's content into real titles.
+      batchResolve: (...args: unknown[]) =>
+        mockBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -87,13 +93,6 @@ vi.mock('@/lib/logger', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
-}))
-
-vi.mock('lucide-react', () => ({
-  ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
-  ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
-  Link2: (props: Record<string, unknown>) => <svg data-testid="link2-icon" {...props} />,
-  Loader2: (props: Record<string, unknown>) => <svg data-testid="loader2-icon" {...props} />,
 }))
 
 vi.mock('@/components/BacklinkFilterBuilder', () => ({
@@ -165,6 +164,7 @@ const mockedEditBlock = vi.mocked(editBlock)
 const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = mockGetPageAliases
+const mockedBatchResolve = mockBatchResolve
 
 function makeGroup(
   pageId: string,
@@ -210,6 +210,7 @@ beforeEach(() => {
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
   mockedListUnlinked.mockResolvedValue(emptyResponse)
+  mockedBatchResolve.mockResolvedValue([])
   mockedEditBlock.mockResolvedValue({
     id: 'BLOCK',
     block_type: 'content',
@@ -309,6 +310,44 @@ describe('UnlinkedReferences', () => {
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
     expect(await screen.findByText('5 Unlinked References')).toBeInTheDocument()
+  })
+
+  // A matched block that also carries a `[[ULID]]` link must show the target's
+  // title, not the raw 26-character id. The rows used to print `block.content`
+  // verbatim: an `itis` mention reading `Spoke with [[01KP6N…]]` showed the id
+  // where the person's name belongs, while the linked-references panel beside
+  // it resolved the very same token.
+  it('resolves [[ULID]] tokens in the matched block content', async () => {
+    const user = userEvent.setup()
+    const linkedId = '01KP6NZN93WXY5XX7AXWZTEQVX'
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Source Page', [
+          { id: 'B1', content: `Spoke with [[${linkedId}]] about the itis case` },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+    mockedBatchResolve.mockResolvedValue([
+      { id: linkedId, title: 'Patricio Aumedes', block_type: 'page', deleted: false },
+    ])
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'ITIS' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+
+    // The chip carries the resolved title...
+    const chip = await screen.findByTestId('block-link-chip')
+    expect(chip).toHaveTextContent('Patricio Aumedes')
+    // ...and the raw id is gone from the row entirely.
+    const row = document.querySelector('[data-backlink-item="B1"]') as HTMLElement
+    expect(row).not.toBeNull()
+    expect(row.textContent).not.toContain(linkedId)
+    expect(row.textContent).toContain('Spoke with')
   })
 
   // 3. Expands on header click — groups become visible, listUnlinkedReferences called

@@ -18,9 +18,11 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
@@ -147,15 +149,23 @@ export function UnlinkedReferences({
     // needs. Expanding re-keys the query and pulls the full page.
   } = useUnlinkedReferences({ pageId, filters, sort, spaceId: currentSpaceId, collapsed })
 
+  // Resolve the `[[ULID]]` / `((ULID))` / `#[ULID]` tokens INSIDE the matched
+  // block content. The rows used to print `block.content` verbatim, so a
+  // mention that also carried a link showed the raw 26-character id — an
+  // `itis` mention reading `Spoke with [[01KP6N…]]` instead of the person's
+  // name. The linked-references panel has always resolved these; this panel
+  // reads from the same shared store, so the two now agree.
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName } = useBacklinkResolution(groups)
+
   // Bug 2 — pre-warm the resolve cache for source-page IDs. Without this,
   // `useBlockResolve.resolveTitle` falls back to the `[[ULID-prefix...]]`
   // placeholder for any source page that hasn't been visited yet (e.g. a deeply
-  // nested child created in another session). The matched-block content path
-  // already benefits from `useBacklinkResolution` warming, but the
-  // source-page-header path surfaces these IDs directly and needs its own
-  // pre-warm. Keyed on the derived `groups` — re-warms whenever a fetch (initial
-  // or load-more) changes the merged group list, mirroring the old per-fetch
-  // `batchSet` in `fetchGroups`.
+  // nested child created in another session). The matched-block content path is
+  // covered by the `useBacklinkResolution` call above; this one is the
+  // source-page HEADER, which surfaces its ids directly and is not part of any
+  // block's content. Keyed on the derived `groups` — re-warms whenever a fetch
+  // (initial or load-more) changes the merged group list, mirroring the old
+  // per-fetch `batchSet` in `fetchGroups`.
   useEffect(() => {
     // #4239 — these are PAGE ids, so they share the resolve store's
     // `${spaceId}::${ulid}` key space with `preload`'s page half and with the
@@ -614,7 +624,20 @@ export function UnlinkedReferences({
                           className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
                           onClick={() => handleBlockClick(block)}
                         >
-                          {block.content || t('unlinkedRefs.empty')}
+                          {/* `inline` keeps the result inside this
+                              single-line truncating button — no block-level
+                              elements. No `interactive` / `onNavigate`, so the
+                              chips render inert rather than nesting a
+                              `role="link"` inside a button; the row's own
+                              click still navigates. */}
+                          {(block.content
+                            ? renderRichContent(block.content, {
+                                inline: true,
+                                resolveBlockTitle,
+                                resolveTagName,
+                                resolveBlockStatus,
+                              })
+                            : null) ?? t('unlinkedRefs.empty')}
                         </button>
                         <Button
                           variant="ghost"
