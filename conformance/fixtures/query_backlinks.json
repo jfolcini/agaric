@@ -1,0 +1,351 @@
+{
+  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; (b) the `b.deleted_at IS NULL` join filter, which needs a soft-deleted block still holding a link token — that state reddens the SNAPSHOT leg, because `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`) so the backend keeps the tombstoned source's `block_links` row by design, while the mock's `deriveLinkEdges` skips deleted sources outright. That is a snapshot-projection divergence in the mock, not a `get_backlinks` one, and fixing it means widening `deriveLinkEdges` and filtering at its two counting consumers instead.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first mention of [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second mention of [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "this text links nowhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "cross page mention of [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B6",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "source_id": "B3",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B4",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B7",
+        "source_page_id": "B6",
+        "target_id": "B1"
+      }
+    ],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_all_in_source_id_order",
+      "rows": [
+        "B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B7#parent_id=B6#page_id=B6#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id}",
+      "error": null,
+      "has_more": true,
+      "name": "backlinks_page_1",
+      "rows": [
+        "B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B4#parent_id=B2#page_id=B2#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_page_2",
+      "rows": ["B7#parent_id=B6#page_id=B6#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_none_for_unlinked_page",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "backlinks_global_scope",
+      "rows": [
+        "B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B7#parent_id=B6#page_id=B6#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "query_backlinks",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "first mention of [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "second mention of [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "linked to [[000000000000000000000000S1]] before unlinking"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "toText": "cross page mention of [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "this text links nowhere"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "The three surviving sources in `bl.source_id ASC` order: B3, B4, B7. B5 linked and its edge was dropped when the later edit removed the token, so a mock reading a stale edge set serves a fourth row. Every token carries `page_id` — the key the backlink UI groups by — so a source served under the wrong owning page fails too: B3/B4 belong to page B2, B7 to page B6.",
+      "name": "backlinks_all_in_source_id_order"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 2,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "First page of the same listing: `limit` is honoured, `has_more` is true, and the minted cursor is the `{id}` keyset `Cursor::for_id` builds.",
+      "name": "backlinks_page_1"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 2,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "Resumes on `bl.source_id > <cursor id>`: the one remaining source, no overlap, no skip, and the listing ends here.",
+      "cursor_from": "backlinks_page_1",
+      "name": "backlinks_page_2"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "The empty answer is the assertion: nothing links to page B6, so `bl.target_id = ?1` really selects. Without it a handler that ignored `blockId` and served every linking block would pass every other step here.",
+      "expect_empty": true,
+      "name": "backlinks_none_for_unlinked_page"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "get_backlinks",
+      "comment": "`Global` is the unscoped cross-space listing (`scope.as_filter_param()` binds NULL), not a refusal — unlike `list_trash`, which rejects it. One space in the harness, so the ROWS cannot tell scoped from unscoped; what this pins is that the request is served at all.",
+      "name": "backlinks_global_scope"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S2",
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma",
+        "id": "S6",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

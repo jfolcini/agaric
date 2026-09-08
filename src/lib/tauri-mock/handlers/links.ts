@@ -12,11 +12,17 @@
 // #4022 — the `fts_blocks.stripped` stand-in, imported rather than re-spelled:
 // `search.ts` is its single owner (#3938), and a second copy of the strip /
 // fold pair here would be free to drift away from the index it models.
+// #4667 — `get_backlinks` pages the SAME way `list_blocks`'s three
+// `ORDER BY id ASC` branches do (`Cursor::for_id`, `LIMIT ?limit + 1`), so it
+// reuses their paginator rather than growing a second cursor codec that would
+// be free to drift from the backend's `Cursor` shape.
+import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   contentLinksTo,
   inSpaceScope,
+  pageRequestLimit,
   scanLinkTargets,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
@@ -134,7 +140,20 @@ export const linksHandlers = {
         inSpaceScope(b, spaceId) &&
         contentLinksTo(b['content'] as string | null, targetId),
     )
-    return { items: backlinkItems, next_cursor: null, has_more: false, total_count: null }
+    // #4667 — this used to return the WHOLE set with `has_more: false` and no
+    // cursor, ignoring `limit` and `cursor` outright, so every page was the
+    // first page. `pagination::list_backlinks` is `ORDER BY bl.source_id ASC
+    // LIMIT ?limit + 1` over an `{id}` keyset; `bl.source_id` is the source
+    // block's own id, which is what {@link idKey} reads. Found by the
+    // `query_backlinks.json` query steps.
+    return paginateKeyset(
+      backlinkItems,
+      idKey,
+      pageRequestLimit(a['limit']),
+      a['cursor'],
+      null,
+      null,
+    )
   },
 
   count_backlinks_batch: (args) => {

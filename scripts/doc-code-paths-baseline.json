@@ -191,11 +191,6 @@
   },
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
-    "ref": "agaric-store/src/pagination/mod.rs:55",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
-    "file": "src/lib/tauri-mock/handlers/search.ts",
     "ref": "agaric-store/src/query/engine.rs:123",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },

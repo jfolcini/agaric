@@ -13,8 +13,6 @@ import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import {
-  type PageMetaRow,
-  type TypedHandlers,
   buildPageMetaRow,
   deriveLinkEdges,
   fbqInSpace,
@@ -23,7 +21,10 @@ import {
   linkTokenRe,
   metaRowMatchesExpr,
   metaRowMatchesFilter,
+  pageRequestLimit,
   rawOpLogLastEditedAt,
+  type PageMetaRow,
+  type TypedHandlers,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
@@ -1131,17 +1132,6 @@ function capPaletteContent(
   cut['content'] = points.slice(0, PALETTE_CONTENT_PREVIEW_CAP).join('')
   return cut
 }
-
-/** `pagination::MAX_PAGE_SIZE` (`agaric-store/src/pagination/mod.rs:55`) — the
- *  upper end of the range `PageRequest::new` accepts, checked BEFORE
- *  {@link SEARCH_MAX_RESULTS} and in a different function, hence the two
- *  distinct refusal messages in {@link searchHandlers.search_blocks}. */
-const PAGINATION_MAX_PAGE_SIZE = 200
-
-/** `pagination::DEFAULT_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:52`) — what an OMITTED `limit`
- *  (serde `None`) falls through to. An omitted limit is not an out-of-range
- *  one: it skips the range check entirely. */
-const PAGINATION_DEFAULT_PAGE_SIZE = 50
 
 /** `toggle_filter::REGEX_PRE_FILTER_CAP` — the regex arm's SQL `LIMIT`, applied
  *  to the recency-ordered candidate scan BEFORE the pattern runs, so a match
@@ -2316,41 +2306,7 @@ export const searchHandlers = {
     //
     // The order is observable: `{limit: 0, cursor: <garbage>}` reports the
     // LIMIT and `{limit: 150, cursor: <garbage>}` reports the CURSOR.
-    //
-    // The range test is spelled as an ACCEPT (`(1..=MAX_PAGE_SIZE).contains`,
-    // like the Rust) rather than as two comparisons, because a value that is
-    // not an integer compares `false` against both bounds and would sail
-    // through to `slice(0, limit + 1)` — where `'5' + 1` is `'51'` and
-    // `50.5 + 1` is a fractional slice bound.
-    //
-    // Where the two stacks part, stated in full rather than by half. An
-    // INTEGER out of range (`0`, `-1`, `201`) is `AppError::Validation` on both
-    // sides, same kind and same text — that is the parity this guard exists
-    // for. A NON-INTEGER (`50.5`) or non-number `limit` is not: the backend
-    // never reaches `PageRequest::new` with one, because Tauri's `Option<i64>`
-    // deserialisation refuses it at the IPC boundary, and a deserialisation
-    // failure is not an `AppError` at all — there is no kind on that side for
-    // this mock to be in parity WITH. So the `validation` kind thrown here is
-    // the mock's own choice, not a mirrored one: it is the cheapest way to keep
-    // a fractional bound out of `slice`, and it diverges from the backend in
-    // kind as well as text. #2463's kind-parity rule is about refusals the
-    // backend expresses as an `AppError`; this is the documented exception, and
-    // the exception is why the test below asserts only that it refuses.
-    //
-    // Nor is it unreachable: `limit` is typed `number`, so a typed caller CAN
-    // send `50.5` (only a non-number is ruled out by the types). No caller in
-    // this repo does, and both stacks refuse it — they disagree about how.
-    const rawLimit = (a['limit'] as number | null | undefined) ?? null
-    if (
-      rawLimit !== null &&
-      !(Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= PAGINATION_MAX_PAGE_SIZE)
-    ) {
-      throw validationRejection(
-        `pagination limit must be in [1, ${PAGINATION_MAX_PAGE_SIZE}]; got ${String(rawLimit)}. ` +
-          `For larger result sets, use cursor pagination.`,
-      )
-    }
-    const limit = rawLimit ?? PAGINATION_DEFAULT_PAGE_SIZE
+    const limit = pageRequestLimit(a['limit'])
     const cursor = rawCursor === null ? null : decodeSearchCursor(rawCursor)
     if (limit > SEARCH_MAX_RESULTS) {
       throw validationRejection(`search limit must be in [1, ${SEARCH_MAX_RESULTS}]; got ${limit}`)

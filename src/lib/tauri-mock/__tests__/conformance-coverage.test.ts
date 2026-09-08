@@ -420,12 +420,30 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // The EDGES are pinned twice (the snapshot's `page_links`, and the
   // `list_page_links` query step); these commands' grouping, filtering and
   // counting on top of them are not.
-  get_backlinks: 'fixture candidate: grouping/pagination over edges the snapshot already pins',
+  //
+  // `get_backlinks` is NOT waived: it answers with a plain `PageResponse`, so
+  // its ordering, `deleted_at` filter and `{id}` keyset are query steps in
+  // `query_backlinks.json` (#4667).
   count_backlinks_batch:
     'returns `HashMap<page_id, count>` — a keyed count map, not the canonical ' +
     'block-id rows the query projection binds',
-  list_backlinks_grouped: 'fixture candidate: grouped backlinks over already-pinned edges',
-  list_unlinked_references: 'fixture candidate: content scan over already-pinned block content',
+  // NOT "fixture candidate"s (#4667). Both answer with `GroupedBacklinkResponse`
+  // — `groups[]` of `{page_id, page_title, blocks, truncated}` with no flat row
+  // list — and the harness's one grouped projector (`groupTokens` /
+  // `group_tokens`) reads `run_advanced_query`'s bucket shape instead:
+  // `key`, `count`, `members`, `aggregates`. Pointed at a `BacklinkGroup` it
+  // emits `<missing-key>#count=null` and drops every member, so these need a
+  // projection EXTENSION before a step can say anything — the same blocker
+  // `count_backlinks_batch` above carries, not a fixture nobody wrote.
+  list_backlinks_grouped:
+    'answers under `groups[].blocks` — ' +
+    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); the harness ' +
+    "grouped projector binds `run_advanced_query`'s `key`/`count`/`members` bucket, so " +
+    'binding this one needs a projection extension, not just a query step',
+  list_unlinked_references:
+    'answers under `groups[].blocks` — ' +
+    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); same projection ' +
+    'extension `list_backlinks_grouped` needs — the FTS scan behind it is not the blocker',
   // `search_blocks_partitioned` is NOT waived: its two-partition envelope is
   // bound by the `partitions` row location (#3823) and driven by
   // `query_search_blocks_partitioned.json`.
@@ -701,7 +719,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'count_backlinks_batch',
   'count_trash',
   'export_page_markdown',
-  'get_backlinks',
   'get_block_history',
   'get_compaction_status',
   'get_link_metadata',
