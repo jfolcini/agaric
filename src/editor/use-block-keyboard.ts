@@ -274,12 +274,20 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // down (Enter / Backspace / boundary arrows) stay hardcoded — their
   // semantics are inseparable from those keys and the catalog marks them
   // `rebindable: false`.
+  // The four restructure callbacks below — and the Tab pair further down —
+  // deliberately do NOT flush here. Each one reads the editor's markdown,
+  // flushes, performs the move, and remounts the editor on the same block
+  // with what it read. Flushing first destroyed the value they read:
+  // `unmount()` wipes the ProseMirror doc to an empty paragraph, so the
+  // capture came back empty and the block was remounted blank, losing
+  // everything typed since the last commit. The boundary-arrow and
+  // focus-change rules further down DO flush, because the handlers they
+  // call do not.
   // `moveBlockUp` (default Ctrl/Cmd+Shift+ArrowUp): move block up among siblings
   {
     match: (e) => matchesShortcutBinding(e, 'moveBlockUp'),
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onMoveUp?.()
     },
   },
@@ -288,7 +296,6 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     match: (e) => matchesShortcutBinding(e, 'moveBlockDown'),
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onMoveDown?.()
     },
   },
@@ -297,7 +304,6 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     match: (e) => matchesShortcutBinding(e, 'indentBlock'),
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onIndent()
     },
   },
@@ -306,7 +312,6 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     match: (e) => matchesShortcutBinding(e, 'dedentBlock'),
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onDedent()
     },
   },
@@ -324,7 +329,6 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     match: (e, ctx) => e.key === 'Tab' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onIndent()
     },
   },
@@ -332,7 +336,6 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     match: (e, ctx) => e.key === 'Tab' && e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onFlush()
       cb.onDedent()
     },
   },
