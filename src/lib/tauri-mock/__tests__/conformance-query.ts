@@ -360,6 +360,15 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'truncated',
     totalKey: 'total',
   },
+  // A backlink row is the SOURCE block, so it carries the block attributes:
+  // the right ids under the wrong `page_id` (the grouping key the backlink UI
+  // renders by) must not compare equal (#4667).
+  get_backlinks: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   // Journal reads answer BARE — `get_journal_page_by_date` with one row or
   // null, `list_journal_pages_in_range` with a flat array. There is no
   // envelope, so neither scalar exists and both runners report `null`.

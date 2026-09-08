@@ -137,7 +137,7 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
 const NULL_POSITION_SENTINEL = Number.MAX_SAFE_INTEGER
 
 /** Backend `DEFAULT_PAGE_SIZE` — the limit `PageRequest::new(_, None)` falls to. */
-const DEFAULT_PAGE_SIZE = 50
+export const DEFAULT_PAGE_SIZE = 50
 
 /** Backend cap for `list_blocks_inner`, which REJECTS a limit outside `[1, 100]`. */
 const LIST_BLOCKS_MAX_LIMIT = 100
@@ -188,9 +188,9 @@ function positionThenIdKey(row: Record<string, unknown>): SortKey {
   return [keysetPosition(row), (row['id'] as string) ?? '']
 }
 
-/** `ORDER BY id ASC` — `list_by_type`, `list_by_tag` (`bt.block_id` ≡ `b.id`)
- *  and `list_agenda`. */
-function idKey(row: Record<string, unknown>): SortKey {
+/** `ORDER BY id ASC` — `list_by_type`, `list_by_tag` (`bt.block_id` ≡ `b.id`),
+ *  `list_agenda` and `list_backlinks` (`bl.source_id` ≡ `b.id`). */
+export function idKey(row: Record<string, unknown>): SortKey {
   return [(row['id'] as string) ?? '']
 }
 
@@ -346,7 +346,7 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
  * `compare` is the branch's `ORDER BY`; every ascending keyset takes the
  * default, `list_trash` passes {@link compareTrashKeys}.
  */
-function paginateKeyset(
+export function paginateKeyset(
   rows: Record<string, unknown>[],
   keyOf: (row: Record<string, unknown>) => SortKey,
   limit: number,
