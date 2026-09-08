@@ -1,4 +1,4 @@
-# Session 1588 — split the conformance waivers, and put a number on the debt (#4667)
+# Session 1588 — split the conformance waivers, and name the debt (#4667)
 
 ## What
 
@@ -9,82 +9,41 @@ split into a permanent half and a shrink-only ratchet:
   carrying no domain state a snapshot could compare: transport sessions, the
   observability and MCP runtime toggles, and process/environment/status probes.
   No fixture will ever pin these, so they are not debt.
-- Everything else — **42 mutating + 27 read** — is debt with a number on it.
+- Everything else — **42 mutating + 27 read** — is debt, named in a committed list.
 
 ## The criterion is each command's own reason, not its section header
 
-The first pass classified by section, which put five `app_settings` /
-`peer_refs` writers in the permanent set — `cancel_pairing` ("pending-pairing
-marker (app_settings)"), the three peer-registry writers, and
-`set_reminder_settings` — while `list_peer_refs` sat in the debt set for a
-BYTE-IDENTICAL reason string. Reviewer-caught.
+"no durable/persistent state" is permanent; "outside the conformance snapshot
+scope" is debt — that says the snapshot is too narrow, which a widened snapshot
+fixes. Classifying by section header instead put five `app_settings` /
+`peer_refs` writers in the permanent set while `list_peer_refs` sat in the debt
+set for a byte-identical reason.
 
-A second round caught the same shape surviving in the other direction:
-`confirm_pairing` stayed permanent on a reason string that itself claimed "no
-durable domain state to snapshot", while `pairing.rs:630`/`:644` write an
-`app_settings` row and clear `peer_refs` flags — the comment four lines below
-the waiver already said so. Deferring to each command's own reason only works
-when that reason is true, so the check is the code, not the string. Moving it
-to the debt half took the mutating baseline to 42.
+Deferring to a reason string only works when the string is true, and three were
+not: `confirm_pairing` claimed "no durable domain state" while `pairing.rs`
+writes an `app_settings` row and clears `peer_refs` flags, and
+`get_reminder_settings` claimed "no domain state" while reading the row
+`set_reminder_settings` writes. Both are debt. The check is the code.
 
-The honest test is the reason itself: "no durable/persistent state" is
-permanent; "outside the conformance snapshot scope" is not, because that says
-the snapshot is too narrow, which is a thing a widened snapshot fixes.
-`get_reminder_settings` moved too — it reads the `app_settings` row its own
-setter writes, so classifying the setter as debt and the getter as permanent
-was the same inconsistency in the other direction.
+## The ratchet holds names, not a count
 
-Re-classified per-command, the split is 11 + 14. #4667's independent audit
-measured 12 + 14; the one it counts as principled and this does not is
-`confirm_pairing`, which the second review round moved to debt.
+A count nets out: pin one command, waive another, and 42 is still 42. Names
+fail in both directions, which is why `check-tauri-import-baseline.mjs` commits
+a sorted list rather than a number.
 
-## Why the existing guard was not enough
+The names are derivable from the two allowlists, and are still worth
+committing, because the derivation has two inputs. Deleting an allowlist line
+(pinning) shows up in review on its own; moving a command into the PRINCIPLED
+set does not — the allowlist line is untouched, and the orphan test only
+catches a principled name that is missing from the allowlist entirely. That
+second axis is how `get_reminder_settings` would have quietly left the debt
+count, and the name list is the only thing that reddens on it.
 
-The honesty tests already failed on a stale waiver, a now-covered one, or a
-citation naming a file that does not mention the command. What they could not
-say is *which* waivers are debt. A principled waiver and an unwritten one read
-identically, so 76% of the command surface looked like a settled decision rather
-than a backlog.
-
-That is #4667's point: the guard measured bookkeeping, not coverage.
-
-## The ratchet is an equality, not a ceiling
-
-```ts
-expect({ mutating: mutating.length, read: read.length }).toEqual({
-  mutating: NOT_YET_PINNED_MUTATING_BASELINE,
-  read: NOT_YET_PINNED_READ_BASELINE,
-})
-```
-
-`<=` would let a stale baseline hide a win: pin a command, the count drops, the
-test still passes, and the number is free to drift back up unnoticed. Equality
-makes both directions fail — pinning one requires lowering the baseline in the
-same diff, and waiving a new one requires raising it where a reviewer sees it.
-Same mechanism as `tauri-import-baseline`, which fails on "new importer **or**
-stale baseline entry" for exactly this reason.
-
-A second test rejects a principled name that is not actually waived, so the
-permanent list cannot be used to shrink the debt count without pinning anything.
-
-## Falsification
-
-Three mutants, against a copy, restored and `cmp`-verified. All red:
-
-- remove a waiver, as if that command had just been pinned → the count drops;
-- move a batch command into the principled set, mislabelling debt as permanent →
-  the count drops and fails;
-- add a principled name that is not in any allowlist → the orphan test fires.
-
-## Counts, and why they differ from the issue
-
-#4667 measured 52 mutating + 55 read waived. The file today holds 53 + 41; the
-read side shrank as commands were pinned since that audit. The numbers here are
-measured from the file rather than copied from the issue body, which is the
-point of making this a test rather than prose. The principled side lands within
-one of the issue's own 12 + 14, and the single disagreement (`confirm_pairing`)
-is itself a finding rather than noise, which is a useful sign the criterion is
-the one the audit used.
+Falsified on exactly that: promote `get_reminder_settings` to principled with
+its waiver untouched, and one assertion fires. Isolated separately by swapping
+`start_sync` out of the principled set and `add_tags_by_ids` in — both still
+waived, both real command names, count identical at 42 — so nothing else in the
+file can be doing the work.
 
 ## Not done here
 
@@ -92,25 +51,3 @@ The issue's other two acceptance criteria — query steps for the 14 self-labell
 "fixture candidate" reads, and widening the migration⇒mock CONTRACT map beyond
 its 9 of 59 tables — are separate work. This commit is the mechanism that makes
 that burn-down visible; it does not do the burning down.
-
-## Third review round: a count nets out
-
-The ratchet shipped as two numbers, and the reviewer showed the hole: a diff
-that pins one command AND waives a new one leaves 42 either way and lands
-green — the exact case the mechanism exists to make visible.
-`check-tauri-import-baseline.mjs` uses a sorted committed NAME list for this
-reason, failing on "new entry or stale entry" rather than on a delta. Both
-baselines are now `readonly string[]`, which also deleted the `JSON.stringify`
-message-building the count needed to say anything useful.
-
-Falsified on the net-out case specifically, and isolated so nothing else in
-the file could be doing the work: move `start_sync` out of the principled set
-and `add_tags_by_ids` into it. Both stay waived and both are real command
-names, so no other guard fires; the count is 42 before and after, and exactly
-one assertion reddens.
-
-`get_reminder_settings`'s reason string was the last survivor of the
-false-claim shape — it said "no domain state" while reading the `app_settings`
-row `set_reminder_settings` writes, so a contributor applying the stated
-criterion would have moved it into the permanent set and shrunk the debt
-without pinning anything.
