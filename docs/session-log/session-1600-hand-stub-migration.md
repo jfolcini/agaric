@@ -45,9 +45,13 @@ have and omitted the `value_bool` it does — exactly backwards.
 been epoch-ms since migration 0081. `filtered_blocks_query` omitted the
 non-optional `total_count`.
 
-Missing `op_refs` envelopes on five mutating commands: `set_property`,
-`create_block` (two files), `delete_property`, `set_due_date` /
-`set_scheduled_date`.
+Missing `op_refs` envelopes on four mutating commands: `set_property`,
+`create_block` (two files) and `delete_property`.
+
+`set_due_date` / `set_scheduled_date` are NOT in that group, though an earlier
+draft of this log said so: both return a bare `BlockRow`
+(`src/lib/bindings.ts:343,345`). Their drift was the partial `{ id: 'BLOCK_1' }`
+literal standing in for a full row — a different error with the same cause.
 
 Two more path bugs: `useQueryExecution`'s "loading during initial fetch" gave
 its single catch-all promise to the FIRST command issued —
