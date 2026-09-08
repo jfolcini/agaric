@@ -2157,7 +2157,7 @@ pub async fn import_markdown_with_progress(
     ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
 
     // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
-    Ok(finish(ctx, counters))
+    Ok(finish(ctx, &counters))
 }
 
 /// Guard the payload, parse it, and derive the page title.
@@ -2428,7 +2428,9 @@ struct ImportCtx<'a> {
 /// in the frontmatter apply and the block loop, `blocks_created` /
 /// `chunks_committed` in the block loop) and reports in the final
 /// [`ImportResult`].
-#[derive(Default, Clone, Copy)]
+// Not `Copy`: every user takes it by `&mut`, and a helper silently taking it
+// by value would drop the increments.
+#[derive(Default)]
 struct ImportCounters {
     blocks_created: u64,
     properties_set: u64,
@@ -4336,8 +4338,8 @@ async fn ingest_attachments(
 
 /// #128 / #1932 / #1934 — emit the `Complete` progress event, log the collected
 /// diagnostics + completion telemetry, and build the returned [`ImportResult`].
-fn finish(ctx: ImportCtx<'_>, counters: ImportCounters) -> ImportResult {
-    let ImportCounters {
+fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters) -> ImportResult {
+    let &ImportCounters {
         blocks_created,
         properties_set,
         chunks_committed,
