@@ -1,6 +1,8 @@
 import type React from 'react'
 
 import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
+import { GatedImage } from '@/components/rendering/GatedImage'
+import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { ImageNode } from '@/editor/types'
 
 /**
@@ -12,7 +14,19 @@ import type { ImageNode } from '@/editor/types'
  * network) until the policy/allowlist permits them; local / `data:` / `blob:` /
  * `asset:` / same-origin images load directly and keep the #1434 broken-image
  * fallback on load error.
+ *
+ * The #4711 collapse toggle is a `<button>`, so it is rendered ONLY when the
+ * surface is interactive. `ResultCard` wraps its whole row in a native button
+ * and passes `interactive: false` for exactly this reason (see its
+ * "keep chips inert to avoid nested-interactive" note); a toggle there would
+ * nest a button inside a button — an `axe` `nested-interactive` violation —
+ * and its click would bubble to the card's navigate handler, so folding a
+ * thumbnail would take the user off the panel. Same rule `renderBlockLink`
+ * applies to its chip.
  */
-export function renderImage(node: ImageNode, key: string): React.ReactElement {
+export function renderImage(node: ImageNode, key: string, ctx: RenderContext): React.ReactElement {
+  if (ctx.interactive !== true) {
+    return <GatedImage key={key} src={node.attrs.src} alt={node.attrs.alt} />
+  }
   return <CollapsibleImage key={key} src={node.attrs.src} alt={node.attrs.alt} />
 }

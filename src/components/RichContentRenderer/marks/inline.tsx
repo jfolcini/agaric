@@ -39,7 +39,7 @@ function renderInlineNode(
       return renderMathInline(node, key)
     }
     case 'image': {
-      return renderImage(node, key)
+      return renderImage(node, key, ctx)
     }
     default: {
       return null
