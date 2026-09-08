@@ -186,22 +186,27 @@ export function buildSnapshot(
   })
 
   // Page links — derive [[ULID]] edges from block content, INCLUDING
-  // soft-deleted sources, mirroring the `block_links` table: `DeleteBlock`
-  // enqueues no `ReindexBlockLinks`, so the row survives and readers filter at
-  // query time (#4848). Joined to the source's page_id. The
-  // target must reference a live block (mirrors the backend's EXISTS guard).
+  // soft-deleted sources (#4848) and soft-deleted targets (#4853), mirroring
+  // the `block_links` table: `DeleteBlock` enqueues no `ReindexBlockLinks`, so
+  // the row survives EITHER tombstone and readers filter at query time. Joined
+  // to the source's page_id.
+  //
+  // The target must still EXIST. `reindex_block_links_conn`'s `WHERE EXISTS`
+  // guard is INSERT-time only, so it says a dangling or already-tombstoned
+  // target is never LINKED — not that an existing row is unlinked when its
+  // target is deleted later. A dangling token stays out for good; a purge takes
+  // the row with it (`ON DELETE CASCADE`, migration 0061) and the block out of
+  // `state.blocks`; only a soft delete leaves both behind.
   //
   // #3332 — the derivation is `deriveLinkEdges`, the function the MOCK runs,
   // not a private copy of its regex. The Rust side of this comparison reads the
   // real materialized `block_links` table, so a private copy here would have
   // let the two `page_links` snapshots agree while every live link handler
   // served different semantics.
-  const liveIds = new Set(
-    [...state.blocks.values()].filter((b) => b['deleted_at'] == null).map((b) => b['id'] as string),
-  )
+  const knownIds = new Set([...state.blocks.values()].map((b) => b['id'] as string))
   const linkRows: Array<Record<string, unknown>> = []
   for (const edge of deriveLinkEdges(state.blocks)) {
-    if (!liveIds.has(edge.targetId)) continue
+    if (!knownIds.has(edge.targetId)) continue
     linkRows.push({
       source_id: relabel(edge.sourceId),
       target_id: relabel(edge.targetId),
