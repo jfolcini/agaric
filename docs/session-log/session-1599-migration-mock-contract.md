@@ -84,3 +84,23 @@ example, and that red was the first evidence the additions bite.
 The hook's `files` pattern does not include its own script, so editing the
 CONTRACT map does not re-run it at pre-commit; the self-test hook is
 `always_run` but `stages = ["manual"]`. CI is what catches map rot.
+
+## Review round: two of my own assertions could not fire
+
+`pages_cache` was mapped on `inbound_link_count` and `page_link_cache` on
+`pageLinkStats`. Both symbols appear in their cited files only in PROSE —
+`handlers/pages.ts:207` and `handlers/shared.ts:342` are comments, and
+`link-scan.ts:109` names `pageLinkStats` in a docblock while the definition is
+in `handlers/shared.ts`. So those two anti-rot assertions could never fire:
+delete the derivation and the self-test still passes. Re-pointed at
+`buildPageMetaRow` and `deriveLinkEdges`, which are code in every listed file;
+renaming either now reds with the symbol named.
+
+The same shape in the parser cases. The first UPDATE-noise case parked
+`ON UPDATE CASCADE` in a `--` trailer, and `strip_sql_comments` runs before any
+regex, so it reduced to `CREATE INDEX i ON t (c);` and tested nothing. Replaced
+with the case the comment above it claims and neither case covered:
+`CREATE TRIGGER tg AFTER UPDATE OF c ON t` as live SQL. Dropping the `\s+SET\b`
+anchor now reds both noise cases; before, only the second.
+
+A guard written to catch guards-that-cannot-fire shipped two of them.

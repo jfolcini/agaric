@@ -175,11 +175,15 @@ CONTRACT: dict[str, dict[str, object]] = {
         "files": ["link-scan.ts", "handlers/shared.ts"],
     },
     "page_link_cache": {
-        "store": "pageLinkStats",
+        # `pageLinkStats` is only NAMED in link-scan.ts (a comment); the symbol
+        # that is CODE in both files is the edge derivation it consumes.
+        "store": "deriveLinkEdges",
         "files": ["link-scan.ts", "handlers/shared.ts"],
     },
     "pages_cache": {
-        "store": "inbound_link_count",
+        # NOT `inbound_link_count`: that appears in both files only in prose,
+        # so the anti-rot assertion could never fire on it.
+        "store": "buildPageMetaRow",
         "files": ["handlers/pages.ts", "handlers/shared.ts"],
     },
     "fts_blocks": {
@@ -704,7 +708,9 @@ def run_self_test() -> int:
     # `ON UPDATE CASCADE` / `AFTER UPDATE OF <col>` must not be read as tables:
     # a bare `UPDATE\s+(\w+)` captures `CASCADE` and `OF` from these.
     for noise in (
-        "CREATE INDEX i ON t (c); -- REFERENCES x(id) ON UPDATE CASCADE",
+        # Live SQL, not a comment: `strip_sql_comments` runs before the regex,
+        # so a clause parked in a `--` trailer would test nothing.
+        "CREATE TRIGGER tg AFTER UPDATE OF c ON t BEGIN SELECT 1; END;",
         "ALTER TABLE zzz ADD COLUMN c TEXT REFERENCES q(id) ON UPDATE CASCADE",
     ):
         if {"cascade", "CASCADE", "of", "OF"} & parse_touched_tables(noise):
