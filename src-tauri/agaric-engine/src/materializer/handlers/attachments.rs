@@ -78,6 +78,64 @@ const TRANSFER_TEMP_HEX_LEN: usize = 32;
 /// two together.
 pub const TRANSFER_TEMP_REAP_AFTER: std::time::Duration = std::time::Duration::from_secs(180 * 20);
 
+/// #4250 — how long a deleted attachment's bytes survive the sweep, in
+/// milliseconds (the unit `op_log.created_at` is stored in).
+///
+/// Since #1993/#3259 a `delete_attachment` removes only the row; this GC is
+/// the sole reclaimer of the bytes. It runs at boot, so the ordinary shape of
+/// "delete, restart, undo" was: bytes reclaimed on the way back in, and
+/// #3706's byte-existence guard refusing the undo the user reopened the app to
+/// perform. The refusal is honest, but the file is gone.
+///
+/// Seven days is a product decision, not a derivation — the maintainer's, on
+/// #4250. The horizon undo is *actually* bounded by is the op log, which
+/// compaction keeps for `agaric_sync::snapshot::DEFAULT_RETENTION_DAYS`
+/// (90); honouring that would hold every deleted attachment's bytes for a
+/// quarter, which is the unbounded-disk objection that made #3706 decline this
+/// fix in the first place. Seven days covers "I deleted the wrong file and
+/// noticed" without turning the vault into an append-only blob store, and it
+/// is the same floor `commands::compaction::MIN_RETENTION_DAYS` puts under a
+/// user-chosen op-log window.
+///
+/// Past the window the undo still refuses through #3706's guard, which is what
+/// keeps the two halves honest: nothing here restores a row over bytes that
+/// are gone, it only stops the bytes from going for a while.
+pub const DELETED_ATTACHMENT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// The `fs_path`s that a `delete_attachment` op younger than
+/// [`DELETED_ATTACHMENT_RETENTION_MS`] still names — the bytes an undo of that
+/// delete would need.
+///
+/// `DeleteAttachmentPayload::fs_path` is captured from the LIVE row inside the
+/// delete's own transaction, and `reverse::attachment_ops` reconstructs the
+/// undo's `add_attachment` from that same field, so this is byte-for-byte the
+/// path the undo will stat. Ops predating C-3 carry no `fs_path` (`NULL` here)
+/// and legacy ones carry `""`; neither names anything, so both are dropped.
+///
+/// Read on the WRITE pool rather than the reader: a read replica that lagged
+/// the writer would omit a delete that just committed, and the cost of being
+/// wrong in that direction is a destroyed file. It is one bounded query per
+/// pass — not per walked file — and the pass already writes to this pool.
+async fn undoable_deleted_paths(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+    let cutoff_ms = agaric_store::db::now_ms().saturating_sub(DELETED_ATTACHMENT_RETENTION_MS);
+    let rows = sqlx::query_scalar!(
+        r#"SELECT json_extract(payload, '$.fs_path') AS "fs_path?: String"
+             FROM op_log
+            WHERE op_type = 'delete_attachment'
+              AND created_at >= ?"#,
+        cutoff_ms
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .flatten()
+        .filter(|p| !p.is_empty())
+        .collect())
+}
+
 /// Does this file name have the in-flight-transfer temp shape?
 ///
 /// Deliberately exact rather than a loose `contains(".tmp")`: the GC's own
@@ -319,6 +377,27 @@ async fn gc_race_rendezvous(relative_str: &str) {
 /// a loose `.tmp` test — the quarantine files above end in `.tmp` too, and
 /// #3519 depends on those *being* collected.
 ///
+/// # Undo retention (#4250)
+///
+/// Everything above decides whether a file is referenced. A file whose only
+/// reference was removed by a `delete_attachment` the user can still undo is
+/// unreferenced *and* needed: `reverse::attachment_ops` reconstructs the undo's
+/// `add_attachment` from the delete payload's `fs_path`, and #3706's guard
+/// refuses when those bytes are absent. Since this pass runs at boot, the
+/// ordinary "delete, restart, undo" sequence reclaimed them first every time.
+///
+/// So a candidate whose path is named by a `delete_attachment` op younger than
+/// [`DELETED_ATTACHMENT_RETENTION_MS`] is skipped. The exemption is checked on
+/// the in-memory set from [`undoable_deleted_paths`] immediately after the
+/// referenced-path test, ahead of the blob-mapping prune and the write-pool
+/// re-check, so a retained file never enters the destructive path.
+///
+/// The bulk `attachment_blobs` prune above is deliberately NOT taught about
+/// the window. Undo needs the BYTES, not the mapping — the reverse re-inserts
+/// the `attachments` row from the op payload — and #3371's asymmetry says a
+/// mapping pruned while its file survives costs one redundant re-copy on the
+/// next ingest of those bytes, which is the self-healing direction.
+///
 /// Semantics are preserved exactly: the old query had **no**
 /// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
 /// the bulk `SELECT fs_path FROM attachments` likewise loads every row
@@ -539,9 +618,28 @@ pub async fn cleanup_orphaned_attachments(
         return Ok(());
     }
 
+    // #4250: the paths a still-undoable `delete_attachment` names. Loaded
+    // AFTER the early return above so a vault with nothing to walk does not
+    // pay for it, and — like the referenced-path load — a failure aborts the
+    // pass rather than letting the sweep treat every retained file as
+    // reclaimable. Being unable to establish what must be kept is not a
+    // licence to destroy it.
+    let undoable_deleted = match undoable_deleted_paths(pool).await {
+        Ok(set) => set,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "cleanup_orphaned_attachments: failed to load the undo-retention path set; aborting pass"
+            );
+            return Ok(());
+        }
+    };
+
     let mut scanned: u64 = 0;
     let mut unlinked: u64 = 0;
     let mut errors: u64 = 0;
+    // #4250: candidates left alone because an undo can still name them.
+    let mut retained: u64 = 0;
     // #3519: candidates whose bytes were quarantined and then handed back
     // because a reference appeared after the orphan decision. A non-zero
     // value is the scheme earning its keep, not a fault.
@@ -578,6 +676,20 @@ pub async fn cleanup_orphaned_attachments(
             // it without touching the DB.
             if referenced_paths.contains(&relative_str) {
                 // File is referenced — keep it.
+                continue;
+            }
+
+            // #4250: unreferenced, but a `delete_attachment` op inside the
+            // retention window still names it, so undoing that delete would
+            // stat this exact path. Keep the bytes. Placed ahead of the
+            // blob-mapping prune and the write-pool re-check so a retained
+            // file never enters the destructive path at all.
+            if undoable_deleted.contains(&relative_str) {
+                retained += 1;
+                tracing::debug!(
+                    path = %full_path.display(),
+                    "cleanup_orphaned_attachments: keeping a recently-deleted attachment's bytes for undo (#4250)"
+                );
                 continue;
             }
 
@@ -789,10 +901,11 @@ pub async fn cleanup_orphaned_attachments(
         scanned,
         unlinked,
         restored,
+        retained,
         errors,
         pruned_blobs,
         exempted_temps,
-        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows, skipped {exempted_temps} in-flight temps"
+        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, retained {retained} for undo, {errors} errors, pruned {pruned_blobs} blob rows, skipped {exempted_temps} in-flight temps"
     );
 
     Ok(())

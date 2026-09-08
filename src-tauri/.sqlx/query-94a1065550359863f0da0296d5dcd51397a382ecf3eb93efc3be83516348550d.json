@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT json_extract(payload, '$.fs_path') AS \"fs_path?: String\"\n             FROM op_log\n            WHERE op_type = 'delete_attachment'\n              AND created_at >= ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "fs_path?: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "94a1065550359863f0da0296d5dcd51397a382ecf3eb93efc3be83516348550d"
+}
