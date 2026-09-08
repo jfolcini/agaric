@@ -1,0 +1,45 @@
+-- #4770 fallout — index `agenda_cache(date, source, block_id)`: the shape
+-- `count_agenda_batch_by_source` needs, and the shape the PK cannot give it.
+--
+-- ## What changed under the query
+--
+-- #4770 deleted `count_agenda_batch` (no frontend caller) and left
+-- `count_agenda_batch_by_source_inner` as the one agenda count the journal
+-- calendar issues. The two queries differ by one column, and that column is
+-- the whole cost:
+--
+--     SELECT ac.date, ac.source, COUNT(*)   -- was: SELECT ac.date, COUNT(*)
+--       FROM agenda_cache ac JOIN blocks b ON b.id = ac.block_id
+--      WHERE ac.date IN (SELECT value FROM json_each(?1)) …
+--      GROUP BY ac.date, ac.source          -- was: GROUP BY ac.date
+--
+-- `PRIMARY KEY (date, block_id)` covers the old one completely — SQLite
+-- answers it from the index alone and the GROUP BY comes out in index order.
+-- `source` is in neither, so the by-source form pays twice: a table lookup
+-- per matching row for the column the index does not carry, and a
+-- `USE TEMP B-TREE FOR GROUP BY` because the rows no longer arrive grouped.
+--
+-- ## What this index restores
+--
+-- `(date, source, block_id)` carries every column the query reads, in the
+-- order it groups by, so the plan returns to the old one:
+--
+--     SEARCH ac USING COVERING INDEX idx_agenda_cache_date_source (date=?)
+--     SEARCH b USING INDEX sqlite_autoindex_blocks_1 (id=?)
+--
+-- with no temp B-tree. `block_id` is the third column because the join needs
+-- it, not for lookup order.
+--
+-- Not the index 0045 dropped: that was `idx_agenda_date`, a bare `(date)`
+-- whose every use the PK's leading column already served. This one exists for
+-- the two columns the PK does not carry in this order.
+--
+-- Index-only: no table is created or altered, so STRICT does not apply
+-- (it is a CREATE TABLE property) and no data is rewritten.
+--
+-- mock-unaffected: an index changes no table shape, column or row the
+-- browser/e2e Tauri mock (`src/lib/tauri-mock/`) models — it is a query-plan
+-- change alone.
+
+CREATE INDEX IF NOT EXISTS idx_agenda_cache_date_source
+    ON agenda_cache(date, source, block_id);
