@@ -8,12 +8,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  mockInvokeCommands,
-  pageRowInvokeFallback,
-} from '@/__tests__/helpers/invoke'
+import { makePage } from '@/__tests__/fixtures'
+import { type PageListEnvelope, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -80,7 +76,6 @@ const mockedInvoke = vi.mocked(invoke)
  * data, so the ordering assertions below were checking a list the component
  * had already been told, silently, no longer existed.
  */
-type PageList = CommandReturns['list_pages_with_metadata']
 
 /**
  * Serve `list_pages_with_metadata` with rows built directly as metadata rows.
@@ -88,38 +83,21 @@ type PageList = CommandReturns['list_pages_with_metadata']
  * The three server-ordered sorts need the metadata columns a `BlockRow`
  * cannot carry, so they bypass {@link stubPageList}'s `makePage` reshaping.
  */
-function stubMetaPageList(items: PageList['items']) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        list_pages_with_metadata: () => ({
-          items,
-          next_cursor: null,
-          has_more: false,
-          total_count: items.length,
-        }),
-        resolve_page_by_alias: () => null,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
+function stubMetaPageList(items: PageListEnvelope['items']) {
+  stubPageRowInvoke(mockedInvoke, {
+    list_pages_with_metadata: () => ({
+      items,
+      next_cursor: null,
+      has_more: false,
+      total_count: items.length,
+    }),
+  })
 }
 
 function stubPageList(items: ReturnType<typeof makePage>[], totalCount: number | null = null) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        list_pages_with_metadata: () => ({
-          items: items.map(asPageWithMetadataRow),
-          next_cursor: null,
-          has_more: false,
-          total_count: totalCount,
-        }),
-        resolve_page_by_alias: () => null,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
+  stubPageRowInvoke(mockedInvoke, {
+    list_pages_with_metadata: () => pageList(items, { total_count: totalCount }),
+  })
 }
 
 beforeEach(() => {
@@ -148,8 +126,12 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Deliberately no default page stub: a test that forgets its own must fail
-  // by name through `strictInvokeFallback`, not read an empty vault (#4668).
+  // `mockReset`, not `clearAllMocks`: clearing wipes the call record and
+  // leaves the previous test's `mockImplementation` installed, so a test that
+  // forgot its own stub would silently render the last test's page list.
+  // Reset restores the `vi.fn(strictInvokeFallback)` base, which fails by name
+  // (#4668).
+  mockedInvoke.mockReset()
 })
 
 describe('PageBrowser', () => {
@@ -309,7 +291,7 @@ describe('PageBrowser', () => {
       lastModifiedAt?: number | null
       inboundLinkCount?: number
       childBlockCount?: number
-    }): PageList['items'][number] {
+    }): PageListEnvelope['items'][number] {
       return {
         id: overrides.id,
         blockType: 'page',

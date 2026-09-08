@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
-import { type CommandReturns, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
+import { type PageListEnvelope, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -61,8 +61,6 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 })
 
 const mockedInvoke = vi.mocked(invoke)
-
-type PageList = CommandReturns['list_pages_with_metadata']
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -179,7 +177,7 @@ describe('PageBrowser', () => {
           fetches += 1
           // The second page request never resolves — `hasMore` stays true
           // so the LoadMoreButton + progress line remain mounted.
-          if (fetches > 1) return new Promise<PageList>(() => undefined)
+          if (fetches > 1) return new Promise<PageListEnvelope>(() => undefined)
           return pageList([makePage({ id: 'P1', content: 'Page 1' })], {
             next_cursor: 'cursor_abc',
             has_more: true,
