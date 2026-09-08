@@ -25,10 +25,6 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/lib/tauri', () => ({
-  getBlock: vi.fn(),
-}))
-
 // #4412 — `queryByProperty` / `batchResolve` retired their `@/lib/tauri`
 // wrappers; the panel calls `commands.*` and unwraps the `Result` envelope, so
 // the spies resolve raw data and the mock wraps it in `{ status: 'ok', data }`.
