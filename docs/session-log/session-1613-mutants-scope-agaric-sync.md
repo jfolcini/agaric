@@ -81,6 +81,41 @@ Both mutations were run against a copy of the workflow and restored:
 Guard green on the final tree: 6 globs, 25 mutable files, three examined
 packages.
 
+## Two things the glob broke, both caught in review
+
+Adding a package to this lane is not the config-only change it looks like.
+
+**The guard's own self-test pinned the glob count.** `check-mutants-scope.mjs`
+asserted the drifted case reports exactly `4` moved-out globs; with six it
+reports six, so `--self-test` exited non-zero and `check-mutants-scope.test.ts`
+went red. The count is now read from `examine_globs` instead, and the test
+matches `/all \d+ moved-out globs/` rather than the spelled-out "four".
+
+The delivery mechanism is the interesting half: this PR touches no frontend
+path, so `detect-changes` skips the `vitest` lane on it. The red would have
+landed on the next PR touching `src/`, on a diff that had nothing to do with
+it. Falsified by pinning the count back to `4` — the test reddens.
+
+**The rust-cache saver no longer built every shard's tree.** `save-if` named
+`agaric-engine` shard 0, "because its build is a superset of `agaric-store`'s".
+That invariant is exactly what a new package can break: `cargo metadata` puts
+`agaric-sync` ON TOP of `agaric-engine` -> `agaric-store` -> `agaric-core`,
+pulling iroh/quinn/rustls, mdns-sd and blake3 that none of them compile, and
+`cargo mutants -p <pkg>` builds only the named package's tree. The three new
+shards would have restored a cache that had never seen that tree and rebuilt it
+from source every cron — inside `--build-timeout 600`, and inside the wall
+budget this session's sizing charges ~360 s of baseline to. The saver moves to
+`agaric-sync` shard 0, which is now the superset.
+
+Same shape as the #4696 finding that motivated the cache work in the first
+place: the saver named a package the matrix no longer held, so nothing matched
+and every shard cold-built weekly. A saver keyed on a package name is only ever
+correct for the matrix it was written against.
+
+Also folded in from the review: the `mutants-scope` hook's `files` pattern now
+includes `agaric-sync/src/sync_protocol`, so renaming or deleting one of the
+two new files runs the guard instead of waiting for the next cron.
+
 ## Not done
 
 Lever C, the two-phase scan/confirm that #4696 measures at ~2.8x. It needs one

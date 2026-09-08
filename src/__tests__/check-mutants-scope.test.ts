@@ -29,7 +29,11 @@ describe('check-mutants-scope.mjs', () => {
     // Name the two assertions that carry the load, so a self-test quietly
     // reduced to trivia fails here.
     expect(out).toContain('a bare invocation examines only the root package')
-    expect(out).toContain('dropping --workspace flags all four moved-out globs')
+    // #4696 — matched on the stable half of the sentence. The count is derived
+    // from `examine_globs` inside the guard, so pinning the spelled-out "four"
+    // here made adding a glob red THIS test, on a PR that (being config-only)
+    // never runs the lane that owns it.
+    expect(out).toMatch(/dropping --workspace flags all \d+ moved-out globs/)
   })
 
   it('--shard-count reports the matrix total, and fails closed without a matrix', () => {
