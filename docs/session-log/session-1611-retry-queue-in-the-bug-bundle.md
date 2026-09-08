@@ -88,6 +88,48 @@ That is where the CI half's remaining value is; the liveness half is already
 covered by B6's existing non-vacuity assertions (`coverage.pages_cache_rows >= 4`,
 `live_page_blocks >= 4`), so nothing was added there.
 
+## The line that would have published the device ID
+
+The first version of this argued its own safety and was wrong about it. The
+doc claimed `task_kind` is safe to publish because "the values are the
+materializer's own enum literals". Every `RetryKind` renders as a static
+literal except one:
+
+```rust
+// agaric-engine/src/materializer/retry_queue.rs:215
+Self::ApplyOp { device_id, seq } => Cow::Owned(format!("ApplyOp:{seq}:{device_id}")),
+```
+
+Those are the rows AGENTS.md calls the correctness backstop — the ones a report
+is most likely to carry. A vault with one failed apply-op retry would have
+rendered
+
+```
+- **Device ID:** `01K7ABCD…` _(truncated)_
+- **Retry queue:** 1 task, oldest 5m, max 3 attempts (ApplyOp:412:01K7ABCDEFGHJKMNPQRSTVWXYZ)
+```
+
+into a prefilled PUBLIC issue body: the full device id, on the line directly
+below the one #609 truncates, bypassing the redaction pipeline that scrubs the
+same string out of logs. The ZIP path leaked it too — `buildReportZip` redacts
+`metadata.device_id` only, so the redact toggle never reached this field.
+
+Second failure, same root: `buildGitHubIssueUrl` documents that callers cap
+large fields to stay inside GitHub's prefill URL limit. Every apply-op row is
+distinct, so a shed `BatchApplyOps` of 500 records would have emitted 500
+entries and produced a broken link instead of a report.
+
+The query now truncates at the first `:`, so the column collapses to its
+variant: `ApplyOp:412:<device>` becomes `ApplyOp`, static kinds are untouched,
+and hundreds of rows become one entry. That makes the enum-literal claim true
+rather than merely asserted. Falsified by restoring the raw column — the new
+test reddens alone.
+
+The `RetryQueueSummary` doc block also lost its comparison paragraphs. specta
+copies doc comments verbatim into `bindings.ts`, so arguing against
+`StatusInfo::retry_queue_pending` and OTel there shipped the argument into the
+generated file; that reasoning belongs here, where it already is.
+
 ## Verified
 
 - `cargo nextest run --workspace -E 'test(retry_queue_summary)'` — 4 passed,

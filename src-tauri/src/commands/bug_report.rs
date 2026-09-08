@@ -389,20 +389,11 @@ pub struct BugReport {
 /// rebuilds anything; it reports the backstop's own state, which the vault
 /// already maintains.
 ///
-/// Not a duplicate of `StatusInfo::retry_queue_pending`
-/// (`agaric-engine/src/materializer/metrics.rs`), which exposes the depth
-/// alone, through a command the bug report does not call and whose output the
-/// issue body does not carry. Depth without the age says a vault has a backlog
-/// but not whether it is draining, and without `task_kinds` it does not say
-/// which artefact is stale. The OTel pipeline carries more than either, and
-/// defaults off (`AGARIC_OTEL`), so it is absent from exactly the reports that
-/// need it.
-///
 /// Deliberately carries no `block_id` and no `last_error`: the frontend embeds
 /// this metadata verbatim into a prefilled PUBLIC GitHub issue body
 /// (`src/lib/bug-report.ts::formatReportBody`), where an id identifies the
-/// user's content and an error string can quote it. `task_kind` is safe — the
-/// values are the materializer's own enum literals, listed in migration 0044.
+/// user's content and an error string can quote it. `task_kinds` carries the
+/// `RetryKind` VARIANT for the same reason — see the query.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct RetryQueueSummary {
     /// Rows in the table.
@@ -412,9 +403,10 @@ pub struct RetryQueueSummary {
     /// Highest `attempts` across the table — a row that keeps failing has
     /// climbed the backoff to the 1 h cap and is not coming back on its own.
     pub max_attempts: i64,
-    /// Distinct `task_kind`s present, sorted. Says WHICH derived artefact is
-    /// behind, which is the difference between "search is stale" and "the
-    /// page tree is stale".
+    /// Distinct `RetryKind` VARIANTS present, sorted — never the raw
+    /// `task_kind` column, which embeds `(device_id, seq)` for `ApplyOp`.
+    /// Says WHICH derived artefact is behind, which is the difference between
+    /// "search is stale" and "the page tree is stale".
     pub task_kinds: Vec<String>,
 }
 
@@ -2130,8 +2122,23 @@ async fn fetch_retry_queue_summary(pool: &SqlitePool) -> Option<RetryQueueSummar
     )
     .fetch_one(pool)
     .await;
+    // #4854 review — the VARIANT, not the column. Every `RetryKind` renders as
+    // a static literal except one: `ApplyOp { device_id, seq }` is stored as
+    // `ApplyOp:<seq>:<device_id>` (`materializer/retry_queue.rs`), and those are
+    // exactly the rows AGENTS.md calls the correctness backstop, so they are
+    // the ones a report is most likely to carry. Publishing the column verbatim
+    // would put the full device id into a PUBLIC issue body one line under the
+    // one #609 truncates, and would emit one entry per failed record — a shed
+    // batch is hundreds, past the prefill URL limit `buildGitHubIssueUrl`
+    // documents. Truncating at the first `:` collapses them to `ApplyOp` and
+    // makes the enum-literal claim above true.
     let kinds = sqlx::query_scalar!(
-        "SELECT DISTINCT task_kind FROM materializer_retry_queue ORDER BY task_kind"
+        "SELECT DISTINCT \
+                CASE WHEN instr(task_kind, ':') > 0 \
+                     THEN substr(task_kind, 1, instr(task_kind, ':') - 1) \
+                     ELSE task_kind END AS \"kind!: String\" \
+           FROM materializer_retry_queue \
+          ORDER BY 1"
     )
     .fetch_all(pool)
     .await;
@@ -2338,6 +2345,51 @@ mod tests {
         let summary = fetch_retry_queue_summary(&pool).await.expect("readable");
 
         assert_eq!(summary.oldest_age_ms, Some(0));
+    }
+
+    /// An `ApplyOp` row's `task_kind` embeds `(device_id, seq)`. The summary
+    /// must carry the VARIANT: the raw column would put the full device id
+    /// into a PUBLIC issue body one line under the one #609 truncates, and
+    /// would emit one entry per failed record instead of one per kind.
+    #[tokio::test]
+    async fn retry_queue_summary_reports_the_variant_not_the_parameterised_kind_4854() {
+        let (pool, _dir) = retry_queue_pool().await;
+        let device = "01K7ABCDEFGHJKMNPQRSTVWXYZ";
+
+        // Three distinct rows of the SAME kind — this is what a shed
+        // `BatchApplyOps` leaves behind, one row per record.
+        for (i, seq) in [(0, 412), (1, 413), (2, 414)] {
+            enqueue_retry(
+                &pool,
+                &format!("01HZ00000000000000000APPLY{i}"),
+                &format!("ApplyOp:{seq}:{device}"),
+                1,
+                crate::db::now_ms(),
+            )
+            .await;
+        }
+        enqueue_retry(
+            &pool,
+            "01HZ000000000000000000FTS0",
+            "UpdateFtsBlock",
+            1,
+            crate::db::now_ms(),
+        )
+        .await;
+
+        let summary = fetch_retry_queue_summary(&pool).await.expect("readable");
+
+        assert_eq!(summary.depth, 4, "every row still counts toward the depth");
+        assert_eq!(
+            summary.task_kinds,
+            vec!["ApplyOp".to_string(), "UpdateFtsBlock".to_string()],
+            "the three ApplyOp rows collapse to one variant, and a static kind is untouched"
+        );
+        assert!(
+            !summary.task_kinds.iter().any(|k| k.contains(device)),
+            "no device id may reach the summary: {:?}",
+            summary.task_kinds
+        );
     }
 
     /// A pool whose table is gone reports `None`. The bug report still

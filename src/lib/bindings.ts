@@ -3447,20 +3447,11 @@ export type RestoreToOpResult = {
  *  rebuilds anything; it reports the backstop's own state, which the vault
  *  already maintains.
  * 
- *  Not a duplicate of `StatusInfo::retry_queue_pending`
- *  (`agaric-engine/src/materializer/metrics.rs`), which exposes the depth
- *  alone, through a command the bug report does not call and whose output the
- *  issue body does not carry. Depth without the age says a vault has a backlog
- *  but not whether it is draining, and without `task_kinds` it does not say
- *  which artefact is stale. The OTel pipeline carries more than either, and
- *  defaults off (`AGARIC_OTEL`), so it is absent from exactly the reports that
- *  need it.
- * 
  *  Deliberately carries no `block_id` and no `last_error`: the frontend embeds
  *  this metadata verbatim into a prefilled PUBLIC GitHub issue body
  *  (`src/lib/bug-report.ts::formatReportBody`), where an id identifies the
- *  user's content and an error string can quote it. `task_kind` is safe — the
- *  values are the materializer's own enum literals, listed in migration 0044.
+ *  user's content and an error string can quote it. `task_kinds` carries the
+ *  `RetryKind` VARIANT for the same reason — see the query.
  */
 export type RetryQueueSummary = {
 	/**  Rows in the table. */
@@ -3473,9 +3464,10 @@ export type RetryQueueSummary = {
 	 */
 	max_attempts: number,
 	/**
-	 *  Distinct `task_kind`s present, sorted. Says WHICH derived artefact is
-	 *  behind, which is the difference between "search is stale" and "the
-	 *  page tree is stale".
+	 *  Distinct `RetryKind` VARIANTS present, sorted — never the raw
+	 *  `task_kind` column, which embeds `(device_id, seq)` for `ApplyOp`.
+	 *  Says WHICH derived artefact is behind, which is the difference between
+	 *  "search is stale" and "the page tree is stale".
 	 */
 	task_kinds: string[],
 };
