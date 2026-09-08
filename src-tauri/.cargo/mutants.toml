@@ -57,11 +57,34 @@
 # explicitly — since #3393 one shard-matrix job per `(package, shard)`, passing
 # `-p` — and `scripts/check-mutants-scope.mjs` fails if any glob here resolves
 # outside the union of that matrix's `package` column.
+#
+# #4696 (lever A) adds the `agaric-sync` pair. That crate had never been
+# mutated — 58,891 non-test LOC of version vectors, wire batching and QUIC
+# framing — and until #4517 it did not meet the selection rule above either:
+# 376 example tests and one property test reaching it from the app crate.
+# #4517 landed independent-oracle properties for the four pure decision points
+# (`protocol_proptest.rs`), and those two files are where they live:
+#
+#   * `sync_protocol/operations.rs` — `check_reset_required` (one of the two
+#     version-vector comparisons) and `batch_ops_for_wire`. A partition that
+#     loses, duplicates or reorders a record is silent on the wire.
+#   * `sync_protocol/types.rs` — `encode_persisted_loro_vvs` /
+#     `decode_persisted_loro_vvs`, the persisted per-peer bookmark. The
+#     decoder returns `Vec`, not `Result`, so the type does not answer "what
+#     does it do with garbage" and only a property can.
+#
+# NOT `sync_protocol/loro_sync.rs`, which holds the other version-vector
+# comparison (`classify_from_vv_reachability`). It is 2802 LOC of session
+# orchestration around that one proptested function, so mutating the file
+# would bury the constrained surface under mutants nothing is meant to kill —
+# the same "bury the high-value survivors" failure this scope exists to avoid.
 examine_globs = [
     "agaric-store/src/op.rs",
     "agaric-store/src/op_log/**",
     "agaric-engine/src/reverse/**",
     "agaric-engine/src/loro/engine/**",
+    "agaric-sync/src/sync_protocol/operations.rs",
+    "agaric-sync/src/sync_protocol/types.rs",
 ]
 
 # Never mutate test code or proptest harnesses — they are the oracle, not

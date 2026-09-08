@@ -1107,15 +1107,30 @@ function runSelfTest() {
   else fail('--workspace package selection', JSON.stringify(all))
 
   // 4. End-to-end: the REAL config, analysed against an invocation with no
-  //    `--workspace`, must report all four moved-out globs (op.rs, op_log/**,
-  //    reverse/** and loro/engine/**). This is the guard's whole reason to
-  //    exist, exercised through `analyzeMutantsScope` rather than its helpers.
+  //    `--workspace`, must report EVERY glob as moved out: each one lives in a
+  //    workspace member, and none of them in the root `agaric` package. This is
+  //    the guard's whole reason to exist, exercised through
+  //    `analyzeMutantsScope` rather than its helpers.
+  //
+  //    #4696 — the expected count is read from the config rather than pinned.
+  //    It was `=== 4` for the original four globs, so adding the `agaric-sync`
+  //    pair made the drifted case report 6 and failed this assertion. A
+  //    config-only PR does not run the `vitest` lane that owns
+  //    `check-mutants-scope.test.ts`, so that red would have landed on the next
+  //    PR touching `src/` instead of on the one that caused it.
   const drifted = analyzeMutantsScope({
     root: REPO_ROOT,
     overrideArgv: ['cargo', 'mutants', '--in-place'],
   })
-  if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 4)
-    ok('dropping --workspace flags all four moved-out globs (the #2621 drift)')
+  const expectedDrifted = tomlStringArray(
+    readFileSync(resolve(REPO_ROOT, CONFIG_PATH), 'utf8'),
+    'examine_globs',
+  ).length
+  if (
+    drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length ===
+    expectedDrifted
+  )
+    ok(`dropping --workspace flags all ${expectedDrifted} moved-out globs (the #2621 drift)`)
   else fail('moved-out globs are flagged', JSON.stringify(drifted.problems.map((p) => p.kind)))
 
   // 3b. #3393, the sharded shape: `-p "$PACKAGE"` names the matrix column, so
