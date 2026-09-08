@@ -42,6 +42,10 @@ export interface SetPropertyParams {
   valueNum?: number | null | undefined
   valueDate?: string | null | undefined
   valueRef?: string | null | undefined
+  // `buildSetPropertyParams` returns this for a `value_type: 'boolean'`
+  // definition; it reached the backend through the retired wrapper's own
+  // param type, never through this interface (#4412).
+  valueBool?: boolean | null | undefined
 }
 
 export interface UseBlockPropertyIpcReturn {
@@ -67,7 +71,7 @@ export function useBlockPropertyIpc(): UseBlockPropertyIpcReturn {
           value_num: params.valueNum ?? null,
           value_date: params.valueDate ?? null,
           value_ref: params.valueRef ?? null,
-          value_bool: null,
+          value_bool: params.valueBool ?? null,
         }),
       ),
     [],

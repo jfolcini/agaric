@@ -137,7 +137,10 @@ const SRC_DIR = path.join(ROOT, 'src')
 
 const REQUIRED_KEYS = ['value_text', 'value_num', 'value_date', 'value_ref', 'value_bool']
 
-const CALL_RE = /commands\.setProperty\s*\(/g
+// `\s*` around the dot: a call broken across lines as `commands\n  .setProperty(`
+// is the shape this guard used to skip silently, which is a fail-open in a
+// guard whose contract is to treat what it cannot parse as a violation.
+const CALL_RE = /commands\s*\.\s*setProperty\s*\(/g
 
 // ─── helpers ────────────────────────────────────────────────────────
 

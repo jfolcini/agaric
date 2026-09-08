@@ -53,6 +53,37 @@ describe('useBlockPropertyIpc.getProperties', () => {
     expect(returned).toEqual(rows)
   })
 
+  it('forwards valueBool, the only field the retired wrapper typed and this hook did not', async () => {
+    // #4412 — `buildSetPropertyParams` returns `{ valueBool: false }` for a
+    // `value_type: 'boolean'` definition. `SetPropertyParams` never declared
+    // the field, so it reached the backend only through the wrapper's own
+    // param type; deleting the wrapper dropped it, and `false` arriving as
+    // `null` makes `validate_set_property` reject the add outright.
+    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+
+    const { result } = renderHook(() => useBlockPropertyIpc())
+
+    await act(async () => {
+      await result.current.setProperty({
+        blockId: 'BLOCK_1',
+        key: 'done',
+        valueBool: false,
+      })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      blockId: 'BLOCK_1',
+      key: 'done',
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: false,
+      },
+    })
+  })
+
   it('propagates rejection from the IPC layer', async () => {
     const cause = new Error('IPC failure')
     mockedInvoke.mockRejectedValueOnce(cause)

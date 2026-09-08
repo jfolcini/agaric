@@ -80,3 +80,33 @@ precise: if a future Rust change adds `#[serde(default)]` to a field one of
 these deleted wrappers used to fill, every migrated call site starts sending
 `undefined` and no test in the repo notices. Reinstating the file is a revert of
 one commit if that trade ever stops looking right.
+
+## Review round: the one field nothing typed
+
+`SetPropertyParams` (`useBlockPropertyIpc.ts`) declares four value fields. The
+deleted wrapper's own param type declared five. `buildSetPropertyParams`
+returns `{ valueBool: false }` for a `value_type: 'boolean'` definition, and
+because that is a variable rather than a fresh literal there is no
+excess-property check — so `valueBool` reached the backend through the
+WRAPPER's type and never through the hook's. Deleting the wrapper dropped it,
+and `false` arriving as `null` makes `validate_set_property` reject a
+boolean-property add outright.
+
+This is the issue's own hazard landing on the issue's own PR: a silent default,
+invisible to `tsc`, found by reading rather than by a red test. The field is
+now on `SetPropertyParams` and forwarded, with a test that pins `value_bool:
+false` — reverting the forward reddens it (`expected false, received null`).
+
+## The guard had a fail-open, and this PR was about to widen it
+
+`check-set-property-args` matched `/commands\.setProperty\s*\(/`, so a call
+written across lines as `commands\n  .setProperty(` was skipped silently. Two
+such sites already existed in `ImageResizeToolbar.tsx`, and this PR's two new
+`AttachmentRenderer` sites were written the same way — the "OK at 26 call
+sites" evidence excluded precisely the sites the PR added.
+
+That is a guard failing OPEN on a shape it cannot parse, which its own section
+of AGENTS.md lists as a requirement to fail closed. The dot now tolerates
+surrounding whitespace: 26 visible call sites became 30. Proven rather than
+asserted — the same half-formed-property mutant exits 0 under the old regex and
+1 under the new one.

@@ -279,7 +279,13 @@ function AttachmentImage({
       const prev = imageWidth
       onImageWidthChange(snapped)
       commands
-        .setProperty(blockId, 'image_width', { value_text: snapped })
+        .setProperty(blockId, 'image_width', {
+          value_text: snapped,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
         .then(unwrap)
         .catch((err) => {
           logger.warn('AttachmentRenderer', 'resize save failed', { blockId, snapped }, err)
@@ -315,7 +321,13 @@ function AttachmentImage({
       if (next === imageCaption) return
       onImageCaptionChange(next)
       commands
-        .setProperty(blockId, 'image_caption', { value_text: next })
+        .setProperty(blockId, 'image_caption', {
+          value_text: next,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
         .then(unwrap)
         .catch((err) => {
           logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
