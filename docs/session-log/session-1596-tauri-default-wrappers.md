@@ -110,3 +110,12 @@ of AGENTS.md lists as a requirement to fail closed. The dot now tolerates
 surrounding whitespace: 26 visible call sites became 30. Proven rather than
 asserted — the same half-formed-property mutant exits 0 under the old regex and
 1 under the new one.
+
+## A guard that lost its only test
+
+The deleted `tauri.test.ts` block for `listBlocks({ spaceId: '' })` was the only
+coverage of `requireActiveScope`'s empty-string throw — a tripwire under ~10
+call sites, because an empty id deserialises into a never-matching filter that
+silently returns nothing. Deleting the wrapper deleted its test, and removing
+the throw would have gone green. `src/lib/__tests__/space-scope.test.ts`
+restores it; deleting the guard reddens it.

@@ -536,7 +536,7 @@ describe('searchBlocks', () => {
 // `filteredBlocksQuery` retired its `@/lib/tauri` wrapper (#4412) — its
 // `?? []` / `?? 'eq'` / `?? 'or'` / `?? false` defaults are the backend's own
 // serde defaults (`PropertyFilter` / `TagFilterExpr` in
-// `src-tauri/src/commands/queries.rs`), pinned by `wrapper-default-parity.test.ts`.
+// `src-tauri/src/commands/queries.rs`).
 
 // ---------------------------------------------------------------------------
 // listTagsByPrefix
@@ -557,10 +557,10 @@ describe('searchBlocks', () => {
 // no-arg passthrough (`unwrap(await commands.getStatus())`), covered at its
 // call site.
 
-// `setProperty` retired its `@/lib/tauri` wrapper (#4412) — every
-// `SetPropertyArgs` field carries `#[serde(default)]`, so an omitted field and
-// the wrapper's `?? null` are the same `None`; pinned by
-// `wrapper-default-parity.test.ts`.
+// `setProperty` retired its `@/lib/tauri` wrapper (#4412). Its five fields
+// carry `#[serde(default)]`, but the contract is all five present with exactly
+// one non-null — an omitted key drops what was stored — so what replaces the
+// wrapper is `check-set-property-args` (#3127), not the serde default.
 
 // ---------------------------------------------------------------------------
 // deleteProperty
