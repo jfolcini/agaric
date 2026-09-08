@@ -9,6 +9,7 @@
  */
 
 import { fireEvent, render } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { renderImage } from '@/components/RichContentRenderer/marks/image'
@@ -58,5 +59,21 @@ describe('renderImage (#1434/#1492)', () => {
     )
     fireEvent.error(container.querySelector('img') as HTMLImageElement)
     expect(getByTestId('image-broken').textContent).toContain('/missing.png')
+  })
+
+  // #4711: the static renderer draws every image that is not on the focused
+  // block (invariant 4), so collapse has to reach it too — not just the node
+  // view. The toggle's own behaviour is covered in `CollapsibleImage.test.tsx`.
+  it('carries the collapse toggle, and collapsing replaces the `<img>` with the chip', async () => {
+    const user = userEvent.setup()
+    const { container, getByTestId, queryByTestId } = render(
+      <>{renderImage(imageNode('a cat', '/c.png'), 'k')}</>,
+    )
+
+    await user.click(getByTestId('image-collapse-toggle'))
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(getByTestId('image-collapsed-label').textContent).toBe('a cat')
+    expect(queryByTestId('image-rendered')).toBeNull()
   })
 })

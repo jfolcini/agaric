@@ -11,12 +11,16 @@
  * `data:` / `blob:` / `asset:` / same-origin srcs load directly and keep the
  * #1434 broken-image fallback on load error.
  *
+ * The collapse toggle (#4711) comes with `CollapsibleImage`, which wraps
+ * `GatedImage`. Collapsing is a per-client view preference — it writes nothing
+ * to the block — so the markdown round-trip below is untouched by it.
+ *
  * SCOPE: render + markdown round-trip only; `src` is an opaque URL.
  */
 
 import { type NodeViewProps, NodeViewWrapper } from '@tiptap/react'
 
-import { GatedImage } from '@/components/rendering/GatedImage'
+import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
 
 export function ImageNodeView(props: NodeViewProps): React.ReactElement {
   const { node } = props
@@ -32,7 +36,7 @@ export function ImageNodeView(props: NodeViewProps): React.ReactElement {
       // as inline ProseMirror content.
       contentEditable={false}
     >
-      <GatedImage src={src} alt={alt} imgClassName="image-rendered max-w-full" />
+      <CollapsibleImage src={src} alt={alt} imgClassName="image-rendered max-w-full" />
     </NodeViewWrapper>
   )
 }
