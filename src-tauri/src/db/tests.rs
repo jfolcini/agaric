@@ -6325,3 +6325,112 @@ async fn compaction_watermark_0116_leaves_a_never_compacted_vault_empty_4699() {
          trimmed, so find_lca must keep reporting a missing op as NotFound"
     );
 }
+
+/// #4770 / migration 0117 — `idx_agenda_cache_date_source` exists and is what
+/// the journal calendar's by-source count actually uses.
+///
+/// The index is the whole migration, so existence is only half the subject.
+/// `agenda_cache`'s `PRIMARY KEY (date, block_id)` already leads on `date`, so
+/// the query runs either way; what it cannot do is carry `source`, and that
+/// costs a table lookup per matching row plus a `USE TEMP B-TREE FOR GROUP BY`
+/// because the rows no longer arrive grouped. Those two plan properties are
+/// what distinguish the fixed schema from the pre-fix one; the counts are the
+/// representative-data half.
+#[tokio::test]
+async fn agenda_cache_0117_date_source_index_covers_the_by_source_count_4770() {
+    let (pool, _dir) = test_pool().await;
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'index' AND name = 'idx_agenda_cache_date_source'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "migration 0117 must create idx_agenda_cache_date_source exactly once"
+    );
+
+    // Two dates, two sources, so a plan that grouped wrongly would not survive
+    // the count assertions either.
+    let seeded = [
+        ("2026-04-01", "scheduled"),
+        ("2026-04-01", "scheduled"),
+        ("2026-04-01", "deadline"),
+        ("2026-04-02", "scheduled"),
+    ];
+    for (i, (date, source)) in seeded.iter().enumerate() {
+        let block = format!("01HZ000000000000000004770{i}");
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'agenda')")
+            .bind(&block)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind(date)
+            .bind(&block)
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // The shape `count_agenda_batch_by_source_inner` issues (commands/agenda.rs),
+    // with the space filter unscoped. A macro, not a `const`, so the plan
+    // query below is one `concat!` of literals rather than a runtime `format!`
+    // sqlx 0.9 would reject as dynamic SQL.
+    macro_rules! by_source {
+        () => {
+            "SELECT ac.date, ac.source, COUNT(*) AS cnt \
+             FROM agenda_cache ac \
+             JOIN blocks b ON b.id = ac.block_id \
+             WHERE ac.date IN (SELECT value FROM json_each(?1)) \
+               AND b.deleted_at IS NULL \
+               AND (?2 IS NULL OR b.space_id = ?2) \
+             GROUP BY ac.date, ac.source"
+        };
+    }
+    let dates = r#"["2026-04-01","2026-04-02"]"#;
+
+    let mut rows: Vec<(String, String, i64)> = sqlx::query_as(by_source!())
+        .bind(dates)
+        .bind(Option::<String>::None)
+        .fetch_all(&pool)
+        .await
+        .expect("the by-source count must read the seeded rows back");
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            ("2026-04-01".to_string(), "deadline".to_string(), 1),
+            ("2026-04-01".to_string(), "scheduled".to_string(), 2),
+            ("2026-04-02".to_string(), "scheduled".to_string(), 1),
+        ],
+        "each (date, source) pair must count its own rows"
+    );
+
+    let plan: Vec<(i64, i64, i64, String)> =
+        sqlx::query_as(concat!("EXPLAIN QUERY PLAN ", by_source!()))
+            .bind(dates)
+            .bind(Option::<String>::None)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let detail = plan
+        .iter()
+        .map(|(_, _, _, d)| d.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        detail.contains("COVERING INDEX idx_agenda_cache_date_source"),
+        "the by-source count must be answered from the index alone — the \
+         (date, block_id) PRIMARY KEY does not carry `source`, which is the \
+         whole reason 0117 exists; plan was {detail}"
+    );
+    assert!(
+        !detail.contains("TEMP B-TREE"),
+        "grouping by (date, source) must come out in index order, not through a \
+         sort SQLite pays per calendar repaint; plan was {detail}"
+    );
+}

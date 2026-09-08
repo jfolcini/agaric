@@ -59,6 +59,19 @@ weaker of the two numbers. The two benches the index cannot touch moved by
 under 2% across the pair, which is what says the load did not distort the
 comparison — without that control the 41.84 would not be usable.
 
+## The test the migration owes
+
+`migration-test-coverage` reds a migration with no test naming its number, and
+this one shipped without one — CI caught it, not the local hook, because the
+hook is manual-stage.
+`agenda_cache_0117_date_source_index_covers_the_by_source_count_4770`
+(`db/tests.rs`) seeds two dates and two sources, asserts the exact per-pair
+counts, and asserts the two plan properties that are the whole migration:
+`COVERING INDEX idx_agenda_cache_date_source`, and no `USE TEMP B-TREE FOR
+GROUP BY`. Falsified by dropping `source` from the index on a copy of the
+migration — both plan assertions go red, the counts stay green, which is why
+the counts alone would not have covered this.
+
 ## What was not done
 
 The budget was not raised. A bench whose budget is inherited from a query it no
