@@ -115,3 +115,9 @@
 0108_attachments_fs_path_shape.sql
 0109_attachments_fs_path_trailing_dot.sql
 0110_page_link_cache_backfill.sql
+0111_peer_refs_streamed_at.sql
+0112_block_links_unresolved.sql
+0113_peer_refs_unpaired_by_peer_at.sql
+0114_peer_refs_remote_device_name.sql
+0115_agenda_cache_block_id_index.sql
+0116_compaction_watermark.sql

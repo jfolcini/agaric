@@ -1979,12 +1979,14 @@ files = '^(src-tauri/migrations/.*\.sql|src/lib/tauri-mock/.*)$'
 stages = ["pre-commit", "pre-push"]
 
 # #3084: the guard's CONTRACT map (table → mock store symbol + modeling files),
-# its migration-DDL table parser (CREATE/ALTER/DROP TABLE, CREATE TRIGGER … ON,
-# `_new_<t>` rebuild forms; CREATE INDEX excluded), and the (a) mock-changed /
+# its migration table parser (CREATE/ALTER/DROP TABLE incl. VIRTUAL, CREATE
+# TRIGGER … ON, INSERT INTO / UPDATE … SET / DELETE FROM, `_new_<t>` rebuild
+# forms; CREATE INDEX and bare SELECT excluded), and the (a) mock-changed /
 # (b) `-- mock-unaffected:` acknowledgement + baseline-exemption logic must not
 # silently regress. This companion hook runs the guard's own fixture suite
 # (`--self-test`), which also asserts every CONTRACT file exists and mentions
-# its store symbol so the map cannot rot. No file args.
+# its store symbol, and that every backend table is classified as either read
+# by the mock (CONTRACT) or not (UNMODELED), so the map cannot rot (#4667).
 # WHY: a Python AST guard: a contract shape it does not recognise is a silently skipped line — #3084
 [[repos.hooks]]
 id = "check-migration-mock-contract-self-test"
