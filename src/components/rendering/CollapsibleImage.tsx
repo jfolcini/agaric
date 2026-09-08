@@ -54,11 +54,28 @@ export function CollapsibleImage({
   const collapsed = collapsedSrcs.includes(src)
   const label = collapsedLabel(alt, src)
 
-  const toggle = useCallback(() => {
-    setCollapsedSrcs((prev) =>
-      prev.includes(src) ? prev.filter((s) => s !== src) : [...prev, src],
-    )
-  }, [setCollapsedSrcs, src])
+  // Folding is a view action on the image, never on whatever contains it. Every
+  // surface that renders block content interactively wraps the row in its own
+  // click and Enter/Space handler — agenda and Unfinished tasks navigate to the
+  // block, the outline drops it into edit mode — so the toggle stops both, the
+  // way `blockLinkProps` and the `AttachmentRenderer` buttons already do.
+  const toggle = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      setCollapsedSrcs((prev) =>
+        prev.includes(src) ? prev.filter((s) => s !== src) : [...prev, src],
+      )
+    },
+    [setCollapsedSrcs, src],
+  )
+
+  // No `preventDefault`: the button's native Enter/Space activation is what
+  // fires the click above.
+  const stopActivationKeys = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.stopPropagation()
+    }
+  }, [])
 
   return (
     <span className="collapsible-image group/image inline-flex max-w-full items-start gap-0.5 align-middle">
@@ -89,6 +106,7 @@ export function CollapsibleImage({
         // view mid-click, swallowing it (#1498, and the Mermaid toggle #1438).
         onMouseDown={(e) => e.preventDefault()}
         onClick={toggle}
+        onKeyDown={stopActivationKeys}
       >
         <ChevronToggle isExpanded={!collapsed} size="md" solidWhenCollapsed />
       </button>

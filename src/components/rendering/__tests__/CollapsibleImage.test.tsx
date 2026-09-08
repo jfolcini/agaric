@@ -6,13 +6,14 @@
  * persisted so it survives a remount (the "reload" of the acceptance criteria);
  * two mounted copies of one src agree live — which is what makes collapse hold
  * as the roving editor moves a block between the node view and the static
- * renderer (invariant 4); the chip's label falls back from alt to filename and
+ * renderer (invariant 4); the toggle does not activate the row it sits in; the
+ * chip's label falls back from alt to filename and
  * is capped; a11y in both states.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
@@ -109,6 +110,32 @@ describe('CollapsibleImage', () => {
     const label = screen.getByTestId('image-collapsed-label').textContent ?? ''
     expect(label).toHaveLength(41)
     expect(label.endsWith('…')).toBe(true)
+  })
+
+  it('does not activate the row it is rendered inside', async () => {
+    // Agenda, Unfinished tasks and the outline all render block content
+    // interactively inside a row that carries its own click and Enter/Space
+    // handler (navigate to the block, or focus it for editing). Folding an
+    // image must not do that too.
+    const onRowClick = vi.fn()
+    const onRowKeyDown = vi.fn()
+    const user = userEvent.setup()
+    render(
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- mirrors the real row, which is a li with handlers
+      <li onClick={onRowClick} onKeyDown={onRowKeyDown}>
+        <CollapsibleImage src="/c.png" alt="a cat" />
+      </li>,
+    )
+
+    await user.click(screen.getByTestId('image-collapse-toggle'))
+    expect(screen.getByTestId('image-collapsed-label')).toBeInTheDocument()
+    expect(onRowClick).not.toHaveBeenCalled()
+
+    screen.getByTestId('image-collapse-toggle').focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('image-rendered')).toBeInTheDocument()
+    expect(onRowKeyDown).not.toHaveBeenCalled()
+    expect(onRowClick).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations while expanded', async () => {
