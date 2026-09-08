@@ -16,9 +16,14 @@ unfulfilled`, an error under `-D warnings`. Restored, `cmp`-verified.
 Two extractions did more than move code. `stamp_space_property` replaced four
 copies of the `space` ref stamp, and `ImportCounters` folded the three `u64`
 counters threaded through the import phases into one `&mut` struct — that is
-what let `insert_blocks`' signature shrink, and it retired the
-`too_many_arguments` and `type_complexity` allows that existed only to tolerate
-the old shapes.
+what let `insert_blocks`' signature shrink, and with it two of the six
+`#[allow]`s that existed only to tolerate the old shapes (one
+`too_many_arguments`, one `type_complexity`).
+
+Four remain, on `import_markdown_*`, `resolve_inbound_tags` and `insert_blocks`.
+Worth saying because a stale `#[allow]` is invisible: unlike `#[expect]`, it
+never reds when the thing it tolerates is gone, so nothing will tell the next
+reader they can be deleted.
 
 ## The one real logic change
 
