@@ -2627,22 +2627,70 @@ describe('export_page_markdown', () => {
 // ---------------------------------------------------------------------------
 
 describe('get_block_history', () => {
-  it('returns empty PageResponse shape', () => {
-    const result = invoke('get_block_history', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
-      string,
-      unknown
-    >
-    expect(result).toEqual({ items: [], next_cursor: null, has_more: false, total_count: null })
+  interface HistoryPage {
+    items: Array<{ op_type: string; seq: number }>
+    next_cursor: string | null
+    has_more: boolean
+    total_count: number | null
+  }
+  const history = (args: Record<string, unknown>): HistoryPage =>
+    invoke('get_block_history', {
+      opTypeFilter: null,
+      cursor: null,
+      limit: null,
+      ...args,
+    }) as HistoryPage
+
+  // #3824 — these two used to assert `items: []` for BOTH a block with ops and
+  // one without, because the handler was a constant empty page. That is what
+  // made them pass either way; the distinction between the two blocks is the
+  // whole assertion now.
+  it('serves only the named block’s ops, newest seq first', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'first' })
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_2, toText: 'other block' })
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'second' })
+
+    const result = history({ blockId: SEED_IDS.BLOCK_GS_1 })
+    expect(result.items.map((o) => o.op_type)).toEqual(['edit_block', 'edit_block'])
+    const [newest, older] = result.items
+    expect(newest && older && newest.seq > older.seq).toBe(true)
+    expect(result.has_more).toBe(false)
+    expect(result.next_cursor).toBe(null)
   })
 
-  it('returns same shape for any block ID', () => {
-    const result = invoke('get_block_history', {
-      blockId: SEED_IDS.PAGE_GETTING_STARTED,
-    }) as Record<string, unknown>
-    expect(result).toHaveProperty('items')
-    expect(result).toHaveProperty('next_cursor', null)
-    expect(result).toHaveProperty('has_more', false)
-    expect(result['items']).toEqual([])
+  it('pages a block with more ops than the limit, and the cursor resumes after it', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'first' })
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'second' })
+
+    const page1 = history({ blockId: SEED_IDS.BLOCK_GS_1, limit: 1 })
+    expect(page1.items).toHaveLength(1)
+    expect(page1.has_more).toBe(true)
+
+    const page2 = history({ blockId: SEED_IDS.BLOCK_GS_1, limit: 1, cursor: page1.next_cursor })
+    expect(page2.items).toHaveLength(1)
+    expect(page2.has_more).toBe(false)
+    const first = page1.items[0]
+    const second = page2.items[0]
+    expect(first && second && first.seq > second.seq).toBe(true)
+  })
+
+  it('filters by op type and refuses an out-of-range limit', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_1, toText: 'edited' })
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+
+    expect(
+      history({ blockId: SEED_IDS.BLOCK_GS_1, opTypeFilter: 'delete_block' }).items.map(
+        (o) => o.op_type,
+      ),
+    ).toEqual(['delete_block'])
+    expect(() => history({ blockId: SEED_IDS.BLOCK_GS_1, limit: 0 })).toThrow()
+  })
+
+  // A CONTENT block: `seedBlocks` gives every seeded PAGE an `edit_block`
+  // last-edited stamp (`stampPageLastEdited`), so a page is never op-less.
+  it('answers an empty page for a block with no ops', () => {
+    const result = history({ blockId: SEED_IDS.BLOCK_GS_2 })
+    expect(result).toEqual({ items: [], next_cursor: null, has_more: false, total_count: null })
   })
 })
 

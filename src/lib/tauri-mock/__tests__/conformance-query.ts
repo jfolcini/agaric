@@ -292,6 +292,9 @@ const ID_TOKEN = { kind: 'id', idKey: 'id' } as const
 const BLOCK_TOKEN = { kind: 'id', idKey: 'id', attrKeys: BLOCK_ATTRS } as const
 /** A `TagCacheRow`: `updated_at` is a clock and stays off the token. */
 const TAG_TOKEN = { kind: 'id', idKey: 'tag_id', attrKeys: ['name', 'usage_count'] } as const
+/** A `HistoryEntry` (#3824). Its head is the `op_type`, not an id — see the
+ *  `list_page_history` entry below for why that is the whole vocabulary. */
+const HISTORY_TOKEN = { kind: 'id', idKey: 'op_type', attrKeys: ['is_replicated'] } as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -369,6 +372,30 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // ── Op-log history (#3824) ──
+  //
+  // A `HistoryEntry` has no id the two stacks share: `device_id`, `seq` and
+  // `created_at` are op identities each stack generates independently, and
+  // `payload` is a JSON blob carrying stack-local ids and free text, which the
+  // token grammar refuses on both counts (a `#` or `->` inside it would ALIAS).
+  // `op_type` is what remains, and it is what the #763 op-log digest already
+  // compares cross-stack; `is_replicated` rides along because it is the one
+  // other per-entry column both stacks fill (migration 0099) and the one
+  // `undoDeleteOf` filters on. A fixture using these steps therefore has to
+  // pick ops whose TYPES discriminate — see `query_history.json`.
+  list_page_history: {
+    rows: PAGED,
+    token: HISTORY_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  get_block_history: {
+    rows: PAGED,
+    token: HISTORY_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+
   // Journal reads answer BARE — `get_journal_page_by_date` with one row or
   // null, `list_journal_pages_in_range` with a flat array. There is no
   // envelope, so neither scalar exists and both runners report `null`.

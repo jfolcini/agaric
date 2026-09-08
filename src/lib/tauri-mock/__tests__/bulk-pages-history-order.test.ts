@@ -56,14 +56,23 @@ interface HistoryPage {
   items: HistoryItem[]
 }
 
+/**
+ * The GLOBAL listing, which is the one this file is about: the ordering bug it
+ * pins is `opLog`'s array order not being chronological, and only a listing
+ * that spans all three bulk pages can see it. It used to name Bulk Page 001
+ * and get the whole log anyway, because the handler ignored `pageId` outright
+ * (#3824); now that the handler scopes to the page's subtree, that request
+ * answers with the ONE op stamped on that page and the ordering assertion runs
+ * over a single row.
+ */
 function listHistory(): HistoryItem[] {
   return (
     dispatch('list_page_history', {
-      pageId: pageIdByTitle('Bulk Page 001'),
+      pageId: '__all__',
       opTypeFilter: null,
       scope: { kind: 'active', space_id: SPACE },
       cursor: null,
-      limit: null,
+      limit: 200,
     }) as HistoryPage
   ).items
 }
