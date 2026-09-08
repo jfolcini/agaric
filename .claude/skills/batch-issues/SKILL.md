@@ -117,9 +117,15 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 
-- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit. A non-blocking note never gets a push of its own: every push is another review round, so fold a trivial one into a commit that is going out anyway, reply once to the rest or let them go, and file per §4 only when it names a victim. Then `gh pr merge <n> --squash --delete-branch --admin`: the ruleset requires one approving review and the reviewer app's approval does not count, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
+- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit before the merge. A non-blocking note never delays the merge and never gets a push onto the approved branch — see the follow-up PR below. Then `gh pr merge <n> --squash --delete-branch --admin`: the ruleset requires one approving review and the reviewer app's approval does not count, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
 - Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
 - Running → leave it.
+
+### The follow-up PR
+
+Once the sweep's merges are done, collect every non-blocking note from them into ONE PR off the fresh `origin/main`, titled `chore: review notes from #N, #M and #P`. It carries its own session log and goes through CI like any other. That is one review round for a whole sweep, instead of one per PR on work that was already approved and green.
+
+A note earns a place in it on the same terms as any other finding (§4): fix what has a concrete failure or a mechanical cleanup, leave a comment for a deliberate trade, file an issue only when a user-visible failure is being deferred. A note whose premise is wrong is not silently dropped — say so in the PR body and in the log, with what you checked. Notes that survive none of these get nothing; do not manufacture churn to close the loop on every bullet.
 
 When checking CI by script, an absent check is not a pass: match the required context by suffix (`validate / validate-all`), classify states by allow-list, and require that the checks you need were found by name.
 
