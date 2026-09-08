@@ -104,7 +104,10 @@ export function takeUnstubbedInvokes(): string[] {
  */
 export function pageRowInvokeFallback(command: string): Promise<unknown> {
   if (command === 'load_page_subtree') {
-    return Promise.resolve({ blocks: [], truncated: false, total: 0 })
+    // Annotated, not merely shaped right: an untyped literal here is the exact
+    // drift this module exists to type.
+    const empty: CommandReturns['load_page_subtree'] = { blocks: [], truncated: false, total: 0 }
+    return Promise.resolve(empty)
   }
   return strictInvokeFallback(command)
 }
@@ -163,7 +166,7 @@ export type TypedInvokeHandlers = {
 }
 
 /** Handler for one command: receives the command's argument object. */
-export type InvokeHandler = (args: Record<string, unknown>) => unknown
+type InvokeHandler = (args: Record<string, unknown>) => unknown
 
 /**
  * Install a **command-keyed** `invoke` implementation.
