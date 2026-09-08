@@ -213,6 +213,25 @@ const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"]
 /// clock and stays off the token.
 const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 
+/// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
+/// id. MUST match `HISTORY_TOKEN` in the TS twin.
+///
+/// This is the whole comparable vocabulary a history row has, and the reason
+/// these two commands were waived for so long. `device_id`, `seq` and
+/// `created_at` are op identities each stack generates independently — the
+/// blocker `compute_edit_diff` and `compute_block_vs_current_diff` still carry,
+/// on the INPUT side. `payload` is a JSON blob holding stack-local block ids and
+/// free text, which [`attr_value`] refuses on the `#` / `->` aliasing rule
+/// anyway. What is left is `op_type`, which the #763 op-log digest ALREADY
+/// compares across the stacks (`{ count, ops }` in `conformance_snapshot.rs`),
+/// plus `is_replicated` — the other per-entry column both stacks fill
+/// (migration 0099) and the one `undoDeleteOf` filters on.
+///
+/// So these steps pin WHICH ops each query selects, in WHICH order, and how it
+/// pages them; they do not pin the entries' contents. A fixture using them must
+/// therefore choose ops whose TYPES discriminate.
+const HISTORY_ATTRS: &[&str] = &["is_replicated"];
+
 /// Project a bare `Vec<TagCacheRow>` response.
 fn tag_rows(rows: &[agaric_store::tag_query::TagCacheRow]) -> RawResult {
     let v = serde_json::to_value(rows).expect("serialize Vec<TagCacheRow>");
@@ -915,6 +934,47 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             page_result_with(
                 &serde_json::to_value(&resp).expect("serialize PageResponse"),
                 &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
+        }
+        // ── Op-log history (#3824) ──
+        //
+        // `list_page_history` runs one of two queries: a real `page_id` walks
+        // the `page_blocks` recursive CTE and IGNORES `space_id` (a page is
+        // itself space-bound), `__all__` scopes by `blocks.space_id` instead.
+        // Both are `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id
+        // DESC` over the `Cursor::for_history_full` composite keyset;
+        // `list_block_history` is `ORDER BY ol.seq DESC, ol.device_id DESC`
+        // over `Cursor::for_history_seq`.
+        //
+        // `HISTORY_ATTRS` and the `op_type` head are the whole per-entry
+        // vocabulary these two can have — see the constant's doc comment.
+        "list_page_history" => {
+            let resp = super::common::history::list_page_history_inner(
+                pool,
+                arg_req::<String>(args, "pageId"),
+                opt_arg(args, "opTypeFilter").and_then(|v| v.as_str().map(str::to_owned)),
+                &arg_req::<SpaceScope>(args, "scope"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "op_type", HISTORY_ATTRS),
+            )
+        }
+        "get_block_history" => {
+            let resp = get_block_history_inner(
+                pool,
+                arg_req::<BlockId>(args, "blockId"),
+                opt_arg(args, "opTypeFilter").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "op_type", HISTORY_ATTRS),
             )
         }
         // ── Journal reads (#3347) ──
@@ -1949,7 +2009,12 @@ mod reader_delegation_tests {
     // `query_as!` SELECT over `block_links JOIN blocks` and
     // `build_page_response`. No lazy rebuild, unlike its `list_page_links`
     // neighbour. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 31;
+    // #3824 wired `list_page_history` and `get_block_history`: both are
+    // `PageRequest::new` (pure) plus one `query_as!` SELECT over `op_log` and
+    // `build_page_response` (`pagination::list_page_history` /
+    // `pagination::list_block_history`). op_log is append-only and neither
+    // reader appends; writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 33;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

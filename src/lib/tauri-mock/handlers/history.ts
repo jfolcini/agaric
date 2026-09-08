@@ -9,6 +9,11 @@
  * store.
  */
 
+// #3824 — the two history queries page the SAME way every other keyset does
+// (`LIMIT ?limit + 1` over a `pagination::Cursor`), so they reuse `list_blocks`'
+// paginator rather than growing a second cursor codec free to drift from the
+// backend's `Cursor` shape. Same move #4667 made for `get_backlinks`.
+import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type TypedHandlers,
   applyUndoForTarget,
@@ -16,6 +21,7 @@ import {
   insertAtLiveSlotAndRenumber,
   nextCohortMarker,
   notFoundRejection,
+  pageRequestLimit,
   refreshDescendantPageIds,
   renumberLiveSiblings,
   resolveUndoTarget,
@@ -64,56 +70,187 @@ function findUndoGroupSize(depth: number, windowMs: number): number {
   return count
 }
 
-export const historyHandlers = {
-  get_block_history: (_args) =>
-    // The backend now accepts `opTypeFilter`. The
-    // mock signature mirrors that for parity with `bindings.ts` (the
-    // handlers-drift test only checks that the command name is
-    // present, but accepting the arg is the right shape). Browser-mode
-    // callers don't currently exercise per-block history end-to-end, so
-    // returning an empty page is still the cheapest correct behaviour.
-    ({ items: [], next_cursor: null, has_more: false, total_count: null }),
+/** The sentinel `page_id` that asks `list_page_history` for the WHOLE op log
+ *  rather than one page's subtree (`pagination::list_page_history`). */
+const GLOBAL_HISTORY_PAGE_ID = '__all__'
 
-  list_page_history: (args) => {
-    // Honour `scope: SpaceScope` by resolving the payload's `block_id`
-    // through its owning page (`page_id`) and matching against the
-    // active space's `space` property. This is more permissive than the
-    // backend's literal SQL filter (which would only match page-level
-    // ops because content blocks don't carry their own `space` property)
-    // — the e2e tests + the user-facing UX both expect content-block
-    // ops (e.g. `create_block` for a new child) to show in History view.
-    // The backend SQL behaviour is filed as a separate concern; this
-    // mock matches what the UI expects to see.
+/**
+ * The `op_log.block_id` COLUMN the backend fills from `OpPayload::block_id()`
+ * (migration 0030). The mock has no such column, so it reads the same value
+ * back out of the JSON payload — which is where the backend put it.
+ *
+ * `null` for the mock's synthetic `undo_*` / `redo_*` / `revert_*` rows, whose
+ * payload wraps the target op instead of naming a block. That mirrors the
+ * backend's NULL `block_id` closely enough for the predicates here: a row with
+ * no block id can satisfy no `block_id IN (…)` on either stack.
+ */
+function opBlockId(entry: MockOpLogEntry): string | null {
+  try {
+    const payload = JSON.parse(entry.payload) as Record<string, unknown>
+    const id = payload['block_id']
+    return typeof id === 'string' ? id : null
+  } catch {
+    return null
+  }
+}
+
+/** `AND (?N IS NULL OR ol.op_type = ?N)` — both history queries push the FE's
+ *  op-type filter into SQL, so a filtered page is a full page of matches. */
+function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): boolean {
+  return opTypeFilter === null || entry.op_type === opTypeFilter
+}
+
+/**
+ * The `__all__` branch's space predicate: the op's block belongs to the
+ * requested space, resolved through its owning page's `space` property.
+ *
+ * Pre-existing and deliberately more permissive than the backend in one place
+ * (a row whose payload names no block is KEPT, where `ol.block_id IN (…)` drops
+ * it): the mock's `undo_*` rows are its own invention — the backend appends a
+ * real reverse op carrying a `block_id` — so dropping them would empty the
+ * History view of every undo in browser mode, which is not what the backend
+ * does either.
+ */
+function inSpace(entry: MockOpLogEntry, spaceId: string | null): boolean {
+  if (spaceId === null) return true
+  const blockId = opBlockId(entry)
+  if (blockId === null) return true
+  const blk = blocks.get(blockId)
+  const ownerId = (blk?.['page_id'] as string | null) ?? blockId
+  return (properties.get(ownerId)?.get('space')?.['value_ref'] ?? null) === spaceId
+}
+
+/** Mirrors the `pb.depth < 100` guard on the `page_blocks` CTE. */
+const DESCENDANT_DEPTH_CAP = 100
+
+/**
+ * The ids the backend's `page_blocks` recursive CTE yields: the page itself
+ * plus every transitive child, tombstones included (the CTE has no `deleted_at`
+ * filter — a page's history has to survive its own deletion), bounded at
+ * `depth < 100` (AGENTS.md invariant 9).
+ *
+ * A page id no block carries seeds NOTHING, exactly as `SELECT id FROM blocks
+ * WHERE id = ?1` does — so a purged page's ops stop being listed under it
+ * rather than being matched by id alone.
+ */
+function pageSubtreeIds(pageId: string): Set<string> {
+  const ids = new Set<string>()
+  if (!blocks.has(pageId)) return ids
+  ids.add(pageId)
+  const all = [...blocks.values()]
+  let frontier = new Set<string>([pageId])
+  for (let depth = 0; depth < DESCENDANT_DEPTH_CAP && frontier.size > 0; depth++) {
+    const next = new Set<string>()
+    for (const b of all) {
+      const id = b['id'] as string
+      if (ids.has(id)) continue
+      if (!frontier.has((b['parent_id'] as string | null) ?? '')) continue
+      ids.add(id)
+      next.add(id)
+    }
+    frontier = next
+  }
+  return ids
+}
+
+/** The `HistoryEntry` projection both queries `SELECT`, newest-first ordering
+ *  left to {@link paginateKeyset}. */
+function historyEntries(keep: (entry: MockOpLogEntry) => boolean): Record<string, unknown>[] {
+  return opLog.filter(keep).map((o) => ({
+    device_id: o.device_id,
+    seq: o.seq,
+    op_type: o.op_type,
+    payload: o.payload,
+    created_at: o.created_at,
+    // #2481 phase 2: foreign audit ops carry is_replicated=1; the mock
+    // op log is local-authored unless a row seeds it otherwise.
+    is_replicated: (o as { is_replicated?: boolean }).is_replicated ?? false,
+  }))
+}
+
+/** `(created_at, seq, device_id)` — `list_page_history`'s `ORDER BY`, read
+ *  descending through {@link compareSortKeysDesc}. */
+function pageHistoryKey(row: Record<string, unknown>): SortKey {
+  return [row['created_at'] as string, row['seq'] as number, row['device_id'] as string]
+}
+
+/** `(seq, device_id)` — `list_block_history`'s `ORDER BY`. */
+function blockHistoryKey(row: Record<string, unknown>): SortKey {
+  return [row['seq'] as number, row['device_id'] as string]
+}
+
+export const historyHandlers = {
+  // `ORDER BY ol.seq DESC, ol.device_id DESC LIMIT ?limit + 1` over a
+  // `Cursor::for_history_seq` `{seq, id}` keyset, where the cursor's `id` slot
+  // carries `device_id` — the op_log PK is `(device_id, seq)` and `seq` alone
+  // is not globally unique (`pagination::list_block_history`).
+  //
+  // #3824 — this used to be an UNCONDITIONAL empty page, waived on the grounds
+  // that "browser-mode callers don't currently exercise per-block history", so
+  // every argument it takes was ignored and no test could tell a working
+  // handler from a broken one.
+  //
+  // NOT modelled, and unreachable rather than skipped: the backend's
+  // `delete_attachment` / `rename_attachment` disjunct. The mock's attachment
+  // handlers (`handlers/attachments.ts`) append NO op-log rows at all, so the
+  // mock op log contains no attachment op of any kind for the disjunct to
+  // admit — mirroring it here would be a branch nothing can enter.
+  get_block_history: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
+    const blockId = (a['blockId'] as string | undefined) ?? null
+    const opTypeFilter = (a['opTypeFilter'] as string | null | undefined) ?? null
+    const rows = historyEntries((o) => opBlockId(o) === blockId && matchesOpType(o, opTypeFilter))
+    return paginateKeyset(
+      rows,
+      blockHistoryKey,
+      pageRequestLimit(a['limit']),
+      a['cursor'],
+      null,
+      ['seq'],
+      compareSortKeysDesc,
+    )
+  },
+
+  // `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT
+  // ?limit + 1` over the `Cursor::for_history_full` `{deleted_at, seq, id}`
+  // keyset — the "composite overload" in which `deleted_at` carries
+  // `created_at` and `id` carries `device_id` (`pagination::list_page_history`).
+  //
+  // #3824 — this used to read NEITHER `pageId` nor `cursor` nor `limit` nor
+  // `opTypeFilter`: it answered every request with the whole space-filtered op
+  // log under `{ next_cursor: null, has_more: false }`, so per-page history was
+  // global history and every page was the first page. The same shape #3870
+  // found in `list_blocks` and #4849 in `get_backlinks`.
+  //
+  // The attachment disjunct is unreachable here for the reason
+  // `get_block_history` above gives.
+  list_page_history: (args) => {
+    const a = (args ?? {}) as Record<string, unknown>
+    const pageId = (a['pageId'] as string | undefined) ?? GLOBAL_HISTORY_PAGE_ID
+    const opTypeFilter = (a['opTypeFilter'] as string | null | undefined) ?? null
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const items = sortOpLogNewestFirst(opLog)
-      .filter((o) => {
-        if (spaceId === null) return true
-        let payloadObj: Record<string, unknown>
-        try {
-          payloadObj = JSON.parse(o.payload) as Record<string, unknown>
-        } catch {
-          return true
-        }
-        const blockId = payloadObj['block_id'] as string | undefined
-        if (!blockId) return true
-        const blk = blocks.get(blockId)
-        const ownerId = (blk?.['page_id'] as string | null) ?? blockId
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        return ownerSpace === spaceId
-      })
-      .map((o) => ({
-        device_id: o.device_id,
-        seq: o.seq,
-        op_type: o.op_type,
-        payload: o.payload,
-        created_at: o.created_at,
-        // #2481 phase 2: foreign audit ops carry is_replicated=1; the mock
-        // op log is local-authored unless a row seeds it otherwise.
-        is_replicated: (o as { is_replicated?: boolean }).is_replicated ?? false,
-      }))
-    return { items, next_cursor: null, has_more: false, total_count: null }
+    // The backend runs exactly one of two branches, and `space_id` belongs to
+    // only one of them: a real `page_id` scopes through the recursive
+    // `page_blocks` CTE and IGNORES the space (a page is itself space-bound),
+    // while `__all__` scopes through `blocks.space_id`.
+    const inScope =
+      pageId === GLOBAL_HISTORY_PAGE_ID
+        ? (o: MockOpLogEntry) => inSpace(o, spaceId)
+        : ((subtree) => (o: MockOpLogEntry) => {
+            const id = opBlockId(o)
+            return id !== null && subtree.has(id)
+          })(pageSubtreeIds(pageId))
+    const rows = historyEntries((o) => inScope(o) && matchesOpType(o, opTypeFilter))
+    return paginateKeyset(
+      rows,
+      pageHistoryKey,
+      pageRequestLimit(a['limit']),
+      a['cursor'],
+      null,
+      ['deleted_at', 'seq'],
+      compareSortKeysDesc,
+    )
   },
 
   // #2190 — batched group-undo. Mirrors `undo_page_group_inner`: size the

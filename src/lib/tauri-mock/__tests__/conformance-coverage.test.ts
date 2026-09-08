@@ -476,12 +476,16 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'block-id rows the query projection binds',
 
   // ── Op log / history / time travel ──
-  // The Rust runner replays raw `OpPayload`s and normalises the op log to a
-  // digest, so no recorded expectation can bind a history command's per-entry
-  // shape (ids, timestamps, device). Same structural blocker as the mutating
-  // undo/redo waivers above.
-  get_block_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
-  list_page_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
+  //
+  // `get_block_history` and `list_page_history` are NOT waived (#3824). The old
+  // waiver — "op-log entries are digested (not compared per entry) by the #763
+  // snapshot" — described the SNAPSHOT leg accurately and then read as if it
+  // settled the query leg too, which is the shape #3331 warns about: what a
+  // query step needs is an INPUT both stacks can spell (a page id, a block id)
+  // and a per-row token both can produce. `op_type` is that token — the digest
+  // already compares it across the stacks — so both are now driven by
+  // `query_history.json`. What stays unspellable is the entries' CONTENTS, and
+  // the attachment disjunct, both stated in that fixture's description.
   get_compaction_status: 'op-log maintenance counters, not projected block state',
   // Not "pure text diffs": both SELECT their input by an op-log coordinate the
   // two stacks generate independently, so a fixture cannot name the same op on
@@ -719,7 +723,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'count_backlinks_batch',
   'count_trash',
   'export_page_markdown',
-  'get_block_history',
   'get_compaction_status',
   'get_link_metadata',
   'get_page_aliases',
@@ -730,7 +733,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'list_backlinks_grouped',
   'list_drafts',
   'list_page_aliases_by_prefix',
-  'list_page_history',
   'list_peer_refs',
   'list_projected_agenda',
   'list_property_defs',

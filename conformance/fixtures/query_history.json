@@ -1,0 +1,518 @@
+{
+  "description": "#3824 — READ-command differential over the two op-log history listings, `list_page_history` and `get_block_history`. Both were waived as 'op-log entries are digested (not compared per entry) by the #763 snapshot', and behind that waiver the mock had stopped implementing them: `list_page_history` (`handlers/history.ts`) read NEITHER `pageId` nor `opTypeFilter` nor `cursor` nor `limit` — it answered every request with the whole space-filtered op log under `{ next_cursor: null, has_more: false }`, so per-page history WAS global history and every page was the first page — and `get_block_history` was an unconditional empty page. The #3870 / #4849 shape, on a command with three shipped user-visible defects behind it (#4247/#4278, #4277, #4328). The backend is `agaric-store/src/pagination/history.rs`: `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?limit + 1` over the `Cursor::for_history_full` composite keyset (`deleted_at` carries `created_at`, `id` carries `device_id`) for the page listing, and `ORDER BY ol.seq DESC, ol.device_id DESC` over `Cursor::for_history_seq` for the block one. A row's TOKEN is its `op_type` plus `is_replicated`, and that is the whole per-entry vocabulary these steps can have: `device_id`, `seq` and `created_at` are identities each stack generates independently, and `payload` is a JSON blob carrying stack-local ids and free text (the row-token grammar refuses both). So the ops are chosen to make `op_type` DISCRIMINATE — page B1 ends with a `delete_block` its child ops do not share, page B4's subtree carries the only `set_property`, and the paging steps run over B3, whose two ops have different types — rather than to be typical. NOT pinned, and not pinnable here: the `delete_attachment` / `rename_attachment` two-probe disjunct both queries carry (`history.rs:289-297`). It is not a missing fixture — the mock's attachment handlers (`handlers/attachments.ts`) append NO op-log row at all, so there is no attachment op on the mock side for the disjunct to admit or reject, and mirroring the SQL without the ops would add a branch nothing can enter. Closing that means giving the mock's attachment writes an op log, which is a write-path change to three commands the harness waives outright ('attachments blob store outside the conformance snapshot scope').",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha three",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha two",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B5",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_alpha_newest_first",
+      "rows": [
+        "delete_block#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{deleted_at,id,seq}",
+      "error": null,
+      "has_more": true,
+      "name": "page_history_alpha_page_1",
+      "rows": ["delete_block#is_replicated=false", "edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_alpha_page_2",
+      "rows": ["edit_block#is_replicated=false", "edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_alpha_edits_only",
+      "rows": [
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_beta_subtree_only",
+      "rows": ["set_property#is_replicated=false", "edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_untouched_page_is_empty",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "page_history_global",
+      "rows": [
+        "set_property#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "delete_block#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false",
+        "edit_block#is_replicated=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "page_history_limit_out_of_range_refused",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_history_one_block_only",
+      "rows": ["edit_block#is_replicated=false", "edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id,seq}",
+      "error": null,
+      "has_more": true,
+      "name": "block_history_page_1",
+      "rows": ["delete_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_history_page_2",
+      "rows": ["edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_history_type_filter",
+      "rows": ["edit_block#is_replicated=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_history_untouched_block_is_empty",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_history",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha one"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "alpha two"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha three"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "beta one"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "Page B1's own subtree, newest first: the `delete_block` of B3, then the three edits under it in reverse order. Two things fail here that a passing mock had to get right. The `page_blocks` recursive CTE really selects — B4's subtree contributed two ops (an `edit_block` and the fixture's only `set_property`) and neither is listed, so a handler that ignores `pageId` and answers with the whole op log serves six rows instead of four. And the order is the backend's `created_at DESC, seq DESC`, not the op log's array order — the defect `bulk-pages-history-order.test.ts` pins on the mock side.",
+      "name": "page_history_alpha_newest_first"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 2,
+        "opTypeFilter": null,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "First page of the same listing. `limit` is honoured, `has_more` is true, and the minted cursor is the three-slot composite `Cursor::for_history_full` builds — `{deleted_at, id, seq}`, where `deleted_at` is the op's `created_at` and `id` its `device_id`. A mock minting the `{id}` keyset every other paginated read uses would still return the right two rows and fail on the shape alone (#3893).",
+      "name": "page_history_alpha_page_1"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 2,
+        "opTypeFilter": null,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "Resumes strictly after the boundary op on `(created_at, seq, device_id) <` — no overlap, no skip, and the listing ends here. Page 1 opens with the `delete_block` and page 2 with an `edit_block`, so a cursor that was ignored (or applied ascending) re-serves page 1 and reddens on the first token rather than only on `has_more`.",
+      "cursor_from": "page_history_alpha_page_1",
+      "name": "page_history_alpha_page_2"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": "edit_block",
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "`AND (?N IS NULL OR ol.op_type = ?N)` is pushed into SQL, not applied by the caller after pagination: the `delete_block` that leads the unfiltered listing is gone and the three edits remain. A handler ignoring `opTypeFilter` serves four rows.",
+      "name": "page_history_alpha_edits_only"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null,
+        "pageId": "S4",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The other page, and the reason the fixture spends an op on a `set_property`: B4's subtree is the only place one occurs, so its two-row listing cannot be confused with B1's four-row one by any handler that returns a fixed set. Both pages live in the one harness space, so this also pins that page scoping is not being done by space membership.",
+      "name": "page_history_beta_subtree_only"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null,
+        "pageId": "S6",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The empty answer is the assertion: B6 is a seeded page no op ever touched, and the seed insert appends no op-log row on either stack, so its subtree really is op-less. Without this step a handler that ignored `pageId` for an UNKNOWN page — or fell back to the global listing on a miss — would pass every other step here.",
+      "expect_empty": true,
+      "name": "page_history_untouched_page_is_empty"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null,
+        "pageId": "__all__",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The `__all__` branch — the one the History view actually calls — is a different query: no `page_blocks` CTE, and `space_id` scopes it instead. Every op in the fixture, newest first, which is also what pins that the two page-scoped listings above are SUBSETS rather than everything.",
+      "name": "page_history_global"
+    },
+    {
+      "args": {
+        "cursor": null,
+        "limit": 0,
+        "opTypeFilter": null,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_history",
+      "comment": "The refusal is the point (AGENTS.md invariant 10): `PageRequest::new` REJECTS a limit outside `[1, 200]` rather than clamping it, so a mock that accepted `0` — as this one did while it read no `limit` at all — would train callers on a contract the backend errors on. Same defect class as #4805.",
+      "expect_error": "validation",
+      "name": "page_history_limit_out_of_range_refused"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null
+      },
+      "command": "get_block_history",
+      "comment": "`ol.block_id = ?1` selects one block, not its page: B2's two edits, newest `seq` first, with B3's and B5's ops excluded even though B3 is its sibling under the same page. Before #3824 this command was a constant empty page, so this step is the difference between a handler and a stub.",
+      "name": "block_history_one_block_only"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "cursor": null,
+        "limit": 1,
+        "opTypeFilter": null
+      },
+      "command": "get_block_history",
+      "comment": "First page over B3, whose two ops have DIFFERENT types — the `delete_block` alone here — so page 1 and page 2 are told apart by their rows and not only by `has_more`. The cursor is `Cursor::for_history_seq`'s `{id, seq}`: `seq` is the keyset and `id` carries `device_id`, because the op_log PK is `(device_id, seq)` and `seq` alone is not globally unique.",
+      "name": "block_history_page_1"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "cursor": null,
+        "limit": 1,
+        "opTypeFilter": null
+      },
+      "command": "get_block_history",
+      "comment": "Resumes on `ol.seq < ?` — the older `edit_block`, and the end of the listing. An ignored cursor re-serves the `delete_block` and reddens on the row.",
+      "cursor_from": "block_history_page_1",
+      "name": "block_history_page_2"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": "edit_block"
+      },
+      "command": "get_block_history",
+      "comment": "The op-type filter on the block query, over the same two rows the paging steps split: the `delete_block` drops out and the edit stays.",
+      "name": "block_history_type_filter"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "cursor": null,
+        "limit": 10,
+        "opTypeFilter": null
+      },
+      "command": "get_block_history",
+      "comment": "The empty answer is the assertion, and it is the one a REGRESSED handler passes: a `get_block_history` that went back to answering `{ items: [] }` unconditionally would pass this step and fail the four above it. Kept because the converse also matters — a handler that ignored `blockId` and served the whole op log fails here.",
+      "expect_empty": true,
+      "name": "block_history_untouched_block_is_empty"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha placeholder one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha placeholder two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S4",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "beta placeholder",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Gamma",
+        "id": "S6",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

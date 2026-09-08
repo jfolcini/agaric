@@ -159,7 +159,7 @@ function keysetPosition(row: Record<string, unknown>): number {
  * a keyset page over a non-total order can duplicate or skip a row across the
  * boundary, so the tiebreak is what makes the cursor sound rather than tidy.
  */
-type SortKey = readonly (string | number)[]
+export type SortKey = readonly (string | number)[]
 
 /** Lexicographic compare of two {@link SortKey}s, component by component. Each
  *  position holds the same column on both sides, so the types line up. */
@@ -181,6 +181,19 @@ function compareSortKeys(x: SortKey, y: SortKey): number {
 function compareTrashKeys(x: SortKey, y: SortKey): number {
   const lead = compareSortKeys(x.slice(0, 1), y.slice(0, 1))
   return lead === 0 ? compareSortKeys(x.slice(1), y.slice(1)) : -lead
+}
+
+/**
+ * Every component descending — the two op-log history keysets
+ * (`ORDER BY created_at DESC, seq DESC, device_id DESC` in `list_page_history`,
+ * `ORDER BY seq DESC, device_id DESC` in `list_block_history`,
+ * `agaric-store/src/pagination/history.rs`). Unlike {@link compareTrashKeys},
+ * whose id tiebreak stays ASCending, these reverse the WHOLE tuple, which is
+ * what makes the backend's `created_at < ?` / `seq < ?` / `device_id < ?`
+ * OR-chain the same predicate as `compare(key, cursorKey) > 0` here.
+ */
+export function compareSortKeysDesc(x: SortKey, y: SortKey): number {
+  return -compareSortKeys(x, y)
 }
 
 /** `ORDER BY COALESCE(position, ?sentinel) ASC, id ASC` — `list_children`. */
@@ -215,18 +228,26 @@ function listBlocksLimit(raw: unknown): number {
 }
 
 /**
- * The slot the backend's `Cursor` stashes a branch's LEADING sort key in.
- * `null` for the three `ORDER BY id ASC` branches, whose keyset is the id
- * alone (`Cursor::for_id`).
+ * The slots the backend's `Cursor` stashes a branch's sort key in, AHEAD of the
+ * trailing `id` every keyset ends on — in key order, so `slots[i]` names where
+ * `key[i]` goes. EMPTY for the `ORDER BY id ASC` branches, whose keyset is the
+ * id alone (`Cursor::for_id`).
  *
- * Not a free string: the backend's `Cursor`
+ * Not free strings: the backend's `Cursor`
  * (`agaric-store/src/pagination/mod.rs`) is a fixed struct with five optional
  * slots that different queries REUSE — `list_agenda_range` stashes its
  * `ac.date` in `deleted_at` — so the set of populated slots is precisely which
  * keyset a cursor was minted on, and inventing a slot name here would mint a
  * cursor no backend query can produce.
+ *
+ * A LIST rather than one lead slot because `list_page_history` populates two of
+ * them at once: `Cursor::for_history_full` puts `created_at` in `deleted_at`,
+ * `seq` in `seq` and `device_id` in `id` — the "composite overload" the
+ * `Cursor` doc block names, and the reason the struct has never grown a field
+ * per query. `list_block_history` is the two-component case (`seq`, then
+ * `device_id` in `id`, via `Cursor::for_history_seq`).
  */
-type CursorLeadSlot = 'position' | 'deleted_at' | null
+type CursorSlot = 'position' | 'deleted_at' | 'seq'
 
 /** Cursor schema version — mirrors `CURRENT_CURSOR_VERSION`. */
 const BLOCKS_CURSOR_VERSION = 1
@@ -246,7 +267,7 @@ const BLOCKS_CURSOR_VERSION = 1
  * only claim anything checked, and the shape was free to drift.
  *
  * It is now the backend's shape: `URL_SAFE_NO_PAD` base64 of
- * `{ id, <lead slot>?, version }`, matching `Cursor::encode`. Same reasoning
+ * `{ id, ...<slots>, version }`, matching `Cursor::encode`. Same reasoning
  * that made `run_advanced_query`'s cursor byte-faithful to `QueryCursor` in
  * #3888 — and the standard alphabet was a live defect on its own terms, since
  * a `+` or `/` in a cursor is not URL-safe where the backend guarantees it is.
@@ -256,11 +277,21 @@ const BLOCKS_CURSOR_VERSION = 1
  * a cursor cannot be silently reinterpreted under the wrong order — and now
  * the presence of the slot is the SAME discriminator the backend uses.
  */
-function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
+function encodeBlocksCursor(key: SortKey, slots: readonly CursorSlot[]): string {
   const payload: Record<string, unknown> = { id: String(key.at(-1) ?? '') }
-  if (lead !== null) payload[lead] = key[0]
+  slots.forEach((slot, i) => {
+    payload[slot] = key[i]
+  })
   payload['version'] = BLOCKS_CURSOR_VERSION
   return utf8ToBase64Url(JSON.stringify(payload))
+}
+
+/** The value a bind function falls back to when a cursor omits `slot` — see
+ *  {@link decodeBlocksCursor} for why a missing slot is a sentinel, not a
+ *  refusal. `seq` mirrors `c.seq.unwrap_or(0)` in both history queries. */
+function slotSentinel(slot: CursorSlot): string | number {
+  if (slot === 'position') return NULL_POSITION_SENTINEL
+  return slot === 'seq' ? 0 : ''
 }
 
 /**
@@ -274,24 +305,26 @@ function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
  * A cursor minted on one keyset and replayed on another is NOT rejected — it
  * is reinterpreted, exactly as `Cursor::decode` reinterprets it. `Cursor` has
  * no `deny_unknown_fields` (#3942 review note 4), so a payload naming a slot
- * this branch never reads is accepted and the extra slot is ignored (`lead
- * === null` below). And a payload MISSING the slot this branch reads is also
- * accepted, not refused: `position_keyset_binds`
- * (`agaric-store/src/pagination/mod.rs:271-276`) and `list_agenda_range`'s own
- * bind (`pagination/agenda.rs:100`) both `unwrap_or` a missing lead to a
- * SENTINEL rather than reject the cursor, so the query pages from that
- * sentinel key instead of refusing the request. Rejecting a missing lead
- * slot here made the mock STRICTER than production in the opposite direction
- * from the one this harness exists to close (#3942 review note 3). The
- * `deleted_at` lead is the exception: `pagination::list_trash` REFUSES a
- * cursor without its slot (`cursor missing deleted_at for trash query`) where
- * this decodes `['', id]` and serves an empty page. Neither stack mints such
- * a cursor, so the gap is unreachable and left open.
+ * this branch never reads is accepted and the extra slot is ignored (a slot
+ * absent from `slots` below). And a payload MISSING a slot this branch reads is
+ * also accepted, not refused: `position_keyset_binds`
+ * (`agaric-store/src/pagination/mod.rs:271-276`), `list_agenda_range`'s own
+ * bind (`pagination/agenda.rs:100`) and both history queries' `c.seq.unwrap_or(0)`
+ * all `unwrap_or` a missing slot to a SENTINEL rather than reject the cursor, so
+ * the query pages from that sentinel key instead of refusing the request.
+ * Rejecting a missing slot here made the mock STRICTER than production in the
+ * opposite direction from the one this harness exists to close (#3942 review
+ * note 3). The `deleted_at` slot is the exception, on both queries that read
+ * it: `pagination::list_trash` REFUSES a cursor without it (`cursor missing
+ * deleted_at for trash query`) and so does `pagination::list_page_history`
+ * (`cursor missing created_at for page history query`), where this decodes
+ * `['', …]` and serves from the sentinel. Neither stack mints such a cursor, so
+ * the gap is unreachable and left open.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
  */
-function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null {
+function decodeBlocksCursor(raw: unknown, slots: readonly CursorSlot[]): SortKey | null {
   if (raw == null) return null
   const invalid = (): never => {
     throw validationRejection('invalid pagination cursor')
@@ -316,16 +349,21 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
   if (version !== BLOCKS_CURSOR_VERSION) return invalid()
   const id = obj['id']
   if (typeof id !== 'string') return invalid()
-  if (lead === null) return [id]
-  const leadValue = obj[lead]
-  // Absent or explicit `null` — the backend's `#[serde(default)]` Option
-  // slots read both the same way — defaults to the sentinel the matching bind
-  // function falls back to, rather than refusing the cursor.
-  if (leadValue === undefined || leadValue === null) {
-    return [lead === 'position' ? NULL_POSITION_SENTINEL : '', id]
+  const key: (string | number)[] = []
+  for (const slot of slots) {
+    const value = obj[slot]
+    // Absent or explicit `null` — the backend's `#[serde(default)]` Option
+    // slots read both the same way — defaults to the sentinel the matching bind
+    // function falls back to, rather than refusing the cursor.
+    if (value === undefined || value === null) {
+      key.push(slotSentinel(slot))
+      continue
+    }
+    if (typeof value !== 'string' && typeof value !== 'number') return invalid()
+    key.push(value)
   }
-  if (typeof leadValue !== 'string' && typeof leadValue !== 'number') return invalid()
-  return [leadValue, id]
+  key.push(id)
+  return key
 }
 
 /**
@@ -352,7 +390,7 @@ export function paginateKeyset(
   limit: number,
   rawCursor: unknown,
   totalCount: number | null,
-  lead: CursorLeadSlot,
+  slots: readonly CursorSlot[],
   compare: (x: SortKey, y: SortKey) => number = compareSortKeys,
 ): {
   items: Record<string, unknown>[]
@@ -361,7 +399,7 @@ export function paginateKeyset(
   total_count: number | null
 } {
   const ordered = rows.toSorted((x, y) => compare(keyOf(x), keyOf(y)))
-  const cursorKey = decodeBlocksCursor(rawCursor, lead)
+  const cursorKey = decodeBlocksCursor(rawCursor, slots)
   const after =
     cursorKey === null ? ordered : ordered.filter((b) => compare(keyOf(b), cursorKey) > 0)
   const fetched = after.slice(0, limit + 1)
@@ -370,7 +408,7 @@ export function paginateKeyset(
   const last = items.at(-1)
   return {
     items,
-    next_cursor: hasMore && last ? encodeBlocksCursor(keyOf(last), lead) : null,
+    next_cursor: hasMore && last ? encodeBlocksCursor(keyOf(last), slots) : null,
     has_more: hasMore,
     total_count: totalCount,
   }
@@ -452,7 +490,7 @@ export const blocksHandlers = {
         // `deleted_at` slot (`pagination/agenda.rs`'s
         // `Cursor::for_id_and_deleted_at`) — a documented slot REUSE, not a
         // tombstone.
-        'deleted_at',
+        ['deleted_at'],
       )
     }
 
@@ -465,7 +503,7 @@ export const blocksHandlers = {
         return b['due_date'] === date || b['scheduled_date'] === date
       })
       // `list_agenda` mints `Cursor::for_id` — the id alone.
-      return paginateKeyset(items, idKey, limit, cursor, null, null)
+      return paginateKeyset(items, idKey, limit, cursor, null, [])
     }
 
     const tagId = (req['tagId'] as string | null | undefined) ?? null
@@ -474,7 +512,7 @@ export const blocksHandlers = {
       // join key, so it is `b.id` under another name.
       const items = active.filter((b) => blockTags.get(b['id'] as string)?.has(tagId) ?? false)
       // `list_by_tag` mints `Cursor::for_id`.
-      return paginateKeyset(items, idKey, limit, cursor, null, null)
+      return paginateKeyset(items, idKey, limit, cursor, null, [])
     }
 
     const blockType = (req['blockType'] as string | null | undefined) ?? null
@@ -493,7 +531,7 @@ export const blocksHandlers = {
       // silently.
       const items = active.filter((b) => b['block_type'] === blockType)
       // `list_by_type` mints `Cursor::for_id`.
-      return paginateKeyset(items, idKey, limit, cursor, items.length, null)
+      return paginateKeyset(items, idKey, limit, cursor, items.length, [])
     }
 
     // `list_children` — `WHERE parent_id IS ?1`, i.e. an ABSENT or NULL
@@ -507,7 +545,7 @@ export const blocksHandlers = {
     const items = active.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
     // `list_children` mints `Cursor::for_id_and_position` — the ONE branch
     // whose keyset leads on a column other than the id.
-    return paginateKeyset(items, positionThenIdKey, limit, cursor, null, 'position')
+    return paginateKeyset(items, positionThenIdKey, limit, cursor, null, ['position'])
   },
 
   // Paginate the trash ROOTS of one space. Mirrors `pagination::list_trash`:
@@ -536,7 +574,7 @@ export const blocksHandlers = {
       limit,
       a['cursor'],
       null,
-      'deleted_at',
+      ['deleted_at'],
       compareTrashKeys,
     )
   },

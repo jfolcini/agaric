@@ -146,14 +146,7 @@ export const linksHandlers = {
     // LIMIT ?limit + 1` over an `{id}` keyset; `bl.source_id` is the source
     // block's own id, which is what {@link idKey} reads. Found by the
     // `query_backlinks.json` query steps.
-    return paginateKeyset(
-      backlinkItems,
-      idKey,
-      pageRequestLimit(a['limit']),
-      a['cursor'],
-      null,
-      null,
-    )
+    return paginateKeyset(backlinkItems, idKey, pageRequestLimit(a['limit']), a['cursor'], null, [])
   },
 
   count_backlinks_batch: (args) => {
