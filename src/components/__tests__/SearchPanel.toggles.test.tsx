@@ -22,6 +22,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage } from '@/__tests__/fixtures'
+import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
@@ -50,7 +52,12 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+/** Command-keyed `invoke`, with the search itself resolving empty by default. */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ search_blocks: () => emptyPage, ...handlers }),
+  )
+}
 
 function typeAndSubmit(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } })
@@ -90,7 +97,7 @@ beforeEach(() => {
 
 describe('SearchPanel toggles', () => {
   it('clicking the regex toggle threads `isRegex: true` into the IPC payload', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     const regexButton = screen.getByTestId('search-toggle-regex')
@@ -114,11 +121,10 @@ describe('SearchPanel toggles', () => {
   // tokens are parsed OUT of the input and applied as structural SQL
   // filters; only the remaining free text is the regex pattern.
   it('regex mode applies structural filters AND sends only the free text as the pattern', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-      }
-      return emptyPage
+    stubInvoke({
+      list_tags_by_prefix: () => [
+        { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ],
     })
     render(<SearchPanel />)
 
@@ -141,11 +147,10 @@ describe('SearchPanel toggles', () => {
   })
 
   it('regex mode still renders the tag chip parsed from the input', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-      }
-      return emptyPage
+    stubInvoke({
+      list_tags_by_prefix: () => [
+        { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ],
     })
     render(<SearchPanel />)
 
@@ -163,11 +168,10 @@ describe('SearchPanel toggles', () => {
   })
 
   it('regex mode fires the IPC for a filter-only query (no free text)', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
-      }
-      return emptyPage
+    stubInvoke({
+      list_tags_by_prefix: () => [
+        { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ],
     })
     render(<SearchPanel />)
 
@@ -185,7 +189,7 @@ describe('SearchPanel toggles', () => {
   })
 
   it('clicking case-sensitive sends `caseSensitive: true`', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-case-sensitive'))
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -197,7 +201,7 @@ describe('SearchPanel toggles', () => {
   })
 
   it('clicking whole-word sends `wholeWord: true`', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-whole-word'))
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -208,7 +212,7 @@ describe('SearchPanel toggles', () => {
   })
 
   it('persists toggle state in localStorage across re-renders', () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     const { unmount } = render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-whole-word'))
     expect(screen.getByTestId('search-toggle-whole-word')).toHaveAttribute('aria-pressed', 'true')
@@ -228,7 +232,7 @@ describe('SearchPanel toggles', () => {
       'agaric:searchToggles:v1',
       JSON.stringify({ caseSensitive: 'yes', wholeWord: false, isRegex: false }),
     )
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     expect(screen.getByTestId('search-toggle-case-sensitive')).toHaveAttribute(
       'aria-pressed',
@@ -242,7 +246,7 @@ describe('SearchPanel toggles', () => {
   })
 
   it('has no a11y violations on the toggle row', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     const { container } = render(<SearchPanel />)
     await waitFor(async () => {
       expect(await axe(container)).toHaveNoViolations()
@@ -254,7 +258,7 @@ describe('SearchPanel toggles', () => {
 // as a regular expression when regex mode is on.
 describe('SearchPanel regex-mode input cue (NEW-2)', () => {
   it('off by default: normal placeholder, no font-mono, no regex hint', () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -265,7 +269,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
   })
 
   it('on: regex placeholder + font-mono + aria-describedby wired to the sr-only hint', () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
@@ -282,7 +286,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
   })
 
   it('has no a11y violations with the regex cue showing', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     const { container } = render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
     // The describedby target must exist for the input that references it.
@@ -296,7 +300,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
 
 describe('SearchPanel history', () => {
   it('submitting a query pushes it onto the per-space history store', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'hello world')
@@ -310,7 +314,7 @@ describe('SearchPanel history', () => {
     useSearchHistoryStore.setState({
       bySpace: { SPACE_TEST: ['recent A', 'recent B'] },
     })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.focus(input)
@@ -323,7 +327,7 @@ describe('SearchPanel history', () => {
 
   it('typing hides the dropdown (input no longer empty)', async () => {
     useSearchHistoryStore.setState({ bySpace: { SPACE_TEST: ['alpha'] } })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.focus(input)
@@ -338,7 +342,7 @@ describe('SearchPanel history', () => {
 
   it('clicking Clear history wipes the per-space MRU', async () => {
     useSearchHistoryStore.setState({ bySpace: { SPACE_TEST: ['alpha', 'beta'] } })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.focus(input)
@@ -350,28 +354,30 @@ describe('SearchPanel history', () => {
 
 describe('SearchPanel match-offset rendering', () => {
   it('renders <mark> highlights from match_offsets when the backend provides them', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [
-        {
-          id: 'B1',
-          block_type: 'content',
-          content: 'TODO review Alpha cohort',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: null,
-          snippet: null,
-          // "Alpha" lives at UTF-16 indices 12..17.
-          match_offsets: [{ start: 12, end: 17 }],
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      search_blocks: () => ({
+        items: [
+          {
+            id: 'B1',
+            block_type: 'content',
+            content: 'TODO review Alpha cohort',
+            parent_id: null,
+            position: 1,
+            deleted_at: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+            page_id: null,
+            snippet: null,
+            // "Alpha" lives at UTF-16 indices 12..17.
+            match_offsets: [{ start: 12, end: 17 }],
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -391,11 +397,13 @@ describe('SearchPanel invalid-regex announcement', () => {
     // the specific message inline in the header. The generic "Search
     // failed" status branch must NOT also fire (that would double-announce
     // to screen readers).
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'search_blocks') {
-        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group at position 0' }
-      }
-      return emptyPage
+    stubInvoke({
+      search_blocks: () =>
+        Promise.reject({
+          kind: 'validation',
+          code: 'InvalidRegex',
+          message: 'unclosed group at position 0',
+        }),
     })
     render(<SearchPanel />)
 
@@ -420,11 +428,9 @@ describe('SearchPanel invalid-regex announcement', () => {
     // with an `InvalidRegex`-coded validation error even though the user
     // never enabled regex. The inline "invalid regex" alert must NOT fire in
     // that case — the failure falls through to the generic error body + status.
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'search_blocks') {
-        throw { kind: 'validation', code: 'InvalidRegex', message: 'pattern too large' }
-      }
-      return emptyPage
+    stubInvoke({
+      search_blocks: () =>
+        Promise.reject({ kind: 'validation', code: 'InvalidRegex', message: 'pattern too large' }),
     })
     render(<SearchPanel />)
 
@@ -451,12 +457,7 @@ describe('SearchPanel invalid-regex announcement', () => {
   it('still announces the generic failure for a non-regex backend error', async () => {
     // A plain backend error (no `InvalidRegex` code) must still light
     // Up the status region — only suppresses the regex case.
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'search_blocks') {
-        throw new Error('database is locked')
-      }
-      return emptyPage
-    })
+    stubInvoke({ search_blocks: () => Promise.reject(new Error('database is locked')) })
     render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -470,11 +471,13 @@ describe('SearchPanel invalid-regex announcement', () => {
   })
 
   it('has no a11y violations while showing an invalid-regex error', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'search_blocks') {
-        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group at position 0' }
-      }
-      return emptyPage
+    stubInvoke({
+      search_blocks: () =>
+        Promise.reject({
+          kind: 'validation',
+          code: 'InvalidRegex',
+          message: 'unclosed group at position 0',
+        }),
     })
     const { container } = render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
@@ -494,7 +497,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
     // element. The combobox must therefore NOT report itself expanded into
     // a listbox, and must not reference a non-existent `aria-controls` id.
     useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: false })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -518,7 +521,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
       bySpace: { SPACE_TEST: ['recent A', 'recent B'] },
       historyEnabled: false,
     })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -534,7 +537,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
 
   it('aria-expanded is false when the dropdown is not shown (focused but typing)', async () => {
     useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: false })
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
@@ -561,7 +564,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
   // in the vault".
 
   it('#3315 item 1: regex mode shows a standing scan-scope notice', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     // No notice in plain FTS mode, even with a query in flight.
@@ -583,7 +586,7 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
   })
 
   it('#3315 item 1: an empty regex result set says the scan window was bounded', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubInvoke()
     render(<SearchPanel />)
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
@@ -600,11 +603,9 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
     // Unterminated group — the backend rejects it with an `InvalidRegex`
     // validation error and the header renders that inline. There is no scan to
     // describe, so the scope notice must stay out of the way.
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'search_blocks') {
-        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group' }
-      }
-      return emptyPage
+    stubInvoke({
+      search_blocks: () =>
+        Promise.reject({ kind: 'validation', code: 'InvalidRegex', message: 'unclosed group' }),
     })
     render(<SearchPanel />)
 

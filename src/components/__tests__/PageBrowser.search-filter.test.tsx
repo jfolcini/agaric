@@ -8,11 +8,17 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makePage } from '@/__tests__/fixtures'
-import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow, emptyPage, makePage } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
+import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -62,6 +68,46 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
+type PageList = CommandReturns['list_pages_with_metadata']
+
+/**
+ * The `list_pages_with_metadata` envelope for a set of pages.
+ *
+ * #4668 — this file used to hand the command `BlockRow`s. It returns
+ * `PageWithMetadataRow`, which specta renames to camelCase and which carries
+ * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
+ * `childBlockCount`, `flags`) no `BlockRow` has.
+ */
+function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+    ...rest,
+  }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
+ * consumed in call order regardless of command, so any speculative fetch
+ * could take the slot meant for the page query, and a re-fetch after the
+ * queue drained fell through to a fallback resolving `undefined`.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -88,26 +134,20 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
-  })
+  stubInvoke()
 })
 
 describe('PageBrowser', () => {
   describe('search/filter', () => {
     it('search filters pages and shows only matches', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Meeting notes' }),
-          makePage({ id: 'P2', content: 'Shopping list' }),
-          makePage({ id: 'P3', content: 'Meeting agenda' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Meeting notes' }),
+            makePage({ id: 'P2', content: 'Shopping list' }),
+            makePage({ id: 'P3', content: 'Meeting agenda' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -126,15 +166,13 @@ describe('PageBrowser', () => {
 
     it('search filters namespaced pages and expands matching ancestors', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/project-a' }),
-          makePage({ id: 'P2', content: 'work/project-b' }),
-          makePage({ id: 'P3', content: 'personal/journal' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'work/project-a' }),
+            makePage({ id: 'P2', content: 'work/project-b' }),
+            makePage({ id: 'P3', content: 'personal/journal' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -156,11 +194,9 @@ describe('PageBrowser', () => {
 
     it('search with no matches shows empty state', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Meeting notes' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'Meeting notes' })]),
       })
 
       render(<PageBrowser />)
@@ -176,11 +212,9 @@ describe('PageBrowser', () => {
 
     it('search is case-insensitive', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Meeting Notes' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'Meeting Notes' })]),
       })
 
       render(<PageBrowser />)
@@ -199,14 +233,12 @@ describe('PageBrowser', () => {
 
     it('search matches Turkish İstanbul when query is lowercase istanbul', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'İstanbul' }),
-          makePage({ id: 'P2', content: 'Ankara' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'İstanbul' }),
+            makePage({ id: 'P2', content: 'Ankara' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -221,14 +253,12 @@ describe('PageBrowser', () => {
 
     it('search matches German Straße when query is ASCII strasse', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Straße' }),
-          makePage({ id: 'P2', content: 'München' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Straße' }),
+            makePage({ id: 'P2', content: 'München' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -243,14 +273,12 @@ describe('PageBrowser', () => {
 
     it('search matches accented café when query omits the accent', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'café meeting' }),
-          makePage({ id: 'P2', content: 'lunch' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'café meeting' }),
+            makePage({ id: 'P2', content: 'lunch' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -265,14 +293,12 @@ describe('PageBrowser', () => {
 
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Meeting notes' }),
-          makePage({ id: 'P2', content: 'Shopping list' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Meeting notes' }),
+            makePage({ id: 'P2', content: 'Shopping list' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -304,38 +330,31 @@ describe('PageBrowser', () => {
       // resolver below returns the page id matching the query, with an
       // intentional out-of-order resolution: the older `App` query
       // resolves AFTER the newer `Banana` query.
-      mockedInvoke.mockReset()
-      let resolveApp!: (v: unknown) => void
-      let resolveBanana!: (v: unknown) => void
+      type AliasMatch = CommandReturns['resolve_page_by_alias']
+      let resolveApp!: (v: AliasMatch) => void
+      let resolveBanana!: (v: AliasMatch) => void
       const aliasCalls: string[] = []
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [
-              makePage({ id: 'P_APPLE', content: 'Apple' }),
-              makePage({ id: 'P_BANANA', content: 'Banana' }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: null,
-          })
-        }
-        if (cmd === 'resolve_page_by_alias') {
-          const query = (args as any)?.alias as string | undefined
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P_APPLE', content: 'Apple' }),
+            makePage({ id: 'P_BANANA', content: 'Banana' }),
+          ]),
+        resolve_page_by_alias: (args) => {
+          const query = args['alias'] as string | undefined
           aliasCalls.push(query ?? '')
           if (query === 'App') {
-            return new Promise((resolve) => {
+            return new Promise<AliasMatch>((resolve) => {
               resolveApp = resolve
             })
           }
           if (query === 'Banana') {
-            return new Promise((resolve) => {
+            return new Promise<AliasMatch>((resolve) => {
               resolveBanana = resolve
             })
           }
-          return Promise.resolve(null)
-        }
-        return pageRowInvokeFallback(cmd)
+          return null
+        },
       })
 
       render(<PageBrowser />)
@@ -383,7 +402,7 @@ describe('PageBrowser', () => {
   describe('SearchInput clear button', () => {
     it('new-page input shows clear button when non-empty and clearing resets name + disables submit', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ list_pages_with_metadata: () => emptyPage })
 
       render(<PageBrowser />)
 
@@ -413,14 +432,12 @@ describe('PageBrowser', () => {
 
     it('filter-search input shows clear button when non-empty and clearing restores full list', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Meeting notes' }),
-          makePage({ id: 'P2', content: 'Shopping list' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Meeting notes' }),
+            makePage({ id: 'P2', content: 'Shopping list' }),
+          ]),
       })
 
       render(<PageBrowser />)
@@ -448,11 +465,9 @@ describe('PageBrowser', () => {
 
     it('has no a11y violations when a clear button is visible on the filter input', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Meeting notes' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'Meeting notes' })]),
       })
 
       render(<PageBrowser />)
@@ -483,7 +498,7 @@ describe('PageBrowser', () => {
     }, 10000)
   })
   describe('compound filters', () => {
-    function metaPage(id: string, content: string) {
+    function metaPage(id: string, content: string): PageList['items'][number] {
       return {
         id,
         blockType: 'page',
@@ -518,24 +533,16 @@ describe('PageBrowser', () => {
       // unfiltered returns both pages; with a Stub chip the server reply
       // narrows to the stub page only. (The full filter→SQL semantics are
       // covered backend-side in the Rust suite.)
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
+      stubInvoke({
+        list_pages_with_metadata: (args) => {
           const filters =
-            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
-              ?.filters ?? []
+            (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []
           const hasStub = filters.some((f) => f.type === 'Stub')
           const items = hasStub
             ? [metaPage('P1', 'Apple')]
             : [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')]
-          return Promise.resolve({
-            items,
-            next_cursor: null,
-            has_more: false,
-            total_count: items.length,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
+          return { items, next_cursor: null, has_more: false, total_count: items.length }
+        },
       })
 
       render(<PageBrowser />)
@@ -576,23 +583,15 @@ describe('PageBrowser', () => {
       // NOT the "No pages yet / Create your first page" empty-space state
       // (which falsely tells a user with a full graph it's empty).
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
+      stubInvoke({
+        list_pages_with_metadata: (args) => {
           const filters =
-            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
-              ?.filters ?? []
+            (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []
           // Unfiltered shows one page so the chip-row (and Add-filter
           // button) are reachable; the Stub chip narrows to zero rows.
           const items = filters.length > 0 ? [] : [metaPage('P1', 'Apple')]
-          return Promise.resolve({
-            items,
-            next_cursor: null,
-            has_more: false,
-            total_count: items.length,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
+          return { items, next_cursor: null, has_more: false, total_count: items.length }
+        },
       })
 
       const { container } = render(<PageBrowser />)
@@ -621,24 +620,16 @@ describe('PageBrowser', () => {
 
     it('announces filter add and remove in a polite live region (P1-F1)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
+      stubInvoke({
+        list_pages_with_metadata: (args) => {
           const filters =
-            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
-              ?.filters ?? []
+            (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []
           const hasStub = filters.some((f) => f.type === 'Stub')
           const items = hasStub
             ? [metaPage('P1', 'Apple')]
             : [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')]
-          return Promise.resolve({
-            items,
-            next_cursor: null,
-            has_more: false,
-            total_count: items.length,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
+          return { items, next_cursor: null, has_more: false, total_count: items.length }
+        },
       })
 
       render(<PageBrowser />)

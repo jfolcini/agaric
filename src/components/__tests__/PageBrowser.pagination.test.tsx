@@ -9,10 +9,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makePage } from '@/__tests__/fixtures'
-import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
+import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -62,6 +68,46 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
+type PageList = CommandReturns['list_pages_with_metadata']
+
+/**
+ * The `list_pages_with_metadata` envelope for a set of pages.
+ *
+ * #4668 — this file used to hand the command `BlockRow`s. It returns
+ * `PageWithMetadataRow`, which specta renames to camelCase and which carries
+ * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
+ * `childBlockCount`, `flags`) no `BlockRow` has.
+ */
+function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+    ...rest,
+  }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
+ * consumed in call order regardless of command, so any speculative fetch
+ * could take the slot meant for the page query, and a re-fetch after the
+ * queue drained fell through to a fallback resolving `undefined`.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -88,22 +134,15 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
-  })
+  stubInvoke()
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    const page = {
-      items: [makePage({ id: 'P1', content: 'Accessible page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
+    })
 
     const { container } = render(<PageBrowser />)
 
@@ -116,14 +155,12 @@ describe('PageBrowser', () => {
   })
   describe('pagination UX — count chip, auto-load, scroll restoration', () => {
     it('renders "{{count}} pages" count chip when backend supplies total_count', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Page 1' }),
-          makePage({ id: 'P2', content: 'Page 2' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: 312,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            [makePage({ id: 'P1', content: 'Page 1' }), makePage({ id: 'P2', content: 'Page 2' })],
+            { total_count: 312 },
+          ),
       })
 
       render(<PageBrowser />)
@@ -135,15 +172,16 @@ describe('PageBrowser', () => {
 
     it('renders "X of Y matching" when a text query is active (E13: loaded basis)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: 312,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            [
+              makePage({ id: 'P1', content: 'Apple' }),
+              makePage({ id: 'P2', content: 'Banana' }),
+              makePage({ id: 'P3', content: 'Cherry' }),
+            ],
+            { total_count: 312 },
+          ),
       })
 
       render(<PageBrowser />)
@@ -164,12 +202,8 @@ describe('PageBrowser', () => {
     })
 
     it('omits the count chip when backend does not supply total_count', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Page 1' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-        // no total_count — older bindings / cursor-only endpoints.
+      stubInvoke({
+        list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Page 1' })]),
       })
 
       render(<PageBrowser />)
@@ -183,16 +217,20 @@ describe('PageBrowser', () => {
       // and the LoadMoreButton (and its progress line) stay mounted.
       // The progress line is only rendered when `hasMore` is true
       // AND both counts are numbers — so this proves the wiring.
-      mockedInvoke
-        .mockResolvedValueOnce({
-          items: [makePage({ id: 'P1', content: 'Page 1' })],
-          next_cursor: 'cursor_abc',
-          has_more: true,
-          total_count: 50,
-        })
-        // The second page request never resolves — `hasMore` stays true
-        // so the LoadMoreButton + progress line remain mounted.
-        .mockReturnValueOnce(new Promise(() => undefined))
+      let fetches = 0
+      stubInvoke({
+        list_pages_with_metadata: () => {
+          fetches += 1
+          // The second page request never resolves — `hasMore` stays true
+          // so the LoadMoreButton + progress line remain mounted.
+          if (fetches > 1) return new Promise<PageList>(() => undefined)
+          return pageList([makePage({ id: 'P1', content: 'Page 1' })], {
+            next_cursor: 'cursor_abc',
+            has_more: true,
+            total_count: 50,
+          })
+        },
+      })
 
       render(<PageBrowser />)
       await screen.findByText('Page 1')
@@ -206,23 +244,25 @@ describe('PageBrowser', () => {
       // The mocked virtualizer renders ALL items; lastVisible.index ===
       // virtualItemCount - 1 every render. So the auto-load effect
       // fires as soon as we mount and there are more pages.
-      const page1 = {
-        items: [makePage({ id: 'P1', content: 'One' }), makePage({ id: 'P2', content: 'Two' })],
-        next_cursor: 'cursor_abc',
-        has_more: true,
-        total_count: 5,
-      }
-      const page2 = {
-        items: [
+      const page1 = pageList(
+        [makePage({ id: 'P1', content: 'One' }), makePage({ id: 'P2', content: 'Two' })],
+        { next_cursor: 'cursor_abc', has_more: true, total_count: 5 },
+      )
+      const page2 = pageList(
+        [
           makePage({ id: 'P3', content: 'Three' }),
           makePage({ id: 'P4', content: 'Four' }),
           makePage({ id: 'P5', content: 'Five' }),
         ],
-        next_cursor: null,
-        has_more: false,
-        total_count: 5,
-      }
-      mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+        { total_count: 5 },
+      )
+      let fetches = 0
+      stubInvoke({
+        list_pages_with_metadata: () => {
+          fetches += 1
+          return fetches === 1 ? page1 : page2
+        },
+      })
 
       render(<PageBrowser />)
 
@@ -248,15 +288,16 @@ describe('PageBrowser', () => {
       // three pages plus an optional section header, so use 60 to
       // stay safely below the clamp.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '60')
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'One' }),
-          makePage({ id: 'P2', content: 'Two' }),
-          makePage({ id: 'P3', content: 'Three' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: 3,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            [
+              makePage({ id: 'P1', content: 'One' }),
+              makePage({ id: 'P2', content: 'Two' }),
+              makePage({ id: 'P3', content: 'Three' }),
+            ],
+            { total_count: 3 },
+          ),
       })
 
       render(<PageBrowser />)
@@ -273,11 +314,9 @@ describe('PageBrowser', () => {
       // virtualizer doesn't scroll into empty space when the list
       // shrank between sessions.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '99999')
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Only' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: 1,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'Only' })], { total_count: 1 }),
       })
 
       render(<PageBrowser />)
@@ -293,11 +332,9 @@ describe('PageBrowser', () => {
     })
 
     it('does not restore scroll when sessionStorage is empty', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'One' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: 1,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'One' })], { total_count: 1 }),
       })
 
       render(<PageBrowser />)
@@ -315,14 +352,12 @@ describe('PageBrowser', () => {
       // saved offset should be wiped (the saved position is
       // meaningless against the post-filter view).
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '480')
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: 2,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            [makePage({ id: 'P1', content: 'Apple' }), makePage({ id: 'P2', content: 'Banana' })],
+            { total_count: 2 },
+          ),
       })
 
       const user = userEvent.setup()
@@ -345,11 +380,9 @@ describe('PageBrowser', () => {
       // Seed a value for SPACE_OTHER — it should NOT be applied to
       // SPACE_TEST. Cross-space contamination is the bug this guards.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_OTHER', '999')
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'One' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: 1,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'One' })], { total_count: 1 }),
       })
 
       render(<PageBrowser />)
@@ -364,14 +397,12 @@ describe('PageBrowser', () => {
   describe('  estimateSize referential stability', () => {
     it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'Apple' }),
+            makePage({ id: 'P2', content: 'Banana' }),
+          ]),
       })
 
       render(<PageBrowser />)

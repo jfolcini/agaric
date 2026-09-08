@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
-import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -76,6 +80,31 @@ const mockedInvoke = vi.mocked(invoke)
  * data, so the ordering assertions below were checking a list the component
  * had already been told, silently, no longer existed.
  */
+type PageList = CommandReturns['list_pages_with_metadata']
+
+/**
+ * Serve `list_pages_with_metadata` with rows built directly as metadata rows.
+ *
+ * The three server-ordered sorts need the metadata columns a `BlockRow`
+ * cannot carry, so they bypass {@link stubPageList}'s `makePage` reshaping.
+ */
+function stubMetaPageList(items: PageList['items']) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        list_pages_with_metadata: () => ({
+          items,
+          next_cursor: null,
+          has_more: false,
+          total_count: items.length,
+        }),
+        resolve_page_by_alias: () => null,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 function stubPageList(items: ReturnType<typeof makePage>[], totalCount: number | null = null) {
   mockedInvoke.mockImplementation(
     mockInvokeCommands(
@@ -119,22 +148,13 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return pageRowInvokeFallback(cmd)
-  })
+  stubPageList([])
 })
 
 describe('PageBrowser', () => {
   describe('sort dropdown', () => {
     it('renders sort dropdown with 7 options', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
 
       render(<PageBrowser />)
 
@@ -157,12 +177,7 @@ describe('PageBrowser', () => {
     })
 
     it('defaults to Alphabetical sort', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
 
       render(<PageBrowser />)
 
@@ -173,16 +188,11 @@ describe('PageBrowser', () => {
     })
 
     it('sorts pages alphabetically by default', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Cherry' }),
-          makePage({ id: 'P2', content: 'Apple' }),
-          makePage({ id: 'P3', content: 'Banana' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Cherry' }),
+        makePage({ id: 'P2', content: 'Apple' }),
+        makePage({ id: 'P3', content: 'Banana' }),
+      ])
 
       render(<PageBrowser />)
 
@@ -267,12 +277,7 @@ describe('PageBrowser', () => {
     it('reads persisted sort preference from localStorage', async () => {
       localStorage.setItem('page-browser-sort', 'recent')
 
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
 
       render(<PageBrowser />)
 
@@ -283,12 +288,7 @@ describe('PageBrowser', () => {
     })
 
     it('sort dropdown passes a11y audit', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Accessible page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'Accessible page' })])
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Accessible page')
@@ -308,7 +308,7 @@ describe('PageBrowser', () => {
       lastModifiedAt?: number | null
       inboundLinkCount?: number
       childBlockCount?: number
-    }) {
+    }): PageList['items'][number] {
       return {
         id: overrides.id,
         blockType: 'page',
@@ -343,25 +343,14 @@ describe('PageBrowser', () => {
     // the SQL ordering is the single authority.
     it('renders most-linked rows in server order (inboundLinkCount DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            // Server order: Banana(5), Date(3), then the 1-count tie resolved
-            // server-side by id ASC → Apple(P1) before Cherry(P3).
-            items: [
-              makeMetaPage({ id: 'P2', content: 'Banana', inboundLinkCount: 5 }),
-              makeMetaPage({ id: 'P4', content: 'Date', inboundLinkCount: 3 }),
-              makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
-              makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 4,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
+      // Server order: Banana(5), Date(3), then the 1-count tie resolved
+      // server-side by id ASC → Apple(P1) before Cherry(P3).
+      stubMetaPageList([
+        makeMetaPage({ id: 'P2', content: 'Banana', inboundLinkCount: 5 }),
+        makeMetaPage({ id: 'P4', content: 'Date', inboundLinkCount: 3 }),
+        makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
+        makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -376,24 +365,13 @@ describe('PageBrowser', () => {
 
     it('renders most-content rows in server order (childBlockCount DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            // Server order: Banana(10), Date(7), then the 2-count tie by id ASC.
-            items: [
-              makeMetaPage({ id: 'P2', content: 'Banana', childBlockCount: 10 }),
-              makeMetaPage({ id: 'P4', content: 'Date', childBlockCount: 7 }),
-              makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
-              makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 4,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
+      // Server order: Banana(10), Date(7), then the 2-count tie by id ASC.
+      stubMetaPageList([
+        makeMetaPage({ id: 'P2', content: 'Banana', childBlockCount: 10 }),
+        makeMetaPage({ id: 'P4', content: 'Date', childBlockCount: 7 }),
+        makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
+        makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -408,41 +386,14 @@ describe('PageBrowser', () => {
 
     it('renders recently-modified rows in server order (lastModifiedAt DESC, id ASC), no client re-sort', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            // Server order: Banana (newest), Date, then the Apple/Cherry
-            // timestamp tie resolved server-side by id ASC.
-            items: [
-              makeMetaPage({
-                id: 'P2',
-                content: 'Banana',
-                lastModifiedAt: 1772323200000,
-              }),
-              makeMetaPage({
-                id: 'P4',
-                content: 'Date',
-                lastModifiedAt: 1769904000000,
-              }),
-              makeMetaPage({
-                id: 'P1',
-                content: 'Apple',
-                lastModifiedAt: 1767225600000,
-              }),
-              makeMetaPage({
-                id: 'P3',
-                content: 'Cherry',
-                lastModifiedAt: 1767225600000,
-              }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 4,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
+      // Server order: Banana (newest), Date, then the Apple/Cherry
+      // timestamp tie resolved server-side by id ASC.
+      stubMetaPageList([
+        makeMetaPage({ id: 'P2', content: 'Banana', lastModifiedAt: 1772323200000 }),
+        makeMetaPage({ id: 'P4', content: 'Date', lastModifiedAt: 1769904000000 }),
+        makeMetaPage({ id: 'P1', content: 'Apple', lastModifiedAt: 1767225600000 }),
+        makeMetaPage({ id: 'P3', content: 'Cherry', lastModifiedAt: 1767225600000 }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')

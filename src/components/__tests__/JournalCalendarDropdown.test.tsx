@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   computeSourceModifiers,
   JournalCalendarDropdown,
@@ -49,16 +49,21 @@ vi.mock('@/components/ui/calendar', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** Command-keyed `invoke`; the agenda-count read resolves empty by default. */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ count_agenda_batch_by_source: () => ({}), ...handlers }),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
   // No active space by default: `useCalendarPageDates` short-circuits without
   // dispatching, so `count_agenda_batch_by_source` stays the only IPC in this
-  // file and the positional `mockRejectedValueOnce` error-path stubs below
-  // cannot be stolen by the journal-page highlight fetch. The two
-  // highlight tests seed a space explicitly.
+  // file. The two highlight tests seed a space explicitly.
   useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
-  mockedInvoke.mockResolvedValue({})
+  stubInvoke()
 })
 
 describe('computeSourceModifiers', () => {
@@ -231,7 +236,7 @@ describe('JournalCalendarDropdown', () => {
     const pending = new Promise<Record<string, Record<string, number>>>((resolve) => {
       resolveFetch = resolve
     })
-    mockedInvoke.mockReturnValueOnce(pending)
+    stubInvoke({ count_agenda_batch_by_source: () => pending })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 
@@ -256,15 +261,12 @@ describe('JournalCalendarDropdown', () => {
   // dropdown now derives them itself from the DISPLAYED month's range.
   it('derives highlighted days from the journal-page fetch and passes them as modifiers', async () => {
     seedSpace()
-    mockedInvoke.mockImplementation(
-      mockInvokeCommands({
-        count_agenda_batch_by_source: () => ({}),
-        list_journal_pages_in_range: () => [
-          makePage({ id: 'P1', content: '2025-06-10' }),
-          makePage({ id: 'P2', content: '2025-06-20' }),
-        ],
-      }),
-    )
+    stubInvoke({
+      list_journal_pages_in_range: () => [
+        makePage({ id: 'P1', content: '2025-06-10' }),
+        makePage({ id: 'P2', content: '2025-06-20' }),
+      ],
+    })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 
@@ -367,12 +369,9 @@ describe('JournalCalendarDropdown', () => {
 
   it('has no a11y violations with highlighted days', async () => {
     seedSpace()
-    mockedInvoke.mockImplementation(
-      mockInvokeCommands({
-        count_agenda_batch_by_source: () => ({}),
-        list_journal_pages_in_range: () => [makePage({ id: 'P1', content: '2025-06-10' })],
-      }),
-    )
+    stubInvoke({
+      list_journal_pages_in_range: () => [makePage({ id: 'P1', content: '2025-06-10' })],
+    })
 
     const { container } = render(<JournalCalendarDropdown {...defaultProps} />)
     await waitFor(() => {
@@ -387,7 +386,9 @@ describe('JournalCalendarDropdown', () => {
   // -----------------------------------------------------------------------
 
   it('still renders calendar when countAgendaBatchBySource rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
+    stubInvoke({
+      count_agenda_batch_by_source: () => Promise.reject(new Error('Backend unavailable')),
+    })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 
@@ -403,7 +404,9 @@ describe('JournalCalendarDropdown', () => {
   })
 
   it('logs warning when countAgendaBatchBySource rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('DB connection lost'))
+    stubInvoke({
+      count_agenda_batch_by_source: () => Promise.reject(new Error('DB connection lost')),
+    })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 
@@ -418,7 +421,7 @@ describe('JournalCalendarDropdown', () => {
   })
 
   it('shows zero agenda-source dots when countAgendaBatchBySource rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Timeout'))
+    stubInvoke({ count_agenda_batch_by_source: () => Promise.reject(new Error('Timeout')) })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 
@@ -433,7 +436,9 @@ describe('JournalCalendarDropdown', () => {
   })
 
   it('does not crash on non-Error rejection from countAgendaBatchBySource', async () => {
-    mockedInvoke.mockRejectedValueOnce('string error without Error wrapper')
+    stubInvoke({
+      count_agenda_batch_by_source: () => Promise.reject('string error without Error wrapper'),
+    })
 
     render(<JournalCalendarDropdown {...defaultProps} />)
 

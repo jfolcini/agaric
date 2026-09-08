@@ -28,6 +28,12 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  type TypedInvokeHandlers,
+  mockInvokeCommands,
+} from '@/__tests__/helpers/invoke'
 import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
@@ -38,15 +44,33 @@ const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 const mockedToastSuccess = vi.mocked(toast.success)
 
-const emptyPage: never[] = []
+type TagCacheRow = CommandReturns['list_all_tags_in_space'][number]
 
-function makeTag(id: string, name: string, usageCount = 0) {
+function makeTag(id: string, name: string, usageCount = 0): TagCacheRow {
   return {
     tag_id: id,
     name,
     usage_count: usageCount,
     updated_at: '2025-01-15T00:00:00Z',
   }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` queue this replaced
+ * was consumed in call order regardless of command, so the tag-list read and
+ * the mutation under test were only ever matched up by luck.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ list_all_tags_in_space: () => [], ...handlers }),
+  )
+}
+
+/** {@link stubInvoke} with the tag-list read seeded. */
+function stubTags(tags: TagCacheRow[], handlers: Readonly<TypedInvokeHandlers> = {}) {
+  stubInvoke({ list_all_tags_in_space: () => tags, ...handlers })
 }
 
 /** Find the trash (delete) button within a tag row via its aria-label. */
@@ -78,7 +102,7 @@ beforeEach(() => {
 
 describe('TagList', () => {
   it('renders create form on mount', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubTags([])
 
     render(<TagList />)
 
@@ -89,7 +113,7 @@ describe('TagList', () => {
   })
 
   it('loads and renders tags', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
+    stubTags([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
 
     render(<TagList />)
 
@@ -103,7 +127,7 @@ describe('TagList', () => {
   // back to the prefix call would silently truncate workspaces with
   // more than 200 tags.
   it('loadTags routes through list_all_tags_in_space (limit-clamp-followup)', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a-tag')])
+    stubTags([makeTag('T1', 'a-tag')])
 
     render(<TagList />)
 
@@ -131,7 +155,7 @@ describe('TagList', () => {
   })
 
   it('displays usage counts next to tag names', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
+    stubTags([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
 
     render(<TagList />)
 
@@ -141,7 +165,7 @@ describe('TagList', () => {
   })
 
   it('exposes a stable tag-item-<name> data-testid on each tag button', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
+    stubTags([makeTag('T1', 'important', 3), makeTag('T2', 'work', 7)])
 
     render(<TagList />)
 
@@ -152,7 +176,7 @@ describe('TagList', () => {
   })
 
   it('shows empty state when no tags exist', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubTags([])
 
     render(<TagList />)
 
@@ -161,7 +185,7 @@ describe('TagList', () => {
 
   it('shows skeleton loaders during initial load', () => {
     // Mock that never resolves — keeps loading state
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    stubInvoke({ list_all_tags_in_space: () => new Promise<TagCacheRow[]>(() => {}) })
 
     const { container } = render(<TagList />)
 
@@ -172,22 +196,20 @@ describe('TagList', () => {
 
   it('creates a tag via the form', async () => {
     const user = userEvent.setup()
-    // Initial load — empty
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    // Initial load — empty.
+    // #4668 — `create_block` returns `WithOps<BlockRow>`; the literal here was
+    // a partial row with no `op_refs` envelope.
+    stubTags([], {
+      create_block: () =>
+        withOps(
+          makeBlockRow({ id: 'T1', block_type: 'tag', content: 'my-new-tag', position: null }),
+        ),
+    })
 
     render(<TagList />)
 
     await waitFor(() => {
       expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
-    })
-
-    // Mock create_block response
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'T1',
-      block_type: 'tag',
-      content: 'my-new-tag',
-      parent_id: null,
-      position: null,
     })
 
     // Type tag name and submit
@@ -222,7 +244,7 @@ describe('TagList', () => {
 
   it('does not submit when input is empty', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubTags([])
 
     render(<TagList />)
 
@@ -243,7 +265,7 @@ describe('TagList', () => {
   describe('delete confirmation dialog', () => {
     it('shows AlertDialog when trash icon is clicked', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-delete', 2)])
+      stubTags([makeTag('T1', 'to-delete', 2)])
 
       render(<TagList />)
 
@@ -265,7 +287,7 @@ describe('TagList', () => {
 
     it('cancelling the dialog keeps the tag', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'keep-me')])
+      stubTags([makeTag('T1', 'keep-me')])
 
       render(<TagList />)
 
@@ -287,24 +309,22 @@ describe('TagList', () => {
 
     it('confirming the dialog deletes the tag', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-delete')])
+      // #4668 — `delete_block` returns `WithOps<DeleteResponse>`; `deleted_at`
+      // is epoch ms, not an ISO string, and `affected_page_ids` is required.
+      stubTags([makeTag('T1', 'to-delete')], {
+        delete_block: () =>
+          withOps({
+            block_id: 'T1',
+            deleted_at: 1736899200000,
+            descendants_affected: 1,
+            affected_page_ids: [],
+          }),
+        purge_block: () => ({ block_id: 'T1', purged_count: 1 }),
+      })
 
       render(<TagList />)
 
       expect(await screen.findByText('to-delete')).toBeInTheDocument()
-
-      // Mock delete_block response (soft-delete first — BUG session 679:
-      // purge_block_inner requires deleted_at IS NOT NULL)
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'T1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      })
-      // Mock purge_block response (hard-delete after soft-delete)
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'T1',
-        purged_count: 1,
-      })
 
       // Open dialog
       const tagRow = screen.getByText('to-delete').closest('li') as HTMLElement
@@ -326,7 +346,7 @@ describe('TagList', () => {
     // Cancel button (a reflex Enter dismisses, it does NOT hard-purge the tag).
     it('renders the dialog with translated strings (not hardcoded English) and the destructive variant', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'i18n-tag')])
+      stubTags([makeTag('T1', 'i18n-tag')])
 
       render(<TagList />)
 
@@ -357,7 +377,7 @@ describe('TagList', () => {
 
     it('has no a11y violations with the delete dialog open', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a11y-delete', 1)])
+      stubTags([makeTag('T1', 'a11y-delete', 1)])
 
       const { container } = render(<TagList />)
 
@@ -376,7 +396,7 @@ describe('TagList', () => {
   // UX #2: Tag rename dialog
   describe('rename dialog', () => {
     it('renders rename button for each tag', async () => {
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
+      stubTags([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
 
       render(<TagList />)
 
@@ -391,7 +411,7 @@ describe('TagList', () => {
 
     it('clicking rename opens the rename dialog', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'my-tag')])
+      stubTags([makeTag('T1', 'my-tag')])
 
       render(<TagList />)
 
@@ -408,7 +428,11 @@ describe('TagList', () => {
 
     it('submitting new name calls editBlock', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'old-name')])
+      // #4668 — `edit_block` returns `WithOps<BlockRow>`.
+      stubTags([makeTag('T1', 'old-name')], {
+        edit_block: () =>
+          withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'new-name' })),
+      })
 
       render(<TagList />)
 
@@ -420,13 +444,6 @@ describe('TagList', () => {
       const input = await screen.findByDisplayValue('old-name')
       await user.clear(input)
       await user.type(input, 'new-name')
-
-      // Mock editBlock response
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'T1',
-        block_type: 'tag',
-        content: 'new-name',
-      })
 
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
@@ -443,7 +460,7 @@ describe('TagList', () => {
 
     it('empty name validation prevents submission', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'keep-name')])
+      stubTags([makeTag('T1', 'keep-name')])
 
       render(<TagList />)
 
@@ -461,7 +478,9 @@ describe('TagList', () => {
 
     it('shows success toast after rename', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'before')])
+      stubTags([makeTag('T1', 'before')], {
+        edit_block: () => withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'after' })),
+      })
 
       render(<TagList />)
 
@@ -473,12 +492,6 @@ describe('TagList', () => {
       await user.clear(input)
       await user.type(input, 'after')
 
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'T1',
-        block_type: 'tag',
-        content: 'after',
-      })
-
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
@@ -488,7 +501,9 @@ describe('TagList', () => {
 
     it('shows error toast when rename fails', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'fail-rename')])
+      stubTags([makeTag('T1', 'fail-rename')], {
+        edit_block: () => Promise.reject(new Error('Rename failed')),
+      })
 
       render(<TagList />)
 
@@ -499,8 +514,6 @@ describe('TagList', () => {
       const input = await screen.findByDisplayValue('fail-rename')
       await user.clear(input)
       await user.type(input, 'new-fail-name')
-
-      mockedInvoke.mockRejectedValueOnce(new Error('Rename failed'))
 
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
@@ -513,7 +526,7 @@ describe('TagList', () => {
 
     it('prevents renaming to an existing tag name', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'first-tag'), makeTag('T2', 'second-tag')])
+      stubTags([makeTag('T1', 'first-tag'), makeTag('T2', 'second-tag')])
 
       render(<TagList />)
 
@@ -541,7 +554,7 @@ describe('TagList', () => {
     it('calls onTagClick when a tag name is clicked', async () => {
       const user = userEvent.setup()
       const onTagClick = vi.fn()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'clickable-tag', 5)])
+      stubTags([makeTag('T1', 'clickable-tag', 5)])
 
       render(<TagList onTagClick={onTagClick} />)
 
@@ -554,7 +567,7 @@ describe('TagList', () => {
     it('calls onTagClick with correct args for each tag', async () => {
       const user = userEvent.setup()
       const onTagClick = vi.fn()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha', 1), makeTag('T2', 'beta', 2)])
+      stubTags([makeTag('T1', 'alpha', 1), makeTag('T2', 'beta', 2)])
 
       render(<TagList onTagClick={onTagClick} />)
 
@@ -565,7 +578,7 @@ describe('TagList', () => {
     })
 
     it('does not crash when onTagClick is not provided', async () => {
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'no-handler')])
+      stubTags([makeTag('T1', 'no-handler')])
 
       render(<TagList />)
 
@@ -577,7 +590,7 @@ describe('TagList', () => {
   // UX #8: Error feedback on failed operations
   describe('error feedback', () => {
     it('shows toast on failed tag load', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Network error'))
+      stubInvoke({ list_all_tags_in_space: () => Promise.reject(new Error('Network error')) })
 
       render(<TagList />)
 
@@ -593,16 +606,13 @@ describe('TagList', () => {
 
     it('shows toast on failed tag creation', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([], { create_block: () => Promise.reject(new Error('Create failed')) })
 
       render(<TagList />)
 
       await waitFor(() => {
         expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
       })
-
-      // Mock create_block to fail
-      mockedInvoke.mockRejectedValueOnce(new Error('Create failed'))
 
       const input = screen.getByPlaceholderText('New tag name...')
       await user.type(input, 'fail-tag')
@@ -622,15 +632,15 @@ describe('TagList', () => {
     // and NOT the generic "Failed to create tag" fallback.
     it('shows the "already exists" toast on kind="conflict" creation rejection', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([], {
+        create_block: () => Promise.reject({ kind: 'conflict', message: 'UNIQUE failed' }),
+      })
 
       render(<TagList />)
 
       await waitFor(() => {
         expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
       })
-
-      mockedInvoke.mockRejectedValueOnce({ kind: 'conflict', message: 'UNIQUE failed' })
 
       const input = screen.getByPlaceholderText('New tag name...')
       await user.type(input, 'duplicate-tag')
@@ -648,14 +658,13 @@ describe('TagList', () => {
 
     it('shows toast on failed tag deletion', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'fail-delete')])
+      stubTags([makeTag('T1', 'fail-delete')], {
+        delete_block: () => Promise.reject(new Error('Delete failed')),
+      })
 
       render(<TagList />)
 
       expect(await screen.findByText('fail-delete')).toBeInTheDocument()
-
-      // Mock delete_block to fail
-      mockedInvoke.mockRejectedValueOnce(new Error('Delete failed'))
 
       // Open dialog and confirm
       const tagRow = screen.getByText('fail-delete').closest('li') as HTMLElement
@@ -675,7 +684,7 @@ describe('TagList', () => {
   // UX #10: Add Tag disabled state styling
   describe('disabled state styling', () => {
     it('Add Tag button is disabled when input is empty', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([])
 
       render(<TagList />)
 
@@ -688,7 +697,7 @@ describe('TagList', () => {
     })
 
     it('Add Tag button has opacity-50 styling when disabled', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([])
 
       render(<TagList />)
 
@@ -705,7 +714,7 @@ describe('TagList', () => {
 
     it('Add Tag button becomes enabled when input has text', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([])
 
       render(<TagList />)
 
@@ -723,7 +732,7 @@ describe('TagList', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'accessible-tag', 4)])
+    stubTags([makeTag('T1', 'accessible-tag', 4)])
 
     const { container } = render(<TagList />)
 
@@ -736,7 +745,7 @@ describe('TagList', () => {
   describe('long tag name overflow (TG-12)', () => {
     it('truncates long tag names', async () => {
       const longName = 'a'.repeat(200)
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', longName)])
+      stubTags([makeTag('T1', longName)])
 
       render(<TagList />)
 
@@ -750,7 +759,7 @@ describe('TagList', () => {
   describe('tag name validation (TG-4)', () => {
     it('rejects tag names over 100 characters', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([])
 
       render(<TagList />)
 
@@ -777,7 +786,7 @@ describe('TagList', () => {
   // Tag color picker
   describe('tag color picker', () => {
     it('renders color button for each tag', async () => {
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
+      stubTags([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
 
       render(<TagList />)
 
@@ -792,7 +801,7 @@ describe('TagList', () => {
 
     it('clicking color button opens popover with palette', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'my-tag')])
+      stubTags([makeTag('T1', 'my-tag')])
 
       render(<TagList />)
 
@@ -813,7 +822,11 @@ describe('TagList', () => {
 
     it('selecting a color calls setProperty', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'color-tag')])
+      // #4668 — `set_property` returns `WithOps<BlockRow>`.
+      stubTags([makeTag('T1', 'color-tag')], {
+        set_property: () =>
+          withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'color-tag' })),
+      })
 
       render(<TagList />)
 
@@ -821,9 +834,6 @@ describe('TagList', () => {
       const tagRow = tag.closest('li') as HTMLElement
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
-
-      // Mock setProperty response
-      mockedInvoke.mockResolvedValueOnce({ id: 'T1', block_type: 'tag', content: 'color-tag' })
 
       // Click the "rose" swatch — #1099 persists the accent *token*, not a
       // raw sRGB hex, so the value re-themes across light/dark/high-contrast.
@@ -850,7 +860,7 @@ describe('TagList', () => {
       // hex, so it re-themes across light/dark/high-contrast. The foreground
       // is the token's fixed paired colour (blue → white).
       localStorage.setItem('tag-colors', JSON.stringify({ T1: 'accent-blue' }))
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'blue-tag')])
+      stubTags([makeTag('T1', 'blue-tag')])
 
       render(<TagList />)
 
@@ -865,7 +875,7 @@ describe('TagList', () => {
       // and renders verbatim; foreground falls back to pickReadableForeground.
       // Very dark navy → strictly higher contrast against white than black.
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#1e3a8a' }))
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'navy-tag')])
+      stubTags([makeTag('T1', 'navy-tag')])
 
       render(<TagList />)
 
@@ -879,7 +889,7 @@ describe('TagList', () => {
       // A tag coloured before #1099 with the old red-500 preset re-themes to
       // accent-rose (nearest hue) rather than rendering the flat sRGB hex.
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#ef4444' }))
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'legacy-tag')])
+      stubTags([makeTag('T1', 'legacy-tag')])
 
       render(<TagList />)
 
@@ -892,7 +902,11 @@ describe('TagList', () => {
       const user = userEvent.setup()
       // Pre-set color in localStorage
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#ef4444' }))
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'red-tag')])
+      // #4668 — `delete_property` returns `WithOps<DeletePropertyResponse>`,
+      // not nothing.
+      stubTags([makeTag('T1', 'red-tag')], {
+        delete_property: () => withOps({ block_id: 'T1', key: 'color' }),
+      })
 
       render(<TagList />)
 
@@ -900,9 +914,6 @@ describe('TagList', () => {
       const tagRow = tag.closest('li') as HTMLElement
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
-
-      // Mock deleteProperty response
-      mockedInvoke.mockResolvedValueOnce(undefined)
 
       // Click clear button
       const clearBtn = await screen.findByText(/clear color/i)
@@ -922,7 +933,7 @@ describe('TagList', () => {
 
     it('clear option is hidden when no color is set', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'no-color')])
+      stubTags([makeTag('T1', 'no-color')])
 
       render(<TagList />)
 
@@ -942,7 +953,7 @@ describe('TagList', () => {
     // utility, not the legacy 2px ring.
     it('#1092: color preset swatch uses focus-ring-visible (no legacy 2px ring)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'ring-tag')])
+      stubTags([makeTag('T1', 'ring-tag')])
 
       render(<TagList />)
 
@@ -960,7 +971,7 @@ describe('TagList', () => {
 
     it('has no a11y violations with color picker open', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a11y-tag', 2)])
+      stubTags([makeTag('T1', 'a11y-tag', 2)])
 
       const { container } = render(<TagList />)
 
@@ -978,7 +989,7 @@ describe('TagList', () => {
 
   // Placeholder resolves via t()
   it('new tag input placeholder resolves via t()', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    stubTags([])
 
     render(<TagList />)
 
@@ -993,7 +1004,10 @@ describe('TagList', () => {
   describe('name-change broadcast (#4007)', () => {
     it('broadcasts a rename to the picker name caches', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'before-rename')])
+      stubTags([makeTag('T1', 'before-rename')], {
+        edit_block: () =>
+          withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'after-rename' })),
+      })
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
       try {
@@ -1006,11 +1020,6 @@ describe('TagList', () => {
         await user.clear(input)
         await user.type(input, 'after-rename')
 
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'T1',
-          block_type: 'tag',
-          content: 'after-rename',
-        })
         await user.click(screen.getByRole('button', { name: /Save/i }))
 
         await waitFor(() =>
@@ -1035,7 +1044,12 @@ describe('TagList', () => {
     // cache is empty.
     it('broadcasts a create to the picker name caches', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubTags([], {
+        create_block: () =>
+          withOps(
+            makeBlockRow({ id: 'T_NEW', block_type: 'tag', content: 'brandnew', position: null }),
+          ),
+      })
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
       try {
@@ -1044,14 +1058,6 @@ describe('TagList', () => {
         expect(
           await screen.findByPlaceholderText(t('tagList.newTagPlaceholder')),
         ).toBeInTheDocument()
-
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'T_NEW',
-          block_type: 'tag',
-          content: 'brandnew',
-          parent_id: null,
-          position: null,
-        })
 
         await user.type(screen.getByPlaceholderText(t('tagList.newTagPlaceholder')), 'brandnew')
         await user.click(screen.getByRole('button', { name: /Add Tag/i }))
@@ -1068,20 +1074,22 @@ describe('TagList', () => {
 
     it('broadcasts a delete to the picker name caches', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-purge')])
+      stubTags([makeTag('T1', 'to-purge')], {
+        delete_block: () =>
+          withOps({
+            block_id: 'T1',
+            deleted_at: 1736899200000,
+            descendants_affected: 1,
+            affected_page_ids: [],
+          }),
+        purge_block: () => ({ block_id: 'T1', purged_count: 1 }),
+      })
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
       try {
         render(<TagList />)
 
         const tag = await screen.findByText('to-purge')
-        mockedInvoke.mockResolvedValueOnce({
-          block_id: 'T1',
-          deleted_at: '2025-01-15T00:00:00Z',
-          descendants_affected: 0,
-        })
-        mockedInvoke.mockResolvedValueOnce({ block_id: 'T1', purged_count: 1 })
-
         await user.click(findTrashButton(tag.closest('li') as HTMLElement))
         await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
 
