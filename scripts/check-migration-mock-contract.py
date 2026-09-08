@@ -304,7 +304,7 @@ _CREATE_TRIGGER_RE = re.compile(
 # backfilled cache) are exactly the contract the mock re-implements, so they
 # count as touching the table.
 _INSERT_INTO_RE = re.compile(
-    r'\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+"?(\w+)"?', re.IGNORECASE
+    r'\b(?:INSERT\s+(?:OR\s+\w+\s+)?|REPLACE\s+)INTO\s+"?(\w+)"?', re.IGNORECASE
 )
 # `\s+SET\b` is load-bearing: it is what separates a real `UPDATE <t> SET …`
 # from the `ON UPDATE CASCADE` and `AFTER UPDATE OF <col> ON <t>` clauses that
@@ -528,9 +528,10 @@ def run_self_test() -> int:
         )
 
     # --- CONTRACT map integrity (anti-rot) ---------------------------------
-    backend = _backend_tables()
+    # `real`, not `_backend_tables()`: the looser set includes the `_new_<t>`
+    # rebuild scratch names, so a CONTRACT key typo'd as one would pass.
     for table, spec in CONTRACT.items():
-        if table not in backend:
+        if table not in real:
             failures.append(
                 f"CONTRACT table {table!r} is not CREATE'd by any migration "
                 f"(schema drift or typo)."

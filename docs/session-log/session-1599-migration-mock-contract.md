@@ -104,3 +104,11 @@ with the case the comment above it claims and neither case covered:
 anchor now reds both noise cases; before, only the second.
 
 A guard written to catch guards-that-cannot-fire shipped two of them.
+
+Two more of the same class, reviewer-caught in the round after: the CONTRACT
+existence check ran against the UNFILTERED table set while UNMODELED's ran
+against `real`, so a key typo'd as a `_new_<t>` rebuild scratch name passed;
+and `_INSERT_INTO_RE` required the `INSERT` keyword, so a bare `REPLACE INTO`
+— valid SQLite, equivalent to `INSERT OR REPLACE INTO` — parsed to nothing.
+No migration uses the bare form today, which is exactly how it would have gone
+unnoticed. Both now fire.
