@@ -160,14 +160,7 @@ test.describe('Keyboard block movement', () => {
 
   // ── An in-flight edit survives the restructure ─────────────────────────
 
-  /**
-   * The four move shortcuts flush the roving editor twice: the key handler
-   * calls `onFlush`, and the orchestration handler calls `handleFlush` again
-   * after reading the editor's markdown. `unmount()` wipes the ProseMirror doc
-   * to an empty paragraph, so by the time the second read happens there is
-   * nothing left to read, and the block is remounted blank — losing whatever
-   * had been typed but not yet committed.
-   */
+  /** Each chord must carry the text typed since the last commit. */
   const EDITED = 'GS_3 edited before the move'
 
   for (const [name, key] of [

@@ -624,20 +624,17 @@ export function UnlinkedReferences({
                           className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
                           onClick={() => handleBlockClick(block)}
                         >
-                          {/* `inline` keeps the result inside this
-                              single-line truncating button — no block-level
-                              elements. No `interactive` / `onNavigate`, so the
-                              chips render inert rather than nesting a
-                              `role="link"` inside a button; the row's own
-                              click still navigates. */}
-                          {(block.content
+                          {/* `inline` because the button is one truncating
+                              line; no `interactive`, so no `role="link"` is
+                              nested inside it. */}
+                          {block.content
                             ? renderRichContent(block.content, {
                                 inline: true,
                                 resolveBlockTitle,
                                 resolveTagName,
                                 resolveBlockStatus,
                               })
-                            : null) ?? t('unlinkedRefs.empty')}
+                            : t('unlinkedRefs.empty')}
                         </button>
                         <Button
                           variant="ghost"

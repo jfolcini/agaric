@@ -275,14 +275,10 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // semantics are inseparable from those keys and the catalog marks them
   // `rebindable: false`.
   // The four restructure callbacks below — and the Tab pair further down —
-  // deliberately do NOT flush here. Each one reads the editor's markdown,
-  // flushes, performs the move, and remounts the editor on the same block
-  // with what it read. Flushing first destroyed the value they read:
-  // `unmount()` wipes the ProseMirror doc to an empty paragraph, so the
-  // capture came back empty and the block was remounted blank, losing
-  // everything typed since the last commit. The boundary-arrow and
-  // focus-change rules further down DO flush, because the handlers they
-  // call do not.
+  // must NOT flush here: each reads the editor's markdown, flushes, moves, and
+  // remounts with what it read, and `unmount()` wipes the doc, so an earlier
+  // flush empties the capture. The boundary-arrow rules below do flush; the
+  // focus handlers they call do not.
   // `moveBlockUp` (default Ctrl/Cmd+Shift+ArrowUp): move block up among siblings
   {
     match: (e) => matchesShortcutBinding(e, 'moveBlockUp'),
