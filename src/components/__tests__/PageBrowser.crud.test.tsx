@@ -242,11 +242,8 @@ describe('PageBrowser', () => {
         delete_block: () =>
           withOps({
             block_id: 'P1',
-
             deleted_at: 1767225600000,
-
             descendants_affected: 0,
-
             affected_page_ids: [],
           }),
       })
