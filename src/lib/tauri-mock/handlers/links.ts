@@ -17,11 +17,12 @@
 // reuses their paginator rather than growing a second cursor codec that would
 // be free to drift from the backend's `Cursor` shape.
 import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
-import { matchesFtsIndex, pageRequestLimit, stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   contentLinksTo,
   inSpaceScope,
+  pageRequestLimit,
   scanLinkTargets,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
