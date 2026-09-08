@@ -189,8 +189,13 @@ function TreePageRow({
       )}
       style={rowStyle(virtualRow.start)}
     >
+      {/* `page-tree-gutter` reserves the width a flat `page` row spends on
+          its checkbox + star, so a namespace root's own row lines up with
+          the top-level pages it sits between instead of starting left of
+          them — which made every flat row below a root read as nested
+          inside it. See the utility's comment in `src/index.css`. */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell">
+      <div role="gridcell" className="page-tree-gutter">
         <PageTreeItem
           node={node}
           depth={depth}

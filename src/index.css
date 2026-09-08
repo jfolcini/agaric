@@ -1915,6 +1915,28 @@
   }
 }
 
+/* ── PageBrowser namespace gutter ──────────────────────────────────────
+ * The `Pages` list interleaves two row shapes: a flat page row
+ * (`DensityRow`) and a namespace subtree (`PageTreeItem`). Only the flat
+ * row carries leading affordances — the multi-select checkbox and the
+ * star toggle — and both keep their layout width while invisible, so its
+ * title starts well right of an un-guttered subtree. Without this gutter
+ * a top-level page sits DEEPER than a page nested inside a namespace and
+ * reads as that namespace's child.
+ *
+ * Mirrors DensityRow's leading run — px-3 + checkbox + gap-3 + star
+ * button + gap-3 — at both pointer sizes (`size-4` / `size-6` fine,
+ * `min-w-11` / `size-11` coarse). `pages-namespace-indent.spec.ts`
+ * measures the two shapes against each other, so drift on either side
+ * reddens. */
+@utility page-tree-gutter {
+  padding-left: calc(0.75rem + 1rem + 0.75rem + 1.5rem + 0.75rem);
+
+  @media (pointer: coarse) {
+    padding-left: calc(0.75rem + 2.75rem + 0.75rem + 2.75rem + 0.75rem);
+  }
+}
+
 /* ── ScrollArea / list scrollbars (WebKitGTK overlap fix) ───────────────
  * Tauri's webviews render an *overlay* scrollbar that floats over the
  * content's right edge — in our long, full-width lists it clips the
