@@ -10,11 +10,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useLinkMetadata } from '@/hooks/useLinkMetadata'
 import type { LinkMetadata } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -35,7 +40,7 @@ describe('useLinkMetadata.fetch', () => {
       auth_required: false,
       not_found: false,
     }
-    mockedInvoke.mockResolvedValueOnce(meta)
+    stubInvoke({ fetch_link_metadata: () => meta })
 
     const { result } = renderHook(() => useLinkMetadata())
 
@@ -53,7 +58,7 @@ describe('useLinkMetadata.fetch', () => {
   it('logs a structured warning and re-throws when the IPC rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const cause = new Error('network down')
-    mockedInvoke.mockRejectedValueOnce(cause)
+    stubInvoke({ fetch_link_metadata: () => Promise.reject(cause) })
 
     const { result } = renderHook(() => useLinkMetadata())
 

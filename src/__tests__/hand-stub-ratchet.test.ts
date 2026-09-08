@@ -40,7 +40,7 @@ import { stripComments } from '../../scripts/lib/js-scanner.mjs'
  * Lower this when you migrate one to `mockInvokeCommands`; the test fails if it
  * does not match, in either direction.
  */
-const HAND_STUB_FILE_BASELINE = 85
+const HAND_STUB_FILE_BASELINE = 72
 
 // Anchored at the alias: only a stub call that immediately follows it counts,
 // so a `.mockResolvedValue(` on a different mock nearby cannot be attributed

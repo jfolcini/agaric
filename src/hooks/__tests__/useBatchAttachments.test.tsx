@@ -36,7 +36,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   BatchAttachmentsProvider,
   useBatchAttachments,
@@ -49,6 +49,10 @@ import {
 import type { AttachmentRow } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 interface BatchAttachmentsValue {
   get: (blockId: string) => AttachmentRow[] | undefined
@@ -84,7 +88,7 @@ function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue({})
+  stubInvoke({ list_attachments_batch: () => ({}) })
   _resetAttachmentInvalidationForTest()
 })
 
@@ -112,10 +116,7 @@ describe('useBatchAttachments', () => {
 
   it('provider fetches full lists via IPC and publishes them', async () => {
     const att1 = makeAttachment({ id: 'att-1', block_id: 'BLOCK_1' })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') return { BLOCK_1: [att1], BLOCK_2: [] }
-      return undefined
-    })
+    stubInvoke({ list_attachments_batch: () => ({ BLOCK_1: [att1], BLOCK_2: [] }) })
 
     const { result } = renderHook(() => useBatchAttachments(), {
       wrapper: makeWrapper(['BLOCK_1', 'BLOCK_2', 'BLOCK_3']),
@@ -138,9 +139,10 @@ describe('useBatchAttachments', () => {
   })
 
   it('logs warning and stays at empty cache on IPC failure', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_attachments_batch: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(
@@ -161,15 +163,14 @@ describe('useBatchAttachments', () => {
   })
 
   it('refetches when blockIds membership changes', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_attachments_batch') {
+    stubInvoke({
+      list_attachments_batch: (args) => {
         const ids = (args as { blockIds: string[] }).blockIds
         const out: Record<string, AttachmentRow[]> = {}
         if (ids.includes('A')) out['A'] = [makeAttachment({ id: 'a1', block_id: 'A' })]
         if (ids.includes('B')) out['B'] = [makeAttachment({ id: 'b1', block_id: 'B' })]
         return out
-      }
-      return undefined
+      },
     })
 
     const observed: Array<BatchAttachmentsValue | null> = []
@@ -202,14 +203,11 @@ describe('useBatchAttachments', () => {
   })
 
   it('does NOT refetch when blockIds reference changes but membership is identical', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') {
-        return {
-          A: [makeAttachment({ id: 'a1', block_id: 'A' })],
-          B: [makeAttachment({ id: 'b1', block_id: 'B' })],
-        }
-      }
-      return undefined
+    stubInvoke({
+      list_attachments_batch: () => ({
+        A: [makeAttachment({ id: 'a1', block_id: 'A' })],
+        B: [makeAttachment({ id: 'b1', block_id: 'B' })],
+      }),
     })
 
     const observed: Array<BatchAttachmentsValue | null> = []
@@ -249,12 +247,11 @@ describe('useBatchAttachments', () => {
     const att2 = makeAttachment({ id: 'a2', block_id: 'A', filename: 'second.png' })
 
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') {
+    stubInvoke({
+      list_attachments_batch: () => {
         callCount += 1
         return callCount === 1 ? { A: [att1] } : { A: [att1, att2] }
-      }
-      return undefined
+      },
     })
 
     const { result } = renderHook(() => useBatchAttachments(), {
@@ -286,12 +283,11 @@ describe('useBatchAttachments', () => {
     const renamed = makeAttachment({ id: 'a1', block_id: 'A', filename: 'renamed.png' })
 
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') {
+    stubInvoke({
+      list_attachments_batch: () => {
         callCount += 1
         return callCount === 1 ? { A: [att1] } : { A: [renamed] }
-      }
-      return undefined
+      },
     })
 
     const { result } = renderHook(() => useBatchAttachments(), {
@@ -316,13 +312,11 @@ describe('useBatchAttachments', () => {
 
   it('loading is true during initial fetch and after invalidate', async () => {
     let resolveFetch!: (val: Record<string, AttachmentRow[]>) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') {
-        return new Promise<Record<string, AttachmentRow[]>>((resolve) => {
+    stubInvoke({
+      list_attachments_batch: () =>
+        new Promise<Record<string, AttachmentRow[]>>((resolve) => {
           resolveFetch = resolve
-        })
-      }
-      return undefined
+        }),
     })
 
     const { result } = renderHook(
@@ -373,10 +367,7 @@ describe('useBatchAttachments', () => {
       const a2 = makeAttachment({ id: 'a2', block_id: 'A', filename: 'second.png' })
       const b1 = makeAttachment({ id: 'b1', block_id: 'B' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_attachments_batch') return { A: [a1, a2], B: [b1] }
-        return undefined
-      })
+      stubInvoke({ list_attachments_batch: () => ({ A: [a1, a2], B: [b1] }) })
 
       const { result } = renderHook(() => useBatchAttachments(), {
         wrapper: makeWrapper(['A', 'B', 'C']),
@@ -401,10 +392,7 @@ describe('useBatchAttachments', () => {
     })
 
     it('does NOT issue a separate IPC for counts (single source: list batch)', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_attachments_batch') return { A: [makeAttachment()] }
-        return undefined
-      })
+      stubInvoke({ list_attachments_batch: () => ({ A: [makeAttachment()] }) })
 
       const { result } = renderHook(() => useBatchAttachments(), {
         wrapper: makeWrapper(['A']),
@@ -429,16 +417,15 @@ describe('useBatchAttachments', () => {
 
   describe('windowed scroll settle (#2701)', () => {
     function mockBatchInvoke() {
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'list_attachments_batch') {
+      stubInvoke({
+        list_attachments_batch: (args) => {
           const ids = (args as { blockIds: string[] }).blockIds
           const out: Record<string, AttachmentRow[]> = {}
           for (const id of ids) {
             out[id] = [makeAttachment({ id: `att-${id}`, block_id: id })]
           }
           return out
-        }
-        return undefined
+        },
       })
     }
 
@@ -460,13 +447,11 @@ describe('useBatchAttachments', () => {
       // Second settle: [A, B] — only B is fetched; hold its promise open so
       // the fetch is still in flight when the window changes again.
       let resolveB: ((v: Record<string, AttachmentRow[]>) => void) | undefined
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_attachments_batch') {
-          return new Promise((res) => {
+      stubInvoke({
+        list_attachments_batch: () =>
+          new Promise<Record<string, AttachmentRow[]>>((res) => {
             resolveB = res
-          })
-        }
-        return strictInvokeFallback(cmd)
+          }),
       })
       rerender(
         <BatchAttachmentsProvider blockIds={['A', 'B']}>

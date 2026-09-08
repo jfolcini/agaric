@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   dispatchQuery,
   fetchBacklinksQuery,
@@ -13,12 +14,41 @@ import {
   QueryValidationError,
   useQueryExecution,
 } from '@/hooks/useQueryExecution'
+import type { AdvancedQueryResponse, PageResponse, QueryResultRow } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** {@link stubInvoke}, additionally recording every command name invoked. */
+function stubInvokeRecording(handlers: Readonly<TypedInvokeHandlers>): string[] {
+  const seen: string[] = []
+  const dispatch = mockInvokeCommands(handlers)
+  mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+    seen.push(cmd)
+    return dispatch(cmd, args)
+  })
+  return seen
+}
+
+/** An `AdvancedQueryResponse` page; the engine's field names are camelCase. */
+function advancedPage(
+  rows: QueryResultRow[],
+  overrides: Partial<AdvancedQueryResponse> = {},
+): AdvancedQueryResponse {
+  return { rows, nextCursor: null, hasMore: false, totalCount: null, ...overrides }
+}
+
+/** A `PageResponse<T>`; `total_count` is not optional on the wire. */
+function page<T>(items: T[], overrides: Partial<PageResponse<T>> = {}): PageResponse<T> {
+  return { items, next_cursor: null, has_more: false, total_count: null, ...overrides }
+}
+
+const projectTag = { tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, updated_at: '' }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -26,22 +56,13 @@ beforeEach(() => {
 
 describe('useQueryExecution', () => {
   it('fetches tag query results and resolves page titles', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' })],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: null,
-        }
-      }
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, updated_at: '' }]
-      }
-      if (cmd === 'batch_resolve') {
-        return [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }]
-      }
-      return null
+    stubInvoke({
+      run_advanced_query: () =>
+        advancedPage([
+          makeBlock({ id: 'B1', content: 'Tagged block', parent_id: 'P1', page_id: 'P1' }),
+        ]),
+      list_tags_by_prefix: () => [projectTag],
+      batch_resolve: () => [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }],
     })
 
     const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:project' }))
@@ -59,17 +80,10 @@ describe('useQueryExecution', () => {
   })
 
   it('fetches property query results', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [makeBlock({ id: 'B1', content: 'Priority task', priority: '1' })],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: null,
-        }
-      }
-      if (cmd === 'batch_resolve') return []
-      return null
+    stubInvoke({
+      run_advanced_query: () =>
+        advancedPage([makeBlock({ id: 'B1', content: 'Priority task', priority: '1' })]),
+      batch_resolve: () => [],
     })
 
     const { result } = renderHook(() =>
@@ -96,13 +110,10 @@ describe('useQueryExecution', () => {
       makeBlock({ id: 'B1', content: 'Match', todo_state: 'TODO', priority: '1' }),
     ]
 
-    mockedInvoke.mockImplementation((async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
-        return { rows: intersected, nextCursor: null, hasMore: false, totalCount: null }
-      }
-      if (cmd === 'batch_resolve') return []
-      return null
-    }) as never)
+    stubInvoke({
+      run_advanced_query: () => advancedPage(intersected),
+      batch_resolve: () => [],
+    })
 
     const { result } = renderHook(() =>
       useQueryExecution({ expression: 'property:todo_state=TODO property:priority=1' }),
@@ -130,26 +141,17 @@ describe('useQueryExecution', () => {
   })
 
   it('fetches backlinks query results (reroutes to ChildOf via run_advanced_query)', async () => {
-    const seen: string[] = []
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      seen.push(cmd)
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [
-            makeBlock({
-              id: 'B1',
-              content: 'Child block',
-              parent_id: 'TARGET1',
-              page_id: 'TARGET1',
-            }),
-          ],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: null,
-        }
-      }
-      if (cmd === 'batch_resolve') return []
-      return null
+    const seen = stubInvokeRecording({
+      run_advanced_query: () =>
+        advancedPage([
+          makeBlock({
+            id: 'B1',
+            content: 'Child block',
+            parent_id: 'TARGET1',
+            page_id: 'TARGET1',
+          }),
+        ]),
+      batch_resolve: () => [],
     })
 
     const { result } = renderHook(() =>
@@ -191,29 +193,18 @@ describe('useQueryExecution', () => {
 
   it('handles pagination with handleLoadMore', async () => {
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
+    stubInvoke({
+      run_advanced_query: () => {
         callCount++
-        if (callCount === 1) {
-          return {
-            rows: [makeBlock({ id: 'B1', content: 'First' })],
-            nextCursor: 'cursor1',
-            hasMore: true,
-            totalCount: null,
-          }
-        }
-        return {
-          rows: [makeBlock({ id: 'B2', content: 'Second' })],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: null,
-        }
-      }
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, updated_at: '' }]
-      }
-      if (cmd === 'batch_resolve') return []
-      return null
+        return callCount === 1
+          ? advancedPage([makeBlock({ id: 'B1', content: 'First' })], {
+              nextCursor: 'cursor1',
+              hasMore: true,
+            })
+          : advancedPage([makeBlock({ id: 'B2', content: 'Second' })])
+      },
+      list_tags_by_prefix: () => [projectTag],
+      batch_resolve: () => [],
     })
 
     const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:project' }))
@@ -240,21 +231,31 @@ describe('useQueryExecution', () => {
   })
 
   it('sets loading=true during initial fetch', async () => {
-    let resolveQuery: ((value: unknown) => void) | undefined
-    mockedInvoke.mockImplementation(
-      () =>
-        new Promise((resolve) => {
+    let resolveQuery: ((value: AdvancedQueryResponse) => void) | undefined
+    stubInvoke({
+      list_tags_by_prefix: () => [projectTag],
+      run_advanced_query: () =>
+        new Promise<AdvancedQueryResponse>((resolve) => {
           resolveQuery = resolve
         }),
-    )
+    })
 
     const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:test' }))
 
     expect(result.current.loading).toBe(true)
     expect(result.current.loadingMore).toBe(false)
 
+    // The tag reroute resolves `list_tags_by_prefix` on a microtask before the
+    // controlled `run_advanced_query` promise exists. The old catch-all stub
+    // handed BOTH commands the same promise, so this test used to resolve
+    // `list_tags_by_prefix` with a page envelope and reach `loading === false`
+    // down the ERROR path.
+    await waitFor(() => {
+      expect(resolveQuery).toBeDefined()
+    })
+
     await act(async () => {
-      resolveQuery?.({ items: [], next_cursor: null, has_more: false, total_count: null })
+      resolveQuery?.(advancedPage([]))
     })
 
     await waitFor(() => {
@@ -263,7 +264,9 @@ describe('useQueryExecution', () => {
   })
 
   it('sets error string on fetch failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Network error'))
+    stubInvoke({
+      list_tags_by_prefix: () => Promise.reject(new Error('Network error')),
+    })
 
     const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:test' }))
 
@@ -275,7 +278,8 @@ describe('useQueryExecution', () => {
   })
 
   it('shows generic fallback for non-Error rejection', async () => {
-    mockedInvoke.mockRejectedValueOnce('string error')
+    // A non-Error rejection is the point: the hook must not assume `.message`.
+    stubInvoke({ list_tags_by_prefix: () => Promise.reject('string error') })
 
     const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:test' }))
 
@@ -287,20 +291,10 @@ describe('useQueryExecution', () => {
   })
 
   it('re-fetches when expression changes', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [makeBlock({ id: 'B1', content: 'Result' })],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: null,
-        }
-      }
-      if (cmd === 'list_tags_by_prefix') {
-        return [{ tag_id: 'TAG_X', name: 'x', usage_count: 1, updated_at: '' }]
-      }
-      if (cmd === 'batch_resolve') return []
-      return null
+    stubInvoke({
+      run_advanced_query: () => advancedPage([makeBlock({ id: 'B1', content: 'Result' })]),
+      list_tags_by_prefix: () => [{ ...projectTag, tag_id: 'TAG_X', name: 'x' }],
+      batch_resolve: () => [],
     })
 
     const { result, rerender } = renderHook(({ expression }) => useQueryExecution({ expression }), {
@@ -385,28 +379,21 @@ describe('useQueryExecution', () => {
   // each `fetchResults` call captures `myReqId = ++reqIdRef.current` and
   // bails out at every await boundary if the counter has advanced.
   it('discards stale results when an older fetch resolves after a newer fetch', async () => {
-    let resolveAlpha: ((value: unknown) => void) | undefined
-    let resolveBeta: ((value: unknown) => void) | undefined
+    let resolveAlpha: ((value: AdvancedQueryResponse) => void) | undefined
+    let resolveBeta: ((value: AdvancedQueryResponse) => void) | undefined
     let tagCallCount = 0
 
-    mockedInvoke.mockImplementation(((cmd: string): Promise<unknown> => {
-      if (cmd === 'run_advanced_query') {
+    stubInvoke({
+      run_advanced_query: () => {
         tagCallCount++
-        if (tagCallCount === 1) {
-          return new Promise((resolve) => {
-            resolveAlpha = resolve
-          })
-        }
-        return new Promise((resolve) => {
-          resolveBeta = resolve
+        return new Promise<AdvancedQueryResponse>((resolve) => {
+          if (tagCallCount === 1) resolveAlpha = resolve
+          else resolveBeta = resolve
         })
-      }
-      if (cmd === 'list_tags_by_prefix') {
-        return Promise.resolve([{ tag_id: 'TAG_X', name: 'x', usage_count: 1, updated_at: '' }])
-      }
-      if (cmd === 'batch_resolve') return Promise.resolve([])
-      return Promise.resolve(null)
-    }) as never)
+      },
+      list_tags_by_prefix: () => [{ ...projectTag, tag_id: 'TAG_X', name: 'x' }],
+      batch_resolve: () => [],
+    })
 
     const { result, rerender } = renderHook(({ expression }) => useQueryExecution({ expression }), {
       initialProps: { expression: 'type:tag expr:alpha' },
@@ -433,12 +420,7 @@ describe('useQueryExecution', () => {
 
     // Beta resolves FIRST (the "newer, faster" fetch).
     await act(async () => {
-      resolveBeta?.({
-        rows: [makeBlock({ id: 'B1', content: 'beta-result' })],
-        nextCursor: null,
-        hasMore: false,
-        totalCount: null,
-      })
+      resolveBeta?.(advancedPage([makeBlock({ id: 'B1', content: 'beta-result' })]))
     })
 
     await waitFor(() => {
@@ -451,12 +433,7 @@ describe('useQueryExecution', () => {
     // stale-fetch guard, this would call applyQueryResult and overwrite
     // beta's payload. With the guard it must be a no-op.
     await act(async () => {
-      resolveAlpha?.({
-        rows: [makeBlock({ id: 'A1', content: 'alpha-result' })],
-        nextCursor: null,
-        hasMore: false,
-        totalCount: null,
-      })
+      resolveAlpha?.(advancedPage([makeBlock({ id: 'A1', content: 'alpha-result' })]))
       await Promise.resolve()
     })
 
@@ -469,11 +446,12 @@ describe('useQueryExecution', () => {
 
 describe('fetchTagQuery', () => {
   it('returns items, nextCursor and hasMore for a tag prefix query', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1', content: 'Tagged' })],
-      next_cursor: 'cur1',
-      has_more: true,
-      total_count: null,
+    stubInvoke({
+      query_by_tags: () =>
+        page([makeBlock({ id: 'B1', content: 'Tagged' })], {
+          next_cursor: 'cur1',
+          has_more: true,
+        }),
     })
 
     const result = await fetchTagQuery({ expr: 'project' })
@@ -489,12 +467,7 @@ describe('fetchTagQuery', () => {
   })
 
   it('passes no prefixes when expr is empty', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ query_by_tags: () => page([]) })
 
     await fetchTagQuery({})
 
@@ -505,12 +478,7 @@ describe('fetchTagQuery', () => {
   })
 
   it('forwards pageCursor for pagination', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ query_by_tags: () => page([]) })
 
     await fetchTagQuery({ expr: 'project' }, 'CURSOR123')
 
@@ -521,7 +489,7 @@ describe('fetchTagQuery', () => {
   })
 
   it('propagates backend rejection', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend down'))
+    stubInvoke({ query_by_tags: () => Promise.reject(new Error('backend down')) })
 
     await expect(fetchTagQuery({ expr: 'project' })).rejects.toThrow('backend down')
   })
@@ -529,11 +497,8 @@ describe('fetchTagQuery', () => {
 
 describe('fetchPropertyQuery', () => {
   it('returns items and pagination for a key/value property query', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1', content: 'High priority' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubInvoke({
+      query_by_property: () => page([makeBlock({ id: 'B1', content: 'High priority' })]),
     })
 
     const result = await fetchPropertyQuery({ key: 'priority', value: '1' })
@@ -551,12 +516,7 @@ describe('fetchPropertyQuery', () => {
   })
 
   it('uses valueDate when a date param is provided', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ query_by_property: () => page([]) })
 
     await fetchPropertyQuery({ key: 'due_date', date: '2025-06-15' })
 
@@ -577,7 +537,7 @@ describe('fetchPropertyQuery', () => {
   })
 
   it('propagates backend rejection', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db fail'))
+    stubInvoke({ query_by_property: () => Promise.reject(new Error('db fail')) })
 
     await expect(fetchPropertyQuery({ key: 'priority' })).rejects.toThrow('db fail')
   })
@@ -585,12 +545,7 @@ describe('fetchPropertyQuery', () => {
 
 describe('fetchBacklinksQuery', () => {
   it('returns items for a target parentId', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1', parent_id: 'TARGET1' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ list_blocks: () => page([makeBlock({ id: 'B1', parent_id: 'TARGET1' })]) })
 
     // #2248 — a backlinks fetch requires an active space; pass one so it dispatches.
     const result = await fetchBacklinksQuery({ target: 'TARGET1' }, undefined, 'SPACE_1')
@@ -624,7 +579,7 @@ describe('fetchBacklinksQuery', () => {
   })
 
   it('propagates backend rejection', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
+    stubInvoke({ list_blocks: () => Promise.reject(new Error('list_blocks failed')) })
 
     await expect(fetchBacklinksQuery({ target: 'T1' }, undefined, 'SPACE_1')).rejects.toThrow(
       'list_blocks failed',
@@ -650,7 +605,8 @@ describe('fetchFilteredQuery', () => {
 
   it('passes a single property filter to filtered_blocks_query', async () => {
     const blocks = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })]
-    mockedInvoke.mockResolvedValueOnce({ items: blocks, next_cursor: null, has_more: false })
+    // `total_count` is not optional on `PageResponse`; the old literal omitted it.
+    stubInvoke({ filtered_blocks_query: () => page(blocks) })
 
     const result = await fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], [])
 
@@ -668,12 +624,7 @@ describe('fetchFilteredQuery', () => {
   })
 
   it('issues ONE IPC with composed property filters (no fan-out, no JS intersect)', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ filtered_blocks_query: () => page([makeBlock({ id: 'B1' })]) })
 
     const result = await fetchFilteredQuery(
       [
@@ -699,12 +650,7 @@ describe('fetchFilteredQuery', () => {
   })
 
   it('bundles tag filters into a single tagFilters arg (no parallel tag IPCs)', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B1' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ filtered_blocks_query: () => page([makeBlock({ id: 'B1' })]) })
 
     const result = await fetchFilteredQuery([], ['alpha', 'beta'])
 
@@ -719,7 +665,7 @@ describe('fetchFilteredQuery', () => {
   })
 
   it('propagates backend rejection from the single IPC', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('sub-query failed'))
+    stubInvoke({ filtered_blocks_query: () => Promise.reject(new Error('sub-query failed')) })
 
     await expect(
       fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], []),
@@ -745,12 +691,7 @@ describe('fetchFilteredQuery', () => {
       id: 'ZZZZZZZZZZZZZZZZZZZZZZZZZZ', // top-of-sort-key ULID
       content: 'rare AND-set member',
     })
-    mockedInvoke.mockResolvedValueOnce({
-      items: [rareMatch],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ filtered_blocks_query: () => page([rareMatch]) })
 
     const result = await fetchFilteredQuery(
       [
@@ -768,12 +709,7 @@ describe('fetchFilteredQuery', () => {
 
 describe('dispatchQuery', () => {
   it('routes tag queries to query_by_tags', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ query_by_tags: () => page([]) })
 
     await dispatchQuery({
       type: 'tag',
@@ -786,12 +722,7 @@ describe('dispatchQuery', () => {
   })
 
   it('routes property queries to query_by_property', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ query_by_property: () => page([]) })
 
     await dispatchQuery({
       type: 'property',
@@ -804,12 +735,7 @@ describe('dispatchQuery', () => {
   })
 
   it('routes backlinks queries to list_blocks', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ list_blocks: () => page([]) })
 
     await dispatchQuery(
       {
@@ -833,12 +759,7 @@ describe('dispatchQuery', () => {
   })
 
   it('routes filtered queries to a single filtered_blocks_query IPC (Tier 2.10b)', async () => {
-    mockedInvoke.mockResolvedValue({
-      items: [],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    stubInvoke({ filtered_blocks_query: () => page([]) })
 
     await dispatchQuery({
       type: 'filtered',
@@ -888,21 +809,13 @@ describe('useQueryExecution — structured (v2) inline queries', () => {
       table: false,
     })
 
-    const seen: string[] = []
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      seen.push(cmd)
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [makeBlock({ id: 'B1', content: 'Rich match', parent_id: 'P1', page_id: 'P1' })],
-          nextCursor: null,
-          hasMore: false,
-          totalCount: 1,
-        }
-      }
-      if (cmd === 'batch_resolve') {
-        return [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }]
-      }
-      return null
+    const seen = stubInvokeRecording({
+      run_advanced_query: () =>
+        advancedPage(
+          [makeBlock({ id: 'B1', content: 'Rich match', parent_id: 'P1', page_id: 'P1' })],
+          { totalCount: 1 },
+        ),
+      batch_resolve: () => [{ id: 'P1', title: 'My Page', block_type: 'page', deleted: false }],
     })
 
     const { result } = renderHook(() => useQueryExecution({ expression }))
@@ -921,16 +834,13 @@ describe('useQueryExecution — structured (v2) inline queries', () => {
   })
 
   it('fetchRichInlineQuery maps the engine response to the fetch-result shape', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'run_advanced_query') {
-        return {
-          rows: [makeBlock({ id: 'B2', content: 'row' })],
+    stubInvoke({
+      run_advanced_query: () =>
+        advancedPage([makeBlock({ id: 'B2', content: 'row' })], {
           nextCursor: 'CURSOR',
           hasMore: true,
           totalCount: 9,
-        }
-      }
-      return null
+        }),
     })
     const out = await fetchRichInlineQuery({ type: 'And', children: [] }, undefined, 'SPACE')
     expect(out.items).toHaveLength(1)

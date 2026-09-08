@@ -14,10 +14,18 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+const block1 = makeBlockRow({ id: 'BLOCK_1' })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -33,7 +41,7 @@ afterEach(() => {
 
 describe('useBlockReschedule.setDueDate', () => {
   it('invokes set_due_date with the expected args (string date)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_due_date: () => block1 })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -48,7 +56,7 @@ describe('useBlockReschedule.setDueDate', () => {
   })
 
   it('forwards null to clear the due date', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_due_date: () => block1 })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -65,7 +73,7 @@ describe('useBlockReschedule.setDueDate', () => {
   it('logs a structured warning and re-throws when the IPC rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const cause = new Error('IPC failed')
-    mockedInvoke.mockRejectedValueOnce(cause)
+    stubInvoke({ set_due_date: () => Promise.reject(cause) })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -90,7 +98,7 @@ describe('useBlockReschedule.setDueDate', () => {
 
 describe('useBlockReschedule.setScheduledDate', () => {
   it('invokes set_scheduled_date with the expected args (string date)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_scheduled_date: () => block1 })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -105,7 +113,7 @@ describe('useBlockReschedule.setScheduledDate', () => {
   })
 
   it('forwards null to clear the scheduled date', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_scheduled_date: () => block1 })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -122,7 +130,7 @@ describe('useBlockReschedule.setScheduledDate', () => {
   it('logs a structured warning and re-throws when the IPC rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const cause = new Error('disk full')
-    mockedInvoke.mockRejectedValueOnce(cause)
+    stubInvoke({ set_scheduled_date: () => Promise.reject(cause) })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -148,14 +156,15 @@ describe('useBlockReschedule.setScheduledDate', () => {
 /**
  * Simulate the multi-IPC `reschedule` flow: `getBlock(blockId)` then either
  * `setDueDate` or `setScheduledDate` depending on the block's current
- * shape. Each test queues the IPC responses in order via
- * `mockedInvoke.mockResolvedValueOnce` / `mockRejectedValueOnce`.
+ * shape. Each test stubs the two commands by NAME, so the branch taken is
+ * read off `toHaveBeenNthCalledWith` rather than off a positional queue.
  */
 describe('useBlockReschedule.reschedule', () => {
   it('writes due_date when the block has neither date set', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({ id: 'BLOCK_1', due_date: null, scheduled_date: null })
-      .mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', due_date: null, scheduled_date: null }),
+      set_due_date: () => block1,
+    })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -173,13 +182,11 @@ describe('useBlockReschedule.reschedule', () => {
   })
 
   it('writes scheduled_date when the block has scheduled_date set and due_date null', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({
-        id: 'BLOCK_1',
-        due_date: null,
-        scheduled_date: '2026-04-10',
-      })
-      .mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({
+      get_block: () =>
+        makeBlockRow({ id: 'BLOCK_1', due_date: null, scheduled_date: '2026-04-10' }),
+      set_scheduled_date: () => block1,
+    })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -196,13 +203,11 @@ describe('useBlockReschedule.reschedule', () => {
   })
 
   it('prefers due_date when both fields are set on the block', async () => {
-    mockedInvoke
-      .mockResolvedValueOnce({
-        id: 'BLOCK_1',
-        due_date: '2026-04-09',
-        scheduled_date: '2026-04-10',
-      })
-      .mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({
+      get_block: () =>
+        makeBlockRow({ id: 'BLOCK_1', due_date: '2026-04-09', scheduled_date: '2026-04-10' }),
+      set_due_date: () => block1,
+    })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -221,7 +226,10 @@ describe('useBlockReschedule.reschedule', () => {
   it('falls back to setDueDate and logs a warning when getBlock rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const lookupErr = new Error('getBlock failed')
-    mockedInvoke.mockRejectedValueOnce(lookupErr).mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({
+      get_block: () => Promise.reject(lookupErr),
+      set_due_date: () => block1,
+    })
 
     const { result } = renderHook(() => useBlockReschedule())
 
@@ -246,9 +254,10 @@ describe('useBlockReschedule.reschedule', () => {
   it('re-throws when the underlying setter rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const setterErr = new Error('write failed')
-    mockedInvoke
-      .mockResolvedValueOnce({ id: 'BLOCK_1', due_date: null, scheduled_date: null })
-      .mockRejectedValueOnce(setterErr)
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', due_date: null, scheduled_date: null }),
+      set_due_date: () => Promise.reject(setterErr),
+    })
 
     const { result } = renderHook(() => useBlockReschedule())
 

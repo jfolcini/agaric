@@ -33,7 +33,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   BatchPropertiesProvider,
   useBatchPropertyRows,
@@ -42,6 +42,10 @@ import {
 import type { PropertyRow } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 interface BatchPropertiesValue {
   get: (blockId: string) => PropertyRow[] | undefined
@@ -75,7 +79,7 @@ function makeRow(overrides: Partial<PropertyRow> = {}): PropertyRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue({})
+  stubInvoke({ get_batch_properties: () => ({}) })
 })
 
 describe('useBatchPropertyRows', () => {
@@ -101,10 +105,7 @@ describe('useBatchPropertyRows', () => {
 
   it('provider fetches full lists via IPC and publishes them', async () => {
     const r1 = makeRow({ key: 'blocked_by', value_ref: 'X' })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') return { B1: [r1], B2: [] }
-      return undefined
-    })
+    stubInvoke({ get_batch_properties: () => ({ B1: [r1], B2: [] }) })
 
     const { result } = renderHook(() => useBatchPropertyRows(), {
       wrapper: makeWrapper(['B1', 'B2', 'B3']),
@@ -127,9 +128,10 @@ describe('useBatchPropertyRows', () => {
   })
 
   it('logs warning and stays at empty cache on IPC failure', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      get_batch_properties: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(
@@ -150,15 +152,14 @@ describe('useBatchPropertyRows', () => {
   })
 
   it('refetches when blockIds membership changes', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'get_batch_properties') {
+    stubInvoke({
+      get_batch_properties: (args) => {
         const ids = (args as { blockIds: string[] }).blockIds
         const out: Record<string, PropertyRow[]> = {}
         if (ids.includes('A')) out['A'] = [makeRow({ key: 'a' })]
         if (ids.includes('B')) out['B'] = [makeRow({ key: 'b' })]
         return out
-      }
-      return undefined
+      },
     })
 
     const observed: Array<BatchPropertiesValue | null> = []
@@ -191,14 +192,11 @@ describe('useBatchPropertyRows', () => {
   })
 
   it('does NOT refetch when blockIds reference changes but membership is identical', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') {
-        return {
-          A: [makeRow({ key: 'a' })],
-          B: [makeRow({ key: 'b' })],
-        }
-      }
-      return undefined
+    stubInvoke({
+      get_batch_properties: () => ({
+        A: [makeRow({ key: 'a' })],
+        B: [makeRow({ key: 'b' })],
+      }),
     })
 
     const observed: Array<BatchPropertiesValue | null> = []
@@ -235,8 +233,8 @@ describe('useBatchPropertyRows', () => {
 
   it('invalidate(blockId) triggers refetch', async () => {
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') {
+    stubInvoke({
+      get_batch_properties: () => {
         callCount += 1
         return {
           A:
@@ -244,8 +242,7 @@ describe('useBatchPropertyRows', () => {
               ? [makeRow({ key: 'a' })]
               : [makeRow({ key: 'a' }), makeRow({ key: 'a2' })],
         }
-      }
-      return undefined
+      },
     })
 
     const { result } = renderHook(() => useBatchPropertyRows(), {
@@ -269,10 +266,7 @@ describe('useBatchPropertyRows', () => {
   })
 
   it('invalidationKey prop bump triggers a refetch', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') return { A: [makeRow({ key: 'a' })] }
-      return undefined
-    })
+    stubInvoke({ get_batch_properties: () => ({ A: [makeRow({ key: 'a' })] }) })
 
     const { rerender } = render(
       <BatchPropertiesProvider blockIds={['A']} invalidationKey="v0">
@@ -299,13 +293,11 @@ describe('useBatchPropertyRows', () => {
 
   it('loading is true during initial fetch and after invalidate', async () => {
     let resolveFetch!: (val: Record<string, PropertyRow[]>) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_batch_properties') {
-        return new Promise<Record<string, PropertyRow[]>>((resolve) => {
+    stubInvoke({
+      get_batch_properties: () =>
+        new Promise<Record<string, PropertyRow[]>>((resolve) => {
           resolveFetch = resolve
-        })
-      }
-      return undefined
+        }),
     })
 
     const { result } = renderHook(
@@ -349,16 +341,15 @@ describe('useBatchPropertyRows', () => {
 
   describe('windowed scroll settle (#2701)', () => {
     function mockBatchInvoke() {
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'get_batch_properties') {
+      stubInvoke({
+        get_batch_properties: (args) => {
           const ids = (args as { blockIds: string[] }).blockIds
           const out: Record<string, PropertyRow[]> = {}
           for (const id of ids) {
             out[id] = [makeRow({ key: `k-${id}` })]
           }
           return out
-        }
-        return undefined
+        },
       })
     }
 
@@ -380,13 +371,11 @@ describe('useBatchPropertyRows', () => {
       // Second settle: [A, B] — only B is fetched; hold its promise open so
       // the fetch is still in flight when the window changes again.
       let resolveB: ((v: Record<string, PropertyRow[]>) => void) | undefined
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'get_batch_properties') {
-          return new Promise((res) => {
+      stubInvoke({
+        get_batch_properties: () =>
+          new Promise<Record<string, PropertyRow[]>>((res) => {
             resolveB = res
-          })
-        }
-        return strictInvokeFallback(cmd)
+          }),
       })
       rerender(
         <BatchPropertiesProvider blockIds={['A', 'B']}>

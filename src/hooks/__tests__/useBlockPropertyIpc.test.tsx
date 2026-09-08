@@ -14,11 +14,21 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { paginationLimit } from '@/lib/safe-limit'
 import { listPropertyDefs as listPropertyDefsIpc } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** `set_property` returns the row inside the `op_refs` envelope. */
+const setPropertyResult = withOps(makeBlockRow({ id: 'BLOCK_1' }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -30,17 +40,19 @@ afterEach(() => {
 
 describe('useBlockPropertyIpc.getProperties', () => {
   it('invokes get_properties with the block id and returns the rows', async () => {
-    const rows = [
+    // `PropertyRow` has no `block_id` (the caller passed it) and does carry
+    // `value_bool`; the previous literal had it exactly backwards.
+    const rows: PropertyRow[] = [
       {
-        block_id: 'BLOCK_1',
         key: 'effort',
         value_text: '3',
         value_num: null,
         value_date: null,
         value_ref: null,
+        value_bool: null,
       },
     ]
-    mockedInvoke.mockResolvedValueOnce(rows)
+    stubInvoke({ get_properties: () => rows })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -55,7 +67,7 @@ describe('useBlockPropertyIpc.getProperties', () => {
 
   it('propagates rejection from the IPC layer', async () => {
     const cause = new Error('IPC failure')
-    mockedInvoke.mockRejectedValueOnce(cause)
+    stubInvoke({ get_properties: () => Promise.reject(cause) })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -71,9 +83,11 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   it('invokes list_property_defs and returns the PageResponse envelope', async () => {
     // `list_property_defs` is now cursor-paginated, so the IPC
     // response shape is `{ items, next_cursor, has_more }`.
-    const defs = [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }]
-    const page = { items: defs, next_cursor: null, has_more: false }
-    mockedInvoke.mockResolvedValueOnce(page)
+    const defs: PropertyDefinition[] = [
+      { key: 'effort', value_type: 'number', options: null, created_at: '2026-01-01T00:00:00Z' },
+    ]
+    const page = { items: defs, next_cursor: null, has_more: false, total_count: null }
+    stubInvoke({ list_property_defs: () => page })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -97,11 +111,19 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   // surfaced verbatim so a consumer can detect there are more pages.
   it('surfaces a non-terminal page (has_more=true with next_cursor) verbatim', async () => {
     const page = {
-      items: [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }],
+      items: [
+        {
+          key: 'effort',
+          value_type: 'number',
+          options: null,
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
       next_cursor: 'cursor-page-2',
       has_more: true,
+      total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({ list_property_defs: () => page })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -122,24 +144,41 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   // (pattern: UnfinishedTasks.test.tsx).
   it('iterates through paginated results, chaining next_cursor until has_more=false', async () => {
     const pageA = {
-      items: [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }],
+      items: [
+        {
+          key: 'effort',
+          value_type: 'number',
+          options: null,
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
       next_cursor: 'cursor-2',
       has_more: true,
+      total_count: null,
     }
     const pageB = {
-      items: [{ key: 'status', value_type: 'select', label: 'Status', icon: null }],
+      items: [
+        {
+          key: 'status',
+          value_type: 'select',
+          options: '["todo","done"]',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+      ],
       next_cursor: null,
       has_more: false,
+      total_count: null,
     }
 
     // Cursor-conditional: the FIRST page is requested with `cursor: null`; the
     // SECOND with the `next_cursor` the first returned.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd !== 'list_property_defs') throw new Error(`unexpected IPC ${cmd}`)
-      const cursor = (args as { cursor: string | null }).cursor
-      if (cursor === null) return pageA
-      if (cursor === 'cursor-2') return pageB
-      throw new Error(`unexpected cursor ${String(cursor)}`)
+    stubInvoke({
+      list_property_defs: (args) => {
+        const cursor = (args as { cursor: string | null }).cursor
+        if (cursor === null) return pageA
+        if (cursor === 'cursor-2') return pageB
+        throw new Error(`unexpected cursor ${String(cursor)}`)
+      },
     })
 
     // Consumer-side iteration loop (what a paginating caller does).
@@ -165,7 +204,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
 
 describe('useBlockPropertyIpc.setProperty', () => {
   it('maps the param object to the positional bindings call (text)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_property: () => setPropertyResult })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -194,7 +233,7 @@ describe('useBlockPropertyIpc.setProperty', () => {
   })
 
   it('forwards null defaults for unset value fields', async () => {
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_property: () => setPropertyResult })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -221,7 +260,7 @@ describe('useBlockPropertyIpc.setProperty', () => {
 
   it('propagates rejection from the IPC layer', async () => {
     const cause = new Error('write failed')
-    mockedInvoke.mockRejectedValueOnce(cause)
+    stubInvoke({ set_property: () => Promise.reject(cause) })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
@@ -242,7 +281,7 @@ describe('useBlockPropertyIpc.setProperty', () => {
     // the field, so it reached the backend only through the wrapper's own
     // param type; deleting the wrapper dropped it, and `false` arriving as
     // `null` makes `validate_set_property` reject the add outright.
-    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+    stubInvoke({ set_property: () => setPropertyResult })
 
     const { result } = renderHook(() => useBlockPropertyIpc())
 
