@@ -787,8 +787,9 @@ describe('DaySection', () => {
       mockedInvoke.mockImplementation(
         mockInvokeCommands({
           delete_block: () => ({
+            op_refs: [],
             block_id: 'PAGE_1',
-            deleted_at: '2026-01-01T00:00:00Z',
+            deleted_at: 1767225600000,
             descendants_affected: 0,
             affected_page_ids: [],
           }),

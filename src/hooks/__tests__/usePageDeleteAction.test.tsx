@@ -6,7 +6,8 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { type InvokeHandler, mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import type { NameChange } from '@/lib/name-change-bus'
@@ -16,7 +17,7 @@ import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
-function stubInvoke(overrides: Readonly<Record<string, InvokeHandler>>): void {
+function stubInvoke(overrides: Readonly<TypedInvokeHandlers>): void {
   mockedInvoke.mockImplementation(mockInvokeCommands(overrides))
 }
 
@@ -89,12 +90,13 @@ describe('usePageDeleteAction', () => {
 
   it('uses the cached title on a successful delete and calls onDeleted once', async () => {
     stubInvoke({
-      delete_block: () => ({
-        block_id: 'PAGE_1',
-        deleted_at: '2026-01-01T00:00:00Z',
-        descendants_affected: 0,
-        affected_page_ids: [],
-      }),
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
     })
     useResolveStore.getState().set('PAGE_1', 'Cached title', false)
     const onDeleted = vi.fn()
@@ -120,12 +122,13 @@ describe('usePageDeleteAction', () => {
 
   it('falls back to the visible title, then Undo restores status and calls onRestored', async () => {
     stubInvoke({
-      delete_block: () => ({
-        block_id: 'PAGE_1',
-        deleted_at: '2026-01-01T00:00:00Z',
-        descendants_affected: 0,
-        affected_page_ids: [],
-      }),
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
     const onRestored = vi.fn()
@@ -159,12 +162,13 @@ describe('usePageDeleteAction', () => {
 
   it('keeps the page deleted and skips onRestored when Undo restore fails', async () => {
     stubInvoke({
-      delete_block: () => ({
-        block_id: 'PAGE_1',
-        deleted_at: '2026-01-01T00:00:00Z',
-        descendants_affected: 0,
-        affected_page_ids: [],
-      }),
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
       restore_blocks_by_ids: () => Promise.reject(new Error('restore failed')),
     })
     const onRestored = vi.fn()
@@ -213,11 +217,19 @@ describe('usePageDeleteAction', () => {
   })
 
   it('does not write an originating page into a newly active space', async () => {
-    let resolveDelete: ((value: unknown) => void) | undefined
+    let resolveDelete: (() => void) | undefined
     stubInvoke({
       delete_block: () =>
         new Promise((resolve) => {
-          resolveDelete = resolve
+          resolveDelete = () =>
+            resolve(
+              withOps({
+                block_id: 'PAGE_1',
+                deleted_at: 1767225600000,
+                descendants_affected: 0,
+                affected_page_ids: [],
+              }),
+            )
         }),
     })
     useResolveStore.getState().set('PAGE_1', 'Space A title', false)
@@ -228,12 +240,7 @@ describe('usePageDeleteAction', () => {
     await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
-      resolveDelete?.({
-        block_id: 'PAGE_1',
-        deleted_at: '2026-01-01T00:00:00Z',
-        descendants_affected: 0,
-        affected_page_ids: [],
-      })
+      resolveDelete?.()
     })
 
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
@@ -252,12 +259,13 @@ describe('usePageDeleteAction', () => {
   // after an Undo, keeps hiding a page that is back).
   it('broadcasts the delete — and the Undo — to the picker name caches', async () => {
     stubInvoke({
-      delete_block: () => ({
-        block_id: 'PAGE_1',
-        deleted_at: '2026-01-01T00:00:00Z',
-        descendants_affected: 0,
-        affected_page_ids: [],
-      }),
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
     const changes: NameChange[] = []

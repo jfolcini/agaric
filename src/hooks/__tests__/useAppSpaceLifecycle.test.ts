@@ -36,7 +36,7 @@ beforeEach(() => {
   // with empty results so the effect completes the way production does.
   vi.mocked(invoke).mockImplementation(
     mockInvokeCommands({
-      list_blocks: () => ({ items: [], has_more: false, next_cursor: null }),
+      list_blocks: () => ({ items: [], has_more: false, next_cursor: null, total_count: null }),
       list_all_tags_in_space: () => [],
     }),
   )

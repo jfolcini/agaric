@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makePage } from '@/__tests__/fixtures'
+import { asPageWithMetadataRow, emptyPage, makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
@@ -80,7 +80,7 @@ function stubPageList(items: ReturnType<typeof makePage>[]) {
     mockInvokeCommands(
       {
         list_pages_with_metadata: () => ({
-          items,
+          items: items.map(asPageWithMetadataRow),
           next_cursor: null,
           has_more: false,
           total_count: null,

@@ -25,6 +25,7 @@ import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
+import { withOps } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { HostRowAriaContext } from '@/components/editor/embed/host-row-aria'
@@ -116,7 +117,7 @@ function installBackend(): void {
         const b = graph.get(args['blockId'] as string)
         if (!b) throw new Error('block not found')
         b.content = args['toText'] as string
-        return { ...toRow(b), ops: [] }
+        return withOps(toRow(b))
       },
     }),
   )

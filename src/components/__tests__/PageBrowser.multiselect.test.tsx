@@ -24,9 +24,9 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makePage } from '@/__tests__/fixtures'
+import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
 import {
-  type InvokeHandler,
+  type TypedInvokeHandlers,
   mockInvokeCommands,
   pageRowInvokeFallback,
 } from '@/__tests__/helpers/invoke'
@@ -60,13 +60,13 @@ const PAGES = [
  * covered by a fallback resolving `undefined`, which `unwrap` reports as a
  * successful (empty) response.
  */
-function mockPageList(handlers: Readonly<Record<string, InvokeHandler>> = {}) {
+function mockPageList(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
     mockInvokeCommands(
       {
         resolve_page_by_alias: () => null,
         list_pages_with_metadata: () => ({
-          items: PAGES,
+          items: PAGES.map(asPageWithMetadataRow),
           next_cursor: null,
           has_more: false,
           total_count: PAGES.length,

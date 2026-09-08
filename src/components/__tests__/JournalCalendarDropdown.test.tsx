@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   computeSourceModifiers,
@@ -259,8 +260,8 @@ describe('JournalCalendarDropdown', () => {
       mockInvokeCommands({
         count_agenda_batch_by_source: () => ({}),
         list_journal_pages_in_range: () => [
-          { id: 'P1', content: '2025-06-10' },
-          { id: 'P2', content: '2025-06-20' },
+          makePage({ id: 'P1', content: '2025-06-10' }),
+          makePage({ id: 'P2', content: '2025-06-20' }),
         ],
       }),
     )
@@ -369,7 +370,7 @@ describe('JournalCalendarDropdown', () => {
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
         count_agenda_batch_by_source: () => ({}),
-        list_journal_pages_in_range: () => [{ id: 'P1', content: '2025-06-10' }],
+        list_journal_pages_in_range: () => [makePage({ id: 'P1', content: '2025-06-10' })],
       }),
     )
 

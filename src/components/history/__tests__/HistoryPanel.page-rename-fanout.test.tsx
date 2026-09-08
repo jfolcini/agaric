@@ -25,7 +25,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeHistoryEntry } from '@/__tests__/fixtures'
+import { makeBlockRow, makeHistoryEntry, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
@@ -95,13 +95,9 @@ describe('HistoryPanel page-title revert fans out through renamePage (#4056)', (
         has_more: false,
         total_count: null,
       }),
-      get_block: () => ({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
-      edit_block: () => ({
-        id: 'PAGE001',
-        block_type: 'page',
-        content: 'Reverted Title',
-        op_refs: [],
-      }),
+      get_block: () => makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
+      edit_block: () =>
+        withOps(makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Reverted Title' })),
     })
     const { invoke } = await import('@tauri-apps/api/core')
     vi.mocked(invoke).mockImplementation(mockedInvoke)
@@ -141,13 +137,9 @@ describe('HistoryPanel page-title revert fans out through renamePage (#4056)', (
         has_more: false,
         total_count: null,
       }),
-      get_block: () => ({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
-      edit_block: () => ({
-        id: 'PAGE001',
-        block_type: 'page',
-        content: 'Reverted Title',
-        op_refs: [],
-      }),
+      get_block: () => makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
+      edit_block: () =>
+        withOps(makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Reverted Title' })),
     })
     const { invoke } = await import('@tauri-apps/api/core')
     vi.mocked(invoke).mockImplementation(mockedInvoke)
@@ -206,13 +198,9 @@ describe('HistoryPanel page-title revert fans out through renamePage (#4056)', (
         has_more: false,
         total_count: null,
       }),
-      get_block: () => ({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
-      edit_block: () => ({
-        id: 'PAGE001',
-        block_type: 'page',
-        content: 'Reverted Title',
-        op_refs: [],
-      }),
+      get_block: () => makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Old Title' }),
+      edit_block: () =>
+        withOps(makeBlockRow({ id: 'PAGE001', block_type: 'page', content: 'Reverted Title' })),
     })
     const { invoke } = await import('@tauri-apps/api/core')
     vi.mocked(invoke).mockImplementation(mockedInvoke)

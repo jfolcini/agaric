@@ -43,6 +43,8 @@
  * `afterEach` reads.
  */
 
+import type { commands } from '@/lib/bindings'
+
 const RECORD_KEY = '__agaricUnstubbedInvokes__'
 
 interface StrictInvokeGlobal {
@@ -102,13 +104,69 @@ export function takeUnstubbedInvokes(): string[] {
  */
 export function pageRowInvokeFallback(command: string): Promise<unknown> {
   if (command === 'load_page_subtree') {
-    return Promise.resolve({ blocks: [], truncated: false, total: 0 })
+    // Annotated, not merely shaped right: an untyped literal here is the exact
+    // drift this module exists to type.
+    const empty: CommandReturns['load_page_subtree'] = { blocks: [], truncated: false, total: 0 }
+    return Promise.resolve(empty)
   }
   return strictInvokeFallback(command)
 }
 
+/**
+ * #4668 — the command → raw-invoke-return map, derived from the GENERATED
+ * bindings so it cannot drift from the Rust surface.
+ *
+ * `commands.foo()` returns `typedError<T, AppError>(__TAURI_INVOKE(...))`, so
+ * the value `invoke` itself resolves is the `T` — the `data` arm, before
+ * `typedError` wraps it. That `T` is what a stub here must produce.
+ *
+ * The generated object is camelCase-keyed and `invoke` is called with the
+ * snake_case IPC name, so the key is converted at the type level. A digit is
+ * its own `Lowercase`, which keeps `mcpRwSetEnabled` → `mcp_rw_set_enabled`
+ * right rather than splitting on the digits.
+ */
+type CamelToSnake<S extends string> = S extends `${infer C}${infer R}`
+  ? C extends Lowercase<C>
+    ? `${C}${CamelToSnake<R>}`
+    : `_${Lowercase<C>}${CamelToSnake<R>}`
+  : S
+
+type GeneratedCommands = typeof commands
+
+/** The `data` arm of a generated command's `Result`, i.e. what `invoke` resolves. */
+type InvokeReturn<K extends keyof GeneratedCommands> = GeneratedCommands[K] extends (
+  ...args: never[]
+) => Promise<infer R>
+  ? Extract<R, { status: 'ok' }> extends { data: infer D }
+    ? D
+    : never
+  : never
+
+/** Every IPC name the app can invoke, mapped to the value it resolves with. */
+export type CommandReturns = {
+  [K in keyof GeneratedCommands as CamelToSnake<K & string>]: InvokeReturn<K>
+}
+
+/**
+ * A handler for one command, constrained to that command's real return type.
+ *
+ * `undefined` stays allowed for every command: the doc above explains that a
+ * `()`-returning Rust command legitimately resolves with no payload, and the
+ * no-handler case is distinguished by the handler's EXISTENCE rather than by
+ * its value. That is a deliberate, narrow hole — it lets a stub under-return,
+ * but not return the wrong SHAPE, which is the drift #4668 is about.
+ */
+export type TypedInvokeHandler<K extends keyof CommandReturns> = (
+  args: Record<string, unknown>,
+) => CommandReturns[K] | Promise<CommandReturns[K]> | undefined
+
+/** The handler map `mockInvokeCommands` accepts. */
+export type TypedInvokeHandlers = {
+  [K in keyof CommandReturns]?: TypedInvokeHandler<K>
+}
+
 /** Handler for one command: receives the command's argument object. */
-export type InvokeHandler = (args: Record<string, unknown>) => unknown
+type InvokeHandler = (args: Record<string, unknown>) => unknown
 
 /**
  * Install a **command-keyed** `invoke` implementation.
@@ -131,14 +189,14 @@ export type InvokeHandler = (args: Record<string, unknown>) => unknown
  *
  * ```ts
  * mockInvokeCommands({
- *   list_pages_with_metadata: () => ({ items: [page], has_more: false }),
+ *   list_pages_with_metadata: () => ({ items: [page], next_cursor: null, has_more: false, total_count: null }),
  *   delete_block: () => Promise.reject(new Error('Delete failed')),
- *   record_page_visit: () => undefined, // returns () in Rust
+ *   cancel_sync: () => undefined, // returns () in Rust
  * })
  * ```
  */
 export function mockInvokeCommands(
-  handlers: Readonly<Record<string, InvokeHandler>>,
+  handlers: Readonly<TypedInvokeHandlers>,
   options: {
     /**
      * What an unlisted command does. Defaults to {@link strictInvokeFallback};
@@ -154,7 +212,9 @@ export function mockInvokeCommands(
   // Tauri's `InvokeArgs` also admits array/buffer payloads; handlers receive
   // the object form, which is what every command in this app sends.
   return (command: string, args?: unknown) => {
-    const handler = Object.hasOwn(handlers, command) ? handlers[command] : undefined
+    const handler = Object.hasOwn(handlers, command)
+      ? (handlers as Readonly<Record<string, InvokeHandler>>)[command]
+      : undefined
     if (!handler) return fallback(command)
     // A handler that throws synchronously should behave like a rejected
     // IPC call, not like a broken mock.
