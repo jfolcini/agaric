@@ -26,6 +26,7 @@ import {
   renumberLiveSiblings,
   resolveUndoTarget,
   restoreCohort,
+  reverseOpTypeFor,
   sortOpLogNewestFirst,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -41,14 +42,12 @@ import {
 
 // Mirror `undo_page_group_inner`'s group sizing so browser-mode FE
 // tests observe the same group the real backend reverts. Walks the in-memory `opLog` newest-first,
-// filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
+// filtering out `is_undo` ops (#4868), seeds at index `depth`,
 // and counts consecutive same-device + within-window ops.
 function findUndoGroupSize(depth: number, windowMs: number): number {
   // Newest-first ordering on (created_at DESC, seq DESC) — see
   // `sortOpLogNewestFirst` (shared.ts).
-  const undoableOps = sortOpLogNewestFirst(
-    opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
-  )
+  const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
 
   if (depth < 0 || depth >= undoableOps.length) return 0
 
@@ -79,12 +78,12 @@ const GLOBAL_HISTORY_PAGE_ID = '__all__'
  * (migration 0030). The mock has no such column, so it reads the same value
  * back out of the JSON payload — which is where the backend put it.
  *
- * `null` for the mock's synthetic `undo_*` / `redo_*` / `revert_*` rows, whose
- * payload wraps the target op instead of naming a block. That is NOT what the
- * backend stores: its undo appends a real reverse op, which carries a
- * `block_id` like any other. So the two branches that require one — the
- * per-page scope and `get_block_history` — drop undo rows the backend lists.
- * The fix belongs in the mock's undo WRITE path, not in this reader.
+ * #4868 — the undo, redo and revert arms now stamp a `block_id` of their own,
+ * so this returns one for them too. It used to return `null`: their payload
+ * only wrapped the target op, and the two branches that require a block id —
+ * the per-page scope and `get_block_history` — therefore dropped every undo
+ * row the backend lists. The fix was in the write path, which is where it
+ * landed; this reader was always right.
  */
 function opBlockId(entry: MockOpLogEntry): string | null {
   try {
@@ -106,12 +105,11 @@ function matchesOpType(entry: MockOpLogEntry, opTypeFilter: string | null): bool
  * The `__all__` branch's space predicate: the op's block belongs to the
  * requested space, resolved through its owning page's `space` property.
  *
- * Pre-existing and deliberately more permissive than the backend in one place
- * (a row whose payload names no block is KEPT, where `ol.block_id IN (…)` drops
- * it): the mock's `undo_*` rows are its own invention — the backend appends a
- * real reverse op carrying a `block_id` — so dropping them would empty the
- * History view of every undo in browser mode, which is not what the backend
- * does either.
+ * More permissive than the backend in one place — a row whose payload names no
+ * block is KEPT, where `ol.block_id IN (…)` drops it. That allowance existed
+ * for the mock's block-less undo rows; #4868 gave those a real `block_id`, so
+ * what it now covers is only a seeded or synthetic row that genuinely names no
+ * block.
  */
 function inSpace(entry: MockOpLogEntry, spaceId: string | null): boolean {
   if (spaceId === null) return true
@@ -260,8 +258,8 @@ export const historyHandlers = {
   // consecutive same-device, within-window group with `findUndoGroupSize`,
   // then apply the per-op reverse newest-first, returning
   // one UndoResult per reverted op. Reuses the sibling handlers so the reverse
-  // effects stay identical to the single-op path. Reverse ops carry an `undo_`
-  // prefix and are filtered out of the undoable set, so `depth + i` walks the
+  // effects stay identical to the single-op path. Reverse ops carry `is_undo`
+  // (#4868) and are filtered out of the undoable set, so `depth + i` walks the
   // same ops the group spans across the loop.
   undo_page_group: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
@@ -298,7 +296,15 @@ export const historyHandlers = {
 
       applyRevertForOp(target, blocks, { properties, blockTags })
 
-      const newOp = pushOp(`revert_${target.op_type}`, { reverted: target })
+      // #4868 — the genuine reverse type flagged `is_undo`, matching
+      // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`, plus a `block_id`
+      // for the history readers.
+      const revertedPayload = JSON.parse(target.payload) as Record<string, unknown>
+      const newOp = pushOp(
+        reverseOpTypeFor(target.op_type),
+        { reverted: target, block_id: revertedPayload['block_id'] },
+        true,
+      )
       results.push(newOp)
     }
 
@@ -314,16 +320,27 @@ export const historyHandlers = {
     // target-selection query (`src-tauri/src/commands/history.rs:1574`) — see
     // `sortOpLogNewestFirst` (shared.ts). `undo_depth` then indexes directly
     // into the sorted (newest-first) array: depth 0 is the newest op.
-    const undoableOps = sortOpLogNewestFirst(
-      opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
-    )
+    // #4868 — `is_undo`, not an op_type prefix. `undo_page_op_inner`'s
+    // `AND ol.is_undo = 0` admits a REDO op (`src-tauri/src/commands/history.rs:2401` keeps
+    // it `is_undo = 0`, "its effect is forward-equivalent"), so undo-after-redo
+    // targets the redo. The prefix filter excluded it and targeted the op
+    // BEFORE it instead.
+    const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
     // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
     // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
     if (undoDepth < 0 || undoDepth >= undoableOps.length) {
       throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
     }
-    const target = undoableOps[undoDepth]
-    if (!target) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
+    const picked = undoableOps[undoDepth]
+    if (!picked) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
+
+    // #4868 — a REDO op is undoable (it is `is_undo = 0`), and undoing it
+    // means reversing the op it re-applied. The backend gets this for free:
+    // its redo row IS a real op carrying its own payload. The mock's redo row
+    // carries a bookkeeping stash instead, so resolve through it — the same
+    // hop `resolveUndoTarget` makes for the ref-addressed path.
+    const reApplied = (JSON.parse(picked.payload) as { re_applied?: MockOpLogEntry }).re_applied
+    const target = reApplied ?? picked
 
     const payload = JSON.parse(target.payload) as Record<string, unknown>
     let reverseOpType = 'edit_block'
@@ -392,7 +409,12 @@ export const historyHandlers = {
       reverseOpType = 'delete_block'
     }
 
-    const newOp = pushOp(`undo_${reverseOpType}`, { reversed: target })
+    // #4868 — the GENUINE reverse op type with `is_undo`, the way the backend
+    // appends it, and a `block_id` so `opBlockId` can find one: without it the
+    // per-page scope and `get_block_history` drop every undo the backend lists.
+    // `reversed` rides along for `redo_page_op`'s lookup; payload is not
+    // compared cross-stack.
+    const newOp = pushOp(reverseOpType, { reversed: target, block_id: payload['block_id'] }, true)
     return {
       reversed_op: { device_id: target.device_id, seq: target.seq },
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
@@ -409,14 +431,14 @@ export const historyHandlers = {
     // previous undo appended (the FE stores each undo's `new_op_ref` on its
     // redo stack), and redo re-applies the ORIGINAL op that undo reversed.
     // A ref to a forward (non-undo) op is REJECTED, mirroring the backend's
-    // #659 provenance check (`op_log.is_undo`; the mock's equivalent marker
-    // is the `undo_` op_type prefix stamped by the undo handlers).
+    // #659 provenance check on `op_log.is_undo` — the same column since #4868,
+    // rather than the op_type prefix that used to stand in for it.
     const undoOp: MockOpLogEntry | undefined = opLog.find((o) => o.seq === undoSeq)
     // #2463 — mirrors `redo_page_op_inner`'s two rejections
     // (`src-tauri/src/commands/history.rs`): a missing op_log row is
     // `NotFound`, a non-undo provenance ref is `Validation` (#659).
     if (!undoOp) throw notFoundRejection(`op_log (${a['undoDeviceId'] as string}, ${undoSeq})`)
-    if (!undoOp.op_type.startsWith('undo_')) {
+    if (!undoOp.is_undo) {
       throw validationRejection(
         `redo target (${undoOp.device_id}, ${undoOp.seq}) is a '${undoOp.op_type}' op that was ` +
           'not produced by undo — refusing to reverse a forward op via redo (#659)',
@@ -487,7 +509,14 @@ export const historyHandlers = {
       redoOpType = 'restore_block'
     }
 
-    const newOp = pushOp(`redo_${redoOpType}`, { re_applied: originalOp })
+    // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
+    // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable. The genuine op
+    // type and a `block_id`, for the same reasons as the undo arm.
+    const newOp = pushOp(
+      redoOpType,
+      { re_applied: originalOp, block_id: payload['block_id'] },
+      false,
+    )
     return {
       reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },

@@ -18,6 +18,7 @@ function makeOp(
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: '2025-01-01T00:00:00.000Z',
+    is_undo: false,
     ...overrides,
   }
 }

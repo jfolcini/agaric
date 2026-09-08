@@ -92,6 +92,18 @@ export interface MockOpLogEntry {
   op_type: string
   payload: string
   created_at: string
+  /**
+   * `op_log.is_undo` (migration 0090) — provenance, NOT a naming convention.
+   *
+   * #4868: this used to be encoded in `op_type` as an `undo_` / `redo_` /
+   * `revert_` prefix, which `undo_page_op_inner`'s own doc comment forbids:
+   * a reverse op "uses a plain `op_type` (e.g. `edit_block`), NOT an
+   * `undo_`/`redo_` prefix, so the filter must key on the `is_undo` flag".
+   * A redo op is forward-equivalent and keeps `is_undo = 0`
+   * (`src-tauri/src/commands/history.rs:2401`), so it stays undoable — which the prefix
+   * filter got backwards.
+   */
+  is_undo: boolean
 }
 
 export const opLog: MockOpLogEntry[] = []
@@ -106,8 +118,12 @@ let opSeqCounter = 0
  * ones. Delegating makes that impossible — there is exactly one entry shape,
  * defined once.
  */
-export function pushOp(opType: string, payload: Record<string, unknown>): MockOpLogEntry {
-  return pushOpAt(opType, payload, new Date().toISOString())
+export function pushOp(
+  opType: string,
+  payload: Record<string, unknown>,
+  isUndo = false,
+): MockOpLogEntry {
+  return pushOpAt(opType, payload, new Date().toISOString(), isUndo)
 }
 
 /**
@@ -136,6 +152,7 @@ export function pushOpAt(
   opType: string,
   payload: Record<string, unknown>,
   createdAt: string,
+  isUndo = false,
 ): MockOpLogEntry {
   opSeqCounter += 1
   const entry: MockOpLogEntry = {
@@ -144,6 +161,7 @@ export function pushOpAt(
     op_type: opType,
     payload: JSON.stringify(payload),
     created_at: createdAt,
+    is_undo: isUndo,
   }
   opLog.push(entry)
   return entry
