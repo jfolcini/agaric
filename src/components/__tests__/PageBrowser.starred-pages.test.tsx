@@ -8,8 +8,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
-import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
+import { makePage } from '@/__tests__/fixtures'
+import { pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -76,20 +76,7 @@ const mockedInvoke = vi.mocked(invoke)
  * ran against rows the component had already been told, silently, were gone.
  */
 function stubPageList(items: ReturnType<typeof makePage>[]) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        list_pages_with_metadata: () => ({
-          items: items.map(asPageWithMetadataRow),
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
-        resolve_page_by_alias: () => null,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
+  stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => pageList(items) })
 }
 
 beforeEach(() => {
@@ -118,7 +105,12 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubPageList([])
+  // `mockReset`, not `clearAllMocks`: clearing wipes the call record and
+  // leaves the previous test's `mockImplementation` installed, so a test that
+  // forgot its own stub would silently render the last test's page list.
+  // Reset restores the `vi.fn(strictInvokeFallback)` base, which fails by name
+  // (#4668).
+  mockedInvoke.mockReset()
 })
 
 describe('PageBrowser', () => {

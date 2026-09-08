@@ -8,16 +8,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  type TypedInvokeHandlers,
-  mockInvokeCommands,
-  pageRowInvokeFallback,
-} from '@/__tests__/helpers/invoke'
+import { makePage } from '@/__tests__/fixtures'
+import { pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -67,46 +61,6 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
-type PageList = CommandReturns['list_pages_with_metadata']
-
-/**
- * The `list_pages_with_metadata` envelope for a set of pages.
- *
- * #4668 — this file used to hand the command `BlockRow`s. It returns
- * `PageWithMetadataRow`, which specta renames to camelCase and which carries
- * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
- * `childBlockCount`, `flags`) no `BlockRow` has.
- */
-function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
-  return {
-    items: items.map(asPageWithMetadataRow),
-    next_cursor: null,
-    has_more: false,
-    total_count: null,
-    ...rest,
-  }
-}
-
-/**
- * Install a COMMAND-KEYED `invoke` implementation for one test.
- *
- * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
- * consumed in call order regardless of command, so any speculative fetch
- * could take the slot meant for the page query, and a re-fetch after the
- * queue drained fell through to a fallback resolving `undefined`.
- */
-function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        resolve_page_by_alias: () => null,
-        ...handlers,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -133,12 +87,12 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubInvoke()
+  stubPageRowInvoke(mockedInvoke)
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
     })
@@ -154,7 +108,7 @@ describe('PageBrowser', () => {
   })
   describe('namespaced pages tree view', () => {
     it('renders flat list when no pages have namespaces', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'First page' }),
@@ -176,7 +130,7 @@ describe('PageBrowser', () => {
     })
 
     it('renders tree structure for namespaced pages', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work/project-a' }),
@@ -199,7 +153,7 @@ describe('PageBrowser', () => {
 
     it('namespace folders are collapsible', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work/project-a' }),
@@ -235,7 +189,7 @@ describe('PageBrowser', () => {
     it('fires onPageSelect with full path when a tree leaf is clicked', async () => {
       const user = userEvent.setup()
       const onPageSelect = vi.fn()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'work/project-a' })]),
       })
@@ -251,7 +205,7 @@ describe('PageBrowser', () => {
     it('renders hybrid node (page with children) as navigable folder', async () => {
       const user = userEvent.setup()
       const onPageSelect = vi.fn()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work' }),
@@ -275,7 +229,7 @@ describe('PageBrowser', () => {
 
     it('hybrid node can be collapsed to hide children', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work' }),
@@ -309,7 +263,7 @@ describe('PageBrowser', () => {
 
     it('tree leaf items have a delete button that triggers confirmation dialog', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work/project-a' }),
@@ -338,7 +292,7 @@ describe('PageBrowser', () => {
     // jsdom's autoFocus + Radix focus-trap timing can lag the Enter event.
     it('reflex Enter on delete dialog does NOT call delete_block', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'work/project-a' })]),
       })
@@ -369,7 +323,7 @@ describe('PageBrowser', () => {
     })
 
     it('tree leaf items render with a file icon', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'work/project-a' })]),
       })

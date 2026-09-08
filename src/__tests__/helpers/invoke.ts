@@ -43,7 +43,11 @@
  * `afterEach` reads.
  */
 
-import type { commands } from '@/lib/bindings'
+import type { invoke } from '@tauri-apps/api/core'
+import type { MockedFunction } from 'vitest'
+
+import { asPageWithMetadataRow } from '@/__tests__/fixtures'
+import type { BlockRow, commands } from '@/lib/bindings'
 
 const RECORD_KEY = '__agaricUnstubbedInvokes__'
 
@@ -224,4 +228,58 @@ export function mockInvokeCommands(
       return Promise.reject(err)
     }
   }
+}
+
+/** The `list_pages_with_metadata` envelope, as `invoke` resolves it. */
+export type PageListEnvelope = CommandReturns['list_pages_with_metadata']
+
+/**
+ * The `list_pages_with_metadata` envelope for a set of pages.
+ *
+ * #4668 — the PageBrowser suites used to hand the command `BlockRow`s. It
+ * returns `PageWithMetadataRow`, which specta renames to camelCase and which
+ * carries four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
+ * `childBlockCount`, `flags`) no `BlockRow` has.
+ */
+export function pageList(
+  items: BlockRow[],
+  rest: Partial<PageListEnvelope> = {},
+): PageListEnvelope {
+  return {
+    items: items.map(asPageWithMetadataRow),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+    ...rest,
+  }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one page-row test.
+ *
+ * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
+ * consumed in call order regardless of command, so any speculative fetch could
+ * take the slot meant for the page query, and a re-fetch after the queue
+ * drained fell through to a fallback resolving `undefined`.
+ *
+ * The caller passes its own `vi.mocked(invoke)`, and the two imports this file
+ * needs to name it are `import type`. A VALUE import of `@tauri-apps/api/core`
+ * here deadlocks every test in the suite: `test-setup.ts` imports this module,
+ * and its `vi.mock('@tauri-apps/api/core', …)` factory is async so it can
+ * `await import` this module back — so a static import of the mocked module
+ * closes a cycle neither side can settle, and vitest hangs before it collects.
+ */
+export function stubPageRowInvoke(
+  mockedInvoke: MockedFunction<typeof invoke>,
+  handlers: Readonly<TypedInvokeHandlers> = {},
+): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
 }

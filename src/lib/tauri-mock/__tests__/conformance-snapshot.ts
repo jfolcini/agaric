@@ -192,21 +192,23 @@ export function buildSnapshot(
   // to the source's page_id.
   //
   // The target must still EXIST. `reindex_block_links_conn`'s `WHERE EXISTS`
-  // guard is INSERT-time only, so it says a dangling or already-tombstoned
-  // target is never LINKED — not that an existing row is unlinked when its
-  // target is deleted later. A dangling token stays out for good; a purge takes
-  // the row with it (`ON DELETE CASCADE`, migration 0061) and the block out of
-  // `state.blocks`; only a soft delete leaves both behind.
+  // guard is INSERT-time only: an existing row is not unlinked when its target
+  // is deleted later. A purge takes the row with it (`ON DELETE CASCADE`,
+  // migration 0061) and the block out of `state.blocks`; a soft delete leaves
+  // both behind. The backend also declines the INSERT for a target that was
+  // ALREADY tombstoned at reindex time, which this existence test does not
+  // model — a fixture that deletes X and then writes `[[X]]` gets a mock edge
+  // the backend would not have. That fixture simply goes red, so tracking
+  // tombstone order here would buy nothing.
   //
   // #3332 — the derivation is `deriveLinkEdges`, the function the MOCK runs,
   // not a private copy of its regex. The Rust side of this comparison reads the
   // real materialized `block_links` table, so a private copy here would have
   // let the two `page_links` snapshots agree while every live link handler
   // served different semantics.
-  const knownIds = new Set([...state.blocks.values()].map((b) => b['id'] as string))
   const linkRows: Array<Record<string, unknown>> = []
   for (const edge of deriveLinkEdges(state.blocks)) {
-    if (!knownIds.has(edge.targetId)) continue
+    if (!state.blocks.has(edge.targetId)) continue
     linkRows.push({
       source_id: relabel(edge.sourceId),
       target_id: relabel(edge.targetId),

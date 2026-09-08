@@ -8,17 +8,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, emptyPage, makePage } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  type TypedInvokeHandlers,
-  mockInvokeCommands,
-  pageRowInvokeFallback,
-} from '@/__tests__/helpers/invoke'
+import { emptyPage, makePage } from '@/__tests__/fixtures'
+import { type CommandReturns, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
-import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -70,44 +64,6 @@ const mockedInvoke = vi.mocked(invoke)
 
 type PageList = CommandReturns['list_pages_with_metadata']
 
-/**
- * The `list_pages_with_metadata` envelope for a set of pages.
- *
- * #4668 — this file used to hand the command `BlockRow`s. It returns
- * `PageWithMetadataRow`, which specta renames to camelCase and which carries
- * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
- * `childBlockCount`, `flags`) no `BlockRow` has.
- */
-function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
-  return {
-    items: items.map(asPageWithMetadataRow),
-    next_cursor: null,
-    has_more: false,
-    total_count: null,
-    ...rest,
-  }
-}
-
-/**
- * Install a COMMAND-KEYED `invoke` implementation for one test.
- *
- * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
- * consumed in call order regardless of command, so any speculative fetch
- * could take the slot meant for the page query, and a re-fetch after the
- * queue drained fell through to a fallback resolving `undefined`.
- */
-function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        resolve_page_by_alias: () => null,
-        ...handlers,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -134,14 +90,14 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubInvoke()
+  stubPageRowInvoke(mockedInvoke)
 })
 
 describe('PageBrowser', () => {
   describe('search/filter', () => {
     it('search filters pages and shows only matches', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Meeting notes' }),
@@ -166,7 +122,7 @@ describe('PageBrowser', () => {
 
     it('search filters namespaced pages and expands matching ancestors', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'work/project-a' }),
@@ -194,7 +150,7 @@ describe('PageBrowser', () => {
 
     it('search with no matches shows empty state', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'Meeting notes' })]),
       })
@@ -212,7 +168,7 @@ describe('PageBrowser', () => {
 
     it('search is case-insensitive', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'Meeting Notes' })]),
       })
@@ -233,7 +189,7 @@ describe('PageBrowser', () => {
 
     it('search matches Turkish İstanbul when query is lowercase istanbul', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'İstanbul' }),
@@ -253,7 +209,7 @@ describe('PageBrowser', () => {
 
     it('search matches German Straße when query is ASCII strasse', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Straße' }),
@@ -273,7 +229,7 @@ describe('PageBrowser', () => {
 
     it('search matches accented café when query omits the accent', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'café meeting' }),
@@ -293,7 +249,7 @@ describe('PageBrowser', () => {
 
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Meeting notes' }),
@@ -334,7 +290,7 @@ describe('PageBrowser', () => {
       let resolveApp!: (v: AliasMatch) => void
       let resolveBanana!: (v: AliasMatch) => void
       const aliasCalls: string[] = []
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P_APPLE', content: 'Apple' }),
@@ -402,7 +358,7 @@ describe('PageBrowser', () => {
   describe('SearchInput clear button', () => {
     it('new-page input shows clear button when non-empty and clearing resets name + disables submit', async () => {
       const user = userEvent.setup()
-      stubInvoke({ list_pages_with_metadata: () => emptyPage })
+      stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => emptyPage })
 
       render(<PageBrowser />)
 
@@ -432,7 +388,7 @@ describe('PageBrowser', () => {
 
     it('filter-search input shows clear button when non-empty and clearing restores full list', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Meeting notes' }),
@@ -465,7 +421,7 @@ describe('PageBrowser', () => {
 
     it('has no a11y violations when a clear button is visible on the filter input', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'Meeting notes' })]),
       })
@@ -533,7 +489,7 @@ describe('PageBrowser', () => {
       // unfiltered returns both pages; with a Stub chip the server reply
       // narrows to the stub page only. (The full filter→SQL semantics are
       // covered backend-side in the Rust suite.)
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: (args) => {
           const filters =
             (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []
@@ -583,7 +539,7 @@ describe('PageBrowser', () => {
       // NOT the "No pages yet / Create your first page" empty-space state
       // (which falsely tells a user with a full graph it's empty).
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: (args) => {
           const filters =
             (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []
@@ -620,7 +576,7 @@ describe('PageBrowser', () => {
 
     it('announces filter add and remove in a polite live region (P1-F1)', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: (args) => {
           const filters =
             (args['filter'] as { filters?: Array<{ type?: string }> } | undefined)?.filters ?? []

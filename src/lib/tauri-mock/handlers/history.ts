@@ -80,9 +80,11 @@ const GLOBAL_HISTORY_PAGE_ID = '__all__'
  * back out of the JSON payload — which is where the backend put it.
  *
  * `null` for the mock's synthetic `undo_*` / `redo_*` / `revert_*` rows, whose
- * payload wraps the target op instead of naming a block. That mirrors the
- * backend's NULL `block_id` closely enough for the predicates here: a row with
- * no block id can satisfy no `block_id IN (…)` on either stack.
+ * payload wraps the target op instead of naming a block. That is NOT what the
+ * backend stores: its undo appends a real reverse op, which carries a
+ * `block_id` like any other. So the two branches that require one — the
+ * per-page scope and `get_block_history` — drop undo rows the backend lists.
+ * The fix belongs in the mock's undo WRITE path, not in this reader.
  */
 function opBlockId(entry: MockOpLogEntry): string | null {
   try {
@@ -234,13 +236,14 @@ export const historyHandlers = {
     // only one of them: a real `page_id` scopes through the recursive
     // `page_blocks` CTE and IGNORES the space (a page is itself space-bound),
     // while `__all__` scopes through `blocks.space_id`.
+    const subtree = pageId === GLOBAL_HISTORY_PAGE_ID ? null : pageSubtreeIds(pageId)
     const inScope =
-      pageId === GLOBAL_HISTORY_PAGE_ID
+      subtree === null
         ? (o: MockOpLogEntry) => inSpace(o, spaceId)
-        : ((subtree) => (o: MockOpLogEntry) => {
+        : (o: MockOpLogEntry) => {
             const id = opBlockId(o)
             return id !== null && subtree.has(id)
-          })(pageSubtreeIds(pageId))
+          }
     const rows = historyEntries((o) => inScope(o) && matchesOpType(o, opTypeFilter))
     return paginateKeyset(
       rows,

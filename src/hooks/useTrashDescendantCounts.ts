@@ -34,7 +34,7 @@ export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, num
       .then(unwrap)
       .then((next) => {
         if (cancelled) return
-        setCounts(next ?? {})
+        setCounts(next)
       })
       .catch((err) => {
         logger.warn('TrashView', 'descendant count resolution failed', undefined, err)
