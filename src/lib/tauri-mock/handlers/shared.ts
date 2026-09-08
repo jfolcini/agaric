@@ -1661,10 +1661,8 @@ export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, un
   }
 }
 
-/** `pagination::MAX_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:55`) — the
- *  upper end of the range `PageRequest::new` accepts, checked BEFORE
- *  {@link SEARCH_MAX_RESULTS} and in a different function, hence the two
- *  distinct refusal messages in {@link searchHandlers.search_blocks}. */
+/** `pagination::MAX_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:55`) —
+ *  the upper end of the range `PageRequest::new` accepts. */
 const PAGINATION_MAX_PAGE_SIZE = 200
 
 /** `pagination::DEFAULT_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:52`) — what an OMITTED `limit`

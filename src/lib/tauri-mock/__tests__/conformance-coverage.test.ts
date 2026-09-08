@@ -436,11 +436,13 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // projection EXTENSION before a step can say anything — the same blocker
   // `count_backlinks_batch` above carries, not a fixture nobody wrote.
   list_backlinks_grouped:
-    'answers under `groups[].blocks` (agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse)); the harness ' +
+    'answers under `groups[].blocks` — ' +
+    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); the harness ' +
     "grouped projector binds `run_advanced_query`'s `key`/`count`/`members` bucket, so " +
     'binding this one needs a projection extension, not just a query step',
   list_unlinked_references:
-    'answers under `groups[].blocks` (agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse)); same projection ' +
+    'answers under `groups[].blocks` — ' +
+    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); same projection ' +
     'extension `list_backlinks_grouped` needs — the FTS scan behind it is not the blocker',
   // `search_blocks_partitioned` is NOT waived: its two-partition envelope is
   // bound by the `partitions` row location (#3823) and driven by
