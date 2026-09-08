@@ -1,5 +1,5 @@
 {
-  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; and (b) nothing else — the `b.deleted_at IS NULL` join filter was the other gap and #4848 closed it. B8 is the state it needs: a block that links to B1 and is then soft-deleted. `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`), so its `block_links` row survives the tombstone by design — it is in `page_links` below — and every reader drops it at query time instead. `backlinks_all_in_source_id_order` is where that is asserted: B8 sorts last, so a `get_backlinks` that skipped the join filter would serve it as a fourth source. The mock used to skip deleted sources inside `deriveLinkEdges`, which made the SNAPSHOT leg red on this exact state; it now mirrors the table, with the count-time `src.deleted_at IS NULL` moved to `pageLinkStats` (`handlers/shared.ts`), the one place both counting consumers reach it through.",
+  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; and (b) nothing else — the `b.deleted_at IS NULL` join filter was the other gap and #4848 closed it. B8 is the state it needs: a block that links to B1 and is then soft-deleted. `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`), so its `block_links` row survives the tombstone by design — it is in `page_links` below — and every reader drops it at query time instead. `backlinks_all_in_source_id_order` is where that is asserted: B8 sorts last, so a `get_backlinks` that skipped the join filter would serve it as a fourth source. The mock used to skip deleted sources inside `deriveLinkEdges`, which made the SNAPSHOT leg red on this exact state; it now mirrors the table, with the count-time `src.deleted_at IS NULL` moved to `pageLinkStats` (`handlers/shared.ts`), the one place both counting consumers reach it through. #4853 is the mirror image, and B9/B10 are the state IT needs: B10 links to page B9, then B9 — the TARGET — is soft-deleted. `reindex_block_links_conn` applies `tgt.deleted_at IS NULL` only inside its INSERT (`agaric-store/src/cache/block_links.rs`), and its only DELETE is keyed by `source_id` and the content diff, so the guard means such a link is never CREATED, not that an existing row is unlinked when its target is deleted later — the `B10 -> B9` edge is in `page_links` below. B10 is a NEW seed rather than a second token on B3/B4/B7, and B9 a new page rather than B1 or B6, so the surviving edge is interesting for exactly one reason and none of the `get_backlinks` steps above move. The mock used to drop a tombstoned TARGET in the snapshot projection alone; no read path needed a compensating filter, because `pageLinkStats` (`handlers/shared.ts`) gates the target through `pageScopeIds`, which both of `deriveLinkEdges`' production consumers build from the LIVE page plus its LIVE descendants.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -106,10 +106,36 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Delta",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "mention of [[000000000000000000000000S9]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 7,
+      "count": 9,
       "ops": [
         {
           "op_type": "edit_block"
@@ -125,6 +151,12 @@
         },
         {
           "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
         },
         {
           "op_type": "edit_block"
@@ -154,6 +186,11 @@
         "source_id": "B8",
         "source_page_id": "B2",
         "target_id": "B1"
+      },
+      {
+        "source_id": "B10",
+        "source_page_id": "B2",
+        "target_id": "B9"
       }
     ],
     "properties": []
@@ -258,6 +295,19 @@
     {
       "args": {
         "blockId": "S8"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "toText": "mention of [[000000000000000000000000S9]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S9"
       },
       "command": "delete_block"
     }
@@ -387,6 +437,20 @@
         "id": "S8",
         "parent_id": "S2",
         "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "Delta",
+        "id": "S9",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S10",
+        "parent_id": "S2",
+        "position": 5
       }
     ],
     "properties": [],
