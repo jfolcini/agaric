@@ -372,6 +372,50 @@ pub struct BugReport {
     /// (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
     /// path there is no user-facing redact toggle on the issue-body path.
     pub recent_errors: Vec<String>,
+    /// #4854 — the derived-state backstop's own backlog, or `None` when the
+    /// read failed. `None` and a zero `depth` are different answers and the
+    /// report must not conflate them.
+    pub retry_queue: Option<RetryQueueSummary>,
+}
+
+/// `materializer_retry_queue` reduced to the shape a bug report can carry.
+///
+/// #4854 — derived views (`pages_cache`, `fts_blocks`, `block_links`,
+/// `agenda_cache`, `blocks.space_id`) are rebuilt by background tasks, and a
+/// task that failed or that a saturated queue shed lands in this table to be
+/// retried with backoff. A vault whose queue is deep, or whose oldest entry is
+/// old, is a vault whose derived state is behind — which is what a "my page
+/// count is wrong" report looks like from the inside. Nothing here audits or
+/// rebuilds anything; it reports the backstop's own state, which the vault
+/// already maintains.
+///
+/// Not a duplicate of `StatusInfo::retry_queue_pending`
+/// (`agaric-engine/src/materializer/metrics.rs`), which exposes the depth
+/// alone, through a command the bug report does not call and whose output the
+/// issue body does not carry. Depth without the age says a vault has a backlog
+/// but not whether it is draining, and without `task_kinds` it does not say
+/// which artefact is stale. The OTel pipeline carries more than either, and
+/// defaults off (`AGARIC_OTEL`), so it is absent from exactly the reports that
+/// need it.
+///
+/// Deliberately carries no `block_id` and no `last_error`: the frontend embeds
+/// this metadata verbatim into a prefilled PUBLIC GitHub issue body
+/// (`src/lib/bug-report.ts::formatReportBody`), where an id identifies the
+/// user's content and an error string can quote it. `task_kind` is safe — the
+/// values are the materializer's own enum literals, listed in migration 0044.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RetryQueueSummary {
+    /// Rows in the table.
+    pub depth: i64,
+    /// Age of the oldest row, in ms. `None` only when `depth` is 0.
+    pub oldest_age_ms: Option<i64>,
+    /// Highest `attempts` across the table — a row that keeps failing has
+    /// climbed the backoff to the 1 h cap and is not coming back on its own.
+    pub max_attempts: i64,
+    /// Distinct `task_kind`s present, sorted. Says WHICH derived artefact is
+    /// behind, which is the difference between "search is stale" and "the
+    /// page tree is stale".
+    pub task_kinds: Vec<String>,
 }
 
 /// One log file's name + contents returned by [`read_logs_for_report`].
@@ -831,6 +875,7 @@ pub fn collect_bug_report_metadata_inner(
     device_id: String,
     home: Option<&str>,
     peer_device_ids: &[String],
+    retry_queue: Option<RetryQueueSummary>,
 ) -> Result<BugReport, AppError> {
     let log_dir = log_dir_for_app_data(app_data_dir);
     let raw_recent_errors = recent_errors_from_log_dir(&log_dir);
@@ -858,6 +903,7 @@ pub fn collect_bug_report_metadata_inner(
         arch: tauri_plugin_os::arch().to_string(),
         device_id,
         recent_errors,
+        retry_queue,
     })
 }
 
@@ -881,11 +927,13 @@ pub async fn collect_bug_report_metadata(
     let data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let home = home_dir_string();
     let peer_device_ids = fetch_redaction_extras(&pool.inner().0).await;
+    let retry_queue = fetch_retry_queue_summary(&pool.inner().0).await;
     collect_bug_report_metadata_inner(
         &data_dir,
         device_id.as_str().to_string(),
         home.as_deref(),
         &peer_device_ids,
+        retry_queue,
     )
     .map_err(super::sanitize_internal_error)
 }
@@ -2067,6 +2115,49 @@ fn apply_bundle_cap(entries: Vec<LogFileEntry>) -> Vec<LogFileEntry> {
 /// peer's stable identifier" — are unchanged. On DB error we fall back to
 /// an empty slice (fail-soft: a redaction miss beats a failed bug-report
 /// dialog).
+/// Read [`RetryQueueSummary`], or `None` if the read failed.
+///
+/// Degrades the way [`fetch_redaction_extras`] does — a bug report from a
+/// vault whose DB is unhappy is exactly the report worth having, so a failure
+/// here must not fail the report. `None` is reported as unavailable rather
+/// than as an empty queue.
+async fn fetch_retry_queue_summary(pool: &SqlitePool) -> Option<RetryQueueSummary> {
+    let totals = sqlx::query!(
+        "SELECT COUNT(*) AS \"depth!: i64\", \
+                MIN(created_at) AS \"oldest_created_at?: i64\", \
+                COALESCE(MAX(attempts), 0) AS \"max_attempts!: i64\" \
+         FROM materializer_retry_queue"
+    )
+    .fetch_one(pool)
+    .await;
+    let kinds = sqlx::query_scalar!(
+        "SELECT DISTINCT task_kind FROM materializer_retry_queue ORDER BY task_kind"
+    )
+    .fetch_all(pool)
+    .await;
+
+    match (totals, kinds) {
+        (Ok(totals), Ok(task_kinds)) => Some(RetryQueueSummary {
+            depth: totals.depth,
+            // `created_at` is epoch ms since migration 0077. Clamped at 0: a
+            // clock that moved backwards is not evidence of a future task.
+            oldest_age_ms: totals
+                .oldest_created_at
+                .map(|created| (crate::db::now_ms() - created).max(0)),
+            max_attempts: totals.max_attempts,
+            task_kinds,
+        }),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!(
+                target: "bug_report",
+                error = %e,
+                "failed to read materializer_retry_queue; reporting it as unavailable",
+            );
+            None
+        }
+    }
+}
+
 async fn fetch_redaction_extras(pool: &SqlitePool) -> Vec<String> {
     match sqlx::query_scalar!("SELECT peer_id FROM peer_refs")
         .fetch_all(pool)
@@ -2124,6 +2215,147 @@ mod tests {
 
     const DEV: &str = "device-abc-123";
     const HOME: &str = "/home/alice";
+
+    // -- materializer_retry_queue summary (#4854) ------------------------
+
+    async fn retry_queue_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        (pool, dir)
+    }
+
+    async fn enqueue_retry(
+        pool: &SqlitePool,
+        block_id: &str,
+        task_kind: &str,
+        attempts: i64,
+        created_at: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, last_error, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(block_id)
+        .bind(task_kind)
+        .bind(attempts)
+        .bind(created_at)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("seed a retry-queue row");
+    }
+
+    /// An empty queue reports a real zero, not the `None` a failed read gets.
+    /// The two are the whole point of the `Option`: a report that renders "0"
+    /// for a read that never happened says the vault is healthy on no
+    /// evidence.
+    #[tokio::test]
+    async fn retry_queue_summary_reports_an_empty_queue_as_zero_not_unavailable_4854() {
+        let (pool, _dir) = retry_queue_pool().await;
+
+        let summary = fetch_retry_queue_summary(&pool)
+            .await
+            .expect("an empty queue is readable, so the summary must be Some");
+
+        assert_eq!(summary.depth, 0);
+        assert_eq!(summary.oldest_age_ms, None);
+        assert_eq!(summary.max_attempts, 0);
+        assert_eq!(summary.task_kinds, Vec::<String>::new());
+    }
+
+    /// Depth, the oldest entry's age, the worst `attempts`, and WHICH
+    /// artefacts are behind — the four facts that separate "search is stale"
+    /// from "the page tree is stale" in a report.
+    #[tokio::test]
+    async fn retry_queue_summary_carries_depth_age_attempts_and_kinds_4854() {
+        let (pool, _dir) = retry_queue_pool().await;
+        let now = crate::db::now_ms();
+
+        enqueue_retry(
+            &pool,
+            "01HZ000000000000000000000A",
+            "UpdateFtsBlock",
+            3,
+            now - 60_000,
+        )
+        .await;
+        enqueue_retry(
+            &pool,
+            "01HZ000000000000000000000B",
+            "ReindexBlockLinks",
+            7,
+            now - 3_600_000,
+        )
+        .await;
+        enqueue_retry(
+            &pool,
+            "01HZ000000000000000000000C",
+            "UpdateFtsBlock",
+            1,
+            now - 1_000,
+        )
+        .await;
+
+        let summary = fetch_retry_queue_summary(&pool).await.expect("readable");
+
+        assert_eq!(summary.depth, 3);
+        assert_eq!(summary.max_attempts, 7);
+        assert_eq!(
+            summary.task_kinds,
+            vec![
+                "ReindexBlockLinks".to_string(),
+                "UpdateFtsBlock".to_string()
+            ],
+            "kinds are DISTINCT and sorted, so two rows of one kind collapse to one entry"
+        );
+        let age = summary
+            .oldest_age_ms
+            .expect("a non-empty queue has an oldest row");
+        assert!(
+            (3_600_000..3_700_000).contains(&age),
+            "age must come from the OLDEST row (1 h), not the newest (1 s) or the middle; got {age}"
+        );
+    }
+
+    /// A row created in the future (a clock that moved backwards between the
+    /// enqueue and the report) is age 0, never negative — a negative age in a
+    /// public issue body reads as a corrupt report rather than a skewed clock.
+    #[tokio::test]
+    async fn retry_queue_summary_clamps_a_future_created_at_to_zero_4854() {
+        let (pool, _dir) = retry_queue_pool().await;
+        enqueue_retry(
+            &pool,
+            "01HZ000000000000000000000D",
+            "UpdateFtsBlock",
+            0,
+            crate::db::now_ms() + 600_000,
+        )
+        .await;
+
+        let summary = fetch_retry_queue_summary(&pool).await.expect("readable");
+
+        assert_eq!(summary.oldest_age_ms, Some(0));
+    }
+
+    /// A pool whose table is gone reports `None`. The bug report still
+    /// collects — a vault unhealthy enough to fail this read is exactly the
+    /// one worth reporting.
+    #[tokio::test]
+    async fn retry_queue_summary_is_none_when_the_read_fails_4854() {
+        let (pool, _dir) = retry_queue_pool().await;
+        sqlx::query("DROP TABLE materializer_retry_queue")
+            .execute(&pool)
+            .await
+            .expect("drop the table to force the read to fail");
+
+        assert!(
+            fetch_retry_queue_summary(&pool).await.is_none(),
+            "an unreadable queue must be reported as unavailable, never as empty"
+        );
+    }
 
     // -- STABLE_MESSAGES drift guard (#700) ------------------------------
 
@@ -2450,7 +2682,8 @@ mod tests {
         )
         .unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[]).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
 
         assert_eq!(md.device_id, DEV);
         assert_eq!(md.app_version, env!("CARGO_PKG_VERSION"));
@@ -3772,7 +4005,8 @@ mod tests {
     fn collect_metadata_empty_log_dir_returns_empty_recent_errors() {
         let dir = TempDir::new().unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[]).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
         assert_eq!(md.device_id, DEV);
@@ -3783,7 +4017,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(log_dir_for_app_data(dir.path())).unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[]).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
     }
@@ -3823,7 +4058,8 @@ mod tests {
         contents.push_str("2025-01-01 ERROR [agaric] M31_TAIL_MARKER\n");
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[]).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
 
         // Tail marker survives the cap-truncate-from-head path.
         assert!(
@@ -3875,6 +4111,7 @@ mod tests {
             DEV.into(),
             Some(HOME),
             &[peer.to_string()],
+            None,
         )
         .unwrap();
 
@@ -3940,7 +4177,8 @@ mod tests {
         )
         .unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[]).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None).unwrap();
 
         assert_eq!(md.recent_errors.len(), 1);
         let line = &md.recent_errors[0];
@@ -3994,8 +4232,9 @@ mod tests {
         )
         .unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), device_id.to_string(), None, &[])
-            .unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), device_id.to_string(), None, &[], None)
+                .unwrap();
 
         assert_eq!(md.recent_errors.len(), 1);
         let line = &md.recent_errors[0];
@@ -4024,6 +4263,7 @@ mod tests {
             DEV.into(),
             Some(HOME),
             &["peer-device-789".to_string()],
+            None,
         )
         .unwrap();
 
@@ -4049,6 +4289,7 @@ mod tests {
             DEV.into(),
             Some(HOME),
             &["peer-device-789".to_string()],
+            None,
         )
         .unwrap();
 

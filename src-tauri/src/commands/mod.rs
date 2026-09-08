@@ -99,8 +99,8 @@ pub use blocks::{
     trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
-    BugReport, LogFileEntry, collect_bug_report_metadata, collect_bug_report_metadata_inner,
-    read_logs_for_report, read_logs_for_report_inner,
+    BugReport, LogFileEntry, RetryQueueSummary, collect_bug_report_metadata,
+    collect_bug_report_metadata_inner, read_logs_for_report, read_logs_for_report_inner,
 };
 pub use compaction::{
     CompactionResult, CompactionStatus, PageLink, RestoreToOpResult, compact_op_log_cmd,

@@ -7,6 +7,7 @@ import {
   buildGitHubIssueUrl,
   formatReportBody,
   formatReportFields,
+  formatRetryQueue,
   truncateDeviceId,
 } from '@/lib/bug-report'
 
@@ -22,6 +23,7 @@ const SAMPLE_METADATA: BugReport = {
   arch: 'x86_64',
   device_id: FULL_DEVICE_ID,
   recent_errors: ['2025-01-01 ERROR [agaric] kaboom', '2025-01-01 WARN [agaric] slowpoke'],
+  retry_queue: { depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] },
 }
 
 // --------------------------------------------------------------------------
@@ -204,6 +206,7 @@ describe('formatReportBody', () => {
       - **OS:** \`linux\`
       - **Arch:** \`x86_64\`
       - **Device ID:** \`12345678…\` _(truncated)_
+      - **Retry queue:** empty
 
       ## Recent errors
 
@@ -289,5 +292,51 @@ describe('truncateDeviceId', () => {
 
   it('handles the empty string', () => {
     expect(truncateDeviceId('')).toBe('')
+  })
+})
+
+// --------------------------------------------------------------------------
+// formatRetryQueue (#4854)
+// --------------------------------------------------------------------------
+
+describe('formatRetryQueue', () => {
+  it('distinguishes an unreadable queue from an empty one', () => {
+    // The whole reason the backend returns `Option`: rendering a failed read
+    // as "empty" would tell the maintainer the vault is healthy on no evidence.
+    expect(formatRetryQueue(null)).toBe('_(unavailable)_')
+    expect(
+      formatRetryQueue({ depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] }),
+    ).toBe('empty')
+  })
+
+  it('names the depth, the oldest age, the worst attempt count and the kinds', () => {
+    expect(
+      formatRetryQueue({
+        depth: 3,
+        oldest_age_ms: 3_600_000,
+        max_attempts: 7,
+        task_kinds: ['ReindexBlockLinks', 'UpdateFtsBlock'],
+      }),
+    ).toBe('3 tasks, oldest 1h, max 7 attempts (ReindexBlockLinks, UpdateFtsBlock)')
+  })
+
+  it('singularises a queue of one', () => {
+    expect(
+      formatRetryQueue({
+        depth: 1,
+        oldest_age_ms: 30_000,
+        max_attempts: 1,
+        task_kinds: ['UpdateFtsBlock'],
+      }),
+    ).toBe('1 task, oldest <1m, max 1 attempt (UpdateFtsBlock)')
+  })
+
+  it('reports the coarsest non-zero unit, so a two-day backlog is not "2880m"', () => {
+    const age = (ms: number) =>
+      formatRetryQueue({ depth: 1, oldest_age_ms: ms, max_attempts: 1, task_kinds: ['X'] })
+    expect(age(172_800_000)).toContain('oldest 2d')
+    expect(age(7_200_000)).toContain('oldest 2h')
+    expect(age(120_000)).toContain('oldest 2m')
+    expect(age(59_999)).toContain('oldest <1m')
   })
 })

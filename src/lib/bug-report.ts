@@ -96,6 +96,42 @@ export function truncateDeviceId(deviceId: string): string {
     : `${deviceId.slice(0, DEVICE_ID_PREFIX_CHARS)}…`
 }
 
+/** #4854: age buckets for the retry-queue line, coarsest unit that is not zero.
+ *  A local formatter rather than `formatRelativeTime`, which resolves through
+ *  `t()` — this body is a deterministic English GitHub issue, and a
+ *  locale-dependent one would make the snapshot test and the issue itself
+ *  disagree with each other depending on who filed it. */
+const AGE_UNITS: ReadonlyArray<readonly [ms: number, suffix: string]> = [
+  [86_400_000, 'd'],
+  [3_600_000, 'h'],
+  [60_000, 'm'],
+]
+
+function formatQueueAge(ms: number): string {
+  const unit = AGE_UNITS.find(([size]) => ms >= size)
+  return unit === undefined ? '<1m' : `${Math.floor(ms / unit[0])}${unit[1]}`
+}
+
+/** #4854: one Environment line describing `materializer_retry_queue`.
+ *
+ *  Derived views are rebuilt by background tasks, and a task that failed or
+ *  that a saturated queue shed waits here. A deep or old queue is a vault
+ *  whose derived state is behind — which is what "my page count is wrong"
+ *  looks like from the inside. Always rendered, including when the queue is
+ *  empty: an absent line has to mean "reported by a build older than #4854",
+ *  not "healthy", or the line proves nothing when it is missing. */
+export function formatRetryQueue(summary: BugReport['retry_queue']): string {
+  if (summary === null) return '_(unavailable)_'
+  if (summary.depth === 0) return 'empty'
+
+  const parts = [`${summary.depth} task${summary.depth === 1 ? '' : 's'}`]
+  if (summary.oldest_age_ms !== null) {
+    parts.push(`oldest ${formatQueueAge(summary.oldest_age_ms)}`)
+  }
+  parts.push(`max ${summary.max_attempts} attempt${summary.max_attempts === 1 ? '' : 's'}`)
+  return `${parts.join(', ')} (${summary.task_kinds.join(', ')})`
+}
+
 /** Input to [`formatReportBody`]. */
 export interface FormatReportBodyParams {
   metadata: BugReport
@@ -113,7 +149,8 @@ export interface FormatReportBodyParams {
  *
  *  Output layout (stable, snapshot-tested):
  *    1. User description (or a placeholder line).
- *    2. Environment block (app version, OS, arch, truncated device ID).
+ *    2. Environment block (app version, OS, arch, truncated device ID, and
+ *       the retry-queue line #4854 adds — see `formatRetryQueue`).
  *    3. Recent errors list (if any) — already redacted by the backend
  *       (#609: `collect_bug_report_metadata` runs the tail through the
  *       same pipeline as the ZIP export before it ever reaches the UI).
@@ -135,6 +172,7 @@ export function formatReportBody(params: FormatReportBodyParams): string {
     // #609: never embed the full device ID in a public issue — the same
     // identifier is scrubbed to [REDACTED_DEVICE_ID] in the ZIP export.
     `- **Device ID:** \`${truncateDeviceId(metadata.device_id)}\` _(truncated)_`,
+    `- **Retry queue:** ${formatRetryQueue(metadata.retry_queue)}`,
   ]
   sections.push(envLines.join('\n'))
 

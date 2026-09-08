@@ -1710,6 +1710,12 @@ export type BugReport = {
 	 *  path there is no user-facing redact toggle on the issue-body path.
 	 */
 	recent_errors: string[],
+	/**
+	 *  #4854 — the derived-state backstop's own backlog, or `None` when the
+	 *  read failed. `None` and a zero `depth` are different answers and the
+	 *  report must not conflate them.
+	 */
+	retry_queue: RetryQueueSummary | null,
 };
 
 export type BulkTrashResponse = {
@@ -3427,6 +3433,51 @@ export type RestoreToOpResult = {
 	non_reversible_skipped: number,
 	/**  Individual undo results for each reverted op. */
 	results: UndoResult[],
+};
+
+/**
+ *  `materializer_retry_queue` reduced to the shape a bug report can carry.
+ * 
+ *  #4854 — derived views (`pages_cache`, `fts_blocks`, `block_links`,
+ *  `agenda_cache`, `blocks.space_id`) are rebuilt by background tasks, and a
+ *  task that failed or that a saturated queue shed lands in this table to be
+ *  retried with backoff. A vault whose queue is deep, or whose oldest entry is
+ *  old, is a vault whose derived state is behind — which is what a "my page
+ *  count is wrong" report looks like from the inside. Nothing here audits or
+ *  rebuilds anything; it reports the backstop's own state, which the vault
+ *  already maintains.
+ * 
+ *  Not a duplicate of `StatusInfo::retry_queue_pending`
+ *  (`agaric-engine/src/materializer/metrics.rs`), which exposes the depth
+ *  alone, through a command the bug report does not call and whose output the
+ *  issue body does not carry. Depth without the age says a vault has a backlog
+ *  but not whether it is draining, and without `task_kinds` it does not say
+ *  which artefact is stale. The OTel pipeline carries more than either, and
+ *  defaults off (`AGARIC_OTEL`), so it is absent from exactly the reports that
+ *  need it.
+ * 
+ *  Deliberately carries no `block_id` and no `last_error`: the frontend embeds
+ *  this metadata verbatim into a prefilled PUBLIC GitHub issue body
+ *  (`src/lib/bug-report.ts::formatReportBody`), where an id identifies the
+ *  user's content and an error string can quote it. `task_kind` is safe — the
+ *  values are the materializer's own enum literals, listed in migration 0044.
+ */
+export type RetryQueueSummary = {
+	/**  Rows in the table. */
+	depth: number,
+	/**  Age of the oldest row, in ms. `None` only when `depth` is 0. */
+	oldest_age_ms: number | null,
+	/**
+	 *  Highest `attempts` across the table — a row that keeps failing has
+	 *  climbed the backoff to the 1 h cap and is not coming back on its own.
+	 */
+	max_attempts: number,
+	/**
+	 *  Distinct `task_kind`s present, sorted. Says WHICH derived artefact is
+	 *  behind, which is the difference between "search is stale" and "the
+	 *  page tree is stale".
+	 */
+	task_kinds: string[],
 };
 
 /**

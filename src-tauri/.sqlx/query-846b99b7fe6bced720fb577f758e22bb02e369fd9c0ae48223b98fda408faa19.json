@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT task_kind FROM materializer_retry_queue ORDER BY task_kind",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_kind",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "task_kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "846b99b7fe6bced720fb577f758e22bb02e369fd9c0ae48223b98fda408faa19"
+}

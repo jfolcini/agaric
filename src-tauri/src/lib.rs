@@ -3600,6 +3600,7 @@ mod log_dir_tests {
                 device_id.to_owned(),
                 None,
                 &[],
+                None,
             )
             .expect("bug-report metadata collection must succeed")
             .recent_errors
@@ -3632,6 +3633,7 @@ mod log_dir_tests {
             device_id.to_owned(),
             None,
             &[],
+            None,
         )
         .expect("bug-report metadata collection must succeed")
         .recent_errors;

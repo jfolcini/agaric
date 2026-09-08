@@ -10,6 +10,7 @@ const METADATA: BugReport = {
   arch: 'x86_64',
   device_id: 'DEV-001',
   recent_errors: [],
+  retry_queue: null,
 }
 
 describe('buildReportZip', () => {
