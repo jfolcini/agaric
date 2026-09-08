@@ -23,6 +23,11 @@ import type { ImageNode } from '@/editor/types'
  * and its click would bubble to the card's navigate handler, so folding a
  * thumbnail would take the user off the panel. Same rule `renderBlockLink`
  * applies to its chip.
+ *
+ * An inert surface therefore ignores the collapsed state as well as the
+ * toggle, on purpose: honouring a fold with no way to undo it would leave a
+ * search result or a drag overlay showing a chip the reader cannot open, in a
+ * place whose whole job is to preview the content.
  */
 export function renderImage(node: ImageNode, key: string, ctx: RenderContext): React.ReactElement {
   if (ctx.interactive !== true) {
