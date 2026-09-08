@@ -28,6 +28,7 @@ vi.mock('@/lib/logger', () => ({
 
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
+import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import { blocks, opLog } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
@@ -4244,5 +4245,24 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
       toText: `Linking sibling [[${SEED_IDS.BLOCK_QN_2}]] on the same page.`,
     })
     expect(inboundOf('Quick Notes')).toBe(1)
+  })
+
+  it('excludes a soft-deleted source — the edge survives, the count does not', () => {
+    // `block_links` KEEPS a tombstoned source's row (`DeleteBlock` enqueues no
+    // `ReindexBlockLinks`), and `recompute_all_pages_cache_counts` filters it
+    // at count time with `src.deleted_at IS NULL` (#4848). Both halves are
+    // asserted here, because they are what splits the derivation from the
+    // count: deleting Quick Notes' only inbound source must drop the count to
+    // zero while `deriveLinkEdges` — the mock's `block_links` stand-in, which
+    // the conformance snapshot diffs against the real table — still carries
+    // the edge.
+    expect(inboundOf('Quick Notes')).toBe(1)
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_2 })
+    expect(inboundOf('Quick Notes')).toBe(0)
+    expect(
+      deriveLinkEdges(blocks).filter(
+        (e) => e.sourceId === SEED_IDS.BLOCK_GS_2 && e.targetId === SEED_IDS.PAGE_QUICK_NOTES,
+      ),
+    ).toHaveLength(1)
   })
 })

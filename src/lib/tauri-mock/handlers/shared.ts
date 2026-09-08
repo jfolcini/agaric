@@ -345,7 +345,13 @@ export function inSpaceScope(b: Record<string, unknown>, spaceId: string | null)
  * `src.page_id IS NOT NULL`). A block linking to another block on the same
  * page, a page-block self-link, or a link from an orphan/page-block source
  * (no resolvable `page_id`) is NOT inbound. `hasOutbound` is unaffected by
- * the exclusion — it answers "does this page author any outbound link".
+ * those terms — it answers "does this page author any outbound link".
+ *
+ * A soft-deleted SOURCE is excluded from both terms, the `src.deleted_at IS
+ * NULL` that `recompute_all_pages_cache_counts` and Orphan's outbound `NOT
+ * EXISTS` (`agaric-store/src/filters/primitive.rs`) both spell. It has to be
+ * applied here rather than in `deriveLinkEdges`, which mirrors the `block_links`
+ * TABLE — and the table keeps a tombstoned source's row (#4848).
  */
 export function pageLinkStats(
   pageId: string,
@@ -355,6 +361,7 @@ export function pageLinkStats(
   const inboundSources = new Set<string>()
   let hasOutbound = false
   for (const e of edges) {
+    if (blocks.get(e.sourceId)?.['deleted_at']) continue
     if (pageScopeIds.has(e.targetId) && e.sourcePageId !== null && e.sourcePageId !== pageId) {
       inboundSources.add(e.sourceId)
     }

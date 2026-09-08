@@ -102,13 +102,21 @@ export interface MockLinkEdge {
 }
 
 /**
- * Scan every non-deleted block's content for `[[ULID]]` and `((ULID))` tokens
- * and return the implied block-link edges. The faithful mock stand-in for the
+ * Scan every block's content for `[[ULID]]` and `((ULID))` tokens and return
+ * the implied block-link edges. The faithful mock stand-in for the
  * backend's `block_links` table — used to evaluate the link facets (`Orphan` /
  * `HasNoInboundLinks`) and the `MostLinked` sort. Mirrors the `get_backlinks`
  * scan. Each edge captures the source block's `page_id` so `pageLinkStats`
  * can apply the same-page/self/orphan-source inbound exclusion (migration
  * 0070 + `recompute_pages_cache_counts_for_pages`).
+ *
+ * A soft-deleted source is KEPT, because the table keeps it: `DeleteBlock`
+ * enqueues no `ReindexBlockLinks` (`src-tauri/src/reconciliation_oracle.rs`),
+ * so a tombstoned source's `block_links` row survives and every reader filters
+ * it at read time instead — `get_backlinks`' `b.deleted_at IS NULL` join, and
+ * `pageLinkStats` (`handlers/shared.ts`) for the counts. Skipping it here made
+ * the snapshot leg of any fixture that soft-deletes a linking block red on a
+ * divergence of the mock's own making (#4848).
  *
  * Deliberately UNSCOPED: the `SpaceScope` filter the link-serving handlers
  * apply is the caller's business (see `inSpaceScope` in `handlers/shared.ts`),
@@ -118,7 +126,6 @@ export interface MockLinkEdge {
 export function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockLinkEdge[] {
   const edges: MockLinkEdge[] = []
   for (const blk of allBlocks.values()) {
-    if (blk['deleted_at']) continue
     const sourcePageId = (blk['page_id'] as string | null) ?? null
     for (const targetId of scanLinkTargets(blk['content'] as string | null)) {
       edges.push({ sourceId: blk['id'] as string, targetId, sourcePageId })

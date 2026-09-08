@@ -1,5 +1,5 @@
 {
-  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; (b) the `b.deleted_at IS NULL` join filter, which needs a soft-deleted block still holding a link token — that state reddens the SNAPSHOT leg, because `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`) so the backend keeps the tombstoned source's `block_links` row by design, while the mock's `deriveLinkEdges` skips deleted sources outright. That is a snapshot-projection divergence in the mock, not a `get_backlinks` one, and fixing it means widening `deriveLinkEdges` and filtering at its two counting consumers instead.",
+  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; and (b) nothing else — the `b.deleted_at IS NULL` join filter was the other gap and #4848 closed it. B8 is the state it needs: a block that links to B1 and is then soft-deleted. `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`), so its `block_links` row survives the tombstone by design — it is in `page_links` below — and every reader drops it at query time instead. `backlinks_all_in_source_id_order` is where that is asserted: B8 sorts last, so a `get_backlinks` that skipped the join filter would serve it as a fourth source. The mock used to skip deleted sources inside `deriveLinkEdges`, which made the SNAPSHOT leg red on this exact state; it now mirrors the table, with the count-time `src.deleted_at IS NULL` moved to `pageLinkStats` (`handlers/shared.ts`), the one place both counting consumers reach it through.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -93,10 +93,23 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "doomed mention of [[000000000000000000000000S1]]",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 7,
       "ops": [
         {
           "op_type": "edit_block"
@@ -112,6 +125,12 @@
         },
         {
           "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
         }
       ]
     },
@@ -129,6 +148,11 @@
       {
         "source_id": "B7",
         "source_page_id": "B6",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B8",
+        "source_page_id": "B2",
         "target_id": "B1"
       }
     ],
@@ -223,6 +247,19 @@
         "toText": "this text links nowhere"
       },
       "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "doomed mention of [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S8"
+      },
+      "command": "delete_block"
     }
   ],
   "queries": [
@@ -236,7 +273,7 @@
         }
       },
       "command": "get_backlinks",
-      "comment": "The three surviving sources in `bl.source_id ASC` order: B3, B4, B7. B5 linked and its edge was dropped when the later edit removed the token, so a mock reading a stale edge set serves a fourth row. Every token carries `page_id` — the key the backlink UI groups by — so a source served under the wrong owning page fails too: B3/B4 belong to page B2, B7 to page B6.",
+      "comment": "The three surviving sources in `bl.source_id ASC` order: B3, B4, B7. Two different ways to serve a fourth row are refused here, and the two are independent: B5 linked and its edge was DROPPED when the later edit removed the token, so a mock reading a stale edge set serves it; B8 still HOLDS its edge (soft-deleting a block does not reindex `block_links`) and is excluded only by the `b.deleted_at IS NULL` join filter — #4848, the state that used to be unrepresentable here. B8 sorts after B7, so a missing join filter appends it rather than reordering. Every token carries `page_id` — the key the backlink UI groups by — so a source served under the wrong owning page fails too: B3/B4 belong to page B2, B7 to page B6.",
       "name": "backlinks_all_in_source_id_order"
     },
     {
@@ -343,6 +380,13 @@
         "id": "S7",
         "parent_id": "S6",
         "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S8",
+        "parent_id": "S2",
+        "position": 4
       }
     ],
     "properties": [],
