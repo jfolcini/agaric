@@ -112,8 +112,6 @@ describe('TrashView', () => {
   it('calls listTrash on mount', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -133,8 +131,6 @@ describe('TrashView', () => {
   it('renders empty state when no deleted blocks', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -212,8 +208,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -302,8 +296,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       purge_block: () => ({ block_id: 'B1', purged_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -355,8 +347,6 @@ describe('TrashView', () => {
         return callCount === 1 ? page1 : page2
       },
       batch_resolve: () => [],
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -382,8 +372,6 @@ describe('TrashView', () => {
   it('hides Load More button when no more pages', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -400,8 +388,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -435,8 +421,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -464,8 +448,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -494,8 +476,6 @@ describe('TrashView', () => {
   it('shows an error state with a retry instead of the empty state on a failed load', async () => {
     stubInvoke({
       list_trash: () => Promise.reject(new Error('DB error')),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -526,8 +506,6 @@ describe('TrashView', () => {
         return { items: [block], next_cursor: null, has_more: false, total_count: null }
       },
       batch_resolve: () => [],
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -548,8 +526,6 @@ describe('TrashView', () => {
       restore_block: () => {
         throw new Error('Restore failed')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -578,8 +554,6 @@ describe('TrashView', () => {
       purge_block: () => {
         throw new Error('Purge failed')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -611,8 +585,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -633,8 +605,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       purge_block: () => ({ block_id: 'B1', purged_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -663,8 +633,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'P1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -690,8 +658,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_block: () => ({ block_id: 'C1', restored_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -846,8 +812,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -888,8 +852,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -916,8 +878,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -966,8 +926,6 @@ describe('TrashView', () => {
       list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1047,8 +1005,6 @@ describe('TrashView', () => {
       batch_resolve: () => [
         { id: 'P1', title: 'My Parent Page', block_type: 'page', deleted: false },
       ],
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1073,8 +1029,6 @@ describe('TrashView', () => {
       batch_resolve: () => [
         { id: 'P_DELETED', title: 'Old Page', block_type: 'page', deleted: true },
       ],
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1096,8 +1050,6 @@ describe('TrashView', () => {
     stubInvoke({
       list_trash: () => ({ items: blocks, next_cursor: null, has_more: false, total_count: null }),
       batch_resolve: () => [], // page not found,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1186,8 +1138,6 @@ describe('TrashView', () => {
   it('does not render filter input when trash is empty', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1419,8 +1369,6 @@ describe('TrashView', () => {
   it('does not render Empty Trash and Restore All header buttons when trash is empty', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1531,8 +1479,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1584,8 +1530,6 @@ describe('TrashView', () => {
       },
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1637,8 +1581,6 @@ describe('TrashView', () => {
       },
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1666,8 +1608,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 5 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1696,8 +1636,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1725,8 +1663,6 @@ describe('TrashView', () => {
       purge_blocks_by_ids: () => {
         throw new Error('DB error')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1782,8 +1718,6 @@ describe('TrashView', () => {
         if (purgeCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
         throw new Error('db error on second chunk')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1838,8 +1772,6 @@ describe('TrashView', () => {
         if (purgeCalls === 1) return { affected_count: 1 }
         throw new Error('db error on second chunk')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1893,8 +1825,6 @@ describe('TrashView', () => {
         if (purgeCalls === 1) return { affected_count: 1 }
         throw new Error('db error on second chunk')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -1954,8 +1884,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2008,8 +1936,6 @@ describe('TrashView', () => {
       },
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2057,8 +1983,6 @@ describe('TrashView', () => {
       },
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2087,8 +2011,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 3 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2117,8 +2039,6 @@ describe('TrashView', () => {
       }),
       batch_resolve: () => [],
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2147,8 +2067,6 @@ describe('TrashView', () => {
       restore_blocks_by_ids: () => {
         throw new Error('DB error')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2343,8 +2261,6 @@ describe('TrashView screen reader announcements', () => {
       batch_resolve: () => [],
       // Single-IPC batch restore.
       restore_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2373,8 +2289,6 @@ describe('TrashView screen reader announcements', () => {
       batch_resolve: () => [],
       // Single-IPC batch purge.
       purge_blocks_by_ids: () => ({ affected_count: 2 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2409,8 +2323,6 @@ describe('TrashView screen reader announcements', () => {
       restore_blocks_by_ids: () => {
         throw new Error('DB error')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2464,8 +2376,6 @@ describe('TrashView screen reader announcements', () => {
       purge_blocks_by_ids: () => {
         throw new Error('DB error')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2519,8 +2429,6 @@ describe('TrashView screen reader announcements', () => {
         // restored elsewhere between the listing render and this purge.
         throw { kind: 'invalid_operation', message: 'batch contains a live block' }
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2567,8 +2475,6 @@ describe('TrashView screen reader announcements', () => {
       }),
       batch_resolve: () => [],
       purge_blocks_by_ids: () => ({ affected_count: 5 }),
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 
@@ -2597,8 +2503,6 @@ describe('TrashView screen reader announcements', () => {
       purge_blocks_by_ids: () => {
         throw new Error('DB error')
       },
-      // The rows below have no trashed descendants; before #4668 this
-      // command fell through to a fallback resolving `undefined`.
       trash_descendant_counts: () => ({}),
     })
 

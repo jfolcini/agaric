@@ -29,7 +29,12 @@ const MAX_LABEL_CHARS = 40
 
 /**
  * Identifying text for the collapsed chip: the alt, else the src's filename,
- * else the src — capped, because a `data:` src has neither and is unbounded.
+ * else the src — capped, because a `data:` src is unbounded.
+ *
+ * A `data:` src reaches the chip through the FILENAME branch, not the src one:
+ * `'data:image/png;base64,AAA…'.split('/').pop()` is `'png;base64,AAA…'`, which
+ * is why the cap has to sit outside the branches. The bare-src branch is for a
+ * src with no path segment left to take — one ending in `/`, or empty.
  */
 function collapsedLabel(alt: string, src: string): string {
   const filename = src.split(/[?#]/)[0]?.split('/').pop()?.trim() ?? ''
@@ -78,12 +83,9 @@ export function CollapsibleImage({
   }, [])
 
   return (
-    <span className="collapsible-image group/image inline-flex max-w-full items-start gap-0.5 align-middle">
+    <span className="group/image inline-flex max-w-full items-start gap-0.5 align-middle">
       <button
         type="button"
-        // An atom's node view is not editable text; keep the control out of the
-        // editable surface entirely (mirrors MermaidCodeBlockView's toggle).
-        contentEditable={false}
         className={cn(
           'shrink-0 rounded-sm p-0.5 text-muted-foreground transition-opacity hover:text-foreground focus-ring-visible touch-target',
           // An EXPANDED image needs no at-rest cue — the image itself is the

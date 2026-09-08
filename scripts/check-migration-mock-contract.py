@@ -227,6 +227,10 @@ UNMODELED: dict[str, str] = {
     "log_snapshots": (
         "same constant compaction stubs; the mock never snapshots its op log"
     ),
+    "_op_log_mutation_allowed": (
+        "the op-log immutability triggers' bypass sentinel (migration 0036); "
+        "the mock has no triggers to bypass and no command exposes it"
+    ),
     "gcal_agenda_event_map": "no Google-Calendar command is implemented",
     "gcal_settings": "no Google-Calendar command is implemented",
     "gcal_space_config": "no Google-Calendar command is implemented",
@@ -489,17 +493,33 @@ def _backend_tables() -> set[str]:
     return tables
 
 
+_SCRATCH_PREFIXES = ("_new_", "_keep_", "_preserve_")
+
+# Migration scratch that does not follow the prefix convention. 0089 creates
+# `_spaces_backfill` and drops it in the same migration; `db/tests.rs` asserts
+# `sqlite_master` holds no such row at head.
+_SCRATCH_NAMES = frozenset({"_spaces_backfill"})
+
+
 def _real_backend_tables() -> set[str]:
     """`_backend_tables()` minus table-rebuild scratch names.
 
     `_new_<t>` / `_keep_*` / `_preserve_*` / `<t>_new` exist only inside one
     migration's transaction and are never a mock contract; `_normalize_table`
     has already contributed their real base name.
+
+    Keyed on those prefixes rather than a blanket leading `_`, which also
+    swallowed `_op_log_mutation_allowed` — a permanent table (migration 0036)
+    that `op_log/bypass.rs` and `db/pool.rs` read at runtime. A table dropped
+    here is in neither CONTRACT nor UNMODELED, which is exactly the hole the
+    completeness assertion below exists to close.
     """
     return {
         t
         for t in _backend_tables()
-        if not t.startswith("_") and not t.endswith("_new")
+        if not t.startswith(_SCRATCH_PREFIXES)
+        and not t.endswith("_new")
+        and t not in _SCRATCH_NAMES
     }
 
 

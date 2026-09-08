@@ -379,16 +379,11 @@ async fn gc_race_rendezvous(relative_str: &str) {
 ///
 /// # Undo retention (#4250)
 ///
-/// Everything above decides whether a file is referenced. A file whose only
-/// reference was removed by a `delete_attachment` the user can still undo is
-/// unreferenced *and* needed: `reverse::attachment_ops` reconstructs the undo's
-/// `add_attachment` from the delete payload's `fs_path`, and #3706's guard
-/// refuses when those bytes are absent. Since this pass runs at boot, the
-/// ordinary "delete, restart, undo" sequence reclaimed them first every time.
+/// Everything above decides whether a file is referenced. A file can also be
+/// unreferenced *and* needed — see [`DELETED_ATTACHMENT_RETENTION_MS`] for why.
 ///
-/// So a candidate whose path is named by a `delete_attachment` op younger than
-/// [`DELETED_ATTACHMENT_RETENTION_MS`] is skipped. The exemption is checked on
-/// the in-memory set from [`undoable_deleted_paths`] immediately after the
+/// What belongs here is where the exemption sits: it is checked against the
+/// in-memory set from [`undoable_deleted_paths`] immediately after the
 /// referenced-path test, ahead of the blob-mapping prune and the write-pool
 /// re-check, so a retained file never enters the destructive path.
 ///
@@ -618,11 +613,9 @@ pub async fn cleanup_orphaned_attachments(
         return Ok(());
     }
 
-    // #4250: the paths a still-undoable `delete_attachment` names. Loaded
-    // AFTER the early return above so a vault with nothing to walk does not
-    // pay for it, and — like the referenced-path load — a failure aborts the
-    // pass rather than letting the sweep treat every retained file as
-    // reclaimable. Being unable to establish what must be kept is not a
+    // #4250: loaded AFTER the early return above so a vault with nothing to
+    // walk does not pay for it. Like the referenced-path load, a failure
+    // aborts the pass: being unable to establish what must be kept is not a
     // licence to destroy it.
     let undoable_deleted = match undoable_deleted_paths(pool).await {
         Ok(set) => set,
@@ -679,11 +672,8 @@ pub async fn cleanup_orphaned_attachments(
                 continue;
             }
 
-            // #4250: unreferenced, but a `delete_attachment` op inside the
-            // retention window still names it, so undoing that delete would
-            // stat this exact path. Keep the bytes. Placed ahead of the
-            // blob-mapping prune and the write-pool re-check so a retained
-            // file never enters the destructive path at all.
+            // #4250: unreferenced, but still undoable. Ahead of the
+            // blob-mapping prune and the write-pool re-check by design.
             if undoable_deleted.contains(&relative_str) {
                 retained += 1;
                 tracing::debug!(

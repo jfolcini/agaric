@@ -9,16 +9,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, makePage } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  type TypedInvokeHandlers,
-  mockInvokeCommands,
-  pageRowInvokeFallback,
-} from '@/__tests__/helpers/invoke'
+import { makePage } from '@/__tests__/fixtures'
+import { type CommandReturns, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -70,44 +64,6 @@ const mockedInvoke = vi.mocked(invoke)
 
 type PageList = CommandReturns['list_pages_with_metadata']
 
-/**
- * The `list_pages_with_metadata` envelope for a set of pages.
- *
- * #4668 — this file used to hand the command `BlockRow`s. It returns
- * `PageWithMetadataRow`, which specta renames to camelCase and which carries
- * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
- * `childBlockCount`, `flags`) no `BlockRow` has.
- */
-function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
-  return {
-    items: items.map(asPageWithMetadataRow),
-    next_cursor: null,
-    has_more: false,
-    total_count: null,
-    ...rest,
-  }
-}
-
-/**
- * Install a COMMAND-KEYED `invoke` implementation for one test.
- *
- * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
- * consumed in call order regardless of command, so any speculative fetch
- * could take the slot meant for the page query, and a re-fetch after the
- * queue drained fell through to a fallback resolving `undefined`.
- */
-function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        resolve_page_by_alias: () => null,
-        ...handlers,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -134,12 +90,12 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubInvoke()
+  stubPageRowInvoke(mockedInvoke)
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
     })
@@ -155,7 +111,7 @@ describe('PageBrowser', () => {
   })
   describe('pagination UX — count chip, auto-load, scroll restoration', () => {
     it('renders "{{count}} pages" count chip when backend supplies total_count', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList(
             [makePage({ id: 'P1', content: 'Page 1' }), makePage({ id: 'P2', content: 'Page 2' })],
@@ -172,7 +128,7 @@ describe('PageBrowser', () => {
 
     it('renders "X of Y matching" when a text query is active (E13: loaded basis)', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList(
             [
@@ -202,7 +158,7 @@ describe('PageBrowser', () => {
     })
 
     it('omits the count chip when backend does not supply total_count', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Page 1' })]),
       })
 
@@ -218,7 +174,7 @@ describe('PageBrowser', () => {
       // The progress line is only rendered when `hasMore` is true
       // AND both counts are numbers — so this proves the wiring.
       let fetches = 0
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () => {
           fetches += 1
           // The second page request never resolves — `hasMore` stays true
@@ -257,7 +213,7 @@ describe('PageBrowser', () => {
         { total_count: 5 },
       )
       let fetches = 0
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () => {
           fetches += 1
           return fetches === 1 ? page1 : page2
@@ -288,7 +244,7 @@ describe('PageBrowser', () => {
       // three pages plus an optional section header, so use 60 to
       // stay safely below the clamp.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '60')
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList(
             [
@@ -314,7 +270,7 @@ describe('PageBrowser', () => {
       // virtualizer doesn't scroll into empty space when the list
       // shrank between sessions.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '99999')
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'Only' })], { total_count: 1 }),
       })
@@ -332,7 +288,7 @@ describe('PageBrowser', () => {
     })
 
     it('does not restore scroll when sessionStorage is empty', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'One' })], { total_count: 1 }),
       })
@@ -352,7 +308,7 @@ describe('PageBrowser', () => {
       // saved offset should be wiped (the saved position is
       // meaningless against the post-filter view).
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '480')
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList(
             [makePage({ id: 'P1', content: 'Apple' }), makePage({ id: 'P2', content: 'Banana' })],
@@ -380,7 +336,7 @@ describe('PageBrowser', () => {
       // Seed a value for SPACE_OTHER — it should NOT be applied to
       // SPACE_TEST. Cross-space contamination is the bug this guards.
       sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_OTHER', '999')
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([makePage({ id: 'P1', content: 'One' })], { total_count: 1 }),
       })
@@ -397,7 +353,7 @@ describe('PageBrowser', () => {
   describe('  estimateSize referential stability', () => {
     it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Apple' }),

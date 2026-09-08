@@ -100,7 +100,8 @@ pub use dispatch::move_same_page_hint;
 // materializer module via `handlers::cleanup_orphaned_attachments`.
 #[cfg(any(test, feature = "test-util"))]
 pub use handlers::cleanup_orphaned_attachments;
-// #4250 — the retention window that pass honours (see the constant).
+// #4250 test-only: the retention window that pass honours (see the constant).
+#[cfg(any(test, feature = "test-util"))]
 pub use handlers::DELETED_ATTACHMENT_RETENTION_MS;
 // Re-export the two process-global materializer counter accessors
 // so the OTel metrics pipeline (`observability::metrics`) can surface them as

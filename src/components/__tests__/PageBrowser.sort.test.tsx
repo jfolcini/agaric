@@ -148,7 +148,8 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubPageList([])
+  // Deliberately no default page stub: a test that forgets its own must fail
+  // by name through `strictInvokeFallback`, not read an empty vault (#4668).
 })
 
 describe('PageBrowser', () => {

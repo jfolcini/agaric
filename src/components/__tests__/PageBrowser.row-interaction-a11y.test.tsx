@@ -10,18 +10,14 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { asPageWithMetadataRow, emptyPage, makePage, withOps } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  type TypedInvokeHandlers,
-  mockInvokeCommands,
-  pageRowInvokeFallback,
-} from '@/__tests__/helpers/invoke'
+import { emptyPage, makePage, withOps } from '@/__tests__/fixtures'
+import { pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import type { BlockRow } from '@/lib/tauri'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
+
+const mockedInvoke = vi.mocked(invoke)
 
 // Capture every `estimateSize` callback passed to `useVirtualizer` so the
 // Referential-stability test can assert the function identity
@@ -67,48 +63,6 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
   return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
 })
 
-const mockedInvoke = vi.mocked(invoke)
-
-type PageList = CommandReturns['list_pages_with_metadata']
-
-/**
- * The `list_pages_with_metadata` envelope for a set of pages.
- *
- * #4668 — this file used to hand the command `BlockRow`s. It returns
- * `PageWithMetadataRow`, which specta renames to camelCase and which carries
- * four metadata columns (`lastModifiedAt`, `inboundLinkCount`,
- * `childBlockCount`, `flags`) no `BlockRow` has.
- */
-function pageList(items: BlockRow[], rest: Partial<PageList> = {}): PageList {
-  return {
-    items: items.map(asPageWithMetadataRow),
-    next_cursor: null,
-    has_more: false,
-    total_count: null,
-    ...rest,
-  }
-}
-
-/**
- * Install a COMMAND-KEYED `invoke` implementation for one test.
- *
- * #3217 / #3225 — the positional `mockResolvedValueOnce` this replaced was
- * consumed in call order regardless of command, so any speculative fetch
- * could take the slot meant for the page query, and a re-fetch after the
- * queue drained fell through to a fallback resolving `undefined`.
- */
-function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands(
-      {
-        resolve_page_by_alias: () => null,
-        ...handlers,
-      },
-      { fallback: pageRowInvokeFallback },
-    ),
-  )
-}
-
 /** Find the trash (delete) button within a page row via its aria-label. */
 function findTrashButton(row: HTMLElement): HTMLButtonElement {
   return within(row).getByRole('button', { name: /delete page/i })
@@ -140,12 +94,12 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  stubInvoke()
+  stubPageRowInvoke(mockedInvoke)
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([makePage({ id: 'P1', content: 'Accessible page' })]),
     })
@@ -160,7 +114,7 @@ describe('PageBrowser', () => {
     expect(results).toHaveNoViolations()
   })
   it('page item button has focus-visible ring classes', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Focus Page' })]),
     })
 
@@ -176,7 +130,7 @@ describe('PageBrowser', () => {
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
   })
   it('focused page row highlights with bg only — focus ring lives on the inner button', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Inset Page' })]),
     })
 
@@ -208,7 +162,7 @@ describe('PageBrowser', () => {
     expect(innerBtn?.className).toContain('focus-visible:ring-inset')
   })
   it('star-toggle and delete buttons have ring-inset focus rings', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([makePage({ id: 'P1', content: 'Inset Buttons Page' })]),
     })
@@ -226,7 +180,7 @@ describe('PageBrowser', () => {
   it('delete button is disabled while deletion is in progress', async () => {
     const user = userEvent.setup()
     // `delete_block` never resolves, so the trash button stays disabled.
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Deleting Page' })]),
       delete_block: () => new Promise<never>(() => {}),
     })
@@ -253,7 +207,7 @@ describe('PageBrowser', () => {
     const user = userEvent.setup()
     // #4668 — `delete_block` returns `WithOps<DeleteResponse>`, and
     // `deleted_at` has been epoch ms, not an ISO string, since migration 0081.
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Toast Page' })]),
       delete_block: () =>
         withOps({
@@ -286,7 +240,7 @@ describe('PageBrowser', () => {
     expect(options?.action?.onClick).toBeTypeOf('function')
   })
   it('page name has title attribute for accessibility', async () => {
-    stubInvoke({
+    stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () =>
         pageList([
           makePage({ id: 'P1', content: 'A very long page name that should be truncated' }),
@@ -300,7 +254,7 @@ describe('PageBrowser', () => {
   })
   describe(' aria-activedescendant on keyboard nav', () => {
     it('grid container exposes aria-activedescendant matching the focused row id', async () => {
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Apple' }),
@@ -325,7 +279,7 @@ describe('PageBrowser', () => {
 
     it('arrow-down updates aria-activedescendant to the next row id', async () => {
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Apple' }),
@@ -363,7 +317,7 @@ describe('PageBrowser', () => {
       // chain: one row per page, ids unique, and the id the grid points
       // at actually resolving to an element in the DOM.
       const user = userEvent.setup()
-      stubInvoke({
+      stubPageRowInvoke(mockedInvoke, {
         list_pages_with_metadata: () =>
           pageList([
             makePage({ id: 'P1', content: 'Agaric' }),
@@ -402,7 +356,7 @@ describe('PageBrowser', () => {
     // (inline fallback when no provider is present) so existing tests
     // querying the create-page form continue to work.
     it('no sticky top-0 wrapper div, but header content still renders', async () => {
-      stubInvoke({ list_pages_with_metadata: () => emptyPage })
+      stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => emptyPage })
       const { container } = render(<PageBrowser />)
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
