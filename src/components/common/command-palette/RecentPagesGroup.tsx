@@ -81,7 +81,7 @@ export function RecentPagesGroup({
               )}
               aria-label={
                 isBookmarked
-                  ? t('palette.removeBookmark', { title: page.title })
+                  ? t('bookmarks.remove', { title: page.title })
                   : t('palette.bookmarkPage', { title: page.title })
               }
               data-testid={`palette-recent-bookmark-${page.id}`}

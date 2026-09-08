@@ -125,7 +125,7 @@ Do not wait for CI. Record the PR as a task and start the next batch from the la
 
 Once the sweep's merges are done, collect every non-blocking note from them into ONE PR off the fresh `origin/main`, titled `chore: review notes from #N, #M and #P`. It carries its own session log and goes through CI like any other. That is one review round for a whole sweep, instead of one per PR on work that was already approved and green.
 
-A note earns a place in it on the same terms as any other finding (§4): fix what has a concrete failure or a mechanical cleanup, leave a comment for a deliberate trade, file an issue only when a user-visible failure is being deferred. A note whose premise is wrong is not silently dropped — say so in the PR body and in the log, with what you checked. Notes that survive none of these get nothing; do not manufacture churn to close the loop on every bullet.
+A note earns a place in it on the same terms as any other finding (§4). A note whose premise is wrong is not silently dropped — say so in the PR body and in the log, with what you checked. Notes that survive none of these get nothing; do not manufacture churn to close the loop on every bullet.
 
 When checking CI by script, an absent check is not a pass: match the required context by suffix (`validate / validate-all`), classify states by allow-list, and require that the checks you need were found by name.
 

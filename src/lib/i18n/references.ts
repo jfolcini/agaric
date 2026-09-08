@@ -506,8 +506,9 @@ export const references: Record<string, string> = {
   'palette.helpEmpty': 'No shortcuts match the filter.',
   // Phase 4 — bookmark affordance on the recents rows. Same feature as the
   // sidebar's Bookmarks section (`bookmarks.*`): one name, one word.
+  // Only the add label lives here. Removing is worded identically on both
+  // surfaces, so both read `bookmarks.remove`.
   'palette.bookmarkPage': 'Bookmark {{title}}',
-  'palette.removeBookmark': 'Remove {{title}} from bookmarks',
   // Phase 5 — per-row action menu labels.
   'palette.actionOpen': 'Open',
   'palette.actionOpenPage': 'Open page',
