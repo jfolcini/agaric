@@ -39,9 +39,15 @@ shape. Same shape as #3870's `list_blocks` fix.
 outside `[1, 200]` rather than clamping. The mock accepted anything, so it
 answered where the backend errors — invariant 10, and the exact defect that made
 the child-pages tree dead for every user while the estate stayed green.
-`getBacklinksLimit` mirrors `listBlocksLimit`; `backlinks-limit.test.ts` pins
-both arms, and reverting the validator reddens the three reject cases while the
-two accept cases keep passing.
+The first fix mirrored `listBlocksLimit` — and that was the wrong precedent:
+`handlers/search.ts` already held `PAGINATION_MAX_PAGE_SIZE`,
+`PAGINATION_DEFAULT_PAGE_SIZE` and the identical range test, and `links.ts`
+already imports from it. Reviewer-caught, so the check is now one exported
+`pageRequestLimit` both handlers call rather than a third copy with its own
+wording. `backlinks-limit.test.ts` pins both arms; reverting the validator
+reddens the three reject cases while the accept cases keep passing, and a wrong
+`PAGINATION_DEFAULT_PAGE_SIZE` reddens the default case — which needed 51
+seeded sources, since with one the assertion held for any default above zero.
 
 ## Skipped, with the blocker named rather than "not written yet"
 

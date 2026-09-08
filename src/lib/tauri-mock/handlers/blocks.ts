@@ -137,7 +137,7 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
 const NULL_POSITION_SENTINEL = Number.MAX_SAFE_INTEGER
 
 /** Backend `DEFAULT_PAGE_SIZE` — the limit `PageRequest::new(_, None)` falls to. */
-export const DEFAULT_PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 50
 
 /** Backend cap for `list_blocks_inner`, which REJECTS a limit outside `[1, 100]`. */
 const LIST_BLOCKS_MAX_LIMIT = 100

@@ -1136,12 +1136,32 @@ function capPaletteContent(
  *  upper end of the range `PageRequest::new` accepts, checked BEFORE
  *  {@link SEARCH_MAX_RESULTS} and in a different function, hence the two
  *  distinct refusal messages in {@link searchHandlers.search_blocks}. */
-const PAGINATION_MAX_PAGE_SIZE = 200
+export const PAGINATION_MAX_PAGE_SIZE = 200
 
 /** `pagination::DEFAULT_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:52`) — what an OMITTED `limit`
  *  (serde `None`) falls through to. An omitted limit is not an out-of-range
  *  one: it skips the range check entirely. */
-const PAGINATION_DEFAULT_PAGE_SIZE = 50
+export const PAGINATION_DEFAULT_PAGE_SIZE = 50
+
+/**
+ * `pagination::PageRequest::new` REJECTS a limit outside `[1, MAX_PAGE_SIZE]` —
+ * it does not clamp. Accepting one here is the #4805 shape: the mock answers
+ * where the backend errors, so the estate stays green over a call every real
+ * user sees fail. Shared by every handler that goes through `PageRequest`.
+ */
+export function pageRequestLimit(raw: unknown): number {
+  const rawLimit = (raw as number | null | undefined) ?? null
+  if (
+    rawLimit !== null &&
+    !(Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= PAGINATION_MAX_PAGE_SIZE)
+  ) {
+    throw validationRejection(
+      `pagination limit must be in [1, ${PAGINATION_MAX_PAGE_SIZE}]; got ${String(rawLimit)}. ` +
+        `For larger result sets, use cursor pagination.`,
+    )
+  }
+  return rawLimit ?? PAGINATION_DEFAULT_PAGE_SIZE
+}
 
 /** `toggle_filter::REGEX_PRE_FILTER_CAP` — the regex arm's SQL `LIMIT`, applied
  *  to the recency-ordered candidate scan BEFORE the pattern runs, so a match
@@ -2340,17 +2360,7 @@ export const searchHandlers = {
     // Nor is it unreachable: `limit` is typed `number`, so a typed caller CAN
     // send `50.5` (only a non-number is ruled out by the types). No caller in
     // this repo does, and both stacks refuse it — they disagree about how.
-    const rawLimit = (a['limit'] as number | null | undefined) ?? null
-    if (
-      rawLimit !== null &&
-      !(Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= PAGINATION_MAX_PAGE_SIZE)
-    ) {
-      throw validationRejection(
-        `pagination limit must be in [1, ${PAGINATION_MAX_PAGE_SIZE}]; got ${String(rawLimit)}. ` +
-          `For larger result sets, use cursor pagination.`,
-      )
-    }
-    const limit = rawLimit ?? PAGINATION_DEFAULT_PAGE_SIZE
+    const limit = pageRequestLimit(a['limit'])
     const cursor = rawCursor === null ? null : decodeSearchCursor(rawCursor)
     if (limit > SEARCH_MAX_RESULTS) {
       throw validationRejection(`search limit must be in [1, ${SEARCH_MAX_RESULTS}]; got ${limit}`)

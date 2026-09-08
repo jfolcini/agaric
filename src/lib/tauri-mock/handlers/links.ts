@@ -16,9 +16,8 @@
 // `ORDER BY id ASC` branches do (`Cursor::for_id`, `LIMIT ?limit + 1`), so it
 // reuses their paginator rather than growing a second cursor codec that would
 // be free to drift from the backend's `Cursor` shape.
-import { DEFAULT_PAGE_SIZE, idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
-import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
-import { validationRejection } from '@/lib/tauri-mock/handlers/shared'
+import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
+import { matchesFtsIndex, pageRequestLimit, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   contentLinksTo,
@@ -122,26 +121,6 @@ function applyBacklinkFilters(
   return backlinkItems
 }
 
-/**
- * `PageRequest::new` REJECTS a limit outside `[1, MAX_PAGE_SIZE]` — it does not
- * clamp (`agaric-store/src/pagination/mod.rs`). Accepting one here is the #4805
- * shape: the mock answers where the backend errors, so the whole estate stays
- * green over a call every real user would see fail. Mirrors `listBlocksLimit`.
- */
-const PAGE_REQUEST_MAX_LIMIT = 200
-
-function getBacklinksLimit(raw: unknown): number {
-  if (raw == null) return DEFAULT_PAGE_SIZE
-  const limit = raw as number
-  if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_REQUEST_MAX_LIMIT) {
-    throw validationRejection(
-      `pagination limit must be in [1, ${PAGE_REQUEST_MAX_LIMIT}]; got ${String(raw)}. ` +
-        `Use cursor pagination to walk a larger result set.`,
-    )
-  }
-  return limit
-}
-
 export const linksHandlers = {
   get_backlinks: (args) => {
     const a = args as Record<string, unknown>
@@ -169,7 +148,7 @@ export const linksHandlers = {
     return paginateKeyset(
       backlinkItems,
       idKey,
-      getBacklinksLimit(a['limit']),
+      pageRequestLimit(a['limit']),
       a['cursor'],
       null,
       null,
