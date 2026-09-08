@@ -34,8 +34,8 @@ async function openPagesView(page: Page): Promise<void> {
 /** Left edge of an element's border box, in viewport pixels. */
 async function leftEdge(locator: Locator): Promise<number> {
   const box = await locator.boundingBox()
-  expect(box, 'element is not laid out').not.toBeNull()
-  return box?.x ?? Number.NaN
+  if (box === null) throw new Error('element is not laid out')
+  return box.x
 }
 
 test.describe('Pages view — namespace indentation', () => {

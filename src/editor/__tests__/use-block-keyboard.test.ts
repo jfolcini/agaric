@@ -318,10 +318,6 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
-  // The restructure keys deliberately do NOT call `onFlush`. Their handlers
-  // (`handleIndent` and friends) read the editor's markdown, flush, move, and
-  // remount with what they read; an earlier flush wipes the doc, so the
-  // capture comes back empty and the block is remounted blank.
   describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
     it('Ctrl+Shift+ArrowRight calls onIndent WITHOUT flushing first', () => {
       const editor = makeEditor({})
