@@ -44,8 +44,8 @@ export function buildActionMenuActions(
       open,
       newTab,
       pinned
-        ? { id: 'unpin', label: t('palette.actionUnpin') }
-        : { id: 'pin', label: t('palette.actionPin') },
+        ? { id: 'remove-bookmark', label: t('palette.actionRemoveBookmark') }
+        : { id: 'bookmark', label: t('palette.actionBookmark') },
       reveal,
       copyPageLink,
       { id: 'remove-from-recents', label: t('palette.actionRemoveFromRecents') },

@@ -54,7 +54,7 @@ export const common: Record<string, string> = {
   // #4713 — the sidebar Bookmarks section over the pinned recent pages.
   'bookmarks.title': 'Bookmarks',
   'bookmarks.empty': 'No bookmarks',
-  'bookmarks.emptyHint': 'Pin a page from the command palette to keep it here.',
+  'bookmarks.emptyHint': 'Bookmark a page from the command palette to keep it here.',
   'bookmarks.remove': 'Remove {{title}} from bookmarks',
   'space.switch': 'Switch space',
   'space.manage': 'Manage spaces…',

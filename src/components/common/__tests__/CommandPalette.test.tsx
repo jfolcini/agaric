@@ -287,20 +287,20 @@ describe('CommandPalette — empty state', () => {
   })
 })
 
-describe('CommandPalette — recents pinning (Phase 4)', () => {
-  it('clicking the pin button toggles the pinned state without navigating', async () => {
+describe('CommandPalette — recents bookmarking (Phase 4)', () => {
+  it('clicking the bookmark button toggles the state without navigating', async () => {
     seedRecentPagesStore([{ pageId: 'PAGE_A', title: 'Alpha', visitedAt: '2026-05-19T00:00:00Z' }])
     render(<CommandPalette />)
     openPalette()
-    const pin = await screen.findByTestId('palette-recent-pin-PAGE_A')
-    fireEvent.click(pin)
-    // Persisted as pinned (in the store).
+    const bookmark = await screen.findByTestId('palette-recent-bookmark-PAGE_A')
+    fireEvent.click(bookmark)
+    // Persisted (the store still spells the flag `pinned`).
     expect(readRecentPagesStore()[0]?.pinned).toBe(true)
-    // The palette did NOT navigate away on the pin click.
+    // The palette did NOT navigate away on the bookmark click.
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('pinned recents sort above unpinned recents', async () => {
+  it('bookmarked recents sort above the rest', async () => {
     seedRecentPagesStore([
       { pageId: 'PAGE_OLD', title: 'OldPinned', visitedAt: '2026-01-01T00:00:00Z', pinned: true },
       { pageId: 'PAGE_NEW', title: 'NewUnpinned', visitedAt: '2026-05-19T00:00:00Z' },
@@ -310,11 +310,11 @@ describe('CommandPalette — recents pinning (Phase 4)', () => {
     // Find both recent rows by data-testid.
     const old = await screen.findByTestId('palette-recent-PAGE_OLD')
     const fresh = await screen.findByTestId('palette-recent-PAGE_NEW')
-    // The pinned row's DOM ordering comes before the unpinned one
+    // The bookmarked row's DOM ordering comes before the plain one
     // (compareDocumentPosition: 4 == DOCUMENT_POSITION_FOLLOWING).
     expect(old.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(old.getAttribute('data-pinned')).toBe('true')
-    expect(fresh.getAttribute('data-pinned')).toBeNull()
+    expect(old.getAttribute('data-bookmarked')).toBe('true')
+    expect(fresh.getAttribute('data-bookmarked')).toBeNull()
   })
 })
 
@@ -334,7 +334,7 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     expect(await screen.findByTestId('palette-action-menu')).toBeInTheDocument()
     expect(screen.getByTestId('palette-action-open')).toBeInTheDocument()
     expect(screen.getByTestId('palette-action-open-new-tab')).toBeInTheDocument()
-    expect(screen.getByTestId('palette-action-pin')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-action-bookmark')).toBeInTheDocument()
   })
 
   it('Escape closes the action menu without closing the palette', async () => {
@@ -370,16 +370,16 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
-  it('selecting "Pin" toggles the pinned state', async () => {
+  it('selecting "Bookmark" toggles the state', async () => {
     seedRecents()
     render(<CommandPalette />)
     openPalette()
     const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
-    fireEvent.click(await screen.findByTestId('palette-action-pin'))
+    fireEvent.click(await screen.findByTestId('palette-action-bookmark'))
     expect(readRecentPagesStore()[0]?.pinned).toBe(true)
-    // Action ran, menu closed; palette stays open because pin is not a nav action.
+    // Action ran, menu closed; the palette stays open — bookmarking is not a nav action.
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
