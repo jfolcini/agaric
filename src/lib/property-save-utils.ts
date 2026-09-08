@@ -14,11 +14,9 @@ import { getTodayString } from '@/lib/date-utils'
  *  {@link buildPropertyParams} and reshaped at the call site into
  *  `commands.setProperty`'s positional `(blockId, key, values)` form.
  *
- *  Structural copy of the `@/lib/tauri` `setProperty` param type (that wrapper
- *  still exists for not-yet-migrated callers, so the two must stay in sync
- *  while both are live) — kept local so this module stays free of
- *  `@/lib/tauri` imports, mirroring the same pattern already used by
- *  `InlineSetPropertyParams` in `inline-property-parse.ts`. */
+ *  Mirrors `useBlockPropertyIpc`'s `SetPropertyParams`, kept local so this
+ *  module stays free of hook imports — the same pattern
+ *  `InlineSetPropertyParams` uses in `inline-property-parse.ts`. */
 interface SetPropertyParams {
   blockId: string
   key: string

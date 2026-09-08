@@ -40,11 +40,11 @@
 //     call is SKIPPED, not failed. We cannot statically verify what keys
 //     a non-literal expression produces, and flagging it would be a
 //     false positive that blocks a legitimate caller (e.g. a typed
-//     helper that already guarantees all five keys, or a wrapper
-//     function like `src/lib/tauri/properties.ts`'s own `setProperty`
-//     which takes a *different*, camelCase-optional shape and builds the
-//     five-key literal internally — that internal literal IS checked,
-//     the wrapper's own external params are not this guard's concern).
+//     helper that already guarantees all five keys, or a function like
+//     `useBlockPropertyIpc`'s `setProperty` which takes a *different*,
+//     camelCase-optional shape and builds the five-key literal internally
+//     — that internal literal IS checked, the helper's own external params
+//     are not this guard's concern).
 //   - Same applies to a literal that contains a spread (`{ ...defaults,
 //     value_text: x }`) or a computed key (`{ [k]: v }`): the literal's
 //     explicit keys don't tell us what the spread/computed key
