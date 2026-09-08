@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { SpaceAccentBadge } from '@/components/common/SpaceAccentBadge'
+import { BookmarksSection } from '@/components/layout/BookmarksSection'
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
 import { useTrashCount } from '@/components/pages/ViewDispatcher'
 import {
@@ -255,6 +256,10 @@ function AppSidebarInner({
               </SidebarGroup>
             )
           })}
+          {/* #4713 — the pinned recent pages, as a collapsible section. Below
+              the fixed nav groups because its length varies with the user's
+              pins. */}
+          <BookmarksSection />
         </FeatureErrorBoundary>
       </SidebarContent>
       <SidebarFooter>

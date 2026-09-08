@@ -168,4 +168,20 @@ describe('CollapsiblePanelHeader', () => {
     // Non-string children → aria-label is omitted, text content is the accessible name
     expect(button).not.toHaveAttribute('aria-label')
   })
+
+  // #4713 — `cn()` is last-wins, so a caller override must follow the base or
+  // it is silently dropped. `UnfinishedTasks`' nested group header has passed
+  // `py-1` since it was written and never got it.
+  it('lets a caller override a conflicting base utility', () => {
+    render(
+      <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} className="py-1 text-xs">
+        <span>Group</span>
+      </CollapsiblePanelHeader>,
+    )
+    const header = screen.getByRole('button')
+    expect(header.className).toContain('py-1')
+    expect(header.className).not.toContain('py-2')
+    expect(header.className).toContain('text-xs')
+    expect(header.className).not.toContain('text-sm')
+  })
 })

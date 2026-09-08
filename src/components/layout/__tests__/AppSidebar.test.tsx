@@ -8,7 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -17,6 +17,7 @@ import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
 import { NAV_GROUPS, NAV_ITEMS } from '@/lib/nav-items'
+import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -73,6 +74,10 @@ function renderSidebar(overrides: Partial<AppSidebarProps> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
+  // #4713 — the embedded BookmarksSection reads this store; reset it so a
+  // prior test's pins don't leak into the next sidebar render.
+  useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {}, rawKeysMerged: true })
 
   // Seed the space store the same way App.test.tsx does so the embedded
   // SpaceSwitcher / SpaceAccentBadge render against a deterministic
@@ -351,6 +356,20 @@ describe('AppSidebar', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('5 items in trash')).toBeInTheDocument()
     })
+  })
+
+  // #4713 — the Bookmarks section is mounted in the sidebar's content, below
+  // the nav groups. Its own behaviour is covered by BookmarksSection.test.tsx;
+  // this pins the wiring, which nothing else would catch.
+  it('mounts the Bookmarks section listing the pinned pages (#4713)', () => {
+    const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
+    recordVisit({ pageId: 'A', title: 'Alpha' })
+    togglePinRecentPage('A')
+
+    renderSidebar()
+
+    const bookmarks = screen.getByRole('list', { name: t('bookmarks.title') })
+    expect(within(bookmarks).getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
   })
 })
 
