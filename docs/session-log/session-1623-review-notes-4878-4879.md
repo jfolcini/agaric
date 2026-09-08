@@ -15,6 +15,15 @@ here.
   dispositions three paragraphs after §4 gives them. The pointer carries it, so
   the enumeration is gone and the section keeps only what it adds.
 
+## A second round on this PR's own text
+
+The review of this PR flagged two things it had just added: a comment
+explaining why a key is absent, on a PR about not saying things twice, and a
+"none of these" whose antecedent went away with the enumeration it removed.
+Both were fixed here rather than deferred to a third collector — §4 already
+says a follow-up about machinery the same PR added is churn, so those get
+fixed in-PR or dropped.
+
 ## Verification
 
 Comment, key and prose changes; no behaviour intended. 788 tests across the

@@ -504,10 +504,8 @@ export const references: Record<string, string> = {
   'palette.tagsUnnamed': '(unnamed)',
   // Help mode placeholder.
   'palette.helpEmpty': 'No shortcuts match the filter.',
-  // Phase 4 — bookmark affordance on the recents rows. Same feature as the
-  // sidebar's Bookmarks section (`bookmarks.*`): one name, one word.
-  // Only the add label lives here. Removing is worded identically on both
-  // surfaces, so both read `bookmarks.remove`.
+  // Phase 4 — bookmark affordance on the recents rows. Removing is worded
+  // identically in the sidebar, so both surfaces read `bookmarks.remove`.
   'palette.bookmarkPage': 'Bookmark {{title}}',
   // Phase 5 — per-row action menu labels.
   'palette.actionOpen': 'Open',
