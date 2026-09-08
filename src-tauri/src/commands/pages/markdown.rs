@@ -2074,7 +2074,6 @@ pub async fn import_markdown_inner(
     err
 )]
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn import_markdown_with_progress(
     pool: &SqlitePool,
     device_id: &str,
@@ -2099,97 +2098,181 @@ pub async fn import_markdown_with_progress(
     // `block_properties.value_ref` lookup downstream.
     let space_id = space_id.to_ascii_uppercase();
 
-    // #2724 — AGGREGATE attachment budget, enforced ONCE at the command
-    // boundary before any parsing or ingest. `vault_files` arrives over IPC
-    // with every referenced file's full bytes resident in memory and is
-    // retained for the whole chunked import; the per-file `MAX_ATTACHMENT_SIZE`
-    // guard (applied later, per ingest) does NOTHING to bound the aggregate.
-    // Reject an over-budget payload up front — a clear error, no partial write
-    // and no ingest attempted — rather than let a multi-hundred-MB `Vec` push
-    // the process toward OOM. `None`/empty ⇒ this whole check is a no-op, so
-    // the pre-#2724 no-attachment path is byte-for-byte unchanged. (The
-    // frontend `DataTab` should pre-check the same budget for a nicer UX, but
-    // THIS backend cap is the load-bearing guard — it protects the MCP / test /
-    // scripted paths that never touch the frontend.)
-    if let Some(files) = vault_files.as_ref() {
+    let (mut parse_output, page_title) =
+        parse_import_payload(&content, filename, vault_files.as_deref())?;
+    let blocks_total = parse_output.blocks.len() as u64;
+    announce_import_start(
+        progress,
+        &page_title,
+        blocks_total,
+        &space_id,
+        parse_output.warnings.len(),
+    );
+
+    let (tx, page_id) =
+        create_import_page(pool, materializer, device_id, &space_id, &page_title).await?;
+
+    let mut counters = ImportCounters::default();
+    // Bundle the read-only handles + derived identity + the running `warnings`
+    // list that every phase appends to, so the phase helpers below take one
+    // `&mut ImportCtx` instead of a long, repeated argument list. `warnings` is
+    // seeded from the parser's diagnostics (`std::mem::take` leaves the parsed
+    // struct otherwise intact so its other fields are still read by the phases).
+    let mut ctx = ImportCtx {
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        progress,
+        started_at,
+        space_id,
+        page_id,
+        page_title,
+        blocks_total,
+        warnings: std::mem::take(&mut parse_output.warnings),
+    };
+
+    let (tx, refs) = resolve_document_refs(&mut ctx, tx, &parse_output, &mut counters).await?;
+
+    // #2724 — the post-commit ingest (`ingest_attachments`) takes ownership of
+    // these files so it can MOVE each single-attempt file's bytes out
+    // (`std::mem::take`) on its last ingest instead of cloning them.
+    let vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
+
+    // #662 — chunked block insertion.
+    let (created_block_ids, pending_attachments) = insert_blocks(
+        &mut ctx,
+        tx,
+        &parse_output,
+        &refs,
+        &vault_files,
+        &mut counters,
+    )
+    .await?;
+
+    // #2510 / #2567 — post-commit anchor resolution + block-ref rewrite.
+    resolve_anchor_links(&mut ctx, &parse_output, &created_block_ids, &refs).await;
+
+    // #1925 — post-commit attachment ingest + content rewrite.
+    ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
+
+    // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
+    Ok(finish(ctx, &counters))
+}
+
+/// Guard the payload, parse it, and derive the page title.
+///
+/// #2724 — the AGGREGATE attachment budget is enforced ONCE here, at the command
+/// boundary, before any parsing or ingest. `vault_files` arrives over IPC with
+/// every referenced file's full bytes resident in memory and is retained for the
+/// whole chunked import; the per-file `MAX_ATTACHMENT_SIZE` guard (applied later,
+/// per ingest) does NOTHING to bound the aggregate. An over-budget payload is
+/// rejected up front — a clear error, no partial write and no ingest attempted —
+/// rather than letting a multi-hundred-MB `Vec` push the process toward OOM.
+/// `None`/empty ⇒ the whole check is a no-op, so the pre-#2724 no-attachment
+/// path is byte-for-byte unchanged. (The frontend `DataTab` should pre-check the
+/// same budget for a nicer UX, but THIS backend cap is the load-bearing guard —
+/// it protects the MCP / test / scripted paths that never touch the frontend.)
+///
+/// #1446 Part B — the title comes from the filename (folder → namespace). The
+/// caller may pass either a bare basename (`API.md`) or a relative path within
+/// the imported folder/vault (`Project/Backend/API.md`, e.g. a browser
+/// `webkitRelativePath`). We strip the `.md` extension and keep the
+/// `/`-delimited path AS the namespaced page title, the inverse of the
+/// namespaced export (Part A). Backslash separators (Windows-authored paths) are
+/// normalised to `/` first, and empty path segments (leading/trailing or doubled
+/// separators) are dropped so a stray slash never yields a blank namespace.
+fn parse_import_payload(
+    content: &str,
+    filename: Option<String>,
+    vault_files: Option<&[VaultFile]>,
+) -> Result<(import::ParseOutput, String), AppError> {
+    if let Some(files) = vault_files {
         // Sum as u64 to avoid any `usize as i64` wrap on a pathological length.
         let total_bytes: u64 = files.iter().map(|f| f.bytes.len() as u64).sum();
         check_attachment_budget(files.len(), total_bytes)?;
     }
-
-    let mut parse_output = import::parse_logseq_markdown(&content);
-
-    // Derive the page title from the filename (#1446 Part B — folder →
-    // namespace). The caller may pass either a bare basename (`API.md`) or a
-    // relative path within the imported folder/vault (`Project/Backend/API.md`,
-    // e.g. a browser `webkitRelativePath`). We strip the `.md` extension and
-    // keep the `/`-delimited path AS the namespaced page title, the inverse of
-    // the namespaced export (Part A): `Project/Backend/API.md` → page title
-    // `Project/Backend/API`. Backslash separators (Windows-authored paths) are
-    // normalised to `/` first. Empty path segments (leading/trailing or doubled
-    // separators) are dropped so a stray slash never yields a blank namespace.
+    let parse_output = import::parse_logseq_markdown(content);
     let page_title = filename
         .map(|f| folder_path_to_namespace_title(&f))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
+    Ok((parse_output, page_title))
+}
 
-    // #128 — emit `Started` with the parser's block count so the UI can
-    // render a determinate progress bar from the first event. Sent before
-    // the transaction opens; if the import later fails, the consumer sees
-    // no `Complete` and treats it as failed.
-    let blocks_total = parse_output.blocks.len() as u64;
-
-    // #1934 — back-fill the identifying span field now that the block count is
-    // known, so every event emitted within this span (and the `err` line on
-    // failure) carries it. #3317 removed the `page_title` back-fill from here;
-    // see the note on the `#[instrument]` attribute above.
+/// #128 / #1932 / #1934 — announce the import before the transaction opens.
+///
+/// The `Started` event carries the parser's block count so the UI can render a
+/// determinate progress bar from the first event; if the import later fails, the
+/// consumer sees no `Complete` and treats it as failed. The same count back-fills
+/// the identifying span field, so every event emitted within this span (and the
+/// `err` line on failure) carries it — #3317 removed the `page_title` back-fill;
+/// see the note on `import_markdown_with_progress`'s `#[instrument]` attribute.
+/// The start log line uses structured fields (not interpolation) to match the
+/// codebase logging baseline (e.g. `materializer/consumer.rs`); until #1932 the
+/// entire backend import path emitted nothing on the happy path, leaving a
+/// completed/partial import invisible in `agaric.log`.
+fn announce_import_start(
+    progress: Option<&dyn ImportProgressSink>,
+    page_title: &str,
+    blocks_total: u64,
+    space_id: &str,
+    parse_warnings: usize,
+) {
     let span = tracing::Span::current();
     span.record("blocks_total", blocks_total);
 
-    // #1932 — start-of-import log line. Until now the entire backend import
-    // path emitted nothing on the happy path, leaving a completed/partial
-    // import invisible in `agaric.log`. Structured fields (not interpolation)
-    // match the codebase logging baseline (e.g. `materializer/consumer.rs`).
     tracing::info!(
         page = %page_title,
         blocks_total,
         space = %space_id,
-        parse_warnings = parse_output.warnings.len(),
+        parse_warnings,
         "import: starting markdown import"
     );
 
     if let Some(sink) = progress {
         sink.emit(ImportProgressUpdate::Started {
-            page_title: page_title.clone(),
+            page_title: page_title.to_string(),
             blocks_total,
         });
     }
+}
 
-    // --- Chunked IMMEDIATE transactions (#662) ---
-    // CommandTx couples commit + post-commit dispatch; op
-    // records enqueue per chunk and drain in FIFO order on that chunk's
-    // commit. Pre-#662 this was a *single* IMMEDIATE transaction spanning
-    // the whole (unbounded) import, so a multi-MB file held the single
-    // SQLite writer lock — blocking every other write + the UI — for its
-    // entire duration. We now flush the transaction at top-level
-    // (depth-0) subtree boundaries once it has accumulated at least
-    // `IMPORT_CHUNK_BLOCKS` blocks, releasing and re-acquiring the writer
-    // lock between chunks so interleaved writes can proceed. See this
-    // function's doc comment for the chunk-boundary + partial-import
-    // contract. A per-block / per-property failure still propagates via
-    // `?`, rolling back the *current* chunk (committed chunks survive).
+/// Open the import's first chunk and create the page it writes into, returning
+/// the transaction and the page's ULID.
+///
+/// --- Chunked IMMEDIATE transactions (#662) --- `CommandTx` couples commit +
+/// post-commit dispatch; op records enqueue per chunk and drain in FIFO order on
+/// that chunk's commit. Pre-#662 this was a *single* IMMEDIATE transaction
+/// spanning the whole (unbounded) import, so a multi-MB file held the single
+/// SQLite writer lock — blocking every other write + the UI — for its entire
+/// duration. The transaction is now flushed at top-level (depth-0) subtree
+/// boundaries once it has accumulated at least `IMPORT_CHUNK_BLOCKS` blocks,
+/// releasing and re-acquiring the writer lock between chunks so interleaved
+/// writes can proceed. See `import_markdown_with_progress`'s doc comment for the
+/// chunk-boundary + partial-import contract.
+///
+/// `space_id` is validated INSIDE the tx, identically to
+/// `create_page_in_space_inner`: the target must exist as a live, non-conflict
+/// block carrying `is_space = 'true'`, which inside the tx is TOCTOU-safe
+/// against a concurrent delete. Rejecting here means the import never partially
+/// writes a page + blocks before failing — the early `?` rolls the whole
+/// transaction back. The page's own `space` ref is stamped straight after it is
+/// created, so ops are emitted in the order (create-page → set-space) and a sync
+/// peer materializes them in the same order, never observing a page without its
+/// space property in steady state.
+async fn create_import_page(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    space_id: &str,
+    page_title: &str,
+) -> Result<(CommandTx, String), AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
-    // chunk at the re-open below.
+    // chunk when the block loop reopens the transaction.
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Validate `space_id` upfront inside the tx,
-    // identically to `create_page_in_space_inner`. The target must
-    // exist as a live, non-conflict block carrying `is_space = 'true'`.
-    // Inside the tx the check is TOCTOU-safe against a concurrent
-    // delete. Rejecting here means the import never partially writes a
-    // page + blocks before failing — the early `?` rolls the whole
-    // transaction back.
     let space_ok = sqlx::query_scalar!(
         r#"SELECT 1 as "ok: i32" FROM blocks b
            WHERE b.id = ?
@@ -2210,13 +2293,12 @@ pub async fn import_markdown_with_progress(
         )));
     }
 
-    // Create the page inside the transaction
     let (page, page_op) = create_block_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
         "page".into(),
-        page_title.clone(),
+        page_title.to_string(),
         None,
         None,
         // #2849 PR2: server-generated id.
@@ -2225,156 +2307,96 @@ pub async fn import_markdown_with_progress(
     .await?;
     tx.enqueue_background(page_op);
     let page_id = page.id.clone().into_string();
+    stamp_space_property(&mut tx, materializer, device_id, page_id.clone(), space_id).await?;
+    Ok((tx, page_id))
+}
 
-    // Stamp the `space` ref property on the imported
-    // page. Mirrors `create_page_in_space_inner`: ops are emitted in
-    // the order (create-page → set-space) so a sync peer materializes
-    // them in the same order and never observes a page without its
-    // space property in steady state.
-    let (_page_block, page_space_op) = set_property_in_tx(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        page_id.clone(),
-        "space",
-        None,
-        None,
-        None,
-        Some(space_id.clone()),
-        None,
-    )
-    .await?;
-    tx.enqueue_background(page_space_op);
+/// Everything the block loop and the post-commit anchor phase need to rewrite a
+/// document's inbound references to this vault's ids.
+struct DocumentRefs {
+    links: InboundLinks,
+    /// Original inline-tag token → tag ULID.
+    tag_tokens: HashMap<String, String>,
+    /// #2510 — Obsidian block-anchor id → the INDEX (into `parse_output.blocks`)
+    /// of the block whose trailing `^block-id` marker the parser stripped (see
+    /// `ParsedBlock::block_anchor`).
+    anchor_to_block_index: HashMap<String, usize>,
+    /// #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
+    /// the FIRST block whose content is that ATX heading.
+    heading_to_block_index: HashMap<String, usize>,
+}
 
-    // Running counters, threaded by value through the phases that update them
-    // (`properties_set` in the frontmatter apply + block loop; `blocks_created`
-    // / `chunks_committed` in the block loop). Declared here so the final
-    // completion telemetry can report their fully-accumulated values.
-    let blocks_created: u64 = 0;
-    let properties_set: u64 = 0;
-    let chunks_committed: u64 = 0;
-
-    // Bundle the read-only handles + derived identity + the running `warnings`
-    // list that every phase appends to, so the phase helpers below take one
-    // `&mut ImportCtx` instead of a long, repeated argument list. `warnings` is
-    // seeded from the parser's diagnostics (`std::mem::take` leaves the parsed
-    // struct otherwise intact so its other fields are still read by the phases).
-    let mut ctx = ImportCtx {
-        pool,
-        device_id,
-        materializer,
-        app_data_dir,
-        progress,
-        started_at,
-        space_id,
-        page_id,
-        page_title,
-        blocks_total,
-        warnings: std::mem::take(&mut parse_output.warnings),
-    };
-
-    // #1432 — leading YAML frontmatter → page-level properties.
-    let (tx, properties_set) =
-        apply_frontmatter_properties(&mut ctx, tx, &parse_output, properties_set).await?;
-
-    // #1446 Part B / #1921 — inbound `[[Page Name]]` wiki-link resolution pre-pass.
-    let (tx, resolved_page_links, pending_block_anchor_links, pending_heading_anchor_links) =
-        resolve_inbound_page_links(&mut ctx, tx, &parse_output).await?;
-
-    // #2510 — Obsidian block-anchor id → the INDEX (into `parse_output.blocks`)
-    // of the block whose trailing `^block-id` marker the parser stripped (see
-    // `ParsedBlock::block_anchor`). Consumed by the block-anchor resolution
-    // pass after the block-creation loop below, once every index has a real
-    // ULID (or `None`, if that particular block was skipped). Built here
-    // (independent of block creation) so it is ready the moment the loop
-    // finishes. A duplicate anchor id within one document (a user/Obsidian
-    // authoring mistake) last-write-wins, matching a plain map insert — not
-    // worth a dedicated ambiguity warning.
-    let anchor_to_block_index: HashMap<String, usize> = parse_output
-        .blocks
+/// #2510 — map each Obsidian `^block-id` marker to the index of the block that
+/// carried it, ready for the post-commit anchor pass to turn into a real ULID.
+/// A duplicate anchor id within one document (a user/Obsidian authoring mistake)
+/// last-write-wins, matching a plain map insert — not worth a dedicated
+/// ambiguity warning.
+fn index_block_anchors(blocks: &[import::ParsedBlock]) -> HashMap<String, usize> {
+    blocks
         .iter()
         .enumerate()
         .filter_map(|(idx, b)| b.block_anchor.as_ref().map(|a| (a.clone(), idx)))
-        .collect();
+        .collect()
+}
 
-    // #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
-    // the FIRST block whose content is that ATX heading. Mirrors
-    // `anchor_to_block_index` above and is consumed by the same
-    // post-block-creation resolution pass. COLLISION RULE: first occurrence
-    // wins (`or_insert`) — a repeated heading label always targets its first
-    // occurrence in document order. Obsidian's own `heading`, `heading-1`, …
-    // numeric-suffix disambiguation is intentionally NOT mirrored (kept simple
-    // and deterministic; documented here and in the issue). `is_code` blocks
-    // are skipped — a `# comment` inside a fenced code sample is not a heading.
-    let heading_to_block_index: HashMap<String, usize> = {
-        let mut map: HashMap<String, usize> = HashMap::new();
-        for (idx, b) in parse_output.blocks.iter().enumerate() {
-            if b.is_code {
-                continue;
-            }
-            if let Some(text) = obsidian_heading_text(&b.content) {
-                map.entry(normalize_heading_anchor(text)).or_insert(idx);
-            }
+/// #2567 — map each normalized ATX heading label to the index of the block that
+/// is that heading. COLLISION RULE: first occurrence wins (`or_insert`), so a
+/// repeated heading label always targets its first occurrence in document order.
+/// Obsidian's own `heading`, `heading-1`, … numeric-suffix disambiguation is
+/// intentionally NOT mirrored (kept simple and deterministic; documented here
+/// and in the issue). `is_code` blocks are skipped — a `# comment` inside a
+/// fenced code sample is not a heading.
+fn index_headings(blocks: &[import::ParsedBlock]) -> HashMap<String, usize> {
+    let mut map: HashMap<String, usize> = HashMap::new();
+    for (idx, b) in blocks.iter().enumerate() {
+        if b.is_code {
+            continue;
         }
-        map
-    };
+        if let Some(text) = obsidian_heading_text(&b.content) {
+            map.entry(normalize_heading_anchor(text)).or_insert(idx);
+        }
+    }
+    map
+}
+
+/// The import's pre-commit phases: page-level frontmatter, then the wiki-link
+/// and inline-tag resolve-or-create pre-passes, then the frontmatter tags. They
+/// all run in the FIRST chunk's transaction, so everything they create shares
+/// the page's atomic write, before the block loop opens any new chunk.
+async fn resolve_document_refs(
+    ctx: &mut ImportCtx<'_>,
+    tx: CommandTx,
+    parse_output: &import::ParseOutput,
+    counters: &mut ImportCounters,
+) -> Result<(CommandTx, DocumentRefs), AppError> {
+    // #1432 — leading YAML frontmatter → page-level properties.
+    let tx = apply_frontmatter_properties(ctx, tx, parse_output, counters).await?;
+
+    // #1446 Part B / #1921 — inbound `[[Page Name]]` wiki-link resolution pre-pass.
+    let (tx, links) = resolve_inbound_page_links(ctx, tx, parse_output).await?;
 
     // #1924 / #1950 — inbound inline-tag resolution pre-pass.
-    let (tx, mut resolved_tag_norm, resolved_tag_tokens, existing_tag_by_norm) =
-        resolve_inbound_tags(&mut ctx, tx, &parse_output).await?;
+    let (tx, mut resolved_tag_norm, tag_tokens, existing_tag_by_norm) =
+        resolve_inbound_tags(ctx, tx, parse_output).await?;
 
     // #2722 — frontmatter `tags:` → real page→tag associations.
     let tx = apply_frontmatter_tags(
-        &mut ctx,
+        ctx,
         tx,
-        &parse_output,
+        parse_output,
         &mut resolved_tag_norm,
         &existing_tag_by_norm,
     )
     .await?;
 
-    // #2724 — the post-commit ingest (`ingest_attachments`) takes ownership of
-    // these files so it can MOVE each single-attempt file's bytes out
-    // (`std::mem::take`) on its last ingest instead of cloning them.
-    let vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
-
-    // #662 — chunked block insertion (returns the accumulated counters plus the
-    // per-block state consumed by the two post-commit phases below).
-    let (blocks_created, properties_set, chunks_committed, created_block_ids, pending_attachments) =
-        insert_blocks(
-            &mut ctx,
-            tx,
-            &parse_output,
-            resolved_page_links,
-            resolved_tag_tokens,
-            &vault_files,
-            blocks_created,
-            properties_set,
-            chunks_committed,
-        )
-        .await?;
-
-    // #2510 / #2567 — post-commit anchor resolution + block-ref rewrite.
-    resolve_anchor_links(
-        &mut ctx,
-        &parse_output,
-        &created_block_ids,
-        &pending_block_anchor_links,
-        &pending_heading_anchor_links,
-        &anchor_to_block_index,
-        &heading_to_block_index,
-    )
-    .await;
-
-    // #1925 — post-commit attachment ingest + content rewrite.
-    ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
-
-    // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
-    Ok(finish(
-        ctx,
-        blocks_created,
-        properties_set,
-        chunks_committed,
+    Ok((
+        tx,
+        DocumentRefs {
+            links,
+            tag_tokens,
+            anchor_to_block_index: index_block_anchors(&parse_output.blocks),
+            heading_to_block_index: index_headings(&parse_output.blocks),
+        },
     ))
 }
 
@@ -2402,16 +2424,195 @@ struct ImportCtx<'a> {
     warnings: Vec<String>,
 }
 
+/// The running totals an import accumulates across its phases (`properties_set`
+/// in the frontmatter apply and the block loop, `blocks_created` /
+/// `chunks_committed` in the block loop) and reports in the final
+/// [`ImportResult`].
+// Not `Copy`: every user takes it by `&mut`, and a helper silently taking it
+// by value would drop the increments.
+#[derive(Default)]
+struct ImportCounters {
+    blocks_created: u64,
+    properties_set: u64,
+    chunks_committed: u64,
+}
+
+/// Stamp the reserved `space` ref property on a block the import just created,
+/// queueing its op for post-commit dispatch.
+///
+/// Every block an import mints — the page itself, a create-if-missing wiki-link
+/// page, a resolve-or-create tag — must carry it: a tag with no space resolves
+/// to NO space and the cross-space gate in `reindex_block_tag_refs` then drops
+/// the inline `#[ULID]` ref, and a page without it is not a member of the
+/// import's space.
+async fn stamp_space_property(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    block_id: String,
+    space_id: &str,
+) -> Result<(), AppError> {
+    let (_block, space_op) = set_property_in_tx(
+        &mut *tx,
+        materializer.loro_state(),
+        device_id,
+        block_id,
+        "space",
+        None,
+        None,
+        None,
+        Some(space_id.to_string()),
+        None,
+    )
+    .await?;
+    tx.enqueue_background(space_op);
+    Ok(())
+}
+
+/// #1920 (A7) / #1921 (B1) — every distinct frontmatter key's declared
+/// `(value_type, options)`, fetched in ONE `json_each(?1)` query.
+///
+/// Pre-fix the apply loop ran `SELECT value_type FROM property_definitions
+/// WHERE key = ?` once PER key, and `set_property_in_tx` then re-queried
+/// `value_type, options` for the SAME key a second time. Driving the loop from
+/// this map and passing the pre-fetched declaration straight into
+/// `set_property_in_tx_with_declaration` eliminates BOTH round-trips. A key
+/// absent from the map is undeclared (declaration `None`), preserving the
+/// missing-key behaviour exactly.
+async fn fetch_frontmatter_declarations(
+    tx: &mut CommandTx,
+    frontmatter: &[(String, String)],
+) -> Result<HashMap<String, (Option<String>, Option<String>)>, AppError> {
+    let distinct_keys: std::collections::BTreeSet<&str> =
+        frontmatter.iter().map(|(k, _)| k.as_str()).collect();
+    if distinct_keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let keys: Vec<&str> = distinct_keys.into_iter().collect();
+    let keys_json = serde_json::to_string(&keys)?;
+    let rows = sqlx::query!(
+        r#"SELECT key AS "key!", value_type, options
+                   FROM property_definitions
+                   WHERE key IN (SELECT value FROM json_each(?1))"#,
+        keys_json,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.key, (Some(r.value_type), r.options)))
+        .collect())
+}
+
+/// #2722 — write the frontmatter `aliases:` items as real `page_aliases` rows in
+/// the import's own transaction.
+///
+/// Mirrors `set_page_aliases_inner`'s `INSERT OR IGNORE` (byte-identical SQL, so
+/// its offline `.sqlx` entry is reused) but shares the import's atomic write.
+/// `page_aliases` is its own table outside the op log (#110), so a direct insert
+/// here is the established pattern, and `INSERT OR IGNORE` keeps re-import
+/// idempotent (alias is globally UNIQUE NOCASE).
+///
+/// `inserted_here` (ASCII-folded to mirror the NOCASE index) tracks aliases this
+/// call just wrote, so a duplicate WITHIN the frontmatter (`[Solo, Solo]`) is a
+/// benign no-op rather than a spurious collision warning. Any OTHER 0-row insert
+/// means the alias is already held by a DIFFERENT page (the page was created
+/// empty in this very tx, so it owned no aliases before this loop) — a
+/// never-silent degradation, surfaced as a warning.
+async fn apply_frontmatter_aliases(
+    tx: &mut CommandTx,
+    page_id: &str,
+    aliases: Vec<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    let mut inserted_here: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for alias in aliases {
+        let res = sqlx::query!(
+            "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
+            page_id,
+            alias,
+        )
+        .execute(&mut ***tx)
+        .await?;
+        if res.rows_affected() > 0 {
+            inserted_here.insert(alias.to_ascii_lowercase());
+        } else if !inserted_here.contains(&alias.to_ascii_lowercase()) {
+            warnings.push(format!(
+                "alias '{alias}' is already used by another page; not applied to \
+                 the imported page"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Registry-aware coercion of one frontmatter value into its typed property
+/// arguments, or `None` when the property must be skipped with a warning.
+///
+/// A `ref`-declared value arrives as the resolved target *title* (that is what
+/// `export_page_markdown_inner` emits), so it is reverse-resolved to a live
+/// page/tag block id. Resolution is SAME-SPACE-SCOPED (`AND space_id = ?`): a
+/// title that collides with a page/tag in a DIFFERENT space must NOT resolve
+/// here, or the foreign block id would flow into `set_property_in_tx` →
+/// `validate_ref_property_cross_space`, which hard-rejects with
+/// `AppError::Validation` and rolls back the entire import. With no same-space
+/// match the value can be persisted neither as a `ref` (no live target) nor as
+/// `text` (the typed def would reject text), so the single property is skipped
+/// with the human-readable title surfaced in the warning.
+async fn frontmatter_typed_args(
+    tx: &mut CommandTx,
+    space_id: &str,
+    key: &str,
+    value: &str,
+    value_type: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<Option<agaric_engine::block_ops::TypedPropertyArgs>, AppError> {
+    if value_type != Some("ref") {
+        return Ok(Some(
+            agaric_engine::block_ops::typed_property_args_for_registry_value(
+                key,
+                value.to_string(),
+                value_type,
+            ),
+        ));
+    }
+    let resolved: Option<String> = sqlx::query_scalar!(
+        r#"SELECT id FROM blocks
+                       WHERE content = ?
+                         AND block_type IN ('page', 'tag')
+                         AND deleted_at IS NULL
+                         AND space_id = ?
+                       ORDER BY id ASC
+                       LIMIT 1"#,
+        value,
+        space_id,
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    let Some(id) = resolved else {
+        // #1933 — per-occurrence diagnostic for this lossy skip.
+        tracing::debug!(
+            key = %key,
+            value = %value,
+            "import: frontmatter ref property could not resolve; skipped (#1933)"
+        );
+        warnings.push(format!(
+            "frontmatter ref property '{key}' could not resolve target \
+             '{value}' to a page in this space; skipped"
+        ));
+        return Ok(None);
+    };
+    Ok(Some((None, None, None, Some(id), None)))
+}
+
 /// #1432 — apply the leading YAML frontmatter as page-level properties. Returns
-/// the (possibly moved-through) transaction and the updated `properties_set`
-/// counter.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+/// the (possibly moved-through) transaction.
 async fn apply_frontmatter_properties(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
     parse_output: &import::ParseOutput,
-    mut properties_set: u64,
-) -> Result<(CommandTx, u64), AppError> {
+    counters: &mut ImportCounters,
+) -> Result<CommandTx, AppError> {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let space_id = ctx.space_id.clone();
@@ -2427,41 +2628,8 @@ async fn apply_frontmatter_properties(
     // written into the FIRST chunk (alongside the page + space property),
     // before the block loop opens any new chunk, so they share the page's
     // atomic write.
-    //
-    // #1920 (A7) / #1921 (B1) — batch the property-definition lookup. Pre-fix
-    // the loop ran `SELECT value_type FROM property_definitions WHERE key = ?`
-    // once PER key, and `set_property_in_tx` then re-queried `value_type,
-    // options` for the SAME key a second time. We now fetch every distinct
-    // frontmatter key's `(value_type, options)` in ONE `json_each(?1)` query
-    // (the exporter's established batched idiom) into a map, drive the loop
-    // from it, and pass the pre-fetched declaration straight into
-    // `set_property_in_tx_with_declaration` — eliminating BOTH round-trips.
-    // A key absent from the map is undeclared (declaration `None`), preserving
-    // the missing-key behaviour exactly.
-    let frontmatter_decls: HashMap<String, (Option<String>, Option<String>)> = {
-        let distinct_keys: std::collections::BTreeSet<&str> = parse_output
-            .frontmatter
-            .iter()
-            .map(|(k, _)| k.as_str())
-            .collect();
-        if distinct_keys.is_empty() {
-            HashMap::new()
-        } else {
-            let keys: Vec<&str> = distinct_keys.into_iter().collect();
-            let keys_json = serde_json::to_string(&keys)?;
-            let rows = sqlx::query!(
-                r#"SELECT key AS "key!", value_type, options
-                   FROM property_definitions
-                   WHERE key IN (SELECT value FROM json_each(?1))"#,
-                keys_json,
-            )
-            .fetch_all(&mut **tx)
-            .await?;
-            rows.into_iter()
-                .map(|r| (r.key, (Some(r.value_type), r.options)))
-                .collect()
-        }
-    };
+    let frontmatter_decls =
+        fetch_frontmatter_declarations(&mut tx, &parse_output.frontmatter).await?;
 
     for (key, value) in &parse_output.frontmatter {
         // #2722 — `aliases` and `tags` are SEMANTIC frontmatter keys the
@@ -2477,60 +2645,13 @@ async fn apply_frontmatter_properties(
         //     tag resolve-or-create machinery, which is set up after the
         //     wiki-link pre-pass).
         if key.as_str() == "aliases" {
-            // The value arrives as a comma-joined scalar (`parse_frontmatter`
-            // collapses the exported `[a, b]` flow/block sequence). Naively
-            // re-splitting that scalar on every `,` is lossy when an alias
-            // itself contains a literal comma — `["Beta, Inc"]` and `["a",
-            // "b"]` join to indistinguishable scalars. `frontmatter_list_items`
-            // (#2829) carries the REAL parsed item boundaries for keys that
-            // arrived as a genuine YAML sequence, so prefer that; only a
-            // plain unbracketed scalar (`aliases: a, b`, no boundary info
-            // available) falls back to the legacy comma-split. Either way,
-            // write real `page_aliases` rows in this tx — mirroring
-            // `set_page_aliases_inner`'s `INSERT OR IGNORE` (byte-identical
-            // SQL, so its offline `.sqlx` entry is reused) but sharing the
-            // import's atomic write. `page_aliases` is its own table outside
-            // the op log (#110), so a direct insert here is the established
-            // pattern. `INSERT OR IGNORE` keeps re-import idempotent (alias is
-            // globally UNIQUE NOCASE) and never duplicates. `page_id` is the
-            // canonical uppercase ULID of the freshly-created page.
-            //
-            // `inserted_here` (ASCII-folded to mirror the NOCASE index) tracks
-            // aliases this loop just wrote, so a duplicate WITHIN the frontmatter
-            // (`[Solo, Solo]`) is a benign idempotent no-op rather than a
-            // spurious collision warning. Any OTHER 0-row insert means the alias
-            // is already held by a DIFFERENT page (the page was created empty in
-            // this very tx, so it owned no aliases before this loop) — a
-            // never-silent degradation, surfaced as a warning.
-            let mut inserted_here: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            let alias_items: Vec<&str> =
-                if let Some(items) = parse_output.frontmatter_list_items.get(key.as_str()) {
-                    items.iter().map(String::as_str).collect()
-                } else {
-                    value
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|a| !a.is_empty())
-                        .collect()
-                };
-            for alias in alias_items {
-                let res = sqlx::query!(
-                    "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
-                    page_id,
-                    alias,
-                )
-                .execute(&mut **tx)
-                .await?;
-                if res.rows_affected() > 0 {
-                    inserted_here.insert(alias.to_ascii_lowercase());
-                } else if !inserted_here.contains(&alias.to_ascii_lowercase()) {
-                    warnings.push(format!(
-                        "alias '{alias}' is already used by another page; not applied to \
-                         the imported page"
-                    ));
-                }
-            }
+            apply_frontmatter_aliases(
+                &mut tx,
+                &page_id,
+                frontmatter_items(parse_output, key, value),
+                warnings,
+            )
+            .await?;
             continue;
         }
         if key.as_str() == "tags" {
@@ -2549,67 +2670,19 @@ async fn apply_frontmatter_properties(
         let (value_type, options): (Option<String>, Option<String>) =
             frontmatter_decls.get(key).cloned().unwrap_or((None, None));
 
-        let (value_text, value_num, value_date, value_ref, value_bool) =
-            if value_type.as_deref() == Some("ref") {
-                // The exporter emits a ref as the resolved target *title*
-                // (`export_page_markdown_inner`). Reverse-resolve it back to a
-                // live page/tag block id so the round-trip preserves the
-                // reference. On no/ambiguous match, fall back to text so the
-                // human-readable value is never dropped (and warn).
-                //
-                // Resolution is SAME-SPACE-SCOPED (`AND space_id = ?`): a
-                // title that collides with a page/tag in a DIFFERENT space
-                // must NOT resolve here. Otherwise the foreign block id would
-                // flow into `set_property_in_tx` →
-                // `validate_ref_property_cross_space`, which hard-rejects with
-                // `AppError::Validation` and aborts/rolls back the entire
-                // import. Scoping to the import's own space means a cross-space
-                // title simply doesn't match and falls through to the text +
-                // warning branch below — the import never aborts on a
-                // collision. (Blocks carry `space_id` directly, Phase 2.)
-                let resolved: Option<String> = sqlx::query_scalar!(
-                    r#"SELECT id FROM blocks
-                       WHERE content = ?
-                         AND block_type IN ('page', 'tag')
-                         AND deleted_at IS NULL
-                         AND space_id = ?
-                       ORDER BY id ASC
-                       LIMIT 1"#,
-                    value,
-                    space_id,
-                )
-                .fetch_optional(&mut **tx)
-                .await?;
-                if let Some(id) = resolved {
-                    (None, None, None, Some(id), None)
-                } else {
-                    // No same-space page/tag carries this title (it may
-                    // live in another space, or not exist). The value type
-                    // is declared `ref`, so we cannot persist the raw title
-                    // as a `ref` (no live target) NOR as `text` (the typed
-                    // def would reject text). Skip this single property with
-                    // a warning rather than abort the whole import — the
-                    // human-readable title is surfaced in the warning so it
-                    // is never silently lost.
-                    // #1933 — per-occurrence diagnostic for this lossy skip.
-                    tracing::debug!(
-                        key = %key,
-                        value = %value,
-                        "import: frontmatter ref property could not resolve; skipped (#1933)"
-                    );
-                    warnings.push(format!(
-                        "frontmatter ref property '{key}' could not resolve target \
-                         '{value}' to a page in this space; skipped"
-                    ));
-                    continue;
-                }
-            } else {
-                agaric_engine::block_ops::typed_property_args_for_registry_value(
-                    key,
-                    value.clone(),
-                    value_type.as_deref(),
-                )
-            };
+        let Some((value_text, value_num, value_date, value_ref, value_bool)) =
+            frontmatter_typed_args(
+                &mut tx,
+                &space_id,
+                key,
+                value,
+                value_type.as_deref(),
+                warnings,
+            )
+            .await?
+        else {
+            continue;
+        };
 
         // #1921 (B1) — reuse the declaration already fetched into the batched
         // map instead of letting `set_property_in_tx` re-query it. A key with
@@ -2637,83 +2710,315 @@ async fn apply_frontmatter_properties(
             declaration,
         )
         .await?;
-        properties_set += 1;
+        counters.properties_set += 1;
         tx.enqueue_background(prop_op);
     }
-    Ok((tx, properties_set))
+    Ok(tx)
+}
+
+/// The wiki-link state one import document's pre-pass produces: the resolved
+/// `full token → page ULID` rewrite map, plus the same-document block- and
+/// heading-anchor tokens whose target block does not exist yet and so are
+/// resolved in the post-commit anchor phase.
+#[derive(Default)]
+struct InboundLinks {
+    page_links: HashMap<String, String>,
+    pending_block_anchors: HashMap<String, String>,
+    pending_heading_anchors: HashMap<String, PendingHeading>,
+}
+
+impl InboundLinks {
+    fn defer_anchor(&mut self, name: String, deferred: DeferredAnchor) {
+        match deferred {
+            DeferredAnchor::Block(block_id) => {
+                self.pending_block_anchors.insert(name, block_id);
+            }
+            DeferredAnchor::Heading(heading) => {
+                self.pending_heading_anchors.insert(name, heading);
+            }
+        }
+    }
+}
+
+/// #2510 / #2567 — the deferred resolution a same-document `#…` sub-anchor
+/// needs. A block's ULID is not known until it is created in the write loop, so
+/// the token is left literal here and rewritten to a real `((block ULID))` ref —
+/// or to a link to the importing page, mirroring #1282's dropped-anchor
+/// fallback — once every block of the document exists.
+enum DeferredAnchor {
+    Block(String),
+    Heading(PendingHeading),
+}
+
+fn deferred_anchor(
+    anchor: &str,
+    block_anchor_id: Option<&str>,
+    empty_base: bool,
+) -> DeferredAnchor {
+    match block_anchor_id {
+        Some(block_id) => DeferredAnchor::Block(block_id.to_string()),
+        None => DeferredAnchor::Heading(PendingHeading {
+            norm: normalize_heading_anchor(anchor),
+            empty_base,
+        }),
+    }
+}
+
+/// #2200 — the resolution matches for ALL distinct link names in ONE query
+/// instead of a per-name `SELECT … LIMIT 2` (an N+1 over distinct link targets).
+/// Mirrors the TAG pre-pass (#1990) snapshot idiom and the batched
+/// frontmatter-declaration lookup (`json_each(?1)`). The resolve pass only
+/// CREATES pages (never mutates existing page content/titles), so a single
+/// pre-loop snapshot stays valid; within-pass creations are remembered by the
+/// pass itself, and since collected names are DISTINCT a created page never
+/// needs to be re-observed by a later name.
+///
+/// Semantics preserved BYTE-FOR-BYTE vs the old per-name query:
+///   * Match is BINARY/case-SENSITIVE (`content = ?` — NO normalization,
+///     unlike the case-folding tag pre-pass). The snapshot therefore keys on
+///     the EXACT title bytes.
+///   * SAME-SPACE-SCOPED (`space_id = ?1`) — a colliding title in another
+///     space must NOT match. The importing page (created in this tx) is
+///     visible here, so a self-reference `[[<this page title>]]` resolves to
+///     it.
+///   * The old `LIMIT 2 … ORDER BY id ASC` only distinguished "unique match"
+///     (take that id) from "ambiguous" (2+). We reproduce that exactly by
+///     keeping AT MOST the two smallest ids per title (`ORDER BY id ASC`,
+///     capped in Rust): `[single]` → link, `[]` → create, `_` (≥2) →
+///     ambiguous, identical to before.
+///
+/// #1282 — the lookup runs on the anchor-STRIPPED BASE name of each token. An
+/// anchor-only link like `[[#heading]]` has an EMPTY base and contributes no
+/// lookup target (it never resolves/creates a page).
+async fn snapshot_page_link_matches(
+    tx: &mut CommandTx,
+    space_id: &str,
+    link_names: &[String],
+) -> Result<HashMap<String, Vec<String>>, AppError> {
+    let base_lookup_names: Vec<String> = {
+        use std::collections::BTreeSet;
+        let mut set: BTreeSet<String> = BTreeSet::new();
+        for name in link_names {
+            let (base, _anchor) = split_wikilink_anchor(name);
+            if !base.is_empty() {
+                set.insert(base.to_string());
+            }
+        }
+        set.into_iter().collect()
+    };
+    if base_lookup_names.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let names_json = serde_json::to_string(&base_lookup_names)?;
+    // ORDER BY id ASC so the per-title truncation below keeps the SAME two
+    // smallest-id rows the old per-name `LIMIT 2` did (the second only
+    // signals "ambiguous"). Restricting `content IN (…names…)` bounds the
+    // scan to the distinct link targets, not the whole space.
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!", content AS "content!"
+               FROM blocks
+               WHERE block_type = 'page'
+                 AND deleted_at IS NULL
+                 AND space_id = ?1
+                 AND content IN (SELECT value FROM json_each(?2))
+               ORDER BY id ASC"#,
+        space_id,
+        names_json,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for r in rows {
+        let ids = map.entry(r.content).or_default();
+        // Cap at 2: the old `LIMIT 2` never returned more, and only the
+        // count (1 vs ≥2) drives the branch. Keeping the first two (smallest
+        // ids, from `ORDER BY id ASC`) preserves the unique-match winner.
+        if ids.len() < 2 {
+            ids.push(r.id);
+        }
+    }
+    Ok(map)
+}
+
+/// Resolve one wiki-link BASE name to a page ULID, creating the page when the
+/// snapshot holds no match. `None` means the name is ambiguous (two or more
+/// same-space pages carry that title): never guess which was meant — the token
+/// is left as plain text and a non-fatal warning surfaces the loss.
+///
+/// `resolved_base_links` remembers this pass's own resolutions so two distinct
+/// tokens sharing one base (`[[Page#h1]]`, `[[Page#h2]]`) resolve to the SAME
+/// page and create it AT MOST once.
+async fn resolve_or_create_link_target(
+    ctx: &mut ImportCtx<'_>,
+    tx: &mut CommandTx,
+    base: String,
+    name: &str,
+    link_matches: &HashMap<String, Vec<String>>,
+    resolved_base_links: &mut HashMap<String, String>,
+) -> Result<Option<String>, AppError> {
+    if let Some(ulid) = resolved_base_links.get(&base) {
+        return Ok(Some(ulid.clone()));
+    }
+    let matches: &[String] = link_matches.get(&base).map_or(&[], Vec::as_slice);
+    match matches {
+        [single] => {
+            let single = single.clone();
+            resolved_base_links.insert(base, single.clone());
+            Ok(Some(single))
+        }
+        [] => {
+            // Create the missing target page inside this chunk's tx, then
+            // stamp its `space` ref (mirrors the importing page), so the new
+            // page is a first-class member of the import's space.
+            let (new_page, new_page_op) = create_block_in_tx(
+                &mut *tx,
+                ctx.materializer.loro_state(),
+                ctx.device_id,
+                "page".into(),
+                base.clone(),
+                None,
+                None,
+                // #2849 PR2: server-generated id.
+                None,
+            )
+            .await?;
+            tx.enqueue_background(new_page_op);
+            let new_page_id = new_page.id.clone().into_string();
+            stamp_space_property(
+                tx,
+                ctx.materializer,
+                ctx.device_id,
+                new_page_id.clone(),
+                &ctx.space_id,
+            )
+            .await?;
+            resolved_base_links.insert(base, new_page_id.clone());
+            Ok(Some(new_page_id))
+        }
+        _ => {
+            // #1933 — per-occurrence diagnostic for this lossy transform (the
+            // `[[Name]]` link is dropped to plain text).
+            tracing::debug!(
+                name = %name,
+                "import: ambiguous wiki-link left as plain text (#1933)"
+            );
+            ctx.warnings.push(format!(
+                "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
+            ));
+            Ok(None)
+        }
+    }
+}
+
+/// Resolve every collected wiki-link token against the pre-loop snapshot,
+/// creating missing target pages in this chunk's transaction.
+///
+/// #1282 — a token may carry a `#…` sub-anchor (`[[Page#Heading]]`,
+/// `[[Page#^blockId]]`) addressing a heading/block INSIDE the target page. Only
+/// the BASE page is resolved: the returned map stays keyed on the ORIGINAL full
+/// token (so the rewrite still matches `[[Page#Heading]]` and swaps in
+/// `[[<ULID>]]`). A sub-anchor that points INTO the document being imported is
+/// deferred instead (see [`DeferredAnchor`]); a CROSS-note anchor (the base
+/// resolves to a DIFFERENT, already-existing page) is out of scope for this
+/// slice and falls through to the #1282 dropped-anchor page-link behaviour.
+async fn resolve_link_names(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    link_names: Vec<String>,
+    link_matches: &HashMap<String, Vec<String>>,
+) -> Result<(CommandTx, InboundLinks), AppError> {
+    let page_id = ctx.page_id.clone();
+    let mut links = InboundLinks::default();
+    let mut resolved_base_links: HashMap<String, String> = HashMap::new();
+    // #1282 — count of DISTINCT full tokens whose `#…` sub-anchor was dropped to
+    // resolve to the base page. Surfaced as one aggregate warning (mirroring the
+    // block-ref-strip warning) so the lossy anchor drop is diagnosable.
+    let mut dropped_anchor_count: usize = 0;
+    for name in link_names {
+        let (base, anchor) = split_wikilink_anchor(&name);
+        // #2510 — the `^block-id` sub-anchor id, when this is an Obsidian
+        // BLOCK anchor (as opposed to a heading anchor).
+        let block_anchor_id = anchor.and_then(obsidian_block_anchor_id);
+        if let Some(anchor) = anchor
+            && base.is_empty()
+        {
+            // An anchor-only link (`[[#^blockId]]` / `[[#Heading]]`): the
+            // implicit target page IS the page being imported. On an
+            // UNRESOLVED heading the deferred pass restores #1282's "no page
+            // target" literal behaviour (`empty_base = true`).
+            let deferred = deferred_anchor(anchor, block_anchor_id, true);
+            links.defer_anchor(name, deferred);
+            continue;
+        }
+        let base = base.to_string();
+        let Some(resolved_ulid) = resolve_or_create_link_target(
+            ctx,
+            &mut tx,
+            base,
+            &name,
+            link_matches,
+            &mut resolved_base_links,
+        )
+        .await?
+        else {
+            continue;
+        };
+
+        if let Some(anchor) = anchor
+            && resolved_ulid == page_id
+        {
+            // An explicit self-title anchor (`[[SelfTitle#^blockId]]` /
+            // `[[SelfTitle#Heading]]`): same-document, so defer it exactly like
+            // the anchor-only case. An unresolved heading falls back to a page
+            // link + the aggregate dropped-anchor warning (`empty_base =
+            // false`), matching #1282's existing self/page-base behaviour.
+            let deferred = deferred_anchor(anchor, block_anchor_id, false);
+            links.defer_anchor(name, deferred);
+            continue;
+        }
+
+        if anchor.is_some() {
+            dropped_anchor_count += 1;
+        }
+        links.page_links.insert(name, resolved_ulid);
+    }
+    if dropped_anchor_count > 0 {
+        // #1282 — aggregate warning for the lossy anchor drop (mirrors the
+        // block-ref-strip warning style). The links still resolve to the page;
+        // only the `#heading` / cross-note `#^blockId` sub-anchor targeting is
+        // not applied.
+        ctx.warnings.push(format!(
+            "{dropped_anchor_count} wikilink block/heading anchors were dropped; links resolve to \
+             the page (Obsidian block-anchor targeting is not yet supported)"
+        ));
+    }
+    Ok((tx, links))
 }
 
 /// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal
 /// `[[ULID]]` refs (create-if-missing), returning the transaction, the
 /// resolved-link map used by the block loop, and the deferred same-document
 /// block/heading-anchor maps resolved in the post-commit anchor phase.
-#[allow(clippy::type_complexity)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+///
+/// This is a PRE-PASS over the whole parsed document so each distinct name is
+/// resolved/created exactly once (a name cited by N blocks creates at most one
+/// page), and so the created pages share the FIRST chunk's atomic write
+/// alongside the importing page itself (before the block loop opens a new
+/// chunk).
+///
+/// Resolution mirrors the paste path (#1484) duplicate-title rule, scoped to
+/// the import's OWN space:
+///   * exactly one same-space page with that title → link to it,
+///   * none                                        → create the page + link,
+///   * more than one (ambiguous)                   → leave plain text.
+///
+/// A name we cannot resolve or create is simply absent from the map, so the
+/// rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
 async fn resolve_inbound_page_links(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
     parse_output: &import::ParseOutput,
-) -> Result<
-    (
-        CommandTx,
-        HashMap<String, String>,
-        HashMap<String, String>,
-        HashMap<String, PendingHeading>,
-    ),
-    AppError,
-> {
-    let materializer = ctx.materializer;
-    let device_id = ctx.device_id;
-    let space_id = ctx.space_id.clone();
-    let page_id = ctx.page_id.clone();
-    let warnings = &mut ctx.warnings;
-    // #1446 Part B — resolve inbound `[[Page Name]]` wiki-links to internal
-    // `[[ULID]]` refs, creating any missing target page (create-if-missing).
-    // This is a PRE-PASS over the whole parsed document so each distinct name
-    // is resolved/created exactly once (a name cited by N blocks creates at
-    // most one page), and so the created pages share the FIRST chunk's atomic
-    // write alongside the importing page itself (before the block loop opens a
-    // new chunk). The resolved `name → ULID` map then drives an in-loop rewrite
-    // of each block's content.
-    //
-    // Resolution mirrors the paste path (#1484) duplicate-title rule, scoped to
-    // the import's OWN space (`AND space_id = ?`):
-    //   * exactly one same-space page with that title → link to it,
-    //   * none                                        → create the page + link,
-    //   * more than one (ambiguous)                   → leave plain text.
-    // A name we cannot resolve or create is simply absent from the map, so the
-    // rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
-    //
-    // #2200 — snapshot the resolution matches for ALL distinct link names in ONE
-    // query instead of a per-name `SELECT … LIMIT 2` (an N+1 over distinct link
-    // targets). Mirrors the TAG pre-pass (#1990) snapshot idiom below and the
-    // batched frontmatter-declaration lookup above (`json_each(?1)`). The loop
-    // only CREATES pages (never mutates existing page content/titles), so a
-    // single pre-loop snapshot stays valid; within-pass creations are inserted
-    // straight into `resolved_page_links`, and since collected names are DISTINCT
-    // a created page never needs to be re-observed by a later name.
-    //
-    // Semantics preserved BYTE-FOR-BYTE vs the old per-name query:
-    //   * Match is BINARY/case-SENSITIVE (`content = ?` — NO normalization,
-    //     unlike the case-folding tag pre-pass). The snapshot therefore keys on
-    //     the EXACT title bytes.
-    //   * SAME-SPACE-SCOPED (`space_id = ?1`) — a colliding title in another
-    //     space must NOT match. The importing page (created above, in this tx)
-    //     is visible here, so a self-reference `[[<this page title>]]` resolves
-    //     to it.
-    //   * The old `LIMIT 2 … ORDER BY id ASC` only distinguished "unique match"
-    //     (take that id) from "ambiguous" (2+). We reproduce that exactly by
-    //     keeping AT MOST the two smallest ids per title (`ORDER BY id ASC`,
-    //     capped in Rust): `[single]` → link, `[]` → create, `_` (≥2) →
-    //     ambiguous, identical to before.
-    // #1282 (Obsidian slice) — an Obsidian wiki-link may carry a `#…`
-    // sub-anchor (`[[Page#Heading]]` / `[[Page#^blockId]]`) that addresses a
-    // heading/block INSIDE the target page. We resolve only the BASE page: the
-    // collected/resolved map stays keyed on the ORIGINAL full token (so the
-    // rewrite still matches `[[Page#Heading]]` and swaps in `[[<ULID>]]`), but
-    // the SQL lookup / create-if-missing below runs on the anchor-STRIPPED base
-    // name. A plain `[[Page]]` (no `#`) splits to `(Page, None)` and behaves
-    // byte-for-byte as before, so Logseq / plain Markdown is unaffected.
+) -> Result<(CommandTx, InboundLinks), AppError> {
     let mut link_names = collect_inbound_page_link_names(&parse_output.blocks);
     // #2968 — also resolve/create the PAGE names referenced by structured
     // `{{query v2n:…}}` inline queries, so a query's page/structural refs remap
@@ -2722,273 +3027,50 @@ async fn resolve_inbound_page_links(
     link_names.extend(super::inline_query_md::query_page_names(
         &parse_output.blocks,
     ));
-    // Distinct, non-empty BASE names to look up (anchors stripped). An
-    // anchor-only link like `[[#heading]]` has an EMPTY base and contributes no
-    // lookup target (it never resolves/creates a page).
-    let base_lookup_names: Vec<String> = {
-        use std::collections::BTreeSet;
-        let mut set: BTreeSet<String> = BTreeSet::new();
-        for name in &link_names {
-            let (base, _anchor) = split_wikilink_anchor(name);
-            if !base.is_empty() {
-                set.insert(base.to_string());
-            }
-        }
-        set.into_iter().collect()
-    };
-    let link_matches: HashMap<String, Vec<String>> = if base_lookup_names.is_empty() {
-        HashMap::new()
-    } else {
-        let names_json = serde_json::to_string(&base_lookup_names)?;
-        // ORDER BY id ASC so the per-title truncation below keeps the SAME two
-        // smallest-id rows the old per-name `LIMIT 2` did (the second only
-        // signals "ambiguous"). Restricting `content IN (…names…)` bounds the
-        // scan to the distinct link targets, not the whole space.
-        let rows = sqlx::query!(
-            r#"SELECT id AS "id!", content AS "content!"
-               FROM blocks
-               WHERE block_type = 'page'
+    let link_matches = snapshot_page_link_matches(&mut tx, &ctx.space_id, &link_names).await?;
+    resolve_link_names(ctx, tx, link_names, &link_matches).await
+}
+
+/// #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
+/// name → smallest-id winner, instead of re-scanning every in-space tag per
+/// token. The resolve pass only CREATES tags (never mutates existing tag
+/// content), so a single pre-loop snapshot stays valid; within-pass creations
+/// are tracked by the caller. SQLite cannot apply `normalize_tag_name`
+/// (NFC → Unicode lowercase → NFC) and NOCASE folds only ASCII A–Z, so we fold
+/// in Rust here to catch every case-variant the Loro engine (which keys by
+/// `normalize_tag_name`) already merges. Tag count is bounded by the user's
+/// vocabulary, so the snapshot is cheap.
+async fn snapshot_tags_by_norm(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<HashMap<String, String>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id, content FROM blocks
+               WHERE block_type = 'tag'
                  AND deleted_at IS NULL
+                 AND content IS NOT NULL
                  AND space_id = ?1
-                 AND content IN (SELECT value FROM json_each(?2))
                ORDER BY id ASC"#,
-            space_id,
-            names_json,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        let mut map: HashMap<String, Vec<String>> = HashMap::new();
-        for r in rows {
-            let ids = map.entry(r.content).or_default();
-            // Cap at 2: the old `LIMIT 2` never returned more, and only the
-            // count (1 vs ≥2) drives the branch. Keeping the first two (smallest
-            // ids, from `ORDER BY id ASC`) preserves the unique-match winner.
-            if ids.len() < 2 {
-                ids.push(r.id);
-            }
+        space_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let mut map: HashMap<String, String> = HashMap::new();
+    for r in rows {
+        if let Some(c) = r.content {
+            // `or_insert` keeps the FIRST (smallest-id, since ORDER BY id
+            // ASC) row per normalized name — the tags-cache winner.
+            map.entry(agaric_core::tag_norm::normalize_tag_name(&c))
+                .or_insert(r.id);
         }
-        map
-    };
-
-    let mut resolved_page_links: HashMap<String, String> = HashMap::new();
-    // #1282 — BASE name → resolved/created ULID within this pass. Two distinct
-    // full tokens sharing one base (`[[Page#h1]]`, `[[Page#h2]]`) must resolve
-    // to the SAME page and create it AT MOST once; the snapshot above only
-    // reflects pre-existing pages, so a base created here is remembered to keep
-    // the second occurrence from creating a duplicate.
-    let mut resolved_base_links: HashMap<String, String> = HashMap::new();
-    // #1282 — count of DISTINCT full tokens whose `#…` sub-anchor was dropped to
-    // resolve to the base page. Surfaced as one aggregate warning (mirroring the
-    // block-ref-strip warning) so the lossy anchor drop is diagnosable.
-    let mut dropped_anchor_count: usize = 0;
-    // #2510 — full wiki-link token → Obsidian `^block-id` (WITHOUT the `^`),
-    // for a `[[Page#^blockId]]` / `[[#^blockId]]` link whose base is — or, for
-    // an anchor-only link, is IMPLICITLY — the page being imported. A block's
-    // ULID is not known until it is actually created in the write loop below,
-    // so these tokens are deliberately NOT inserted into `resolved_page_links`
-    // here. They are resolved to a real `((block ULID))` block-ref — or fall
-    // back to a link to THIS page, mirroring #1282's dropped-anchor fallback,
-    // when the marker is not found anywhere in the document — in a dedicated
-    // pass once every block of this document has been created (see below the
-    // block-creation loop). A CROSS-note block anchor (the base resolves to a
-    // DIFFERENT, already-existing page) is intentionally out of scope for this
-    // slice — the #2510 issue itself flags cross-note block-ref rendering as
-    // an open design question — and falls straight through to the unchanged
-    // #1282 dropped-anchor / page-link behavior below.
-    let mut pending_block_anchor_links: HashMap<String, String> = HashMap::new();
-    // #2567 — full wiki-link token → the deferred heading-anchor resolution for
-    // a `[[Page#Heading]]` / `[[#Heading]]` link whose base is — or, for an
-    // anchor-only link, is IMPLICITLY — the page being imported. Mirrors
-    // `pending_block_anchor_links` above: the target heading block's ULID is not
-    // known until it is created in the write loop, so these tokens are resolved
-    // to a real `((block ULID))` block-ref (or fall back per #1282) in the same
-    // post-block-creation pass. A CROSS-note heading anchor (base resolves to a
-    // DIFFERENT existing page) is out of scope for this slice and falls straight
-    // through to the unchanged #1282 dropped-anchor / page-link behavior below.
-    let mut pending_heading_anchor_links: HashMap<String, PendingHeading> = HashMap::new();
-    for name in link_names {
-        // #1282 — split the ORIGINAL captured token into its base page name and
-        // optional `#…` sub-anchor; the map stays keyed on `name` (the full
-        // token) so the rewrite still matches it verbatim.
-        let (base, anchor) = split_wikilink_anchor(&name);
-        // #2510 — the `^block-id` sub-anchor id, when this is an Obsidian
-        // BLOCK anchor (as opposed to a heading anchor).
-        let block_anchor_id = anchor.and_then(obsidian_block_anchor_id);
-        if let Some(anchor) = anchor
-            && base.is_empty()
-        {
-            if let Some(block_id) = block_anchor_id {
-                // #2510 — intra-note block anchor (`[[#^blockId]]`): the
-                // implicit target page IS the page being imported. Defer
-                // to the post-loop resolution pass instead of the
-                // "no page target" fallback below. `block_id` is owned
-                // BEFORE `name` moves into the map (both borrow `name`
-                // transitively via `anchor` / `block_anchor_id`).
-                let block_id = block_id.to_string();
-                pending_block_anchor_links.insert(name, block_id);
-                continue;
-            }
-            // #2567 — anchor-only heading link (`[[#Heading]]`): the implicit
-            // target page IS the page being imported. Defer to the post-loop
-            // heading-resolution pass (mirrors the block-anchor case above).
-            // `norm` is owned before `name` moves into the map. On an
-            // UNRESOLVED heading the pass restores #1282's "no page target"
-            // literal behavior (`empty_base = true`), so this is not a
-            // regression: a `[[#Heading]]` with no matching heading in the
-            // document still ends up literal + warned.
-            let norm = normalize_heading_anchor(anchor);
-            pending_heading_anchor_links.insert(
-                name,
-                PendingHeading {
-                    norm,
-                    empty_base: true,
-                },
-            );
-            continue;
-        }
-        let base = base.to_string();
-
-        // Already resolved/created this base in an earlier iteration (a shared
-        // base across anchors, or a plain `[[Page]]` seen before `[[Page#h]]`),
-        // or resolve against the in-memory snapshot / create-if-missing below.
-        // A base with no snapshot entry has zero same-space matches (the `[]`
-        // create-if-missing branch). `None` only for the ambiguous case (a
-        // warning is pushed at that point, below).
-        let resolved_ulid: Option<String> = if let Some(ulid) = resolved_base_links.get(&base) {
-            Some(ulid.clone())
-        } else {
-            let matches: &[String] = link_matches.get(&base).map_or(&[], Vec::as_slice);
-            match matches {
-                [single] => {
-                    resolved_base_links.insert(base, single.clone());
-                    Some(single.clone())
-                }
-                [] => {
-                    // Create the missing target page inside this chunk's
-                    // tx, then stamp its `space` ref (mirrors the
-                    // importing page above), so the new page is a
-                    // first-class member of the import's space.
-                    let (new_page, new_page_op) = create_block_in_tx(
-                        &mut tx,
-                        materializer.loro_state(),
-                        device_id,
-                        "page".into(),
-                        base.clone(),
-                        None,
-                        None,
-                        // #2849 PR2: server-generated id.
-                        None,
-                    )
-                    .await?;
-                    tx.enqueue_background(new_page_op);
-                    let new_page_id = new_page.id.clone().into_string();
-                    let (_b, new_space_op) = set_property_in_tx(
-                        &mut tx,
-                        materializer.loro_state(),
-                        device_id,
-                        new_page_id.clone(),
-                        "space",
-                        None,
-                        None,
-                        None,
-                        Some(space_id.clone()),
-                        None,
-                    )
-                    .await?;
-                    tx.enqueue_background(new_space_op);
-                    resolved_base_links.insert(base, new_page_id.clone());
-                    Some(new_page_id)
-                }
-                _ => {
-                    // Ambiguous: two or more pages share this title in the
-                    // space. Never guess which was meant — leave the
-                    // token as plain text and surface a non-fatal
-                    // warning.
-                    // #1933 — per-occurrence diagnostic for this lossy
-                    // transform (the `[[Name]]` link is dropped to plain
-                    // text).
-                    tracing::debug!(
-                        name = %name,
-                        "import: ambiguous wiki-link left as plain text (#1933)"
-                    );
-                    warnings.push(format!(
-                            "wiki-link '[[{name}]]' matches multiple pages in this space; left as plain text"
-                        ));
-                    None
-                }
-            }
-        };
-        let Some(resolved_ulid) = resolved_ulid else {
-            continue;
-        };
-
-        if let Some(block_id) = block_anchor_id
-            && resolved_ulid == page_id
-        {
-            // #2510 — the base resolves to THIS importing page itself (a
-            // same-document `[[SelfTitle#^blockId]]` reference). Defer to
-            // the post-loop pass exactly like the anchor-only case above.
-            // `block_id` is owned BEFORE `name` moves (see the matching
-            // comment in the anchor-only branch above).
-            let block_id = block_id.to_string();
-            pending_block_anchor_links.insert(name, block_id);
-            continue;
-        }
-        // #2567 — a heading anchor (`block_anchor_id` is `None`) whose explicit
-        // base resolves to THIS importing page (`[[SelfTitle#Heading]]`, a
-        // same-document self-reference). Defer to the post-loop heading pass
-        // exactly like the block-anchor self-title case above. `norm` is owned
-        // before `name` moves. On an unresolved heading the pass falls back to a
-        // page link + the aggregate dropped-anchor warning (`empty_base = false`),
-        // matching #1282's existing self/page-base behavior.
-        if let Some(anchor_text) = anchor
-            && block_anchor_id.is_none()
-            && resolved_ulid == page_id
-        {
-            let norm = normalize_heading_anchor(anchor_text);
-            pending_heading_anchor_links.insert(
-                name,
-                PendingHeading {
-                    norm,
-                    empty_base: false,
-                },
-            );
-            continue;
-        }
-        // Not a same-document anchor: either a CROSS-note heading/block anchor
-        // (base resolves to a DIFFERENT, already-existing page) — out of scope
-        // for this slice — or an anchor that otherwise could not be matched.
-        // Fall through to the unchanged #1282 dropped-anchor / page-link
-        // behavior below.
-
-        if anchor.is_some() {
-            dropped_anchor_count += 1;
-        }
-        resolved_page_links.insert(name, resolved_ulid);
     }
-    if dropped_anchor_count > 0 {
-        // #1282 — aggregate warning for the lossy anchor drop (mirrors the
-        // block-ref-strip warning style). The links still resolve to the page;
-        // only the `#heading` / cross-note `#^blockId` sub-anchor targeting is
-        // not applied.
-        warnings.push(format!(
-            "{dropped_anchor_count} wikilink block/heading anchors were dropped; links resolve to \
-             the page (Obsidian block-anchor targeting is not yet supported)"
-        ));
-    }
-    Ok((
-        tx,
-        resolved_page_links,
-        pending_block_anchor_links,
-        pending_heading_anchor_links,
-    ))
+    Ok(map)
 }
 
 /// #1924 / #1950 — resolve inbound inline tags (`#tag`, `#[[Tag With Space]]`)
 /// to `#[ULID]` refs (resolve-or-create), returning the transaction plus the
 /// per-pass tag state reused by the block loop and the frontmatter-tag pass.
 #[allow(clippy::type_complexity)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_inbound_tags(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -3032,38 +3114,7 @@ async fn resolve_inbound_tags(
     // and is out of scope for #1924/#1950.
     let mut resolved_tag_norm: HashMap<String, String> = HashMap::new();
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
-    // #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
-    // name → smallest-id winner, instead of re-scanning every in-space tag per
-    // token. The loop only CREATES tags (never mutates existing tag content), so
-    // a single pre-loop snapshot stays valid; within-pass creations are tracked
-    // in `resolved_tag_norm`. SQLite cannot apply `normalize_tag_name`
-    // (NFC → Unicode lowercase → NFC) and NOCASE folds only ASCII A–Z, so we
-    // fold in Rust here to catch every case-variant the Loro engine (which keys
-    // by `normalize_tag_name`) already merges. Tag count is bounded by the
-    // user's vocabulary, so the snapshot is cheap.
-    let existing_tag_by_norm: HashMap<String, String> = {
-        let rows = sqlx::query!(
-            r#"SELECT id, content FROM blocks
-               WHERE block_type = 'tag'
-                 AND deleted_at IS NULL
-                 AND content IS NOT NULL
-                 AND space_id = ?1
-               ORDER BY id ASC"#,
-            space_id,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        let mut map: HashMap<String, String> = HashMap::new();
-        for r in rows {
-            if let Some(c) = r.content {
-                // `or_insert` keeps the FIRST (smallest-id, since ORDER BY id
-                // ASC) row per normalized name — the tags-cache winner.
-                map.entry(agaric_core::tag_norm::normalize_tag_name(&c))
-                    .or_insert(r.id);
-            }
-        }
-        map
-    };
+    let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, &space_id).await?;
     // #2968 — also resolve/create the TAG names referenced by structured
     // `{{query v2n:…}}` inline queries so a query's tag refs remap to this
     // vault's tag ids (create-if-missing) on re-import, exactly like an inbound
@@ -3115,27 +3166,14 @@ async fn resolve_inbound_tags(
             Ok((new_tag, new_tag_op)) => {
                 tx.enqueue_background(new_tag_op);
                 let new_tag_id = new_tag.id.clone().into_string();
-                // Stamp the tag's `space` ref (mirrors the importing page + new
-                // wiki-link pages). Tags are space-scoped (Path A): without this
-                // the new tag resolves to NO space, and the cross-space gate in
-                // `reindex_block_tag_refs` would drop the inline `#[ULID]` ref
-                // (the source content block IS space-scoped, so `tag_space NULL
-                // != source_space` excludes it). Stamping keeps the inline ref
-                // materializing into `block_tag_refs`.
-                let (_b, tag_space_op) = set_property_in_tx(
+                stamp_space_property(
                     &mut tx,
-                    materializer.loro_state(),
+                    materializer,
                     device_id,
                     new_tag_id.clone(),
-                    "space",
-                    None,
-                    None,
-                    None,
-                    Some(space_id.clone()),
-                    None,
+                    &space_id,
                 )
                 .await?;
-                tx.enqueue_background(tag_space_op);
                 resolved_tag_norm.insert(norm, new_tag_id.clone());
                 resolved_tag_tokens.insert(token_name, new_tag_id);
             }
@@ -3159,9 +3197,141 @@ async fn resolve_inbound_tags(
     ))
 }
 
+/// The individual items of a frontmatter list value.
+///
+/// #2829 — the comma-joined scalar in `frontmatter` is lossy for an item that
+/// itself contains a literal comma, so the REAL parsed item boundaries from
+/// `frontmatter_list_items` win whenever the key arrived as a genuine YAML
+/// sequence; a plain unbracketed scalar (no boundary info available) falls back
+/// to the legacy comma-split.
+fn frontmatter_items<'a>(
+    parse_output: &'a import::ParseOutput,
+    key: &str,
+    value: &'a str,
+) -> Vec<&'a str> {
+    if let Some(items) = parse_output.frontmatter_list_items.get(key) {
+        items.iter().map(String::as_str).collect()
+    } else {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+}
+
+/// #2722 — write the real page→tag association via the shared tag-apply helper
+/// (op-log `AddTag` + engine projection), queueing the op for post-commit
+/// dispatch. An association that already exists is an idempotent no-op
+/// (`Ok(None)`). A cross-space rejection is impossible here (page and tag share
+/// the import's space), but degrades to a warning rather than aborting the
+/// durable import if it ever occurs.
+async fn associate_page_tag(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    page_id: &str,
+    tag_id: &str,
+    tag_name: &str,
+    warnings: &mut Vec<String>,
+) {
+    let payload = agaric_store::op::OpPayload::AddTag(agaric_store::op::AddTagPayload {
+        block_id: BlockId::from_trusted(page_id),
+        tag_id: BlockId::from_trusted(tag_id),
+    });
+    match crate::commands::tags::apply_tag_to_block_in_tx(
+        &mut *tx,
+        materializer.loro_state(),
+        device_id,
+        page_id,
+        tag_id,
+        payload,
+    )
+    .await
+    {
+        Ok(Some(op_record)) => tx.enqueue_background(op_record),
+        Ok(None) => { /* association already exists — idempotent */ }
+        Err(e) => {
+            tracing::warn!(
+                name = %tag_name,
+                error = %e,
+                "import: frontmatter tag association failed; skipped (#2722)"
+            );
+            warnings.push(format!(
+                "page tag '{tag_name}' could not be associated ({e})"
+            ));
+        }
+    }
+}
+
+/// Resolve one frontmatter tag NAME to a tag block id, REUSING the inline-tag
+/// pre-pass state (`resolved_tag_norm` for this-pass creations,
+/// `existing_tag_by_norm` for in-space matches) so a name appearing BOTH inline
+/// and in frontmatter converges to ONE tag block, and creating the tag when
+/// neither has it. `None` degrades: the create failed, so the caller skips this
+/// tag's association with a warning already recorded.
+async fn resolve_or_create_frontmatter_tag(
+    ctx: &mut ImportCtx<'_>,
+    tx: &mut CommandTx,
+    tag_name: &str,
+    resolved_tag_norm: &mut HashMap<String, String>,
+    existing_tag_by_norm: &HashMap<String, String>,
+) -> Result<Option<String>, AppError> {
+    let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
+    if let Some(id) = resolved_tag_norm.get(&norm) {
+        return Ok(Some(id.clone()));
+    }
+    if let Some(id) = existing_tag_by_norm.get(&norm) {
+        let id = id.clone();
+        resolved_tag_norm.insert(norm, id.clone());
+        return Ok(Some(id));
+    }
+    // Create the missing tag block + stamp its space (mirrors the inline-tag
+    // pre-pass and the importing page). On failure, degrade: warn and skip this
+    // tag's association.
+    match create_block_in_tx(
+        &mut *tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        "tag".into(),
+        tag_name.to_string(),
+        None,
+        None,
+        // #2849 PR2: server-generated id.
+        None,
+    )
+    .await
+    {
+        Ok((new_tag, new_tag_op)) => {
+            tx.enqueue_background(new_tag_op);
+            let new_tag_id = new_tag.id.clone().into_string();
+            stamp_space_property(
+                tx,
+                ctx.materializer,
+                ctx.device_id,
+                new_tag_id.clone(),
+                &ctx.space_id,
+            )
+            .await?;
+            resolved_tag_norm.insert(norm, new_tag_id.clone());
+            Ok(Some(new_tag_id))
+        }
+        Err(e) => {
+            tracing::warn!(
+                name = %tag_name,
+                error = %e,
+                "import: frontmatter tag create failed; association skipped (#2722)"
+            );
+            ctx.warnings.push(format!(
+                "page tag '{tag_name}' could not be created; not applied"
+            ));
+            Ok(None)
+        }
+    }
+}
+
 /// #2722 — apply page-level frontmatter `tags:` as real `block_tags`
 /// associations, reusing the inline-tag pre-pass state. Returns the transaction.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn apply_frontmatter_tags(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -3171,24 +3341,14 @@ async fn apply_frontmatter_tags(
 ) -> Result<CommandTx, AppError> {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
-    let space_id = ctx.space_id.clone();
     let page_id = ctx.page_id.clone();
-    let warnings = &mut ctx.warnings;
     // #2722 — apply page-level frontmatter `tags:` as REAL `block_tags`
     // associations on the imported page, instead of the inert text property the
     // pre-#2722 importer stamped (which silently disabled tag filtering on
     // re-import). The historical blocker cited in #1924/#1950 was #1917 (typed
     // arrays could not be parsed); that is RESOLVED — the exported `[a, b]` flow
     // sequence now arrives as a comma-joined scalar via `parse_frontmatter`
-    // (see the frontmatter parser), so the value is available here. Each tag
-    // NAME is resolved-or-created to a tag block, REUSING the inline-tag
-    // pre-pass state (`resolved_tag_norm` for this-pass creations,
-    // `existing_tag_by_norm` for in-space matches) so a name appearing BOTH
-    // inline and in frontmatter converges to ONE tag block. The page→tag
-    // association is then written via `apply_tag_to_block_in_tx` — the SAME
-    // op-log `AddTag` + engine projection `add_tag` uses — so `block_tags` (and
-    // inherited-tag fan-out) end up identical to a hand-applied tag, and
-    // re-import is idempotent (`Ok(None)` when the association already exists).
+    // (see the frontmatter parser), so the value is available here.
     //
     // Runs in the FIRST chunk's tx (before the block loop opens any new chunk),
     // sharing the page's atomic write. The page's `space_id` was materialised
@@ -3201,143 +3361,334 @@ async fn apply_frontmatter_tags(
         .iter()
         .find(|(k, _)| k.as_str() == "tags")
     {
-        // The comma-joined `tags_value` scalar is lossy for a tag name
-        // containing a literal comma (#2829, same failure mode as the
-        // `aliases` interception above): prefer the REAL parsed item
-        // boundaries from `frontmatter_list_items` when this key arrived as a
-        // genuine YAML sequence; a plain unbracketed scalar (no boundary
-        // info) falls back to the legacy comma-split.
-        let tag_items: Vec<&str> =
-            if let Some(items) = parse_output.frontmatter_list_items.get("tags") {
-                items.iter().map(String::as_str).collect()
-            } else {
-                tags_value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .collect()
-            };
-        for tag_name in tag_items {
-            let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
-
-            // Resolve: this-pass creation → existing in-space snapshot → create.
-            let tag_id: String = if let Some(id) = resolved_tag_norm.get(&norm) {
-                id.clone()
-            } else if let Some(id) = existing_tag_by_norm.get(&norm) {
-                let id = id.clone();
-                resolved_tag_norm.insert(norm.clone(), id.clone());
-                id
-            } else {
-                // Create the missing tag block + stamp its space (mirrors the
-                // inline-tag pre-pass and the importing page). On failure,
-                // degrade: warn and skip this tag's association.
-                match create_block_in_tx(
-                    &mut tx,
-                    materializer.loro_state(),
-                    device_id,
-                    "tag".into(),
-                    tag_name.to_string(),
-                    None,
-                    None,
-                    // #2849 PR2: server-generated id.
-                    None,
-                )
-                .await
-                {
-                    Ok((new_tag, new_tag_op)) => {
-                        tx.enqueue_background(new_tag_op);
-                        let new_tag_id = new_tag.id.clone().into_string();
-                        let (_b, tag_space_op) = set_property_in_tx(
-                            &mut tx,
-                            materializer.loro_state(),
-                            device_id,
-                            new_tag_id.clone(),
-                            "space",
-                            None,
-                            None,
-                            None,
-                            Some(space_id.clone()),
-                            None,
-                        )
-                        .await?;
-                        tx.enqueue_background(tag_space_op);
-                        resolved_tag_norm.insert(norm.clone(), new_tag_id.clone());
-                        new_tag_id
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            name = %tag_name,
-                            error = %e,
-                            "import: frontmatter tag create failed; association skipped (#2722)"
-                        );
-                        warnings.push(format!(
-                            "page tag '{tag_name}' could not be created; not applied"
-                        ));
-                        continue;
-                    }
-                }
-            };
-
-            // Write the real page→tag association via the shared tag-apply
-            // helper (op-log `AddTag` + engine projection). `Ok(Some(op))` is
-            // the op to dispatch post-commit; `Ok(None)` means the association
-            // already exists (idempotent re-import). A cross-space rejection is
-            // impossible here (page and tag share the import's space), but
-            // degrade to a warning rather than aborting the durable import if it
-            // ever occurs.
-            let payload = agaric_store::op::OpPayload::AddTag(agaric_store::op::AddTagPayload {
-                block_id: BlockId::from_trusted(&page_id),
-                tag_id: BlockId::from_trusted(&tag_id),
-            });
-            match crate::commands::tags::apply_tag_to_block_in_tx(
+        for tag_name in frontmatter_items(parse_output, "tags", tags_value) {
+            let tag_id = resolve_or_create_frontmatter_tag(
+                ctx,
                 &mut tx,
-                materializer.loro_state(),
+                tag_name,
+                resolved_tag_norm,
+                existing_tag_by_norm,
+            )
+            .await?;
+            let Some(tag_id) = tag_id else {
+                continue;
+            };
+            associate_page_tag(
+                &mut tx,
+                materializer,
                 device_id,
                 &page_id,
                 &tag_id,
-                payload,
+                tag_name,
+                &mut ctx.warnings,
             )
-            .await
-            {
-                Ok(Some(op_record)) => tx.enqueue_background(op_record),
-                Ok(None) => { /* association already exists — idempotent */ }
-                Err(e) => {
-                    tracing::warn!(
-                        name = %tag_name,
-                        error = %e,
-                        "import: frontmatter tag association failed; skipped (#2722)"
-                    );
-                    warnings.push(format!(
-                        "page tag '{tag_name}' could not be associated ({e})"
-                    ));
-                }
-            }
+            .await;
         }
     }
     Ok(tx)
 }
 
-/// #662 — chunked block-insertion loop + final commit. Seeded with and returns
-/// the running counters, plus the per-block-index created ULIDs and the pending
-/// attachment refs consumed by the post-commit phases. Consumes `tx` (it commits
-/// the final chunk).
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+/// #662 — commit the open import chunk (draining its op queue in FIFO order,
+/// releasing the writer lock) and open a fresh one. A commit failure here aborts
+/// the import; chunks already committed survive (documented partial-import
+/// semantics).
+///
+/// #1934 — the failure log carries import context (which chunk, how many blocks
+/// were durable when the abort happened) instead of a bare `Database error: …`.
+/// The error itself is routed through `AppError::from(sqlx::Error)` so the IPC
+/// `kind` discrimination is preserved (a writer-busy `PoolTimedOut` stays
+/// `pool_busy`, a `Conflict` stays `conflict`); flattening to `Internal` would
+/// have collapsed every commit failure to one kind and lost the frontend's
+/// retry affordance.
+async fn commit_chunk_and_reopen(
+    tx: CommandTx,
+    materializer: &Materializer,
+    pool: &SqlitePool,
+    page_title: &str,
+    counters: &mut ImportCounters,
+) -> Result<CommandTx, AppError> {
+    let (chunks_committed, blocks_created) = (counters.chunks_committed, counters.blocks_created);
+    tx.commit_and_dispatch(materializer).await.map_err(|e| {
+        tracing::error!(
+            page = %page_title,
+            chunks_committed,
+            blocks_created,
+            error = %e,
+            "import: chunk commit failed; committed chunks remain durable"
+        );
+        AppError::from(e)
+    })?;
+    counters.chunks_committed += 1;
+    // #1932 (OBS-LOG-05) — per-chunk durability signal so a partial
+    // import is observable in the log.
+    tracing::debug!(
+        page = %page_title,
+        chunks_committed = counters.chunks_committed,
+        blocks_created,
+        "import: chunk committed (writer lock released)"
+    );
+    let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
+    // #2604 — re-arm rollback for the new per-chunk tx.
+    tx.arm_engine_rollback(materializer.loro_state());
+    Ok(tx)
+}
+
+/// Commit + dispatch the final chunk's queued ops in FIFO order, releasing the
+/// writer lock.
+///
+/// #1934 — a final-commit failure carries import context (block count / chunks
+/// already durable) in an `error!` log. The error is routed through
+/// `AppError::from(sqlx::Error)` so the IPC `kind` is preserved (e.g. a
+/// writer-busy `PoolTimedOut` stays `pool_busy`); flattening to `Internal` would
+/// have collapsed the discrimination the frontend relies on.
+async fn commit_final_chunk(
+    tx: CommandTx,
+    materializer: &Materializer,
+    page_title: &str,
+    counters: &ImportCounters,
+) -> Result<(), AppError> {
+    let (chunks_committed, blocks_created) = (counters.chunks_committed, counters.blocks_created);
+    tx.commit_and_dispatch(materializer).await.map_err(|e| {
+        tracing::error!(
+            page = %page_title,
+            chunks_committed,
+            blocks_created,
+            error = %e,
+            "import: final chunk commit failed"
+        );
+        AppError::from(e)
+    })?;
+    Ok(())
+}
+
+/// The block a parsed block at `depth` hangs off: pop the stack until it holds a
+/// parent shallower than `depth`, falling back to the imported page itself.
+///
+/// The stack survives chunk flushes unchanged — every id in it refers to a block
+/// committed in this or an earlier chunk, so `create_block_in_tx`'s in-tx parent
+/// check (which reads committed rows) resolves cross-chunk parents fine.
+fn parent_for_depth(
+    parent_stack: &mut Vec<(usize, String)>,
+    depth: usize,
+    page_id: &str,
+) -> String {
+    while parent_stack.len() > 1 && parent_stack.last().is_some_and(|(d, _)| *d >= depth) {
+        parent_stack.pop();
+    }
+    parent_stack
+        .last()
+        .map_or_else(|| page_id.to_string(), |(_, id)| id.clone())
+}
+
+/// One parsed block's content in its stored form: inline queries first, then
+/// inbound wiki-links, then inbound inline tags.
+///
+/// #2968 — a readable `{{query v2n:… names …}}` payload is converted back to the
+/// canonical stored `{{query v2:…ULIDs…}}` form, remapping embedded tag/page
+/// names to THIS vault's ids via the same resolve maps. It runs before the
+/// `[[Page]]` / `#tag` rewrites so the resulting base64url token is inert for
+/// them (its alphabet has no `[[` / `#[` sequences).
+///
+/// #3605 — a code block's `[[Page]]` and `#tag` text is literal, so both
+/// rewrites skip it wholesale (inline-code spans within a non-code block are
+/// skipped inside `rewrite_inbound_tags`). Leaving the link rewrite eager meant
+/// the SAME block kept its `#tag`s verbatim while its wiki-links were swapped
+/// for ULIDs — an inconsistency inside one importer, not just across the two
+/// implementations. The page-link rewrite runs first and leaves a `#[[...]]`
+/// token in place (its `#`-prefix guard), so the tag rewrite is the sole owner
+/// of that token.
+fn rewrite_block_content_for_import(
+    block: &import::ParsedBlock,
+    resolved_page_links: &HashMap<String, String>,
+    resolved_tag_tokens: &HashMap<String, String>,
+) -> String {
+    let content = super::inline_query_md::rewrite_inline_queries_for_import(
+        &block.content,
+        resolved_page_links,
+        resolved_tag_tokens,
+    );
+    if block.is_code {
+        return content;
+    }
+    let content = rewrite_inbound_page_links(&content, resolved_page_links);
+    rewrite_inbound_tags(&content, resolved_tag_tokens)
+}
+
+/// #1925 — the attachment refs in one block's (already tag/link-rewritten)
+/// content, to be ingested + rewritten AFTER the import tx commits. A code block
+/// keeps its `![[...]]` / `![](...)` text literal (mirroring the inline-tag
+/// skip), and with no supplied vault files detection is a no-op.
+fn detect_import_attachment_refs(
+    content: &str,
+    is_code: bool,
+    vault_files: &[VaultFile],
+) -> Vec<import::AttachmentRef> {
+    if vault_files.is_empty() || is_code {
+        return Vec::new();
+    }
+    let spans = import::inline_code_spans(content);
+    import::detect_attachment_refs(content, &spans)
+}
+
+/// Create one imported block inside the current chunk's transaction, queueing
+/// its op for post-commit dispatch and returning its ULID.
+///
+/// #1918 — a SINGLE problematic block degrades gracefully (`Ok(None)`:
+/// skip-and-warn) rather than `?`-aborting the whole chunk/import. Two
+/// RECOVERABLE per-block validation conditions are skipped:
+///
+///   1. The block would exceed `MAX_BLOCK_DEPTH` (a deeply-nested import block
+///      whose absolute depth lands over the create-path bound — the depth clamp
+///      now leaves page-root headroom, but a residual over-deep block must
+///      still skip, not abort).
+///   2. The block's content exceeds `MAX_CONTENT_LENGTH` (a single huge block
+///      must not strand the rest of the import).
+///
+/// Both are surfaced by `create_block_in_tx` as `AppError::Validation` with a
+/// STABLE message, AND both checks run BEFORE any write inside it, so on
+/// rejection the chunk transaction is still clean and the import continues. We
+/// match ONLY those two messages: every other error (`AppError::Database` /
+/// pool / connection / a NotFound parent / any other Validation) still
+/// propagates and aborts as before — this is not a blanket catch-all.
+async fn create_import_block(
+    ctx: &mut ImportCtx<'_>,
+    tx: &mut CommandTx,
+    content: String,
+    parent_id: String,
+    depth: usize,
+) -> Result<Option<String>, AppError> {
+    let create_result = create_block_in_tx(
+        &mut *tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        "content".into(),
+        content,
+        Some(parent_id),
+        None,
+        // #2849 PR2: server-generated id.
+        None,
+    )
+    .await;
+    match create_result {
+        Ok((new_block, block_op)) => {
+            tx.enqueue_background(block_op);
+            Ok(Some(new_block.id.clone().into_string()))
+        }
+        Err(AppError::Validation { message: msg, .. })
+            if msg.contains("maximum nesting depth")
+                || (msg.contains("content length") && msg.contains("exceeds maximum")) =>
+        {
+            tracing::warn!(
+                page = %ctx.page_title,
+                depth,
+                reason = %msg,
+                "import: skipping block that failed a recoverable validation check (#1918)"
+            );
+            ctx.warnings.push(format!(
+                "1 block skipped during import (recoverable validation failure: {msg})"
+            ));
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Set one imported block's properties in the same chunk transaction as the
+/// block itself — a block and its properties are never split across a chunk
+/// boundary (they are written before the next depth-0 flush check).
+///
+/// #2982 — registry-aware coercion for body-block properties too. Pre-#2982
+/// they always routed through `typed_property_args_for_string_value`, which
+/// forces every custom key's value into `value_text` (except the two reserved
+/// date keys), so a descendant block's number/boolean/date-typed custom property
+/// exported correctly typed (#2962) but re-imported coerced back to
+/// `value_text` — the VALUE round-tripped, its TYPE did not. The key's declared
+/// `value_type` comes from `property_definitions`, a single GLOBAL table (`key
+/// TEXT PRIMARY KEY`, no `space_id` column), so no space-scoping is needed here
+/// unlike ref-target title resolution.
+///
+/// Looked up PER KEY (not batched like the frontmatter pre-pass): body-block
+/// property keys are unbounded and vary block-to-block across the whole
+/// document, so a doc-wide pre-fetch isn't the same bounded win. This adds NO
+/// extra query, though: `set_property_in_tx` already ran this exact `SELECT
+/// value_type, options FROM property_definitions WHERE key = ?` internally on
+/// every non-clear write (for validation only, discarding the type). We run it
+/// ourselves and call `set_property_in_tx_with_declaration` with the result —
+/// still exactly ONE query per property, not two.
+///
+/// `ref`-typed keys are NOT specially resolved here (unlike the frontmatter
+/// path's title→ULID reverse lookup, which needs a `tx` + `space_id` round-trip
+/// against `blocks`) — `typed_property_args_for_registry_value` falls through to
+/// the text default for `ref` (see its doc comment), identical to the pre-fix
+/// routing, so a `ref`-declared custom body property's behaviour is UNCHANGED.
+/// A key with no `property_definitions` row (`declaration: None`) also falls
+/// through to the existing string/text behaviour.
+async fn apply_block_properties(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    block_id: &str,
+    properties: &[(String, String)],
+    counters: &mut ImportCounters,
+) -> Result<(), AppError> {
+    for (key, value) in properties {
+        let declaration = sqlx::query!(
+            "SELECT value_type, options FROM property_definitions WHERE key = ?",
+            key,
+        )
+        .fetch_optional(&mut ***tx)
+        .await?
+        .map(|row| agaric_engine::block_ops::PropertyDeclaration {
+            value_type: row.value_type,
+            options: row.options,
+        });
+        // #623 — build the correct typed `PropertyValue` shape per key:
+        // reserved date keys (`due_date`/`scheduled_date`) must hit the
+        // `value_date` field, or `validate_property_value` rejects the
+        // chunk. `typed_property_args_for_registry_value` preserves this
+        // reserved-key routing (it falls back to
+        // `typed_property_args_for_string_value` whenever the declared
+        // type doesn't itself claim the value).
+        let (value_text, value_num, value_date, value_ref, value_bool) =
+            agaric_engine::block_ops::typed_property_args_for_registry_value(
+                key,
+                value.clone(),
+                declaration.as_ref().map(|d| d.value_type.as_str()),
+            );
+        let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
+            tx,
+            materializer.loro_state(),
+            device_id,
+            block_id.to_string(),
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+            declaration,
+        )
+        .await?;
+        counters.properties_set += 1;
+        tx.enqueue_background(prop_op);
+    }
+    Ok(())
+}
+
+/// #662 — chunked block-insertion loop + final commit. Accumulates into the
+/// running counters and returns the per-block-index created ULIDs plus the
+/// pending attachment refs consumed by the post-commit phases. Consumes `tx` (it
+/// commits the final chunk).
+#[allow(clippy::type_complexity)]
 async fn insert_blocks(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
     parse_output: &import::ParseOutput,
-    resolved_page_links: HashMap<String, String>,
-    resolved_tag_tokens: HashMap<String, String>,
+    refs: &DocumentRefs,
     vault_files: &[VaultFile],
-    mut blocks_created: u64,
-    mut properties_set: u64,
-    mut chunks_committed: u64,
+    counters: &mut ImportCounters,
 ) -> Result<
     (
-        u64,
-        u64,
-        u64,
         Vec<Option<String>>,
         Vec<(String, Vec<import::AttachmentRef>)>,
     ),
@@ -3350,7 +3701,6 @@ async fn insert_blocks(
     let page_title = ctx.page_title.clone();
     let blocks_total = ctx.blocks_total;
     let progress = ctx.progress;
-    let warnings = &mut ctx.warnings;
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
@@ -3368,21 +3718,12 @@ async fn insert_blocks(
     // while any import chunk tx is open. `vault_files` empty/None ⇒ this stays
     // empty and the whole phase is a no-op.
     let mut pending_attachments: Vec<(String, Vec<import::AttachmentRef>)> = Vec::new();
-    // #1932 (OBS-LOG-05) — count committed chunks so a partial import (a
-    // mid-chunk abort) leaves a log trail of how many chunks/blocks were
-    // already made durable before the failure, rather than a lone error line.
-
-    // Track parent stack: (depth, block_id). Survives chunk flushes
-    // unchanged — every id in it refers to a block committed in this or an
-    // earlier chunk, so `create_block_in_tx`'s in-tx parent check (which
-    // reads committed rows) resolves cross-chunk parents fine.
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
-
     // #2510 — index-aligned with `parse_output.blocks`: the created ULID of
     // each block, or `None` for one skipped by the #1918 recoverable-failure
     // path. Used by the block-anchor resolution pass after this loop to map
-    // an anchor's owning `ParsedBlock` INDEX (`anchor_to_block_index`, built
-    // below) to the actual block it became.
+    // an anchor's owning `ParsedBlock` INDEX (`anchor_to_block_index`) to the
+    // actual block it became.
     let mut created_block_ids: Vec<Option<String>> = vec![None; parse_output.blocks.len()];
 
     for (block_index, block) in parse_output.blocks.iter().enumerate() {
@@ -3394,165 +3735,26 @@ async fn insert_blocks(
         // depth-0 subtree. The page + space property written above count
         // toward neither threshold; `chunk_blocks` tracks content blocks.
         if block.depth == 0 && chunk_blocks >= IMPORT_CHUNK_BLOCKS {
-            // Commit the current chunk (drains its op queue in FIFO order,
-            // releasing the writer lock) and open a fresh one. A commit
-            // failure here aborts the import; chunks already committed
-            // survive (documented partial-import semantics).
-            //
-            // #1934 — attach import context to a chunk-commit failure via an
-            // `error!` log (which chunk / how many blocks were durable when the
-            // abort happened), instead of a bare `Database error: …`. The error
-            // itself is routed through `AppError::from(sqlx::Error)` so the IPC
-            // `kind` discrimination is preserved (a writer-busy `PoolTimedOut`
-            // stays `pool_busy`, a `Conflict` stays `conflict`); flattening to
-            // `Internal` would have collapsed every commit failure to one kind
-            // and lost the frontend's retry affordance.
-            tx.commit_and_dispatch(materializer).await.map_err(|e| {
-                tracing::error!(
-                    page = %page_title,
-                    chunks_committed,
-                    blocks_created,
-                    error = %e,
-                    "import: chunk commit failed; committed chunks remain durable"
-                );
-                AppError::from(e)
-            })?;
-            chunks_committed += 1;
-            // #1932 (OBS-LOG-05) — per-chunk durability signal so a partial
-            // import is observable in the log.
-            tracing::debug!(
-                page = %page_title,
-                chunks_committed,
-                blocks_created,
-                "import: chunk committed (writer lock released)"
-            );
-            tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
-            // #2604 — re-arm rollback for the new per-chunk tx.
-            tx.arm_engine_rollback(materializer.loro_state());
+            tx = commit_chunk_and_reopen(tx, materializer, pool, &page_title, counters).await?;
             chunk_blocks = 0;
         }
 
-        // Find the correct parent: pop stack until we find a parent at depth < block.depth
-        while parent_stack.len() > 1 && parent_stack.last().is_some_and(|(d, _)| *d >= block.depth)
-        {
-            parent_stack.pop();
-        }
-        let parent_id = parent_stack
-            .last()
-            .map(|(_, id)| id.clone())
-            .unwrap_or(page_id.clone());
+        let parent_id = parent_for_depth(&mut parent_stack, block.depth, &page_id);
+        let content =
+            rewrite_block_content_for_import(block, &refs.links.page_links, &refs.tag_tokens);
+        let detected_attachment_refs =
+            detect_import_attachment_refs(&content, block.is_code, vault_files);
 
-        // Create the block inside the current chunk's transaction.
-        // #1446 Part B — rewrite inbound `[[Page Name]]` wiki-links to internal
-        // `[[ULID]]` refs using the pre-resolved map. Names that were
-        // ambiguous / unresolvable (absent from the map) keep their original
-        // plain-text token; canonical `[[ULID]]` tokens are left untouched.
-        // #2968 — first convert any readable `{{query v2n:… names …}}` payload
-        // back to the canonical stored `{{query v2:…ULIDs…}}` form, remapping
-        // embedded tag/page names to THIS vault's ids via the same resolve maps.
-        // Runs before the `[[Page]]`/`#tag` rewrites so the resulting base64url
-        // token is inert for them (its alphabet has no `[[` / `#[` sequences).
-        let content = super::inline_query_md::rewrite_inline_queries_for_import(
-            &block.content,
-            &resolved_page_links,
-            &resolved_tag_tokens,
-        );
-        // #3605 — a code block's `[[Page]]` text is literal, so it is skipped
-        // here exactly as the tag rewrite below and the attachment detection
-        // further down already skip it. Leaving it eager meant the SAME block
-        // kept its `#tag`s verbatim while its wiki-links were swapped for
-        // ULIDs — an inconsistency inside one importer, not just across the
-        // two implementations.
-        let content = if block.is_code {
-            content
-        } else {
-            rewrite_inbound_page_links(&content, &resolved_page_links)
+        // The parent stack is NOT pushed for a #1918-skipped block, so any of
+        // its children re-parent onto the nearest surviving ancestor (matching
+        // the depth-clamp flattening semantics).
+        let Some(new_block_id) =
+            create_import_block(ctx, &mut tx, content, parent_id, block.depth).await?
+        else {
+            continue;
         };
-        // #1924 / #1950 — then rewrite inbound inline tags (`#tag`,
-        // `#[[Tag With Space]]`) to `#[ULID]` refs using the pre-resolved
-        // token→ULID map. A code block (`is_code`, born inside a ```` ``` ````
-        // fence) is SKIPPED entirely so its `#tag`-looking text stays literal;
-        // inline-code spans within a non-code block are skipped inside
-        // `rewrite_inbound_tags`. The page-link rewrite ran first and leaves a
-        // `#[[...]]` token in place (its `#`-prefix guard), so the tag rewrite
-        // is the sole owner of that token.
-        let content = if block.is_code {
-            content
-        } else {
-            rewrite_inbound_tags(&content, &resolved_tag_tokens)
-        };
-
-        // #1925 — detect attachment refs in this block's (already
-        // tag/link-rewritten) content, to be ingested + rewritten AFTER the
-        // import tx commits. A code block keeps its `![[...]]`/`![](...)` text
-        // literal (skipped here, mirroring the inline-tag skip). Detection only
-        // runs when the caller supplied vault files; with none it is a no-op.
-        let detected_attachment_refs: Vec<import::AttachmentRef> =
-            if vault_files.is_empty() || block.is_code {
-                Vec::new()
-            } else {
-                let spans = import::inline_code_spans(&content);
-                import::detect_attachment_refs(&content, &spans)
-            };
-
-        // #1918 — a SINGLE problematic block must degrade gracefully
-        // (skip-and-warn) rather than `?`-abort the whole chunk/import. Two
-        // RECOVERABLE per-block validation conditions are skipped here:
-        //
-        //   1. The block would exceed `MAX_BLOCK_DEPTH` (a deeply-nested import
-        //      block whose absolute depth lands over the create-path bound —
-        //      the depth clamp now leaves page-root headroom, but a residual
-        //      over-deep block must still skip, not abort).
-        //   2. The block's content exceeds `MAX_CONTENT_LENGTH` (a single huge
-        //      block must not strand the rest of the import).
-        //
-        // Both conditions are surfaced by `create_block_in_tx` as
-        // `AppError::Validation` with a STABLE message, AND both checks run
-        // BEFORE any write inside `create_block_in_tx`, so on rejection the
-        // chunk transaction is still clean and we can keep importing. We match
-        // ONLY those two specific validation messages: every other error
-        // (`AppError::Database` / pool / connection / a NotFound parent / any
-        // other Validation) STILL propagates via the `?` below and aborts as
-        // before — this is not a blanket catch-all.
-        let create_result = create_block_in_tx(
-            &mut tx,
-            materializer.loro_state(),
-            device_id,
-            "content".into(),
-            content,
-            Some(parent_id.clone()),
-            None,
-            // #2849 PR2: server-generated id.
-            None,
-        )
-        .await;
-        let (new_block, block_op) = match create_result {
-            Ok(pair) => pair,
-            Err(AppError::Validation { message: msg, .. })
-                if msg.contains("maximum nesting depth")
-                    || (msg.contains("content length") && msg.contains("exceeds maximum")) =>
-            {
-                // Recoverable: skip just this block, warn, and keep the chunk
-                // open. The parent stack is NOT pushed, so any children of the
-                // skipped block re-parent onto the nearest surviving ancestor
-                // (matching the depth-clamp flattening semantics).
-                tracing::warn!(
-                    page = %page_title,
-                    depth = block.depth,
-                    reason = %msg,
-                    "import: skipping block that failed a recoverable validation check (#1918)"
-                );
-                warnings.push(format!(
-                    "1 block skipped during import (recoverable validation failure: {msg})"
-                ));
-                continue;
-            }
-            Err(e) => return Err(e),
-        };
-        blocks_created += 1;
+        counters.blocks_created += 1;
         chunk_blocks += 1;
-        tx.enqueue_background(block_op);
-        let new_block_id = new_block.id.clone().into_string();
         // #2510 — record this ParsedBlock's created ULID by its original
         // document index, for the block-anchor resolution pass below.
         created_block_ids[block_index] = Some(new_block_id.clone());
@@ -3561,7 +3763,7 @@ async fn insert_blocks(
         // #1925 — record this block's detected attachment refs against its now
         // committed-pending id. Ingested + rewritten in the post-commit phase.
         if !detected_attachment_refs.is_empty() {
-            pending_attachments.push((new_block_id, detected_attachment_refs));
+            pending_attachments.push((new_block_id.clone(), detected_attachment_refs));
         }
 
         // #128 — per-block progress tick. Emitted inside the loop so a
@@ -3570,621 +3772,577 @@ async fn insert_blocks(
         // durability signal).
         if let Some(sink) = progress {
             sink.emit(ImportProgressUpdate::Progress {
-                blocks_done: blocks_created,
+                blocks_done: counters.blocks_created,
                 blocks_total,
             });
         }
 
-        // Set properties inside the same chunk transaction as their
-        // owning block — a block and its properties are never split across
-        // a chunk boundary (properties are emitted immediately after the
-        // block create, before the next depth-0 flush check).
-        //
-        // #2982 — registry-aware coercion for body-block properties too.
-        //
-        // Pre-#2982, body-block properties deliberately did NOT share the
-        // frontmatter's registry-aware coercion: they always routed through
-        // `typed_property_args_for_string_value`, which forces every custom
-        // key's value into `value_text` (except the two reserved date keys).
-        // A descendant block's number/boolean/date-typed custom property
-        // therefore exported correctly typed (#2962) but re-imported
-        // coerced back to `value_text` — the VALUE round-tripped, its TYPE
-        // did not. Fixed by looking up the key's declared `value_type` from
-        // `property_definitions` — a single GLOBAL table (`key TEXT PRIMARY
-        // KEY`, no `space_id` column), so no space-scoping is needed here,
-        // unlike ref-target title resolution — and routing through
-        // `typed_property_args_for_registry_value`, exactly mirroring
-        // `apply_frontmatter_properties`'s registry-aware branch above.
-        //
-        // Looked up PER KEY here (not batched like the frontmatter
-        // pre-pass): body-block property keys are unbounded and vary
-        // block-to-block across the whole document, so a doc-wide pre-fetch
-        // isn't the same bounded win the frontmatter batch is. This adds NO
-        // extra query, though: `set_property_in_tx` already ran this exact
-        // `SELECT value_type, options FROM property_definitions WHERE key =
-        // ?` internally on every non-clear write (for validation only,
-        // discarding the type). We now run that lookup ourselves and call
-        // `set_property_in_tx_with_declaration` directly with the result —
-        // still exactly ONE query per property, not two.
-        //
-        // `ref`-typed keys are NOT specially resolved here (unlike the
-        // frontmatter path's title→ULID reverse lookup just above, which
-        // needs a `tx` + `space_id` round-trip against `blocks`) —
-        // `typed_property_args_for_registry_value` falls through to the text
-        // default for `ref` (see its doc comment), identical to the pre-fix
-        // routing, so a `ref`-declared custom body property's behavior is
-        // UNCHANGED by this fix. A key with no `property_definitions` row
-        // (`declaration: None`) also falls through to the existing
-        // string/text behavior — no regression for untyped custom
-        // properties.
-        for (key, value) in &block.properties {
-            let declaration = sqlx::query!(
-                "SELECT value_type, options FROM property_definitions WHERE key = ?",
-                key,
-            )
-            .fetch_optional(&mut **tx)
-            .await?
-            .map(|row| agaric_engine::block_ops::PropertyDeclaration {
-                value_type: row.value_type,
-                options: row.options,
-            });
-            // #623 — build the correct typed `PropertyValue` shape per key:
-            // reserved date keys (`due_date`/`scheduled_date`) must hit the
-            // `value_date` field, or `validate_property_value` rejects the
-            // chunk. `typed_property_args_for_registry_value` preserves this
-            // reserved-key routing (it falls back to
-            // `typed_property_args_for_string_value` whenever the declared
-            // type doesn't itself claim the value).
-            let (value_text, value_num, value_date, value_ref, value_bool) =
-                agaric_engine::block_ops::typed_property_args_for_registry_value(
-                    key,
-                    value.clone(),
-                    declaration.as_ref().map(|d| d.value_type.as_str()),
-                );
-            let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                new_block.id.clone().into_string(),
-                key,
-                value_text,
-                value_num,
-                value_date,
-                value_ref,
-                value_bool,
-                declaration,
-            )
-            .await?;
-            properties_set += 1;
-            tx.enqueue_background(prop_op);
-        }
+        apply_block_properties(
+            &mut tx,
+            materializer,
+            device_id,
+            &new_block_id,
+            &block.properties,
+            counters,
+        )
+        .await?;
     }
 
-    // Commit + dispatch the final chunk's queued ops in FIFO order,
-    // releasing the writer lock.
-    //
-    // #1934 — attach import context to a final-commit failure via an `error!`
-    // log (block count / chunks already durable). The error is routed through
-    // `AppError::from(sqlx::Error)` so the IPC `kind` is preserved (e.g. a
-    // writer-busy `PoolTimedOut` stays `pool_busy`); flattening to `Internal`
-    // would have collapsed the discrimination the frontend relies on.
-    tx.commit_and_dispatch(materializer).await.map_err(|e| {
-        tracing::error!(
-            page = %page_title,
-            chunks_committed,
-            blocks_created,
-            error = %e,
-            "import: final chunk commit failed"
+    commit_final_chunk(tx, materializer, &page_title, counters).await?;
+    Ok((created_block_ids, pending_attachments))
+}
+
+/// #2510 / #2567 — what one document's deferred anchor links resolved to, so
+/// each outcome can surface its own diagnostic once, in aggregate.
+#[derive(Default)]
+struct AnchorOutcomes {
+    resolved_block_refs: usize,
+    unresolved_block_anchors: usize,
+    resolved_heading_refs: usize,
+    unresolved_headings: usize,
+    unresolved_empty_base_headings: std::collections::BTreeSet<String>,
+}
+
+/// The block's CURRENT (durable, tag/link-rewritten) content, or `None` when the
+/// block vanished (concurrent delete) or could not be read. This phase runs
+/// AFTER the import committed, so a transient read error warns and skips rather
+/// than turning a durable import into a hard failure.
+async fn fetch_anchor_block_content(
+    pool: &SqlitePool,
+    block_id: &str,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    match sqlx::query_scalar!(
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(row) => row.flatten(),
+        Err(e) => {
+            tracing::warn!(
+                block_id = %block_id,
+                error = %e,
+                "import: block-anchor content re-fetch failed (#2510)"
+            );
+            warnings.push(format!(
+                "block '{block_id}' block-anchor link(s) could not be resolved \
+                 (content re-fetch failed: {e})"
+            ));
+            None
+        }
+    }
+}
+
+/// Rewrite one block's deferred anchor tokens, returning the new content when
+/// anything was patched.
+///
+/// The PRECISE match is re-run here via the same `HUMAN_PAGE_LINK_RE` the
+/// initial rewrite pass uses, against the block's CURRENT content — this avoids
+/// any literal-substring drift between the captured map key (`caps[1].trim()`)
+/// and the token's actual on-disk bytes.
+///
+///   * #2510 — the anchor id matches a `^block-id` marker recorded on one of
+///     this document's OWN blocks, and that block was actually created →
+///     rewrite every occurrence of the token to a real Agaric block-ref
+///     `((<block ULID>))`.
+///   * #2567 — a heading anchor resolves its normalized label to the owning
+///     block's ULID, rewriting to the SAME block-ref form so navigation
+///     (scroll/focus-to-block) is reused verbatim.
+///   * otherwise (marker not found anywhere in this document, or its owning
+///     block was skipped) → fall back to a link to THIS page, mirroring #1282's
+///     dropped-anchor fallback. The one exception is an anchor-only
+///     `[[#Heading]]` that matched no heading: it is left LITERAL with a
+///     per-token "no page target" warning, exactly as before #2567.
+fn rewrite_anchor_tokens(
+    current_content: &str,
+    page_id: &str,
+    created_block_ids: &[Option<String>],
+    refs: &DocumentRefs,
+    outcomes: &mut AnchorOutcomes,
+) -> Option<String> {
+    let mut any_patched = false;
+    let new_content = HUMAN_PAGE_LINK_RE
+        .replace_all(current_content, |caps: &regex::Captures<'_>| {
+            let m = caps.get(0).expect("group 0 always present");
+            let whole = m.as_str();
+            // Same guards as `rewrite_inbound_page_links`: skip the
+            // `#[[Tag]]` / `![[embed]]` forms and any already-internal
+            // `[[ULID]]` ref.
+            if current_content[..m.start()].ends_with('#')
+                || current_content[..m.start()].ends_with('!')
+            {
+                return whole.to_string();
+            }
+            if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
+                return whole.to_string();
+            }
+            let name = caps[1].trim();
+            if let Some(anchor) = refs.links.pending_block_anchors.get(name) {
+                any_patched = true;
+                if let Some(target_id) = refs
+                    .anchor_to_block_index
+                    .get(anchor)
+                    .and_then(|&target_idx| created_block_ids.get(target_idx).cloned().flatten())
+                {
+                    outcomes.resolved_block_refs += 1;
+                    format!("(({target_id}))")
+                } else {
+                    outcomes.unresolved_block_anchors += 1;
+                    format!("[[{page_id}]]")
+                }
+            } else if let Some(pending) = refs.links.pending_heading_anchors.get(name) {
+                if let Some(target_id) = refs
+                    .heading_to_block_index
+                    .get(&pending.norm)
+                    .and_then(|&target_idx| created_block_ids.get(target_idx).cloned().flatten())
+                {
+                    any_patched = true;
+                    outcomes.resolved_heading_refs += 1;
+                    format!("(({target_id}))")
+                } else if pending.empty_base {
+                    outcomes
+                        .unresolved_empty_base_headings
+                        .insert(name.to_string());
+                    whole.to_string()
+                } else {
+                    any_patched = true;
+                    outcomes.unresolved_headings += 1;
+                    format!("[[{page_id}]]")
+                }
+            } else {
+                whole.to_string()
+            }
+        })
+        .into_owned();
+    any_patched.then_some(new_content)
+}
+
+/// Surface each anchor-resolution outcome once, in aggregate.
+fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
+    if outcomes.resolved_block_refs > 0 {
+        tracing::debug!(
+            resolved_block_ref_count = outcomes.resolved_block_refs,
+            "import: Obsidian block-anchor wiki-link(s) resolved to a block-ref (#2510)"
         );
-        AppError::from(e)
-    })?;
-    Ok((
-        blocks_created,
-        properties_set,
-        chunks_committed,
-        created_block_ids,
-        pending_attachments,
-    ))
+    }
+    if outcomes.unresolved_block_anchors > 0 {
+        // #2510 — mirrors #1282's dropped-anchor aggregate warning: the
+        // block-anchor marker was not found anywhere in this document
+        // (or its owning block was skipped), so the link fell back to a
+        // page link to this page instead of a block-ref.
+        let unresolved_block_anchor_count = outcomes.unresolved_block_anchors;
+        warnings.push(format!(
+            "{unresolved_block_anchor_count} wikilink block-anchor(s) (`#^blockId`) could not \
+             be matched to a block in this document; left as a page link (Obsidian \
+             cross-note block-anchor targeting is not yet supported)"
+        ));
+    }
+    if outcomes.resolved_heading_refs > 0 {
+        tracing::debug!(
+            resolved_heading_ref_count = outcomes.resolved_heading_refs,
+            "import: Obsidian heading-anchor wiki-link(s) resolved to a block-ref (#2567)"
+        );
+    }
+    if outcomes.unresolved_headings > 0 {
+        // #2567 — mirrors the block-anchor aggregate warning: an explicit
+        // self-title heading link matched no heading in this document, so it
+        // fell back to a page link instead of a block-ref.
+        let unresolved_heading_count = outcomes.unresolved_headings;
+        warnings.push(format!(
+            "{unresolved_heading_count} wikilink heading-anchor(s) (`#Heading`) could not be \
+             matched to a heading in this document; left as a page link (Obsidian cross-note \
+             heading targeting is not yet supported)"
+        ));
+    }
+    for name in &outcomes.unresolved_empty_base_headings {
+        // #1282 — an anchor-only `[[#Heading]]` with no matching heading is
+        // left literal; surface the same per-occurrence "no page target"
+        // diagnostic the pre-#2567 pre-pass emitted, so behavior (and the
+        // #1282 test) is unchanged for the unresolved case.
+        warnings.push(format!(
+            "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
+        ));
+    }
 }
 
 /// #2510 / #2567 — post-commit resolution of deferred same-document block- and
 /// heading-anchor wiki-links to real `((block ULID))` refs (with the #1282
 /// page-link fallback). Warn-and-continue only; never aborts the durable import.
-#[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+///
+/// Runs HERE, AFTER the import writer tx has fully committed (mirrors the #1925
+/// attachment phase below, for the same reason: `edit_block_inner` is pool-based
+/// and opens its OWN writer tx, which would deadlock against the still-held
+/// import tx). Every block in this document now has its final ULID (or `None`,
+/// if skipped by #1918), so a deferred `[[Page#^blockId]]` / `[[#^blockId]]`
+/// token — left LITERAL in its owning block's content by the pre-pass — can
+/// finally be resolved.
 async fn resolve_anchor_links(
     ctx: &mut ImportCtx<'_>,
     parse_output: &import::ParseOutput,
     created_block_ids: &[Option<String>],
-    pending_block_anchor_links: &HashMap<String, String>,
-    pending_heading_anchor_links: &HashMap<String, PendingHeading>,
-    anchor_to_block_index: &HashMap<String, usize>,
-    heading_to_block_index: &HashMap<String, usize>,
+    refs: &DocumentRefs,
 ) {
+    if refs.links.pending_block_anchors.is_empty() && refs.links.pending_heading_anchors.is_empty()
+    {
+        return;
+    }
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let pool = ctx.pool;
     let page_id = ctx.page_id.clone();
-    let warnings = &mut ctx.warnings;
-    // #2510 — block-anchor resolution + content rewrite phase. Runs HERE,
-    // AFTER the import writer tx has fully committed (mirrors the #1925
-    // attachment phase immediately below, for the same reason: `edit_block_inner`
-    // is pool-based and opens its OWN writer tx, which would deadlock against
-    // the still-held import tx). Every block in this document now has its
-    // final ULID (or `None`, if skipped by #1918), so a deferred
-    // `[[Page#^blockId]]` / `[[#^blockId]]` token — left LITERAL in its
-    // owning block's content by the pre-pass above — can finally be resolved:
-    //   * the anchor id matches a `^block-id` marker recorded on one of this
-    //     document's OWN blocks (`anchor_to_block_index`), and that block was
-    //     actually created → rewrite every occurrence of the token to a real
-    //     Agaric block-ref `((<block ULID>))`.
-    //   * otherwise (marker not found anywhere in this document, or its
-    //     owning block was skipped) → fall back to a link to THIS page,
-    //     mirroring #1282's dropped-anchor fallback, with a warning.
-    if !pending_block_anchor_links.is_empty() || !pending_heading_anchor_links.is_empty() {
-        // Candidate block indices: a cheap in-memory pre-filter over the
-        // ORIGINAL parsed content (`[[` presence) so only blocks that could
-        // possibly carry a pending token are re-fetched from the database.
-        // The PRECISE match (respecting internal whitespace, the `#`/`!`
-        // guards, and canonical-ULID skip) is re-run below via the same
-        // `HUMAN_PAGE_LINK_RE` the initial rewrite pass uses, against the
-        // block's CURRENT (already tag/attachment-rewrite-eligible) content —
-        // this avoids any literal-substring drift between the captured map
-        // key (`caps[1].trim()`) and the token's actual on-disk bytes.
-        let mut resolved_block_ref_count: usize = 0;
-        let mut unresolved_block_anchor_count: usize = 0;
-        // #2567 — heading-anchor resolution outcomes, kept separate from the
-        // block-anchor counters above so each surfaces its own diagnostic.
-        let mut resolved_heading_ref_count: usize = 0;
-        let mut unresolved_heading_count: usize = 0;
-        let mut unresolved_empty_base_headings: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+    let mut outcomes = AnchorOutcomes::default();
 
-        for (block_index, block) in parse_output.blocks.iter().enumerate() {
-            if !block.content.contains("[[") {
-                continue;
-            }
-            let Some(Some(container_id)) = created_block_ids.get(block_index) else {
-                // The containing block itself was skipped (#1918) — nothing
-                // to patch.
-                continue;
-            };
-            let current: Option<String> = match sqlx::query_scalar!(
-                "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
-                container_id,
-            )
-            .fetch_optional(pool)
-            .await
-            {
-                Ok(row) => row.flatten(),
-                Err(e) => {
-                    tracing::warn!(
-                        block_id = %container_id,
-                        error = %e,
-                        "import: block-anchor content re-fetch failed (#2510)"
-                    );
-                    warnings.push(format!(
-                        "block '{container_id}' block-anchor link(s) could not be resolved \
-                         (content re-fetch failed: {e})"
-                    ));
-                    continue;
-                }
-            };
-            let Some(current_content) = current else {
-                // Block vanished (concurrent delete) — nothing to rewrite.
-                continue;
-            };
-            if !current_content.contains("[[") {
-                continue;
-            }
+    for (block_index, block) in parse_output.blocks.iter().enumerate() {
+        // A cheap in-memory pre-filter over the ORIGINAL parsed content (`[[`
+        // presence) so only blocks that could possibly carry a pending token are
+        // re-fetched from the database.
+        if !block.content.contains("[[") {
+            continue;
+        }
+        let Some(Some(container_id)) = created_block_ids.get(block_index) else {
+            // The containing block itself was skipped (#1918) — nothing
+            // to patch.
+            continue;
+        };
+        let Some(current_content) =
+            fetch_anchor_block_content(pool, container_id, &mut ctx.warnings).await
+        else {
+            continue;
+        };
+        if !current_content.contains("[[") {
+            continue;
+        }
+        let Some(new_content) = rewrite_anchor_tokens(
+            &current_content,
+            &page_id,
+            created_block_ids,
+            refs,
+            &mut outcomes,
+        ) else {
+            continue;
+        };
 
-            let mut any_patched = false;
-            let new_content = HUMAN_PAGE_LINK_RE
-                .replace_all(&current_content, |caps: &regex::Captures<'_>| {
-                    let m = caps.get(0).expect("group 0 always present");
-                    let whole = m.as_str();
-                    // Same guards as `rewrite_inbound_page_links`: skip the
-                    // `#[[Tag]]` / `![[embed]]` forms and any already-internal
-                    // `[[ULID]]` ref.
-                    if current_content[..m.start()].ends_with('#')
-                        || current_content[..m.start()].ends_with('!')
-                    {
-                        return whole.to_string();
-                    }
-                    if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
-                        return whole.to_string();
-                    }
-                    let name = caps[1].trim();
-                    if let Some(anchor) = pending_block_anchor_links.get(name) {
-                        any_patched = true;
-                        if let Some(target_id) =
-                            anchor_to_block_index.get(anchor).and_then(|&target_idx| {
-                                created_block_ids.get(target_idx).cloned().flatten()
-                            })
-                        {
-                            // #2510 — the marker was found on one of this
-                            // document's own blocks: a real Agaric block-ref.
-                            resolved_block_ref_count += 1;
-                            format!("(({target_id}))")
-                        } else {
-                            // Marker not found anywhere in this document (or its
-                            // owning block was skipped) — #1282-style fallback: a
-                            // page link to THIS page (the resolved/implicit
-                            // target of every deferred token).
-                            unresolved_block_anchor_count += 1;
-                            format!("[[{page_id}]]")
-                        }
-                    } else if let Some(pending) = pending_heading_anchor_links.get(name) {
-                        // #2567 — same-document heading anchor. Resolve the
-                        // normalized heading label to its owning block's ULID via
-                        // the per-document heading map + `created_block_ids`,
-                        // rewriting to the SAME block-ref form `^block-id` uses so
-                        // navigation (scroll/focus-to-block) is reused verbatim.
-                        if let Some(target_id) =
-                            heading_to_block_index
-                                .get(&pending.norm)
-                                .and_then(|&target_idx| {
-                                    created_block_ids.get(target_idx).cloned().flatten()
-                                })
-                        {
-                            any_patched = true;
-                            resolved_heading_ref_count += 1;
-                            format!("(({target_id}))")
-                        } else if pending.empty_base {
-                            // #1282 — an anchor-only `[[#Heading]]` that matched
-                            // no heading is left LITERAL (content unchanged, so
-                            // `any_patched` stays untouched) with a per-token
-                            // "no page target" warning, exactly as before #2567.
-                            unresolved_empty_base_headings.insert(name.to_string());
-                            whole.to_string()
-                        } else {
-                            // #1282 — an explicit self-title `[[Self#Heading]]`
-                            // that matched no heading degrades to a page link to
-                            // THIS page + the aggregate dropped-anchor warning.
-                            any_patched = true;
-                            unresolved_heading_count += 1;
-                            format!("[[{page_id}]]")
-                        }
-                    } else {
-                        whole.to_string()
-                    }
-                })
-                .into_owned();
+        if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
+            pool,
+            device_id,
+            materializer,
+            BlockId::from_trusted(container_id),
+            new_content,
+        )
+        .await
+        {
+            tracing::warn!(
+                block_id = %container_id,
+                error = %e,
+                "import: block-anchor rewrite failed (#2510)"
+            );
+            ctx.warnings.push(format!(
+                "block '{container_id}' block-anchor link(s) could not be rewritten ({e})"
+            ));
+        }
+    }
 
-            if !any_patched {
-                continue;
-            }
+    push_anchor_warnings(&mut ctx.warnings, &outcomes);
+}
 
-            if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
-                pool,
-                device_id,
-                materializer,
-                BlockId::from_trusted(container_id),
-                new_content,
-            )
-            .await
-            {
+/// The path-derived fields and byte length one vault file ingests with.
+///
+/// #2724 — read in a SHORT immutable borrow of the file so the `std::mem::take`
+/// that follows is not blocked by a live `&vf` spanning the whole ingest.
+fn vault_file_ingest_fields(vf: &VaultFile) -> (String, String, i64) {
+    let filename = vf
+        .path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&vf.path)
+        .to_string();
+    let mime_type = import::guess_attachment_mime(&vf.path);
+    // `i64::try_from` avoids the `usize as i64` wrap; a length
+    // that doesn't fit i64 is by definition over the limit.
+    let size_bytes = i64::try_from(vf.bytes.len()).unwrap_or(i64::MAX);
+    (filename, mime_type, size_bytes)
+}
+
+/// #2724 — MOVE the bytes out for a single-ATTEMPT file so the buffer is freed
+/// right after ingest instead of cloned (a transient per-file doubling).
+/// `ingest_counts[idx] == 1` proves no other ingest attempt — including a retry
+/// of a transiently failed first attempt within this block — will read this
+/// file, so the move is safe. `remove` flips it out of the single-attempt set
+/// and `moved_out` records the empty buffer. Any file with count > 1 always
+/// clones, exactly as before.
+///
+/// `None` means the bytes were already moved out: under a correct count that is
+/// unreachable, but refusing to ingest an emptied buffer guarantees it is NEVER
+/// re-ingested as a 0-byte attachment.
+fn take_or_clone_bytes(
+    vault_files: &mut [VaultFile],
+    idx: usize,
+    ingest_counts: &mut HashMap<usize, usize>,
+    moved_out: &mut std::collections::HashSet<usize>,
+) -> Option<Vec<u8>> {
+    if ingest_counts.get(&idx).copied() == Some(1) {
+        ingest_counts.remove(&idx);
+        moved_out.insert(idx);
+        return Some(std::mem::take(&mut vault_files[idx].bytes));
+    }
+    if moved_out.contains(&idx) {
+        return None;
+    }
+    Some(vault_files[idx].bytes.clone())
+}
+
+/// The vault-file index one attachment ref resolves to. A ref matching nothing
+/// is left as-is, and one matching several files by basename uses the first —
+/// both warn rather than failing the already-durable import.
+fn match_ref_to_vault_file(
+    att: &import::AttachmentRef,
+    vault_files: &[VaultFile],
+    warnings: &mut Vec<String>,
+) -> Option<usize> {
+    let Some((idx, ambiguous)) = import::match_vault_file(&att.original_ref, vault_files) else {
+        warnings.push(format!(
+            "referenced attachment '{}' was not found among the imported \
+             vault files; left as-is",
+            att.original_ref
+        ));
+        return None;
+    };
+    if ambiguous {
+        warnings.push(format!(
+            "attachment ref '{}' matched multiple vault files by basename; \
+             used the first match",
+            att.original_ref
+        ));
+    }
+    Some(idx)
+}
+
+/// Ingest every attachment ref detected in ONE content block, returning the
+/// `(ref, attachment id)` pairs its content rewrite needs.
+///
+/// ROW OWNERSHIP: a FRESH attachment row per owning block (matching the editor's
+/// `add_attachment_with_bytes_inner`; identical bytes may still share a
+/// content-addressed blob). The ONLY row-level dedup is within a single block:
+/// the same `original_ref` appearing multiple times in ONE block ingests once
+/// and both rewrites share that id — safe because the duplicates share the same
+/// owning block and thus the same CASCADE lifetime. Cross-page/cross-block asset
+/// dedup is intentionally DEFERRED: it needs attachment refcounting/GC the schema
+/// lacks (`attachments.block_id` is `ON DELETE CASCADE` and not space-scoped, so
+/// reusing one row across blocks would dangle peers when the owner block is
+/// deleted, and cross-space peers would never receive the `AddAttachment` op).
+///
+/// Warnings (not-found, oversized, disallowed mime, ingest failure) leave the
+/// original ref in place and never abort the already-durable import.
+async fn ingest_block_attachments(
+    ctx: &mut ImportCtx<'_>,
+    vault_files: &mut [VaultFile],
+    ingest_counts: &mut HashMap<usize, usize>,
+    moved_out: &mut std::collections::HashSet<usize>,
+    block_id: &str,
+    refs: &[import::AttachmentRef],
+) -> Vec<(import::AttachmentRef, String)> {
+    // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
+    // refs already ingested for THIS block. NOT carried across blocks.
+    let mut block_ingested: HashMap<String, String> = HashMap::new();
+    let mut block_rewrites: Vec<(import::AttachmentRef, String)> = Vec::new();
+
+    for att in refs {
+        // Already ingested for this block (same original ref string).
+        if let Some(attachment_id) = block_ingested.get(&att.original_ref) {
+            block_rewrites.push((att.clone(), attachment_id.clone()));
+            continue;
+        }
+
+        let Some(idx) = match_ref_to_vault_file(att, vault_files, &mut ctx.warnings) else {
+            continue;
+        };
+        let (filename, mime_type, size_bytes) = vault_file_ingest_fields(&vault_files[idx]);
+
+        // Size guard (mirrors the attachment ingest's 50 MB limit). On
+        // an oversized file: warn + skip (leave the original ref). This
+        // `continue` fires BEFORE the move/clone below, so a size-skipped
+        // file's bytes are never taken.
+        if size_bytes > crate::commands::MAX_ATTACHMENT_SIZE {
+            ctx.warnings.push(format!(
+                "attachment '{}' ({size_bytes} bytes) exceeds the maximum size; skipped",
+                att.original_ref,
+            ));
+            continue;
+        }
+
+        let Some(bytes) = take_or_clone_bytes(vault_files, idx, ingest_counts, moved_out) else {
+            ctx.warnings.push(format!(
+                "attachment '{}' could not be re-imported (source bytes already \
+                 consumed by a prior ingest); left as-is",
+                att.original_ref
+            ));
+            continue;
+        };
+
+        // Fresh ingest, owned by this content block. A failure
+        // (disallowed mime, write error, transient DB error, etc.)
+        // degrades to warn+skip so a single bad asset never fails the
+        // (already durable) import.
+        let attachment_id = match crate::commands::attachments::add_attachment_with_bytes_inner(
+            ctx.pool,
+            ctx.device_id,
+            ctx.materializer,
+            ctx.app_data_dir,
+            BlockId::from_trusted(block_id),
+            filename,
+            mime_type,
+            bytes,
+        )
+        .await
+        {
+            Ok(row) => row.id.into_string(),
+            Err(e) => {
                 tracing::warn!(
-                    block_id = %container_id,
+                    reference = %att.original_ref,
                     error = %e,
-                    "import: block-anchor rewrite failed (#2510)"
+                    "import: attachment ingest failed; leaving original ref (#1925)"
                 );
-                warnings.push(format!(
-                    "block '{container_id}' block-anchor link(s) could not be rewritten ({e})"
+                ctx.warnings.push(format!(
+                    "attachment '{}' could not be imported ({e}); left as-is",
+                    att.original_ref
                 ));
+                continue;
             }
-        }
+        };
 
-        if resolved_block_ref_count > 0 {
-            tracing::debug!(
-                resolved_block_ref_count,
-                "import: Obsidian block-anchor wiki-link(s) resolved to a block-ref (#2510)"
+        block_ingested.insert(att.original_ref.clone(), attachment_id.clone());
+        block_rewrites.push((att.clone(), attachment_id));
+    }
+    block_rewrites
+}
+
+/// Rewrite one block's content: each matched ref's full token (`![[file]]` /
+/// `![alt](path)`) → canonical `![alt](attachment:<id>)`, preserving the
+/// original alt text. The CURRENT content is fetched first (it is the durable,
+/// tag/link-rewritten version) and tokens are replaced in it.
+///
+/// A transient DB read error, a vanished block, or a failed edit must NOT abort
+/// the (already durable) import — each warns and skips instead.
+async fn rewrite_block_attachment_refs(
+    ctx: &mut ImportCtx<'_>,
+    block_id: &str,
+    block_rewrites: &[(import::AttachmentRef, String)],
+) {
+    let pool = ctx.pool;
+    let current: Option<String> = match sqlx::query_scalar!(
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(row) => row.flatten(),
+        Err(e) => {
+            tracing::warn!(
+                block_id = %block_id,
+                error = %e,
+                "import: attachment-ref content re-fetch failed (#1925)"
             );
-        }
-        if unresolved_block_anchor_count > 0 {
-            // #2510 — mirrors #1282's dropped-anchor aggregate warning: the
-            // block-anchor marker was not found anywhere in this document
-            // (or its owning block was skipped), so the link fell back to a
-            // page link to this page instead of a block-ref.
-            warnings.push(format!(
-                "{unresolved_block_anchor_count} wikilink block-anchor(s) (`#^blockId`) could not \
-                 be matched to a block in this document; left as a page link (Obsidian \
-                 cross-note block-anchor targeting is not yet supported)"
+            ctx.warnings.push(format!(
+                "block '{block_id}' attachment refs could not be rewritten \
+                 (content re-fetch failed: {e})"
             ));
+            return;
         }
-        if resolved_heading_ref_count > 0 {
-            tracing::debug!(
-                resolved_heading_ref_count,
-                "import: Obsidian heading-anchor wiki-link(s) resolved to a block-ref (#2567)"
-            );
-        }
-        if unresolved_heading_count > 0 {
-            // #2567 — mirrors the block-anchor aggregate warning: an explicit
-            // self-title heading link matched no heading in this document, so it
-            // fell back to a page link instead of a block-ref.
-            warnings.push(format!(
-                "{unresolved_heading_count} wikilink heading-anchor(s) (`#Heading`) could not be \
-                 matched to a heading in this document; left as a page link (Obsidian cross-note \
-                 heading targeting is not yet supported)"
-            ));
-        }
-        for name in &unresolved_empty_base_headings {
-            // #1282 — an anchor-only `[[#Heading]]` with no matching heading is
-            // left literal; surface the same per-occurrence "no page target"
-            // diagnostic the pre-#2567 pre-pass emitted, so behavior (and the
-            // #1282 test) is unchanged for the unresolved case.
-            warnings.push(format!(
-                "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
-            ));
-        }
+    };
+    let Some(mut new_content) = current else {
+        // Block vanished (concurrent delete) — nothing to rewrite.
+        return;
+    };
+    for (att, attachment_id) in block_rewrites {
+        let canonical = format!("![{}](attachment:{})", att.alt, attachment_id);
+        new_content = new_content.replacen(&att.full_match, &canonical, 1);
+    }
+
+    // Edit via the normal in-tx content-update path (opens its own
+    // writer tx — safe now the import tx is committed).
+    if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
+        pool,
+        ctx.device_id,
+        ctx.materializer,
+        BlockId::from_trusted(block_id),
+        new_content,
+    )
+    .await
+    {
+        tracing::warn!(
+            block_id = %block_id,
+            error = %e,
+            "import: attachment-ref content rewrite failed (#1925)"
+        );
+        ctx.warnings.push(format!(
+            "block '{block_id}' attachment refs could not be rewritten ({e})"
+        ));
     }
 }
 
 /// #1925 — post-commit attachment ingest + content rewrite. Takes ownership of
 /// `vault_files` so single-attempt files' bytes can be moved out. Warn-and-
 /// continue only; never aborts the durable import.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+///
+/// Runs HERE, AFTER the import writer tx has fully committed and released the
+/// writer lock, so it never overlaps the held IMMEDIATE tx.
+/// `add_attachment_with_bytes_inner` and `edit_block_inner` are both pool-based
+/// (each opens its OWN `BEGIN IMMEDIATE` tx); running them inside the import tx
+/// would deadlock on the single SQLite writer lock — sequencing them strictly
+/// after the final commit is what makes this safe.
+///
+/// OWNERSHIP: each attachment is owned by the CONTENT block it appears in (the
+/// block's `block_id` FK), matching editor semantics — an attachment's lifecycle
+/// follows its owning block (delete the block, the attachment GCs). The block
+/// already exists + is committed (durable) by the time we ingest, so the FK is
+/// satisfied and the rewrite is a normal `edit_block_inner`.
 async fn ingest_attachments(
     ctx: &mut ImportCtx<'_>,
     mut vault_files: Vec<VaultFile>,
     pending_attachments: Vec<(String, Vec<import::AttachmentRef>)>,
 ) {
-    let materializer = ctx.materializer;
-    let device_id = ctx.device_id;
-    let pool = ctx.pool;
-    let app_data_dir = ctx.app_data_dir;
-    let warnings = &mut ctx.warnings;
-    // #1925 — attachment ingest + content rewrite phase. Runs HERE, AFTER the
-    // import writer tx has fully committed and released the writer lock, so it
-    // never overlaps the held IMMEDIATE tx. `add_attachment_with_bytes_inner`
-    // and `edit_block_inner` are both pool-based (each opens its OWN
-    // `BEGIN IMMEDIATE` tx); running them inside the import tx would deadlock on
-    // the single SQLite writer lock — sequencing them strictly after the final
-    // commit is what makes this safe.
-    //
-    // OWNERSHIP: each attachment is owned by the CONTENT block it appears in
-    // (the block's `block_id` FK), matching editor semantics — an attachment's
-    // lifecycle follows its owning block (delete the block, the attachment GCs).
-    // The block already exists + is committed (durable) by the time we ingest,
-    // so the FK is satisfied and the rewrite is a normal `edit_block_inner`.
-    //
-    // ROW OWNERSHIP: ingest a FRESH attachment row per owning block (matching
-    // the editor's `add_attachment_with_bytes_inner`; identical bytes may still
-    // share a content-addressed blob). The ONLY row-level dedup here is
-    // within a single block: the same `original_ref` appearing multiple times
-    // in ONE block ingests once and both rewrites share that id — safe because
-    // the duplicates share the same owning block and thus the same CASCADE
-    // lifetime. Cross-page/cross-block asset dedup is intentionally DEFERRED:
-    // it needs attachment refcounting/GC the schema lacks (`attachments.block_id`
-    // is `ON DELETE CASCADE` and not space-scoped, so reusing one row across
-    // blocks would dangle peers when the owner block is deleted, and cross-space
-    // peers would never receive the `AddAttachment` op). Tracked separately.
-    //
-    // Warnings (not-found, oversized, disallowed mime, ingest failure, and any
-    // transient DB read/write error) are pushed to `warnings` and NEVER abort
-    // the import — a missing/bad attachment leaves the original ref. This phase
-    // runs AFTER the chunked tx commit, so an aborting `?` would turn a durable
-    // import into a hard failure and suppress the `Complete` event; every DB
-    // op below therefore warn-and-continues instead.
-    if !pending_attachments.is_empty() {
-        // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
-        // SINGLE-ATTEMPT file (the overwhelming common case) can have its bytes
-        // MOVED out (`std::mem::take`) at ingest instead of cloned. See
-        // [`ingest_read_counts`]: `ingest_counts[idx] == 1` means exactly one ref
-        // occurrence resolves to that file, so no other ingest attempt (including
-        // a retry of a transiently-failed first attempt within the same block)
-        // can read a moved-away buffer. Any file with count > 1 is always cloned.
-        let mut ingest_counts = ingest_read_counts(&pending_attachments, &vault_files);
-        // Defence-in-depth for the move/clone decision: an index whose bytes were
-        // taken (moved) is recorded here so the clone arm can never re-ingest an
-        // emptied buffer as a 0-byte attachment, even if the count above were ever
-        // wrong. Under a correct `ingest_counts` this set is never consulted on a
-        // reachable path, but it makes "a moved buffer is never re-ingested" total.
-        let mut moved_out: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    if pending_attachments.is_empty() {
+        return;
+    }
+    // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
+    // SINGLE-ATTEMPT file (the overwhelming common case) can have its bytes
+    // MOVED out at ingest instead of cloned.
+    let mut ingest_counts = ingest_read_counts(&pending_attachments, &vault_files);
+    // Defence-in-depth for the move/clone decision: an index whose bytes were
+    // taken (moved) is recorded here so the clone arm can never re-ingest an
+    // emptied buffer as a 0-byte attachment, even if the count above were ever
+    // wrong. Under a correct `ingest_counts` this set is never consulted on a
+    // reachable path, but it makes "a moved buffer is never re-ingested" total.
+    let mut moved_out: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-        for (block_id, refs) in &pending_attachments {
-            // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
-            // refs already ingested for THIS block, so a ref repeated within the
-            // SAME block ingests once. NOT carried across blocks.
-            let mut block_ingested: HashMap<String, String> = HashMap::new();
-            // Per-block ref → canonical-token map for the rewrite below.
-            let mut block_rewrites: Vec<(import::AttachmentRef, String)> = Vec::new();
-
-            for att in refs {
-                // Already ingested for this block (same original ref string).
-                if let Some(attachment_id) = block_ingested.get(&att.original_ref) {
-                    block_rewrites.push((att.clone(), attachment_id.clone()));
-                    continue;
-                }
-
-                // Match the ref against the supplied vault files.
-                let Some((idx, ambiguous)) =
-                    import::match_vault_file(&att.original_ref, &vault_files)
-                else {
-                    warnings.push(format!(
-                        "referenced attachment '{}' was not found among the imported \
-                         vault files; left as-is",
-                        att.original_ref
-                    ));
-                    continue;
-                };
-                if ambiguous {
-                    warnings.push(format!(
-                        "attachment ref '{}' matched multiple vault files by basename; \
-                         used the first match",
-                        att.original_ref
-                    ));
-                }
-                // Extract the path-derived fields + byte length in a SHORT
-                // immutable borrow of `vault_files`, so the mutable
-                // `std::mem::take` below is not blocked by a live `&vf`
-                // spanning the whole ingest (#2724).
-                let (filename, mime_type, size_bytes) = {
-                    let vf = &vault_files[idx];
-                    let filename = vf
-                        .path
-                        .rsplit(['/', '\\'])
-                        .next()
-                        .unwrap_or(&vf.path)
-                        .to_string();
-                    let mime_type = import::guess_attachment_mime(&vf.path);
-                    // `i64::try_from` avoids the `usize as i64` wrap; a length
-                    // that doesn't fit i64 is by definition over the limit.
-                    let size_bytes = i64::try_from(vf.bytes.len()).unwrap_or(i64::MAX);
-                    (filename, mime_type, size_bytes)
-                };
-
-                // Size guard (mirrors the attachment ingest's 50 MB limit). On
-                // an oversized file: warn + skip (leave the original ref). This
-                // `continue` fires BEFORE the move/clone below, so a size-skipped
-                // file's bytes are never taken.
-                if size_bytes > crate::commands::MAX_ATTACHMENT_SIZE {
-                    warnings.push(format!(
-                        "attachment '{}' ({size_bytes} bytes) exceeds the maximum size; skipped",
-                        att.original_ref,
-                    ));
-                    continue;
-                }
-
-                // #2724 — MOVE the bytes out for a single-ATTEMPT file so the
-                // buffer is freed right after ingest instead of cloned (a
-                // transient per-file doubling). `ingest_counts[idx] == 1` proves
-                // no other ingest attempt — including a retry of a transiently
-                // failed first attempt within this block — will read this file,
-                // so the move is safe. `remove` flips it out of the single-attempt
-                // set and `moved_out` records the empty buffer. Any file with
-                // count > 1 always clones, exactly as before.
-                //
-                // The clone arm additionally refuses to ingest a buffer whose
-                // bytes were already moved out (`moved_out`): under a correct
-                // count this branch is unreachable, but it guarantees a
-                // `mem::take`-emptied buffer is NEVER re-ingested as a 0-byte
-                // attachment. Such a ref is left un-rewritten (warn) instead.
-                let bytes = if ingest_counts.get(&idx).copied() == Some(1) {
-                    ingest_counts.remove(&idx);
-                    moved_out.insert(idx);
-                    std::mem::take(&mut vault_files[idx].bytes)
-                } else if moved_out.contains(&idx) {
-                    warnings.push(format!(
-                        "attachment '{}' could not be re-imported (source bytes already \
-                         consumed by a prior ingest); left as-is",
-                        att.original_ref
-                    ));
-                    continue;
-                } else {
-                    vault_files[idx].bytes.clone()
-                };
-
-                // Fresh ingest, owned by this content block. A failure
-                // (disallowed mime, write error, transient DB error, etc.)
-                // degrades to warn+skip so a single bad asset never fails the
-                // (already durable) import.
-                let attachment_id =
-                    match crate::commands::attachments::add_attachment_with_bytes_inner(
-                        pool,
-                        device_id,
-                        materializer,
-                        app_data_dir,
-                        BlockId::from_trusted(block_id),
-                        filename,
-                        mime_type,
-                        bytes,
-                    )
-                    .await
-                    {
-                        Ok(row) => row.id.into_string(),
-                        Err(e) => {
-                            tracing::warn!(
-                                reference = %att.original_ref,
-                                error = %e,
-                                "import: attachment ingest failed; leaving original ref (#1925)"
-                            );
-                            warnings.push(format!(
-                                "attachment '{}' could not be imported ({e}); left as-is",
-                                att.original_ref
-                            ));
-                            continue;
-                        }
-                    };
-
-                block_ingested.insert(att.original_ref.clone(), attachment_id.clone());
-                block_rewrites.push((att.clone(), attachment_id));
-            }
-
-            if block_rewrites.is_empty() {
-                continue;
-            }
-
-            // Rewrite this block's content: each matched ref's full token
-            // (`![[file]]` / `![alt](path)`) → canonical `![alt](attachment:<id>)`,
-            // preserving the original alt text. Fetch the CURRENT content (it is
-            // the durable, tag/link-rewritten version) and replace tokens in it.
-            // A transient DB read error here must NOT abort the (already
-            // durable) import — warn + skip the rewrite instead of `?`.
-            let current: Option<String> = match sqlx::query_scalar!(
-                "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
-                block_id,
-            )
-            .fetch_optional(pool)
-            .await
-            {
-                Ok(row) => row.flatten(),
-                Err(e) => {
-                    tracing::warn!(
-                        block_id = %block_id,
-                        error = %e,
-                        "import: attachment-ref content re-fetch failed (#1925)"
-                    );
-                    warnings.push(format!(
-                        "block '{block_id}' attachment refs could not be rewritten \
-                         (content re-fetch failed: {e})"
-                    ));
-                    continue;
-                }
-            };
-            let Some(mut new_content) = current else {
-                // Block vanished (concurrent delete) — nothing to rewrite.
-                continue;
-            };
-            for (att, attachment_id) in &block_rewrites {
-                let canonical = format!("![{}](attachment:{})", att.alt, attachment_id);
-                new_content = new_content.replacen(&att.full_match, &canonical, 1);
-            }
-
-            // Edit via the normal in-tx content-update path (opens its own
-            // writer tx — safe now the import tx is committed). A rewrite
-            // failure degrades to warn rather than aborting the (already
-            // durable) import.
-            if let Err(e) = crate::commands::blocks::crud::edit_block_inner(
-                pool,
-                device_id,
-                materializer,
-                BlockId::from_trusted(block_id),
-                new_content,
-            )
-            .await
-            {
-                tracing::warn!(
-                    block_id = %block_id,
-                    error = %e,
-                    "import: attachment-ref content rewrite failed (#1925)"
-                );
-                warnings.push(format!(
-                    "block '{block_id}' attachment refs could not be rewritten ({e})"
-                ));
-            }
+    for (block_id, refs) in &pending_attachments {
+        let block_rewrites = ingest_block_attachments(
+            ctx,
+            &mut vault_files,
+            &mut ingest_counts,
+            &mut moved_out,
+            block_id,
+            refs,
+        )
+        .await;
+        if block_rewrites.is_empty() {
+            continue;
         }
+        rewrite_block_attachment_refs(ctx, block_id, &block_rewrites).await;
     }
 }
 
 /// #128 / #1932 / #1934 — emit the `Complete` progress event, log the collected
 /// diagnostics + completion telemetry, and build the returned [`ImportResult`].
-fn finish(
-    ctx: ImportCtx<'_>,
-    blocks_created: u64,
-    properties_set: u64,
-    chunks_committed: u64,
-) -> ImportResult {
+fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters) -> ImportResult {
+    let &ImportCounters {
+        blocks_created,
+        properties_set,
+        chunks_committed,
+    } = counters;
     let ImportCtx {
         progress,
         page_title,
