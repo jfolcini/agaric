@@ -5,9 +5,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/tauri/properties', () => ({
-  setProperty: vi.fn().mockResolvedValue(undefined),
   deleteProperty: vi.fn().mockResolvedValue(undefined),
 }))
+
+const { mockSetProperty } = vi.hoisted(() => ({
+  mockSetProperty: vi.fn().mockResolvedValue({ status: 'ok', data: {} }),
+}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: { ...actual.commands, setProperty: (...args: unknown[]) => mockSetProperty(...args) },
+  }
+})
 
 import {
   asListStyle,
@@ -18,7 +28,7 @@ import {
   listStyleFromRows,
   setListStyle,
 } from '@/lib/list-style'
-import { deleteProperty, setProperty } from '@/lib/tauri/properties'
+import { deleteProperty } from '@/lib/tauri/properties'
 import type { PropertyRow } from '@/lib/tauri/properties'
 
 const row = (over: Partial<PropertyRow>): PropertyRow => ({
@@ -59,10 +69,12 @@ describe('listStyleFromRows', () => {
 describe('setListStyle', () => {
   it('writes bullet/ordered as a value_text property', async () => {
     await setListStyle('B1', 'ordered')
-    expect(setProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: LIST_STYLE_KEY,
-      valueText: 'ordered',
+    expect(mockSetProperty).toHaveBeenCalledWith('B1', LIST_STYLE_KEY, {
+      value_text: 'ordered',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
     expect(deleteProperty).not.toHaveBeenCalled()
   })
@@ -70,7 +82,7 @@ describe('setListStyle', () => {
   it('clears the property when set to none (never stores a sentinel)', async () => {
     await setListStyle('B1', 'none')
     expect(deleteProperty).toHaveBeenCalledWith('B1', LIST_STYLE_KEY)
-    expect(setProperty).not.toHaveBeenCalled()
+    expect(mockSetProperty).not.toHaveBeenCalled()
   })
 })
 

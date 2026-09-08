@@ -14,7 +14,7 @@ import {
   groupBlocksByPage,
   mergeResolvedTitles,
 } from '@/components/agenda/DonePanel.helpers'
-import type { ResolvedBlock } from '@/lib/tauri'
+import type { ResolvedBlock } from '@/lib/bindings'
 
 // `filterDoneBlocks` and its tests retired. The
 // empty-content / excluded-parent filters now live in SQL via

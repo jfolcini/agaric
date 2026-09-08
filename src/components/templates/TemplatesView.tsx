@@ -29,7 +29,8 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { deleteProperty, paginationLimit, queryByProperty, setProperty } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
+import { deleteProperty, paginationLimit } from '@/lib/tauri'
 import { loadTemplatePagesWithPreview } from '@/lib/template-utils'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -87,13 +88,25 @@ export function TemplatesView(): React.ReactElement {
       // per-template journal/page scope badge, so a smaller cap here would
       // mislabel any journal template ranked beyond the cap as `page` scope
       // (#1523).
-      const journalResp = await queryByProperty({
-        key: 'journal-template',
-        valueText: 'true',
-        limit: paginationLimit(100),
-        spaceId: currentSpaceId,
-        blockType: 'page',
-      })
+      const journalResp = unwrap(
+        await commands.queryByProperty(
+          {
+            key: 'journal-template',
+            valueText: 'true',
+            valueDate: null,
+            operator: null,
+            cursor: null,
+            limit: paginationLimit(100),
+            excludeParentId: null,
+            contentNonEmpty: null,
+            blockType: 'page',
+            valueTextIn: null,
+            valueDateRange: null,
+            excludeTodoStates: null,
+          },
+          toSpaceScope(currentSpaceId),
+        ),
+      )
       const journalIds = new Set(journalResp.items.map((b) => b.id))
       setTemplates(
         pages.map((p) => ({
@@ -152,7 +165,15 @@ export function TemplatesView(): React.ReactElement {
       // `setProperty` below fails, the page still exists as an ordinary page
       // and a warm picker cache should still know about it.
       notifyPageAdded(newId, name, activeSpaceId)
-      await setProperty({ blockId: newId, key: 'template', valueText: 'true' })
+      unwrap(
+        await commands.setProperty(newId, 'template', {
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        }),
+      )
       setTemplates((prev) => [
         { id: newId, content: name, preview: null, isJournalTemplate: false },
         ...prev,

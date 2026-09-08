@@ -180,6 +180,9 @@ describe('useBlockPropertyIpc.setProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLOCK_1',
       key: 'effort',
+      // `value_bool` is spelled even though `SetPropertyParams` has no boolean
+      // slot: the five-key contract is enforced by `check-set-property-args`
+      // (#3127), because an omitted key drops whatever was stored.
       value: {
         value_text: '3',
         value_num: null,
@@ -231,5 +234,36 @@ describe('useBlockPropertyIpc.setProperty', () => {
         })
       }),
     ).rejects.toBe(cause)
+  })
+
+  it('forwards valueBool, the only field the retired wrapper typed and this hook did not', async () => {
+    // #4412 — `buildInitParams` returns `{ valueBool: false }` for a
+    // `value_type: 'boolean'` definition. `SetPropertyParams` never declared
+    // the field, so it reached the backend only through the wrapper's own
+    // param type; deleting the wrapper dropped it, and `false` arriving as
+    // `null` makes `validate_set_property` reject the add outright.
+    mockedInvoke.mockResolvedValueOnce({ id: 'BLOCK_1' })
+
+    const { result } = renderHook(() => useBlockPropertyIpc())
+
+    await act(async () => {
+      await result.current.setProperty({
+        blockId: 'BLOCK_1',
+        key: 'done',
+        valueBool: false,
+      })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      blockId: 'BLOCK_1',
+      key: 'done',
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: false,
+      },
+    })
   })
 })

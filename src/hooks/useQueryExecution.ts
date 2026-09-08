@@ -2,6 +2,7 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
+import type { PropertyFilter as WirePropertyFilter } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
@@ -10,17 +11,9 @@ import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
-import { toSpaceScope } from '@/lib/space-scope'
-import type { BlockRow, FilterExpr, FilteredBlocksPropertyFilter } from '@/lib/tauri'
-import {
-  batchResolve,
-  filteredBlocksQuery,
-  listBlocks,
-  listBlocksLimit,
-  paginationLimit,
-  queryByProperty,
-  runAdvancedQuery,
-} from '@/lib/tauri'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import type { BlockRow, FilterExpr } from '@/lib/tauri'
+import { listBlocksLimit, paginationLimit, runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of items per paginated request. */
@@ -90,14 +83,25 @@ export async function fetchPropertyQuery(
   if (!params['key']) {
     throw new QueryValidationError(t('query.propertyRequiresKey'))
   }
-  const resp = await queryByProperty({
-    key: params['key'],
-    ...(params['value'] != null && { valueText: params['value'] }),
-    ...(params['date'] != null && { valueDate: params['date'] }),
-    cursor: pageCursor,
-    limit: paginationLimit(PAGE_SIZE),
-    spaceId: spaceId ?? null,
-  })
+  const resp = unwrap(
+    await commands.queryByProperty(
+      {
+        key: params['key'],
+        valueText: params['value'] ?? null,
+        valueDate: params['date'] ?? null,
+        operator: null,
+        cursor: pageCursor ?? null,
+        limit: paginationLimit(PAGE_SIZE),
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: null,
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      toSpaceScope(spaceId),
+    ),
+  )
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
@@ -116,18 +120,27 @@ export async function fetchBacklinksQuery(
   if (!spaceId) {
     return { items: [], nextCursor: null, hasMore: false }
   }
-  const resp = await listBlocks({
-    parentId: params['target'],
-    cursor: pageCursor,
-    limit: listBlocksLimit(PAGE_SIZE),
-    spaceId,
-  })
+  const resp = unwrap(
+    await commands.listBlocks(
+      {
+        parentId: params['target'],
+        blockType: null,
+        tagId: null,
+        date: null,
+        dateRange: null,
+        source: null,
+        cursor: pageCursor ?? null,
+        limit: listBlocksLimit(PAGE_SIZE),
+      },
+      requireActiveScope(spaceId),
+    ),
+  )
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
 /** AND-intersect property + tag predicates in SQL.
  *
- *  Single IPC into [`filteredBlocksQuery`] which composes one
+ *  Single IPC into `filtered_blocks_query` which composes one
  *  `EXISTS (SELECT 1 FROM block_properties …)` subquery per property
  *  filter and one `EXISTS (… block_tags … UNION block_tag_refs …)`
  *  per tag filter. The AND between them is the structural conjunction
@@ -155,24 +168,27 @@ export async function fetchFilteredQuery(
     return { items: [], nextCursor: null, hasMore: false }
   }
 
-  const marshalledFilters: FilteredBlocksPropertyFilter[] = propertyFilters.map((pf) => {
+  const marshalledFilters: WirePropertyFilter[] = propertyFilters.map((pf) => {
     const resolvedDate = parseDate(pf.value)
     return {
       key: pf.key,
-      ...(resolvedDate ? { valueDate: resolvedDate } : { valueText: pf.value }),
+      valueText: resolvedDate ? null : pf.value,
+      valueDate: resolvedDate ?? null,
+      valueDateRange: null,
       operator: pf.operator ?? 'eq',
     }
   })
 
-  const resp = await filteredBlocksQuery({
-    propertyFilters: marshalledFilters,
-    ...(tagFilters.length > 0 && {
-      tagFilters: { tagIds: [], prefixes: tagFilters, mode: 'or' },
-    }),
-    spaceId: spaceId ?? null,
-    cursor: pageCursor,
-    limit: paginationLimit(PAGE_SIZE),
-  })
+  const resp = unwrap(
+    await commands.filteredBlocksQuery(
+      marshalledFilters,
+      tagFilters.length > 0 ? { tagIds: [], prefixes: tagFilters, mode: 'or' } : null,
+      null,
+      toSpaceScope(spaceId),
+      pageCursor ?? null,
+      paginationLimit(PAGE_SIZE),
+    ),
+  )
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
@@ -269,7 +285,7 @@ export async function resolveInlineQuery(
 async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   if (parentIds.length === 0) return new Map()
-  const resolved = await batchResolve([...new Set(parentIds)], 'global')
+  const resolved = unwrap(await commands.batchResolve([...new Set(parentIds)], { kind: 'global' }))
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)

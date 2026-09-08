@@ -26,6 +26,8 @@
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
@@ -40,7 +42,7 @@ import type {
   QueryGroup,
   SortKey,
 } from '@/lib/tauri'
-import { batchResolve, runAdvancedQuery } from '@/lib/tauri'
+import { runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of rows per paginated request. */
@@ -124,7 +126,7 @@ async function resolvePageTitles(
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   const allIds = [...parentIds, ...extraIds]
   if (allIds.length === 0) return new Map()
-  const resolved = await batchResolve([...new Set(allIds)], 'global')
+  const resolved = unwrap(await commands.batchResolve([...new Set(allIds)], { kind: 'global' }))
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)

@@ -18,7 +18,7 @@ import { notify } from '@/lib/notify'
 import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { requireActiveScope } from '@/lib/space-scope'
-import { createBlock, listBlocks } from '@/lib/tauri'
+import { createBlock } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -106,7 +106,21 @@ async function ensureSamplePage(
   let existingBodies: ReadonlySet<string | null> = new Set<string | null>()
   let index = 0
   if (existing) {
-    const children = await listBlocks({ parentId: pageId, spaceId })
+    const children = unwrap(
+      await commands.listBlocks(
+        {
+          parentId: pageId,
+          blockType: null,
+          tagId: null,
+          date: null,
+          dateRange: null,
+          source: null,
+          cursor: null,
+          limit: null,
+        },
+        requireActiveScope(spaceId),
+      ),
+    )
     existingBodies = new Set(children.items.map((block) => block.content))
     index = children.items.length
   }

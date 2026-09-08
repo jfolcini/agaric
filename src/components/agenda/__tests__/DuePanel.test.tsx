@@ -27,15 +27,36 @@ import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 vi.mock('@/lib/tauri', () => ({
-  listBlocks: vi.fn(),
-  batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
-  queryByProperty: vi.fn(),
   getBlock: vi.fn(),
   paginationLimit: (n: number) => n,
   listProjectedAgendaLimit: (n: number) => n,
   listBlocksLimit: (n: number) => n,
 }))
+
+// #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
+// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// envelope, so the spies resolve raw data and the mock wraps it.
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty } = vi.hoisted(() => ({
+  mockedListBlocks: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+  mockedQueryByProperty: vi.fn(),
+}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listBlocks: (...args: unknown[]) =>
+        mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      queryByProperty: (...args: unknown[]) =>
+        mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual
@@ -86,15 +107,12 @@ import { toast } from 'sonner'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { DuePanel } from '@/components/agenda/DuePanel'
-import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '@/lib/tauri'
+import { listProjectedAgenda } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
-const mockedListBlocks = vi.mocked(listBlocks)
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
-const mockedQueryByProperty = vi.mocked(queryByProperty)
 const mockedToastError = vi.mocked(toast.error)
 
 const emptyResponse = {
@@ -554,6 +572,7 @@ describe('DuePanel', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_page2' }),
+        expect.anything(),
       )
     })
   })
@@ -619,7 +638,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaDate: '2025-06-15' }),
+        expect.objectContaining({ date: '2025-06-15' }),
+        expect.anything(),
       )
     })
 
@@ -637,7 +657,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaDate: '2025-06-16' }),
+        expect.objectContaining({ date: '2025-06-16' }),
+        expect.anything(),
       )
     })
   })
@@ -717,7 +738,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaSource: 'column:due_date' }),
+        expect.objectContaining({ source: 'column:due_date' }),
+        expect.anything(),
       )
     })
 
@@ -744,7 +766,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.objectContaining({ agendaSource: 'column:due_date' }),
+        expect.objectContaining({ source: 'column:due_date' }),
+        expect.anything(),
       )
     })
 
@@ -762,7 +785,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.not.objectContaining({ agendaSource: expect.any(String) }),
+        expect.objectContaining({ source: null }),
+        expect.anything(),
       )
     })
 
@@ -798,7 +822,8 @@ describe('DuePanel', () => {
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
-        expect.not.objectContaining({ agendaSource: expect.any(String) }),
+        expect.objectContaining({ source: null }),
+        expect.anything(),
       )
     })
 

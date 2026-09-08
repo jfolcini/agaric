@@ -14,12 +14,11 @@ import { getTodayString } from '@/lib/date-utils'
  *  {@link buildPropertyParams} and reshaped at the call site into
  *  `commands.setProperty`'s positional `(blockId, key, values)` form.
  *
- *  Structural copy of the `@/lib/tauri` `setProperty` param type (that wrapper
- *  still exists for not-yet-migrated callers, so the two must stay in sync
- *  while both are live) — kept local so this module stays free of
- *  `@/lib/tauri` imports, mirroring the same pattern already used by
- *  `InlineSetPropertyParams` in `inline-property-parse.ts`. */
-interface SetPropertyParams {
+ *  Declared HERE rather than in `useBlockPropertyIpc`, which consumes it: the
+ *  tier ratchet runs lib < hooks, so the hook can import this and not the
+ *  reverse. One declaration either way — a hand-synced copy is what dropped
+ *  `valueBool` on the way to the backend (#4412). */
+export interface SetPropertyParams {
   blockId: string
   key: string
   valueText?: string | null | undefined

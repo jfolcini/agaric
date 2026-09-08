@@ -39,7 +39,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { editBlock, getBlock, setProperty } from '@/lib/tauri'
+import { editBlock, getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
@@ -304,7 +304,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       const target = availableSpaces.find((s) => s.id === targetSpaceId)
       const targetName = target?.name ?? ''
       try {
-        await setProperty({ blockId: pageId, key: 'space', valueRef: targetSpaceId })
+        unwrap(
+          await commands.setProperty(pageId, 'space', {
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: targetSpaceId,
+            value_bool: null,
+          }),
+        )
         setPageSpaceId(targetSpaceId)
         notify.success(t('space.movedToast', { space: targetName }))
         announce(t('announce.pageMoved'))

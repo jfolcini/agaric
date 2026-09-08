@@ -5,15 +5,9 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
-import { requireActiveScope } from '@/lib/space-scope'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 import type { BlockRow, CreateBlockSpec } from '@/lib/tauri'
-import {
-  createBlocksBatch,
-  firstChildForBlocks,
-  getProperty,
-  paginationLimit,
-  queryByProperty,
-} from '@/lib/tauri'
+import { createBlocksBatch, firstChildForBlocks, getProperty, paginationLimit } from '@/lib/tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
@@ -27,13 +21,25 @@ import {
  * non-page rows that the backend now drops at query time.
  */
 export async function loadTemplatePages(spaceId: string | null): Promise<BlockRow[]> {
-  const resp = await queryByProperty({
-    key: 'template',
-    valueText: 'true',
-    limit: paginationLimit(100),
-    spaceId,
-    blockType: 'page',
-  })
+  const resp = unwrap(
+    await commands.queryByProperty(
+      {
+        key: 'template',
+        valueText: 'true',
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: paginationLimit(100),
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: 'page',
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      toSpaceScope(spaceId),
+    ),
+  )
   return resp.items
 }
 
@@ -52,13 +58,25 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
   template: BlockRow | null
   duplicateWarning: string | null
 }> {
-  const resp = await queryByProperty({
-    key: 'journal-template',
-    valueText: 'true',
-    limit: paginationLimit(10),
-    spaceId,
-    blockType: 'page',
-  })
+  const resp = unwrap(
+    await commands.queryByProperty(
+      {
+        key: 'journal-template',
+        valueText: 'true',
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: paginationLimit(10),
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: 'page',
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      toSpaceScope(spaceId),
+    ),
+  )
   const pages = resp.items
   const duplicateWarning =
     pages.length > 1

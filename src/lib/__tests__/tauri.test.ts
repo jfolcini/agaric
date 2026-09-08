@@ -13,22 +13,18 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  batchResolve,
   createBlock,
   createBlocksBatch,
   deleteBlock,
   deleteBlocksByIds,
   deleteProperty,
   editBlock,
-  filteredBlocksQuery,
   firstChildForBlocks,
   getBatchProperties,
   getBlock,
   getProperties,
   getProperty,
   getPropertyDef,
-  listBlocks,
-  listBlocksLimit,
   listProjectedAgenda,
   listProjectedAgendaLimit,
   listPropertyDefs,
@@ -36,10 +32,8 @@ import {
   logFrontend,
   paginationLimit,
   purgeBlock,
-  queryByProperty,
   restoreBlock,
   searchBlocks,
-  setProperty,
   setPropertyBatch,
 } from '@/lib/tauri'
 
@@ -307,119 +301,9 @@ describe('purgeBlock', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// listBlocks
-// ---------------------------------------------------------------------------
-
-describe('listBlocks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('invokes list_blocks with all nulls + the required active scope', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    const result = await listBlocks({ spaceId: 'TEST_SPACE_01' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // #2277 item 7 — all query params marshal into a single `request` DTO;
-    // `scope` stays a separate arg.
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      request: {
-        parentId: null,
-        blockType: null,
-        tagId: null,
-        date: null,
-        dateRange: null,
-        source: null,
-        cursor: null,
-        limit: null,
-      },
-      // #2248 — spaceId is wrapped into an active SpaceScope via requireActiveScope.
-      scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
-    })
-    expect(result).toEqual(emptyPage)
-  })
-
-  it('passes all optional parameters through', async () => {
-    const pageResp = {
-      items: [
-        {
-          id: 'B1',
-          block_type: 'content',
-          content: 'test',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-        },
-      ],
-      next_cursor: 'abc123',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    const result = await listBlocks({
-      parentId: 'PARENT01',
-      blockType: 'page',
-      tagId: 'TAG01',
-      agendaDate: '2025-01-15',
-      cursor: 'cursor123',
-      limit: listBlocksLimit(25),
-      spaceId: 'TEST_SPACE_01',
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      request: {
-        parentId: 'PARENT01',
-        blockType: 'page',
-        tagId: 'TAG01',
-        date: '2025-01-15',
-        dateRange: null,
-        source: null,
-        cursor: 'cursor123',
-        limit: 25,
-      },
-      scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults missing optional params to null (not undefined)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await listBlocks({ blockType: 'page', spaceId: 'TEST_SPACE_01' })
-
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    // #2277 item 7 — query params live in the `request` DTO.
-    const request = args['request'] as Record<string, unknown>
-    // Tauri 2 requires null for Option<T>, not undefined
-    expect(request['parentId']).toBeNull()
-    expect(request['tagId']).toBeNull()
-    // agenda params default to null on the IPC boundary when none are set
-    expect(request['date']).toBeNull()
-    expect(request['dateRange']).toBeNull()
-    expect(request['source']).toBeNull()
-    expect(request['cursor']).toBeNull()
-    expect(request['limit']).toBeNull()
-    // #2248 — `spaceId` is wrapped into an active SpaceScope.
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'TEST_SPACE_01' })
-    // blockType should be the value we passed
-    expect(request['blockType']).toBe('page')
-  })
-
-  it('wraps spaceId into an active SpaceScope on the wire (#2248)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-    await listBlocks({ spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-
-  it('throws (requireActiveScope) on an empty spaceId without dispatching (#2248)', async () => {
-    // There is no cross-space block listing: callers must short-circuit
-    // locally when there is no active space rather than passing `''`.
-    await expect(listBlocks({ spaceId: '' })).rejects.toThrow('empty space id')
-    expect(mockedInvoke).not.toHaveBeenCalled()
-  })
-})
+// `listBlocks` retired its `@/lib/tauri` wrapper (#4412) — call sites build the
+// `ListBlocksRequest` DTO and pass the scope themselves; coverage lives there
+// (`useDuePanelData`, `resolve`, `SpaceManageDialog`, `useQueryExecution`).
 
 // ---------------------------------------------------------------------------
 // listUndatedTasks
@@ -649,110 +533,10 @@ describe('searchBlocks', () => {
 // `queryByTags` retired its `@/lib/tauri` wrapper (#4411); its invoke-shape
 // coverage now lives at its call sites (e.g. `useAdvancedQuery`, TagList).
 
-// ---------------------------------------------------------------------------
-// FilteredBlocksQuery
-// ---------------------------------------------------------------------------
-
-describe('filteredBlocksQuery', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('marshals propertyFilters into the camelCase IPC shape', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await filteredBlocksQuery({
-      propertyFilters: [
-        { key: 'priority', valueText: '1', operator: 'eq' },
-        {
-          key: 'due_date',
-          valueDateRange: ['2026-01-01', '2026-02-01'],
-        },
-      ],
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
-    expect(cmd).toBe('filtered_blocks_query')
-    const filters = args['propertyFilters'] as Array<Record<string, unknown>>
-    expect(filters).toHaveLength(2)
-    expect(filters[0]).toMatchObject({
-      key: 'priority',
-      valueText: '1',
-      operator: 'eq',
-    })
-    expect(filters[0]?.['valueTextIn']).toEqual([])
-    expect(filters[1]?.['key']).toBe('due_date')
-    expect(filters[1]?.['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
-    expect(args['tagFilters']).toBeNull()
-    expect(args['blockType']).toBeNull()
-    expect(args['scope']).toEqual({ kind: 'global' })
-  })
-
-  it('marshals tagFilters into the camelCase IPC shape with defaults', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await filteredBlocksQuery({
-      tagFilters: { prefixes: ['project/'] },
-    })
-
-    const [, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
-    const tagFilters = args['tagFilters'] as Record<string, unknown>
-    expect(tagFilters).toMatchObject({
-      tagIds: [],
-      prefixes: ['project/'],
-      mode: 'or',
-      includeInherited: false,
-    })
-  })
-
-  it('forwards blockType, spaceId, cursor, limit verbatim', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await filteredBlocksQuery({
-      propertyFilters: [{ key: 'k', valueText: 'v' }],
-      blockType: 'page',
-      spaceId: 'SPACE_42',
-      cursor: 'CURSOR123',
-      limit: paginationLimit(25),
-    })
-
-    const [, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
-    expect(args['blockType']).toBe('page')
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-    expect(args['cursor']).toBe('CURSOR123')
-    expect(args['limit']).toBe(25)
-  })
-
-  it('round-trips PageResponse from invoke', async () => {
-    const payload = {
-      items: [
-        {
-          id: 'B1',
-          block_type: 'content',
-          content: 'matched',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-        },
-      ],
-      next_cursor: 'next123',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(payload)
-
-    const result = await filteredBlocksQuery({
-      propertyFilters: [{ key: 'priority', valueText: '1' }],
-    })
-    expect(result).toEqual(payload)
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('filter failed'))
-    await expect(
-      filteredBlocksQuery({ propertyFilters: [{ key: 'k', valueText: 'v' }] }),
-    ).rejects.toThrow('filter failed')
-  })
-})
+// `filteredBlocksQuery` retired its `@/lib/tauri` wrapper (#4412) — its
+// `?? []` / `?? 'eq'` / `?? 'or'` / `?? false` defaults are the backend's own
+// serde defaults (`PropertyFilter` / `TagFilterExpr` in
+// `src-tauri/src/commands/queries.rs`).
 
 // ---------------------------------------------------------------------------
 // listTagsByPrefix
@@ -761,43 +545,9 @@ describe('filteredBlocksQuery', () => {
 // `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411); its
 // invoke-shape coverage now lives at its call sites.
 
-// ---------------------------------------------------------------------------
-// batchResolve
-// ---------------------------------------------------------------------------
-
-describe('batchResolve', () => {
-  it("invokes batch_resolve with ids and a global scope for the explicit 'global' opt-in", async () => {
-    const expected = [
-      { id: 'B1', title: 'Block 1', block_type: 'content', deleted: false },
-      { id: 'B2', title: null, block_type: 'page', deleted: true },
-    ]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    // #2300 — the scope arg is now REQUIRED; cross-space callers must
-    // spell out `'global'` (the old silent-omission default is gone).
-    const result = await batchResolve(['B1', 'B2'], 'global')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // + Phase 3 — wrapper always forwards a `scope`;
-    // `{ kind: 'global' }` for the explicit `'global'` opt-in.
-    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
-      ids: ['B1', 'B2'],
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('forwards a space ULID scope as an active scope (+  Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
-    await batchResolve(['B1'], 'SPACE_X')
-
-    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
-      ids: ['B1'],
-      scope: { kind: 'active', space_id: 'SPACE_X' },
-    })
-  })
-})
+// `batchResolve` retired its `@/lib/tauri` wrapper (#4412) — call sites build
+// the `SpaceScope` themselves; coverage lives there (`useSearchResults`,
+// `DonePanel`, `resolve`, …).
 
 // ---------------------------------------------------------------------------
 // getStatus
@@ -807,66 +557,10 @@ describe('batchResolve', () => {
 // no-arg passthrough (`unwrap(await commands.getStatus())`), covered at its
 // call site.
 
-// ---------------------------------------------------------------------------
-// setProperty
-// ---------------------------------------------------------------------------
-
-describe('setProperty', () => {
-  it('invokes set_property with all value fields bundled under `value`', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await setProperty({
-      blockId: 'BLK001',
-      key: 'priority',
-      valueText: 'high',
-      valueNum: 1,
-      valueDate: '2025-01-15',
-      valueRef: 'REF001',
-      valueBool: true,
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // Typed values are bundled under `value: SetPropertyArgs` so the
-    // IPC stays under specta's 10-positional-argument cap.
-    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-      blockId: 'BLK001',
-      key: 'priority',
-      value: {
-        value_text: 'high',
-        value_num: 1,
-        value_date: '2025-01-15',
-        value_ref: 'REF001',
-        value_bool: true,
-      },
-    })
-  })
-
-  it('defaults optional value fields to null', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await setProperty({ blockId: 'BLK001', key: 'status' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-      blockId: 'BLK001',
-      key: 'status',
-      value: {
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
-    })
-  })
-
-  it('returns void (no return value)', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    const result = await setProperty({ blockId: 'BLK001', key: 'k', valueText: 'v' })
-
-    expect(result).toBeUndefined()
-  })
-})
+// `setProperty` retired its `@/lib/tauri` wrapper (#4412). Its five fields
+// carry `#[serde(default)]`, but the contract is all five present with exactly
+// one non-null — an omitted key drops what was stored — so what replaces the
+// wrapper is `check-set-property-args` (#3127), not the serde default.
 
 // ---------------------------------------------------------------------------
 // deleteProperty
@@ -976,136 +670,8 @@ describe('getBatchProperties', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// queryByProperty
-// ---------------------------------------------------------------------------
-
-describe('queryByProperty', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('invokes query_by_property with all parameters', async () => {
-    const pageResp = {
-      items: [
-        {
-          id: 'B1',
-          block_type: 'content',
-          content: 'matched',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-        },
-      ],
-      next_cursor: 'next1',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    const result = await queryByProperty({
-      key: 'status',
-      valueText: 'done',
-      cursor: 'cur1',
-      limit: paginationLimit(10),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // #2277 item 7 — all query params (key/value/operator, pagination, and
-    // the push-down knobs) marshal into a single `request` DTO; unset
-    // push-down knobs default to null inside the request. `scope` stays a
-    // separate arg.
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      request: {
-        key: 'status',
-        valueText: 'done',
-        valueDate: null,
-        operator: null,
-        cursor: 'cur1',
-        limit: 10,
-        excludeParentId: null,
-        contentNonEmpty: null,
-        blockType: null,
-        valueTextIn: null,
-        valueDateRange: null,
-        excludeTodoStates: null,
-      },
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults optional valueText, cursor, limit to null and scope to global', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await queryByProperty({ key: 'status' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      request: {
-        key: 'status',
-        valueText: null,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: null,
-        excludeParentId: null,
-        contentNonEmpty: null,
-        blockType: null,
-        valueTextIn: null,
-        valueDateRange: null,
-        excludeTodoStates: null,
-      },
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-    await queryByProperty({ key: 'status', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-
-  // Push-down filters reach the binding as fields of the `request` DTO.
-  it('forwards excludeParentId and contentNonEmpty into request', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-    await queryByProperty({
-      key: 'completed_at',
-      valueDate: '2026-05-08',
-      excludeParentId: 'PAGE_1',
-      contentNonEmpty: true,
-    })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    const request = args['request'] as Record<string, unknown>
-    expect(request['excludeParentId']).toBe('PAGE_1')
-    expect(request['contentNonEmpty']).toBe(true)
-    expect(request['blockType']).toBeNull()
-    expect(request['valueTextIn']).toBeNull()
-    expect(request['valueDateRange']).toBeNull()
-  })
-
-  // Block_type / valueTextIn / valueDateRange
-  // round-trip through the `request` DTO.
-  it('forwards blockType / valueTextIn / valueDateRange into request', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-    await queryByProperty({
-      key: 'status',
-      blockType: 'page',
-      valueTextIn: ['TODO', 'DOING'],
-      valueDateRange: ['2026-01-01', '2026-02-01'],
-    })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    const request = args['request'] as Record<string, unknown>
-    expect(request['blockType']).toBe('page')
-    expect(request['valueTextIn']).toEqual(['TODO', 'DOING'])
-    expect(request['valueDateRange']).toEqual(['2026-01-01', '2026-02-01'])
-    // Tier 1.5 knobs default-null inside the request when not supplied.
-    expect(request['excludeParentId']).toBeNull()
-    expect(request['contentNonEmpty']).toBeNull()
-  })
-})
-
-// `listPeerRefs` retired its `@/lib/tauri` wrapper (#4411); `startSync`
-// moved to `@/lib/ipc-helpers` (#4413, real Channel logic) — both now
-// covered in `ipc-helpers.test.ts` / at their call sites.
+// `queryByProperty` retired its `@/lib/tauri` wrapper (#4412) — call sites build
+// the `QueryByPropertyRequest` DTO and pass the scope themselves.
 
 // ---------------------------------------------------------------------------
 // Thin fixed-field commands (setPropertyBatch)
@@ -1458,16 +1024,12 @@ describe('cross-cutting', () => {
     await deleteBlock('id')
     await restoreBlock('id', 0)
     await purgeBlock('id')
-    await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')
-    await batchResolve(['id'], 'global')
     await searchBlocks({ query: 'test', spaceId: 'TEST_SPACE_01' })
-    await setProperty({ blockId: 'id', key: 'k' })
     await deleteProperty('id', 'k')
     await getProperties('id')
     await getProperty('id', 'k')
     await getBatchProperties(['id'])
-    await queryByProperty({ key: 'k' })
     await getPropertyDef('k')
     await listPropertyDefs()
 
@@ -1478,16 +1040,12 @@ describe('cross-cutting', () => {
       'delete_block',
       'restore_block',
       'purge_block',
-      'list_blocks',
       'get_block',
-      'batch_resolve',
       'search_blocks',
-      'set_property',
       'delete_property',
       'get_properties',
       'get_property',
       'get_batch_properties',
-      'query_by_property',
       'get_property_def',
       'list_property_defs',
     ])

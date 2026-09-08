@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
-import { getPropertyDef, setProperty } from '@/lib/tauri'
+import { getPropertyDef } from '@/lib/tauri'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave
 // composed with useEditorBlur) and the #2675 inline-property tests (the
@@ -30,12 +30,12 @@ import { getPropertyDef, setProperty } from '@/lib/tauri'
 // `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings`, and the
 // #2675 tests drive the real `commitInlineProperties`, which now calls
 // `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
-// `getPropertyDef`/`setProperty` still back BOTH the (still-wrapped)
-// `@/lib/tauri` surface and the `commands.*` surface so their `vi.mocked(...)`
-// assertions keep working; `saveDraft`/`deleteDraft` retired their
-// `@/lib/tauri` wrapper (#4411) so only `commands.*` is mocked for those —
-// assert on the bare `mockSaveDraft`/`mockDeleteDraft` spies instead. All
-// spies resolve the `{ status: 'ok', data }` shape.
+// `getPropertyDef` still backs BOTH the (still-wrapped) `@/lib/tauri` surface
+// and the `commands.*` surface so its `vi.mocked(...)` assertions keep working;
+// `saveDraft`/`deleteDraft` (#4411) and `setProperty` (#4412) retired their
+// `@/lib/tauri` wrappers so only `commands.*` is mocked for those — assert on
+// the bare `mockSaveDraft`/`mockDeleteDraft`/`mockSetProperty` spies instead.
+// All spies resolve the `{ status: 'ok', data }` shape.
 const {
   mockSaveDraft,
   mockFlushDraft,
@@ -56,7 +56,6 @@ const {
 
 vi.mock('@/lib/tauri', () => ({
   getPropertyDef: mockGetPropertyDef,
-  setProperty: mockSetProperty,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -1579,7 +1578,7 @@ describe('useEditorBlur', () => {
       // Re-arm the IPC mocks after the file-level clearAllMocks (which only
       // clears call records) so each test starts from the success defaults.
       vi.mocked(getPropertyDef).mockResolvedValue({ status: 'ok', data: null } as never)
-      vi.mocked(setProperty).mockResolvedValue({
+      mockSetProperty.mockResolvedValue({
         status: 'ok',
         data: { op_refs: [] },
       } as never)
@@ -1613,7 +1612,7 @@ describe('useEditorBlur', () => {
       // The typed value reached the typed property API (text def → value_text).
       // `commands.setProperty` is positional `(blockId, key, values)` and
       // requires every value field explicitly, so the unused ones are `null`.
-      expect(vi.mocked(setProperty)).toHaveBeenCalledExactlyOnceWith('B1', 'context', {
+      expect(mockSetProperty).toHaveBeenCalledExactlyOnceWith('B1', 'context', {
         value_text: 'home',
         value_num: null,
         value_date: null,
@@ -1634,7 +1633,7 @@ describe('useEditorBlur', () => {
     })
 
     it('on a REJECTED property write keeps the line literal (no strip, nothing lost)', async () => {
-      vi.mocked(setProperty).mockRejectedValue(new Error('Validation'))
+      mockSetProperty.mockRejectedValue(new Error('Validation'))
       const mockEdit = vi.fn(() => Promise.resolve(true))
       const mockDiscardDraft = vi.fn()
 

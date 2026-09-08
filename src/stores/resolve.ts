@@ -39,8 +39,8 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
+import { listBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
-import { batchResolve, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const MAX_CACHE_SIZE = 10_000
@@ -48,8 +48,8 @@ const MAX_CACHE_SIZE = 10_000
 /**
  * Backend cap on the `ids` batch accepted by `batch_resolve`
  * (`MAX_BATCH_BLOCK_IDS` in `src-tauri/agaric-store/src/pagination/mod.rs`),
- * mirrored here the same way {@link listBlocks}' sibling caps are mirrored in
- * `src/lib/tauri/blocks.ts`.
+ * mirrored here the same way `list_blocks`' sibling caps are mirrored in
+ * `src/lib/safe-limit.ts`.
  *
  * #3321 — it is also the point where a TARGETED preload rescan stops being
  * worth attempting: above the cap the IPC rejects outright, and a changed set
@@ -425,7 +425,9 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // does not return (purged, moved to another space) simply merge
         // nothing — the same outcome as the full walk, which is merge-only and
         // never removes a stale key either.
-        for (const resolved of await batchResolve(targetedIds, spaceId)) {
+        for (const resolved of unwrap(
+          await commands.batchResolve(targetedIds, { kind: 'active', space_id: spaceId }),
+        )) {
           fetchedPages.set(keyFor(spaceId, resolved.id), {
             // #4239 — `resolveStoreTitle('page', …)` rather than the
             // hardcoded `?? 'Untitled'` this used to carry. Two writers
@@ -450,12 +452,21 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         let cursor: string | undefined
         let hasMore = true
         while (hasMore) {
-          const pagesResp = await listBlocks({
-            blockType: 'page',
-            limit: listBlocksLimit(100),
-            cursor,
-            spaceId,
-          })
+          const pagesResp = unwrap(
+            await commands.listBlocks(
+              {
+                parentId: null,
+                blockType: 'page',
+                tagId: null,
+                date: null,
+                dateRange: null,
+                source: null,
+                cursor: cursor ?? null,
+                limit: listBlocksLimit(100),
+              },
+              requireActiveScope(spaceId),
+            ),
+          )
           for (const p of pagesResp.items) {
             fetchedPages.set(keyFor(spaceId, p.id), {
               // #4239 — see the targeted half above. `blockType: 'page'`

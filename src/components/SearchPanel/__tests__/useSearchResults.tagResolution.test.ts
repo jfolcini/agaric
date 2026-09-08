@@ -24,7 +24,6 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    batchResolve: vi.fn(),
     getBlock: vi.fn(),
   }
 })
@@ -34,6 +33,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
 // envelope, so the mock backs the `commands.*` surface and resolves the
 // `{ status: 'ok', data }` shape.
 const mockedListTags = vi.hoisted(() => vi.fn())
+const mockBatchResolve = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -42,6 +42,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       listTagsByPrefix: (...args: unknown[]) =>
         mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: mockBatchResolve,
     },
   }
 })
@@ -49,10 +50,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 import { UNRESOLVED_TAG_SENTINEL } from '@/components/SearchPanel/searchFilterParams'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { parse } from '@/lib/search-query'
-import { batchResolve, searchBlocks, type TagCacheRow } from '@/lib/tauri'
+import { searchBlocks, type TagCacheRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
-const mockedBatchResolve = vi.mocked(batchResolve)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 const toggles = { caseSensitive: false, wholeWord: false, isRegex: false }
@@ -88,7 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   mockedSearchBlocks.mockResolvedValue(emptyPage)
-  mockedBatchResolve.mockResolvedValue([])
+  mockBatchResolve.mockResolvedValue({ status: 'ok', data: [] })
 })
 
 describe('useSearchResults — tag resolution gating (#717)', () => {

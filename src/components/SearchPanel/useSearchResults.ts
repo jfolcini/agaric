@@ -29,7 +29,14 @@ import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import { isAppError, isCancellation, type TypedAppError, validationCode } from '@/lib/app-error'
+import {
+  isAppError,
+  isCancellation,
+  type TypedAppError,
+  unwrap,
+  validationCode,
+} from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -39,7 +46,7 @@ import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import type { BlockRow, PageResponse, SearchBlockRow } from '@/lib/tauri'
-import { batchResolve, getBlock, searchBlocks } from '@/lib/tauri'
+import { getBlock, searchBlocks } from '@/lib/tauri'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
@@ -415,7 +422,9 @@ export function useSearchResults({
     // result that omits some ids) cannot cause a re-fire on the next
     // `loadMore`.
     for (const id of parentIds) attemptedBreadcrumbIdsRef.current.add(id)
-    batchResolve(parentIds, 'global')
+    commands
+      .batchResolve(parentIds, { kind: 'global' })
+      .then(unwrap)
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
