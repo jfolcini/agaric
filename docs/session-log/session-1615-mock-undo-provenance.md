@@ -84,6 +84,30 @@ the bug, so depth 1 reverses the second edit (`'v1'`) or the first
 (`'original'`). The mutation now reddens with exactly that:
 `Expected "v1", Received "original"`.
 
+## One arm the first pass missed
+
+Review caught that the redo arm still derived its op type from the ORIGINAL op
+rather than from the undo op. The backend builds a redo as
+`compute_reverse(undo_op)`, so redoing a `create_block` reverses the undo's
+`delete_block` and lands on **`restore_block`** — deriving from the original
+gives `create_block`. That was consequence 3 surviving in the one arm the first
+pass did not check, under a commit that claimed to close it.
+
+`reverseOpTypeFor(undoOp.op_type)` is right for all five arms, and it replaces
+the if/else chain's type bookkeeping outright: those branches now own only the
+EFFECT. Falsified by deriving from the original again — `Expected
+"restore_block", Received "create_block"`.
+
+Also from the review: `timesReversedNet`'s docstring still described the
+`undo_*` / `redo_*` convention this change deleted, directly above the body
+that now keys on `is_undo`.
+
+Left alone, and unreachable: a `revert_ops` row now passes `redo_page_op`'s
+provenance check and falls through to the bare "carries no reversed payload"
+error rather than the validation rejection the prefix test produced, because
+revert stashes `reverted` rather than `reversed`. `revertOps` results never
+reach the FE's redo stack.
+
 ## Verified
 
 - `npx vitest run` over the whole frontend estate: **823 files, 18,965 passing**

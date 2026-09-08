@@ -1567,8 +1567,8 @@ export function reverseOpTypeFor(opType: string): string {
 }
 
 /**
- * Net reversal count for a forward op: +1 per `undo_*` op whose stashed
- * `reversed` payload references it, -1 per `redo_*` op that re-applied it.
+ * Net reversal count for a forward op: +1 per `is_undo` op whose stashed
+ * `reversed` payload references it, -1 per redo op that re-applied it.
  * `> 0` ⇒ the op is currently reversed (an `undo_op` against it must be
  * rejected as already-reversed; a redo makes it undoable again).
  */

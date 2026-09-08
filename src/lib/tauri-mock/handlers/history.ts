@@ -454,19 +454,16 @@ export const historyHandlers = {
 
     const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
 
-    let redoOpType = 'edit_block'
+    const redoOpType = reverseOpTypeFor(undoOp.op_type)
     if (originalOp.op_type === 'create_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['deleted_at'] = null
-      redoOpType = 'create_block'
     } else if (originalOp.op_type === 'delete_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['deleted_at'] = new Date().toISOString()
-      redoOpType = 'delete_block'
     } else if (originalOp.op_type === 'edit_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['content'] = (payload['to_text'] as string | null) ?? null
-      redoOpType = 'edit_block'
     } else if (originalOp.op_type === 'move_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) {
@@ -502,16 +499,20 @@ export const historyHandlers = {
         insertAtLiveSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
         if (curParentId !== newParentId) renumberLiveSiblings(curParentId)
       }
-      redoOpType = 'move_block'
     } else if (originalOp.op_type === 'restore_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['deleted_at'] = null
-      redoOpType = 'restore_block'
     }
 
     // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
-    // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable. The genuine op
-    // type and a `block_id`, for the same reasons as the undo arm.
+    // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable.
+    //
+    // The type is the reverse of the UNDO op, not of the original. The backend
+    // builds it as `compute_reverse(undo_op)`, so redoing a `create_block`
+    // reverses the undo's `delete_block` and lands on `restore_block` — not on
+    // `create_block`, which is what deriving it from the original gives. The
+    // if/else chain above still owns the EFFECT; only the type comes from
+    // here.
     const newOp = pushOp(
       redoOpType,
       { re_applied: originalOp, block_id: payload['block_id'] },

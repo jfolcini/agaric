@@ -112,6 +112,31 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
     expect(opLog[0]?.is_undo).toBe(false)
   })
 
+  it('a redo takes the reverse of the UNDO op, not of the original', () => {
+    // Backend: `compute_reverse(undo_op)`. Undoing a `create_block` appends a
+    // `delete_block`, so redoing it reverses THAT and lands on
+    // `restore_block`. Deriving the type from the original op instead gives
+    // `create_block` — the one arm where the type still differed cross-stack.
+    const created = dispatch('create_block', {
+      content: 'fresh',
+      parentId: PAGE,
+      position: 2,
+    }) as { op_refs: Ref[] }
+    expect(created.op_refs).toHaveLength(1)
+
+    const undo = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as UndoResultResp
+    expect(opLog.at(-1)?.op_type).toBe('delete_block')
+
+    const redo = dispatch('redo_page_op', {
+      undoDeviceId: undo.new_op_ref.device_id,
+      undoSeq: undo.new_op_ref.seq,
+    }) as { new_op_type: string }
+
+    expect(opLog.at(-1)?.op_type).toBe('restore_block')
+    expect(opLog.at(-1)?.is_undo).toBe(false)
+    expect(redo.new_op_type).toBe('restore_block')
+  })
+
   it('a create_block reverse is a delete_block, not an undo_delete_block', () => {
     const created = dispatch('create_block', {
       content: 'fresh',
