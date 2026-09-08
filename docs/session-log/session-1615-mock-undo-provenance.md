@@ -108,6 +108,39 @@ error rather than the validation rejection the prefix test produced, because
 revert stashes `reverted` rather than `reversed`. `revertOps` results never
 reach the FE's redo stack.
 
+## The round that mattered: an inert row made destructive
+
+Giving the reverse rows a real `op_type` and a real `block_id` while their
+payload stayed a bookkeeping stash turned a previously harmless click into a
+content wipe.
+
+`revert_ops` resolves any `(device_id, seq)` and hands it to
+`applyRevertForOp` — correctly, because the backend reverts its own undo rows
+fine, its reverse row being a real op. The edit arm is
+`b.content = payload.from_text ?? null`, and a stash has no `from_text`. So:
+edit a block, Ctrl+Z, open History, select the reverse row, Revert — and the
+content becomes **null**. Before this change the same click was a silent no-op,
+because `undo_edit_block` matched no arm at all. The row is reachable:
+`HistoryRevertDialog` filters on neither op type nor `is_undo`, and it passes
+`inSpace` / `pageSubtreeIds` precisely because of the new `block_id`.
+
+This is the residue the first draft *named and deferred* — "reverse rows still
+carry bookkeeping stashes rather than real op payloads". Naming it did not make
+it safe: the row now advertises a type every reader trusts.
+
+`revert_ops` skips a row carrying a stash, so the click is the no-op it was
+rather than a wipe. That is deliberately the smaller half of the fix. The
+larger one — genuine reverse payloads at all three write sites — is #4870, and
+it is a mapping across eleven op types whose forward and reverse shapes are not
+symmetric (`set_property` spreads `value_*` forward but reverts through a typed
+`from_value`; `delete_property`'s reverse is a `set_property` whose own
+`from_value` must be null so reverting it re-deletes). Getting one arm of that
+wrong reintroduces a data-loss path instead of removing one, which is not a
+trade to make in the same PR that just made this row live. The no-op is the
+safe direction of a divergence that already existed; the wipe was not.
+
+Falsified by dropping the guard: the new test reddens with the content null.
+
 ## Verified
 
 - `npx vitest run` over the whole frontend estate: **823 files, 18,965 passing**

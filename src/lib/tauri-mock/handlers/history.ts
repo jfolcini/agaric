@@ -294,6 +294,27 @@ export const historyHandlers = {
       const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
       if (!target) continue
 
+      // #4868 — a REVERSE row's payload is a bookkeeping stash (`reversed` /
+      // `re_applied` / `reverted`), not a forward payload, so
+      // `applyRevertForOp` would read every key it needs as absent: the
+      // `edit_block` arm alone would write `from_text ?? null` and WIPE the
+      // block's content. Before this file gave those rows a real `op_type` and
+      // `block_id` the same click was a silent no-op, because no arm matched;
+      // keep it one rather than turn it destructive.
+      //
+      // The backend reverts these rows properly — its reverse row IS a real op
+      // carrying a real payload. Closing that gap means giving the mock's
+      // reverse rows genuine reverse payloads across all eleven op types, which
+      // is #4870, not a line here. Until then the divergence is a no-op in the
+      // safe direction, and it is the same one that leaves an undo row
+      // non-restorable in browser-mode block history.
+      const stash = JSON.parse(target.payload) as Record<string, unknown>
+      const isBookkeepingRow =
+        stash['reversed'] !== undefined ||
+        stash['re_applied'] !== undefined ||
+        stash['reverted'] !== undefined
+      if (isBookkeepingRow) continue
+
       applyRevertForOp(target, blocks, { properties, blockTags })
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
@@ -455,7 +476,9 @@ export const historyHandlers = {
     const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
 
     const redoOpType = reverseOpTypeFor(undoOp.op_type)
-    if (originalOp.op_type === 'create_block') {
+    // `create_block` and `restore_block` re-apply identically — both make the
+    // block live again — now that neither carries type bookkeeping.
+    if (originalOp.op_type === 'create_block' || originalOp.op_type === 'restore_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) b['deleted_at'] = null
     } else if (originalOp.op_type === 'delete_block') {
@@ -499,9 +522,6 @@ export const historyHandlers = {
         insertAtLiveSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
         if (curParentId !== newParentId) renumberLiveSiblings(curParentId)
       }
-    } else if (originalOp.op_type === 'restore_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = null
     }
 
     // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
