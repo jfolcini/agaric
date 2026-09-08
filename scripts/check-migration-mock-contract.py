@@ -32,9 +32,11 @@ prek invokes the hook with the set of changed files (`files` matches BOTH
 single invocation sees a migration AND any mock file changed alongside
 it. For every changed migration that is NOT grandfathered in the baseline
 (see below), the guard parses the affected table names
-(CREATE/ALTER/DROP TABLE, CREATE TRIGGER … ON <t>, and the `_new_<t>` /
-`<t>_new` rebuild forms), intersects them with the CONTRACT map, and for
-each hit requires an ACKNOWLEDGEMENT — EITHER:
+(CREATE/ALTER/DROP TABLE — `VIRTUAL` included, since `fts_blocks` has no
+other creation form — CREATE TRIGGER … ON <t>, the row-writing INSERT
+INTO / UPDATE … SET / DELETE FROM, and the `_new_<t>` / `<t>_new` rebuild
+forms), intersects them with the CONTRACT map, and for each hit requires
+an ACKNOWLEDGEMENT — EITHER:
 
   (a) a mock file that models that table is ALSO among the changed
       filenames (the mock was updated in the same change), OR
@@ -91,7 +93,11 @@ MOCK_PREFIX = "src/lib/tauri-mock/"
 # ---------------------------------------------------------------------------
 # CONTRACT map — backend table → how the mock models it.
 #
-# `store`: the mock's in-memory Map/array symbol that stands in for the table.
+# `store`: the mock symbol that stands in for the table. For a table the mock
+#          persists that is an in-memory Map/array in seed.ts; for one the mock
+#          DERIVES on read (the backend's materialized caches) it is the
+#          deriving function or the row field the derivation produces. Either
+#          way it is the thing that goes stale when the table changes.
 # `files`: the production mock files that DEFINE or OWN that store (the files a
 #          mock author edits when the table's schema changes). The `__tests__`
 #          tree is deliberately excluded — it exercises the mock, it does not
@@ -100,7 +106,9 @@ MOCK_PREFIX = "src/lib/tauri-mock/"
 # Seeded by reading src/lib/tauri-mock/seed.ts (the in-memory store
 # definitions) and the per-table handlers. The self-test pins every entry
 # (file exists + mentions its store symbol + table is a real backend table),
-# so this map cannot drift out of sync with the mock unnoticed.
+# so this map cannot drift out of sync with the mock unnoticed. It also pins
+# CONTRACT + UNMODELED against the FULL backend table list, so a migration that
+# introduces a table lands in one bucket or the other — never in neither.
 # ---------------------------------------------------------------------------
 CONTRACT: dict[str, dict[str, object]] = {
     "blocks": {
@@ -139,6 +147,114 @@ CONTRACT: dict[str, dict[str, object]] = {
         "store": "opLog",
         "files": ["seed.ts"],
     },
+    "peer_refs": {
+        "store": "peerRefs",
+        "files": ["seed.ts", "handlers/sync.ts"],
+    },
+    # The tag-space bug's own table (#3081). The mock has no `spaces` registry
+    # row; it derives one per block carrying `is_space` and mirrors membership
+    # on the `space_id` block field, so both halves move when `spaces` does.
+    "spaces": {
+        "store": "space_id",
+        "files": ["seed.ts", "handlers/pages.ts", "handlers/properties.ts"],
+    },
+    # --- Backend caches the mock re-derives on every read ------------------
+    # These have no mock table, but the mock reproduces what the cache HOLDS.
+    # A migration that changes what the backend materializes into one of them
+    # changes what the mock must compute, which is the same contract.
+    "tags_cache": {
+        "store": "tagCacheRows",
+        "files": ["handlers/tags.ts"],
+    },
+    "block_tag_inherited": {
+        "store": "inheritedTagIds",
+        "files": ["handlers/tags.ts"],
+    },
+    "block_links": {
+        "store": "deriveLinkEdges",
+        "files": ["link-scan.ts", "handlers/shared.ts"],
+    },
+    "page_link_cache": {
+        # `pageLinkStats` is only NAMED in link-scan.ts (a comment); the symbol
+        # that is CODE in both files is the edge derivation it consumes.
+        "store": "deriveLinkEdges",
+        "files": ["link-scan.ts", "handlers/shared.ts"],
+    },
+    "pages_cache": {
+        # NOT `inbound_link_count`: that appears in both files only in prose,
+        # so the anti-rot assertion could never fire on it.
+        "store": "buildPageMetaRow",
+        "files": ["handlers/pages.ts", "handlers/shared.ts"],
+    },
+    "fts_blocks": {
+        "store": "stripForFts",
+        "files": ["handlers/search.ts", "handlers/links.ts"],
+    },
+    "agenda_cache": {
+        "store": "agendaRangeDate",
+        "files": ["handlers/blocks.ts"],
+    },
+    "app_settings": {
+        "store": "mockReminderSettings",
+        "files": ["handlers/properties.ts"],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# UNMODELED — backend tables the mock deliberately does NOT read.
+#
+# The other half of the contract, and the reason the self-test can insist on
+# completeness: a new backend table must be classified here or in CONTRACT, so
+# "the guard covers 9 of 35 tables and nobody noticed" (#4667) cannot recur.
+#
+# Each reason is a claim a reader can check against the cited file. A table
+# stops belonging here the moment the mock grows real state for it — the entry
+# moves to CONTRACT, it is not amended.
+# ---------------------------------------------------------------------------
+UNMODELED: dict[str, str] = {
+    "block_drafts": (
+        "no drafts store; save_draft/flush_draft/delete_draft return null and "
+        "list_drafts returns [] (handlers/system.ts)"
+    ),
+    "block_links_unresolved": (
+        "no mock reference; the mock derives link edges live from block "
+        "content (link-scan.ts) and keeps no unresolved-target bookkeeping"
+    ),
+    "compaction_watermark": (
+        "op-log compaction is backend-only; get_compaction_status and "
+        "compact_op_log_cmd are constant stubs (handlers/history.ts)"
+    ),
+    "log_snapshots": (
+        "same constant compaction stubs; the mock never snapshots its op log"
+    ),
+    "gcal_agenda_event_map": "no Google-Calendar command is implemented",
+    "gcal_settings": "no Google-Calendar command is implemented",
+    "gcal_space_config": "no Google-Calendar command is implemented",
+    "link_metadata": (
+        "fetch_link_metadata/get_link_metadata return a constant literal "
+        "(handlers/links.ts); no stored row, so nothing can go stale"
+    ),
+    "loro_doc_state": (
+        "no Loro counterpart: the mock's in-memory stores ARE its convergent "
+        "state, it does not model CRDT storage"
+    ),
+    "loro_sync_inbox": "no Loro counterpart (see loro_doc_state)",
+    "loro_sync_quarantine": "no Loro counterpart (see loro_doc_state)",
+    "merge_parity_log": (
+        "engine-internal merge-parity telemetry; no command exposes it"
+    ),
+    "materializer_apply_cursor": (
+        "the mock applies every command synchronously; it has no materializer "
+        "queue, so there is no cursor or retry state to model"
+    ),
+    "materializer_retry_queue": "no materializer queue (see "
+    "materializer_apply_cursor)",
+    "projected_agenda_cache": (
+        "list_projected_agenda returns an empty page "
+        "(handlers/properties.ts); the repeat-rule projection is not modeled"
+    ),
+    "projected_agenda_horizon": "no repeat-rule projection (see "
+    "projected_agenda_cache)",
 }
 
 
@@ -162,8 +278,13 @@ _MOCK_UNAFFECTED_RE = re.compile(
     r"--\s*mock-unaffected:\s*(\S.*)", re.IGNORECASE
 )
 
+# `VIRTUAL` matters: `fts_blocks` is only ever created as
+# `CREATE VIRTUAL TABLE … USING fts5(…)`, so a `CREATE\s+TABLE`-only pattern
+# makes it invisible to BOTH the parser and `_backend_tables()`.
 _CREATE_TABLE_RE = re.compile(
-    r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?', re.IGNORECASE
+    r'\bCREATE\s+(?:TEMP(?:ORARY)?\s+|VIRTUAL\s+)?TABLE\s+'
+    r'(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?',
+    re.IGNORECASE,
 )
 _ALTER_TABLE_RE = re.compile(r'\bALTER\s+TABLE\s+"?(\w+)"?', re.IGNORECASE)
 _DROP_TABLE_RE = re.compile(
@@ -175,6 +296,23 @@ _DROP_TABLE_RE = re.compile(
 _CREATE_TRIGGER_RE = re.compile(
     r'\bCREATE\s+TRIGGER\b[\s\S]*?\bON\s+"?(\w+)"?', re.IGNORECASE
 )
+
+# DML. A migration needs no DDL to break the mock: 0087 — the migration in the
+# tag-space bug itself — is `DELETE FROM block_properties WHERE key = 'space'`
+# plus a `DROP INDEX`, and a DDL-only parser reads it as touching NOTHING. Data
+# moves (a retired property row, a seeded `property_definitions` builtin, a
+# backfilled cache) are exactly the contract the mock re-implements, so they
+# count as touching the table.
+_INSERT_INTO_RE = re.compile(
+    r'\b(?:INSERT\s+(?:OR\s+\w+\s+)?|REPLACE\s+)INTO\s+"?(\w+)"?', re.IGNORECASE
+)
+# `\s+SET\b` is load-bearing: it is what separates a real `UPDATE <t> SET …`
+# from the `ON UPDATE CASCADE` and `AFTER UPDATE OF <col> ON <t>` clauses that
+# a bare `UPDATE\s+(\w+)` would misread as table names.
+_UPDATE_SET_RE = re.compile(
+    r'\bUPDATE\s+(?:OR\s+\w+\s+)?"?(\w+)"?\s+SET\b', re.IGNORECASE
+)
+_DELETE_FROM_RE = re.compile(r'\bDELETE\s+FROM\s+"?(\w+)"?', re.IGNORECASE)
 
 
 def _normalize_table(name: str) -> set[str]:
@@ -202,12 +340,18 @@ def strip_sql_comments(sql: str) -> str:
 
 
 def parse_touched_tables(sql_text: str) -> set[str]:
-    """Return the set of table names a migration's DDL touches.
+    """Return the set of table names a migration touches.
 
-    Only schema-contract statements are considered (CREATE/ALTER/DROP TABLE,
-    CREATE TRIGGER … ON). CREATE INDEX is intentionally excluded — an index is
-    not a contract the JS mock models. Comments are stripped first so a table
-    name inside prose or an annotation never fires.
+    Schema-contract statements (CREATE/ALTER/DROP TABLE, CREATE TRIGGER … ON)
+    AND row-writing statements (INSERT INTO, UPDATE … SET, DELETE FROM): the
+    mock re-implements the data contract as well as the schema, and migration
+    0087 — the tag-space bug's own migration — carries no DDL at all.
+
+    CREATE INDEX is intentionally excluded — an index is not a contract the JS
+    mock models. A bare `SELECT … FROM <t>` is excluded for the same reason: a
+    migration that only reads a table changes nothing the mock must mirror.
+    Comments are stripped first so a table name inside prose or an annotation
+    never fires.
     """
     body = strip_sql_comments(sql_text)
     tables: set[str] = set()
@@ -216,6 +360,9 @@ def parse_touched_tables(sql_text: str) -> set[str]:
         _ALTER_TABLE_RE,
         _DROP_TABLE_RE,
         _CREATE_TRIGGER_RE,
+        _INSERT_INTO_RE,
+        _UPDATE_SET_RE,
+        _DELETE_FROM_RE,
     ):
         for m in rx.finditer(body):
             tables |= _normalize_table(m.group(1))
@@ -342,13 +489,49 @@ def _backend_tables() -> set[str]:
     return tables
 
 
+def _real_backend_tables() -> set[str]:
+    """`_backend_tables()` minus table-rebuild scratch names.
+
+    `_new_<t>` / `_keep_*` / `_preserve_*` / `<t>_new` exist only inside one
+    migration's transaction and are never a mock contract; `_normalize_table`
+    has already contributed their real base name.
+    """
+    return {
+        t
+        for t in _backend_tables()
+        if not t.startswith("_") and not t.endswith("_new")
+    }
+
+
 def run_self_test() -> int:
     failures: list[str] = []
 
+    # --- Every backend table is classified (#4667) -------------------------
+    # The gap this closes: the map covered 9 of 35 tables and nothing said so.
+    # A table in neither bucket is a table nobody decided about.
+    real = _real_backend_tables()
+    overlap = CONTRACT.keys() & UNMODELED.keys()
+    if overlap:
+        failures.append(
+            f"tables in BOTH CONTRACT and UNMODELED: {sorted(overlap)}."
+        )
+    for table in sorted(real - CONTRACT.keys() - UNMODELED.keys()):
+        failures.append(
+            f"backend table {table!r} is in neither CONTRACT nor UNMODELED — "
+            f"decide whether the mock reads it (add to CONTRACT) or not (add "
+            f"to UNMODELED with a checkable reason)."
+        )
+    for table in sorted(UNMODELED.keys() - real):
+        failures.append(
+            f"UNMODELED table {table!r} is not CREATE'd by any migration "
+            f"(schema drift or typo)."
+        )
+
     # --- CONTRACT map integrity (anti-rot) ---------------------------------
-    backend = _backend_tables()
+    # `real`, not `_backend_tables()`: the looser set includes the `_new_<t>`
+    # rebuild scratch names, so a CONTRACT key typo'd as one would pass.
     for table, spec in CONTRACT.items():
-        if table not in backend:
+        if table not in real:
             failures.append(
                 f"CONTRACT table {table!r} is not CREATE'd by any migration "
                 f"(schema drift or typo)."
@@ -401,13 +584,33 @@ def run_self_test() -> int:
             {"9999_touch_blocks.sql"},
             True,
         ),
-        # 5. new migration touching an UNMODELED table -> PASS
+        # 5. new migration touching a table in UNMODELED -> PASS
         (
             "unmodeled-table",
-            [("9999_cache.sql", "CREATE TABLE pages_cache (id TEXT) STRICT;")],
+            [
+                (
+                    "9999_parity.sql",
+                    "CREATE TABLE merge_parity_log (id TEXT) STRICT;",
+                )
+            ],
             set(),
             set(),
             True,
+        ),
+        # 5b. #4667 — the tag-space bug's own migration shape: DML only, no
+        #     DDL, on a modeled table. Must FAIL; 0087 did not.
+        (
+            "dml-only-on-modeled-table",
+            [
+                (
+                    "9999_drop_space_rows.sql",
+                    "DELETE FROM block_properties WHERE key = 'space';\n"
+                    "DROP INDEX IF EXISTS idx_block_properties_space;",
+                )
+            ],
+            set(),
+            set(),
+            False,
         ),
         # 6. mock file changed but it models a DIFFERENT table than the one the
         #    migration touches (blocks touched, only pages mock changed) -> FAIL
@@ -491,6 +694,40 @@ def run_self_test() -> int:
         failures.append("parser: CREATE TRIGGER … ON blocks not detected.")
     if parse_touched_tables("-- ALTER TABLE blocks in a comment\nSELECT 1;"):
         failures.append("parser: table name inside a comment must not fire.")
+    # --- DML paths (#4667). 0087, the tag-space bug's own migration, is
+    # DML-only; a DDL-only parser reads it as touching nothing.
+    if "block_properties" not in parse_touched_tables(
+        "DELETE FROM block_properties WHERE key = 'space';"
+    ):
+        failures.append("parser: DELETE FROM block_properties not detected.")
+    if "property_definitions" not in parse_touched_tables(
+        "INSERT OR IGNORE INTO property_definitions (key) VALUES ('x');"
+    ):
+        failures.append("parser: INSERT INTO property_definitions not detected.")
+    if "blocks" not in parse_touched_tables("UPDATE blocks SET page_id = id;"):
+        failures.append("parser: UPDATE blocks SET not detected.")
+    # `ON UPDATE CASCADE` / `AFTER UPDATE OF <col>` must not be read as tables:
+    # a bare `UPDATE\s+(\w+)` captures `CASCADE` and `OF` from these.
+    for noise in (
+        # Live SQL, not a comment: `strip_sql_comments` runs before the regex,
+        # so a clause parked in a `--` trailer would test nothing.
+        "CREATE TRIGGER tg AFTER UPDATE OF c ON t BEGIN SELECT 1; END;",
+        "ALTER TABLE zzz ADD COLUMN c TEXT REFERENCES q(id) ON UPDATE CASCADE",
+    ):
+        if {"cascade", "CASCADE", "of", "OF"} & parse_touched_tables(noise):
+            failures.append(f"parser: UPDATE clause noise fired on {noise!r}.")
+    if "blocks" not in parse_touched_tables(
+        "CREATE VIRTUAL TABLE fts_blocks USING fts5(x); DROP TABLE blocks;"
+    ):
+        failures.append("parser: statement after CREATE VIRTUAL TABLE lost.")
+    if "fts_blocks" not in parse_touched_tables(
+        "CREATE VIRTUAL TABLE fts_blocks USING fts5(block_id, stripped);"
+    ):
+        failures.append("parser: CREATE VIRTUAL TABLE fts_blocks not detected.")
+    # A read is not a write: a migration that only SELECTs a table changes
+    # nothing the mock must mirror (0116 reads log_snapshots that way).
+    if parse_touched_tables("SELECT up_to_hash FROM log_snapshots;"):
+        failures.append("parser: a bare SELECT … FROM must not register.")
 
     if failures:
         print("check-migration-mock-contract self-test FAILED:", file=sys.stderr)
