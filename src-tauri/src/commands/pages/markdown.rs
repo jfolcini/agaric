@@ -2628,7 +2628,6 @@ async fn apply_frontmatter_properties(
     // written into the FIRST chunk (alongside the page + space property),
     // before the block loop opens any new chunk, so they share the page's
     // atomic write.
-    //
     let frontmatter_decls =
         fetch_frontmatter_declarations(&mut tx, &parse_output.frontmatter).await?;
 
