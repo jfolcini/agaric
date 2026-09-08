@@ -338,6 +338,7 @@ describe('run_advanced_query — request.sort by lastEdited', () => {
       op_type: 'UpdateBlock',
       payload: JSON.stringify({ block_id: blockId }),
       created_at: createdAt,
+      is_undo: false,
     })
   }
 
@@ -909,6 +910,7 @@ describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#386
       op_type: 'UpdateBlock',
       payload: JSON.stringify({ block_id: ZULU }),
       created_at: '2024-05-01T00:00:00.000Z',
+      is_undo: false,
     })
 
     // ASC: the sentinel sorts first, so page 1's boundary row is NEVER.
@@ -981,6 +983,7 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
       op_type: 'UpdateBlock',
       payload: JSON.stringify({ block_id: EDITED }),
       created_at: new Date().toISOString(),
+      is_undo: false,
     })
   })
 
@@ -1289,6 +1292,7 @@ describe('run_advanced_query — keyset walk over repeated never-edited rows (#3
       op_type: 'UpdateBlock',
       payload: JSON.stringify({ block_id: EDITED }),
       created_at: '2024-01-01T00:00:00.000Z',
+      is_undo: false,
     })
   })
 

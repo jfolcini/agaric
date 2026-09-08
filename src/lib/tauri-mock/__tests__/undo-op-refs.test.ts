@@ -206,8 +206,11 @@ describe('#2468 — undo_op reverses exactly the referenced op', () => {
     // A reverted; B untouched.
     expect(rowOf(A)['content']).toBe(`block ${A}`)
     expect(rowOf(B)['content']).toBe('B edited')
-    // Bookkeeping: an `undo_*` op was appended and is the returned ref.
-    expect(opLog.at(-1)?.op_type).toBe('undo_edit_block')
+    // Bookkeeping: the reverse op was appended and is the returned ref. #4868 —
+    // it carries the PLAIN reverse type with `is_undo`, the way the backend
+    // appends it, not an `undo_` prefix.
+    expect(opLog.at(-1)?.op_type).toBe('edit_block')
+    expect(opLog.at(-1)?.is_undo).toBe(true)
     expect(result.new_op_ref.seq).toBe(opLog.at(-1)?.seq)
   })
 
@@ -249,6 +252,7 @@ describe('#2468 — undo_op reverses exactly the referenced op', () => {
       op_type: 'edit_block',
       payload: JSON.stringify({ block_id: A, to_text: 'x', from_text: 'y' }),
       created_at: new Date().toISOString(),
+      is_undo: false,
     })
     const err = captureRejection(() =>
       dispatch('undo_op', { opRef: { device_id: 'other-device', seq: 424_242 } }),

@@ -1534,7 +1534,7 @@ export type TypedHandlers = {
 export const MOCK_LOCAL_DEVICE = 'mock-device'
 
 /**
- * Reverse op_type stamped on the appended `undo_*` op. Mirrors the per-type
+ * Reverse op_type stamped on the appended reverse op. Mirrors the per-type
  * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
  * the #2468 migration makes undoable by ref.
  */
@@ -1567,21 +1567,28 @@ export function reverseOpTypeFor(opType: string): string {
 }
 
 /**
- * Net reversal count for a forward op: +1 per `undo_*` op whose stashed
- * `reversed` payload references it, -1 per `redo_*` op that re-applied it.
+ * Net reversal count for a forward op: +1 per `is_undo` op whose stashed
+ * `reversed` payload references it, -1 per redo op that re-applied it.
  * `> 0` ⇒ the op is currently reversed (an `undo_op` against it must be
  * rejected as already-reversed; a redo makes it undoable again).
  */
 export function timesReversedNet(target: MockOpLogEntry): number {
   let net = 0
+  // #4868 — the provenance is `is_undo` plus the payload stash, not an op_type
+  // prefix. A `revert_ops` row is `is_undo` too but stashes `reverted`, not
+  // `reversed`, so it scores neither way — as before.
   for (const o of opLog) {
-    if (o.op_type.startsWith('undo_')) {
-      const reversed = (JSON.parse(o.payload) as { reversed?: MockOpLogEntry }).reversed
+    const payload = JSON.parse(o.payload) as {
+      reversed?: MockOpLogEntry
+      re_applied?: MockOpLogEntry
+    }
+    if (o.is_undo) {
+      const reversed = payload.reversed
       if (reversed && reversed.device_id === target.device_id && reversed.seq === target.seq) {
         net += 1
       }
-    } else if (o.op_type.startsWith('redo_')) {
-      const reApplied = (JSON.parse(o.payload) as { re_applied?: MockOpLogEntry }).re_applied
+    } else {
+      const reApplied = payload.re_applied
       if (reApplied && reApplied.device_id === target.device_id && reApplied.seq === target.seq) {
         net -= 1
       }
@@ -1597,13 +1604,13 @@ export function timesReversedNet(target: MockOpLogEntry): number {
  *   - foreign / replicated op         → `validation` (only ops this device
  *     authored are undoable — a test models a replicated op by pushing a
  *     foreign-device entry onto `opLog` directly);
- *   - ref to an `undo_*` op           → `validation` (undoing an undo is
+ *   - ref to an `is_undo` op          → `validation` (undoing an undo is
  *     redo's job — `redo_page_op` takes those refs);
  *   - already-reversed op             → `validation` (net of undos/redos);
  *   - `delete_property` with no prior value → `not_found` (backend parity:
  *     `build_reverse_delete_property` cannot compute an inverse without a
  *     prior `set_property`, so the revert phase rejects the whole batch).
- * A `redo_*` ref is ACCEPTED — redo appends a new op that re-applies the
+ * A REDO ref is ACCEPTED — redo appends a new op that re-applies the
  * original, and the FE pushes the redo's `new_op_ref` as the next undo
  * target; its effective revert target is the stashed original op.
  */
@@ -1616,19 +1623,20 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
         'refusing to undo a foreign op',
     )
   }
-  if (entry.op_type.startsWith('undo_')) {
+  // #4868 — `is_undo`, not an op_type prefix: a reverse op carries the plain
+  // type of the op it reverses.
+  if (entry.is_undo) {
     throw validationRejection(
       `op (${entry.device_id}, ${entry.seq}) is a '${entry.op_type}' undo op — ` +
         'refusing to undo an undo (use redo_page_op)',
     )
   }
-  const effective = entry.op_type.startsWith('redo_')
-    ? (JSON.parse(entry.payload) as { re_applied?: MockOpLogEntry }).re_applied
-    : entry
-  // mock-internal invariant (#2463) — the mock stashes the re-applied op
-  // inline on its own `redo_*` entry (see `redo_page_op`); a missing payload
-  // means the mock corrupted its own bookkeeping.
-  if (!effective) throw new Error('redo op carries no re_applied payload')
+  // A REDO op is `is_undo = 0` and so indistinguishable from a forward op by
+  // the flag alone — the backend tells them apart by `reverses_*` (migration
+  // 0101). The mock's equivalent stash is the `re_applied` payload key
+  // `redo_page_op` writes, so that is what this reads.
+  const reApplied = (JSON.parse(entry.payload) as { re_applied?: MockOpLogEntry }).re_applied
+  const effective = reApplied ?? entry
   if (timesReversedNet(effective) > 0) {
     throw validationRejection(
       `op (${effective.device_id}, ${effective.seq}) is already reversed — ` +
@@ -1654,14 +1662,19 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
 
 /**
  * Apply the reverse of a validated target via the shared reversal core and
- * append the bookkeeping `undo_*` op (same `{ reversed }` stash the
- * positional `undo_page_op` writes, so `redo_page_op` accepts the returned
- * `new_op_ref`). Returns the `UndoResult` wire shape.
+ * append the reverse op: the GENUINE reverse type flagged `is_undo` (#4868),
+ * carrying the `{ reversed }` stash `redo_page_op` looks up and a `block_id`
+ * so the history readers can scope it.
  */
 export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, unknown> {
   applyRevertForOp(effective, blocks, { properties, blockTags })
   const reverseOpType = reverseOpTypeFor(effective.op_type)
-  const newOp = pushOp(`undo_${reverseOpType}`, { reversed: effective })
+  const targetPayload = JSON.parse(effective.payload) as Record<string, unknown>
+  const newOp = pushOp(
+    reverseOpType,
+    { reversed: effective, block_id: targetPayload['block_id'] },
+    true,
+  )
   return {
     reversed_op: { device_id: effective.device_id, seq: effective.seq },
     reversed_op_type: effective.op_type,
