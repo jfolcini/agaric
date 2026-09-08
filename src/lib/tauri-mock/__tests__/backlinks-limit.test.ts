@@ -69,8 +69,11 @@ describe('#4667 get_backlinks limit', () => {
       blocks.set(id, makeBlock(id, 'page', `also links [[${TARGET}]]`, null, 1))
       properties.set(id, new Map([['space', spaceProperty()]]))
     }
-    expect(backlinksWithLimit(null)).toMatchObject({ items: expect.any(Array), has_more: true })
-    expect((backlinksWithLimit(null) as { items: unknown[] }).items).toHaveLength(50)
+    const page = backlinksWithLimit(null) as { items: unknown[]; has_more: boolean }
+    expect({ count: page.items.length, has_more: page.has_more }).toEqual({
+      count: 50,
+      has_more: true,
+    })
   })
 
   it.each([0, -1, 201])('rejects out-of-range limit %i', (bad) => {

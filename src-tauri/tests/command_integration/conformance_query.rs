@@ -1943,7 +1943,8 @@ mod reader_delegation_tests {
     // #3823 wired `search_blocks_partitioned`: the same FTS scan
     // `search_blocks` runs, twice (`fts::search_with_toggles_partitioned`), a
     // SELECT on both partitions. Writer set unchanged.
-    // #4667 wired `get_backlinks`: `get_backlinks_inner` takes `ReadPool` and
+    // #4667 wired `get_backlinks`: `get_backlinks_inner` takes `&SqlitePool`
+    // (the `#[tauri::command]` wrapper is what takes `ReadPool`) and
     // is `PageRequest::new` (pure) plus `pagination::list_backlinks` — one
     // `query_as!` SELECT over `block_links JOIN blocks` and
     // `build_page_response`. No lazy rebuild, unlike its `list_page_links`
