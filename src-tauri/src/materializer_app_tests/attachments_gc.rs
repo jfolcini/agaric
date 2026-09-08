@@ -1163,11 +1163,45 @@ impl UndoGcFixture {
         agaric_store::op::OpRef { device_id, seq }
     }
 
+    /// Push every `delete_attachment` op in the log past the #4250 undo
+    /// horizon, so the sweep is free to reclaim the bytes it named.
+    ///
+    /// The window is derived from `DELETED_ATTACHMENT_RETENTION_MS`, not
+    /// restated as a literal, so shortening the retention cannot leave these
+    /// fixtures silently testing the inside-the-window case. `op_log`'s
+    /// migration-0036 immutability triggers forbid a bare `UPDATE`, hence the
+    /// same enable/disable bracket compaction uses.
+    async fn age_deletes_past_the_undo_horizon(&self) {
+        let aged =
+            agaric_store::db::now_ms() - crate::materializer::DELETED_ATTACHMENT_RETENTION_MS - 1;
+        let mut tx = self.pool.begin().await.unwrap();
+        agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE op_log SET created_at = ? WHERE op_type = ?")
+            .bind(aged)
+            .bind("delete_attachment")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
     /// Run the ordinary sweep — the same function boot, the 24 h tick and the
-    /// post-purge enqueue all call — and confirm it reclaimed the bytes. By
-    /// every measure available to the GC the file IS an orphan at this point,
-    /// so this is the correct outcome, not the bug.
+    /// post-purge enqueue all call — from OUTSIDE the #4250 undo horizon, and
+    /// confirm it reclaimed the bytes. By every measure available to the GC
+    /// the file IS an orphan at this point, so this is the correct outcome,
+    /// not the bug.
+    ///
+    /// The aging is what makes these the "outside the window" arm. Inside it
+    /// the same call must keep the bytes — pinned by
+    /// `a_gc_pass_inside_the_retention_window_keeps_the_bytes_undo_needs_4250`,
+    /// which drives the sweep directly rather than through this helper.
     async fn run_gc(&self) {
+        self.age_deletes_past_the_undo_horizon().await;
         crate::materializer::cleanup_orphaned_attachments(&self.pool, None, &self.app_data_dir)
             .await
             .unwrap();
@@ -1242,6 +1276,52 @@ async fn undo_of_delete_attachment_after_gc_refuses_rather_than_restoring_a_dang
         ops_before,
         "the refused undo must roll its whole transaction back — an appended \
          reverse op with no applied effect would leave the delete looking undone"
+    );
+
+    f.mat.shutdown();
+}
+
+/// #4250 — the same sequence, inside the retention window: the sweep must
+/// leave the bytes alone, so the undo hands the user their file back.
+///
+/// This is the half #3706 deliberately did not take. The refusal above is
+/// honest, but the file is gone, and the sweep that took it ran at the next
+/// boot — the moment a user reopens the app to fix a mistake. The GC now
+/// skips a file whose `delete_attachment` op is younger than
+/// `DELETED_ATTACHMENT_RETENTION`, which is exactly the interval in which
+/// an undo can still name it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_gc_pass_inside_the_retention_window_keeps_the_bytes_undo_needs_4250() {
+    let f = UndoGcFixture::new().await;
+    let delete_ref = f.delete_attachment().await;
+
+    crate::materializer::cleanup_orphaned_attachments(&f.pool, None, &f.app_data_dir)
+        .await
+        .unwrap();
+    assert!(
+        f.full_path.exists(),
+        "the sweep reclaimed a just-deleted attachment's bytes — the user's undo \
+         now has nothing to restore (#4250)"
+    );
+
+    crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect(
+            "undoing a delete_attachment inside the retention window must succeed — \
+             the sweep is not allowed to have taken the bytes yet (#4250)",
+        );
+    f.mat.flush_background().await.unwrap();
+
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert_eq!(
+        bytes, UNDO_GC_BYTES,
+        "the undo must hand back the exact file the user deleted, byte for byte"
     );
 
     f.mat.shutdown();

@@ -5197,6 +5197,39 @@ async fn apply_attachment_sanitizes_peer_traversal_filename_3029() {
     mat.shutdown();
 }
 
+/// #4250 — push every `delete_attachment` op past the GC's undo-retention
+/// horizon.
+///
+/// `cleanup_orphaned_attachments` now keeps the bytes a recent
+/// `delete_attachment` names, so an undo of that delete still has a file to
+/// restore. The tests below are about the sweep's ORDINARY reclamation duty,
+/// which starts once the window has passed — so they age the op first rather
+/// than assert the pre-#4250 behaviour of reclaiming immediately.
+///
+/// The bound comes from `DELETED_ATTACHMENT_RETENTION_MS` rather than a
+/// literal, so shortening the window cannot leave these tests silently
+/// exercising the inside-the-window case. `op_log`'s migration-0036
+/// immutability triggers forbid a bare `UPDATE`, hence the same
+/// enable/disable bracket compaction uses.
+async fn age_delete_attachment_ops_past_the_undo_horizon(pool: &SqlitePool) {
+    let aged =
+        agaric_store::db::now_ms() - agaric_lib::materializer::DELETED_ATTACHMENT_RETENTION_MS - 1;
+    let mut tx = pool.begin().await.unwrap();
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = ? WHERE op_type = ?")
+        .bind(aged)
+        .bind("delete_attachment")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_attachment_removes_row() {
     let (pool, _dir) = test_pool().await;
@@ -5260,6 +5293,10 @@ async fn delete_attachment_removes_row() {
     );
 
     // Run the GC pass → the now-unreferenced file is reclaimed.
+    // #4250: the sweep keeps a recently-deleted attachment's bytes for undo,
+    // so reach the ordinary reclamation case by aging the delete op past the
+    // retention window first.
+    age_delete_attachment_ops_past_the_undo_horizon(&pool).await;
     agaric_lib::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
         .await
         .unwrap();
@@ -5342,6 +5379,10 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         "attachment file at {} must still be present immediately after delete (GC reclaims it)",
         full_path.display()
     );
+    // #4250: the sweep keeps a recently-deleted attachment's bytes for undo,
+    // so reach the ordinary reclamation case by aging the delete op past the
+    // retention window first.
+    age_delete_attachment_ops_past_the_undo_horizon(&pool).await;
     agaric_lib::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
         .await
         .unwrap();
@@ -6575,6 +6616,10 @@ async fn delete_attachment_keeps_shared_blob_1993() {
     );
 
     // Run GC → file + orphaned blob row are reclaimed race-free.
+    // #4250: the sweep keeps a recently-deleted attachment's bytes for undo,
+    // so reach the ordinary reclamation case by aging the delete op past the
+    // retention window first.
+    age_delete_attachment_ops_past_the_undo_horizon(&pool).await;
     agaric_lib::materializer::cleanup_orphaned_attachments(&pool, None, app_data_dir)
         .await
         .unwrap();

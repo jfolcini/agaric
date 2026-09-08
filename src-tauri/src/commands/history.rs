@@ -469,8 +469,12 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 /// 3. The undo reconstructs the original `AddAttachment` payload from the op
 ///    log and re-inserts the row with that payload's `fs_path`.
 ///
-/// That is not a race — it is the ordinary outcome once the sweep has run —
-/// and it leaves a live row over bytes that do not exist, with no
+/// That is not a race — it is the ordinary outcome once the sweep has run.
+/// Since #4250 the sweep skips a file a `delete_attachment` op younger than
+/// `DELETED_ATTACHMENT_RETENTION_MS` still names, so step 2 no longer reaches
+/// step 3 within that window and the undo below simply succeeds; past it,
+/// everything here applies unchanged. What remains, once the bytes really are
+/// gone, is a live row over bytes that do not exist, with no
 /// `attachment_blobs` row left that could repoint it. On a synced vault
 /// `find_missing_attachments` classifies the row and the next sync re-requests
 /// the bytes from a peer; on a single-device vault there is no peer and the
@@ -501,7 +505,10 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 /// `read_attachment_inner` — on the chance that a peer which has not synced
 /// since before the delete later reconnects. A visible error beats silent
 /// corruption. But the residual loss is not confined to single-device vaults,
-/// and #4250 (the GC grace window) is what would close it properly.
+/// and #4250 (the GC grace window) is what closes it properly: inside
+/// `DELETED_ATTACHMENT_RETENTION_MS` the bytes are still there and the undo
+/// succeeds on every vault, so nothing is given up at all. Past the window
+/// this section is the whole story again.
 ///
 /// # What the `skip_non_reversible` half of the contract does here: nothing
 ///

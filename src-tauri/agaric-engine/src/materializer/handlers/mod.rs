@@ -65,6 +65,10 @@ use sql_only::*;
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
 pub use attachments::cleanup_orphaned_attachments;
+// #4250 — the undo-retention window the GC honours, so a test can age a
+// `delete_attachment` op past the exact bound production uses rather than
+// restating it as a literal.
+pub use attachments::DELETED_ATTACHMENT_RETENTION_MS;
 // #3519 test-only: the GC's in-window rendezvous, so the race test can commit
 // a reference at the one instant that used to be unrecoverable.
 #[cfg(any(test, feature = "test-util"))]
