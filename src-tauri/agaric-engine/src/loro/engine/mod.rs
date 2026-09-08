@@ -2608,6 +2608,26 @@ mod op_coverage_tests {
         assert_eq!(tags, vec![TAG_Y.to_string()]);
     }
 
+    /// Every `apply_*` leaves the doc COMMITTED — that convention is why
+    /// `LoroEngine::commit` could be deleted as uncalled. `apply_remove_tag`
+    /// is the one that has to think about it: it skips the commit on the
+    /// idempotent no-op path, so the skip condition has to be the right way
+    /// round. No read can tell — loro applies a handler op to `DocState` and
+    /// to the op-log DAG at op time, and every export/import/fork commits
+    /// internally first — so the pending transaction itself is the assertion.
+    #[test]
+    fn apply_remove_tag_leaves_no_pending_transaction() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add X");
+        engine.apply_remove_tag(BLOCK_A, TAG_X).expect("remove X");
+        assert_eq!(
+            engine.doc.get_pending_txn_len(),
+            0,
+            "a removal that changed the doc must be committed before the call \
+             returns; only the no-op path may skip the commit"
+        );
+    }
+
     #[test]
     fn apply_remove_tag_is_noop_for_missing_tag() {
         let mut engine = engine_with_block(BLOCK_A);
