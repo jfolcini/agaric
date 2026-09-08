@@ -46,6 +46,9 @@ export const editor: Record<string, string> = {
   'editor.image.blockedNote': 'external image blocked',
   'editor.image.externalBlockedAria':
     'External image from {{domain}} (blocked by your privacy settings)',
+  // #4711 — per-client collapse toggle on an inline image.
+  'editor.image.collapse': 'Collapse image {{name}}',
+  'editor.image.expand': 'Expand image {{name}}',
   'slash.repeatSet': 'Set repeat to {{value}}',
   'slash.repeatFailed': 'Failed to set repeat',
   'slash.repeatRemoved': 'Repeat removed',

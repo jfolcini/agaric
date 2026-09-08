@@ -1259,6 +1259,29 @@ const EMBED_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
+ * `image_collapsed` — the `src`s of the inline `![alt](url)` images the reader
+ * has folded down to a chip (#4711, `src/components/rendering/CollapsibleImage.tsx`).
+ *
+ * Keyed by `src` and NOT page-scoped, unlike `blockCollapse` / `embedCollapse`
+ * above: the two surfaces that draw one image — the roving editor's node view on
+ * the focused block and the static renderer everywhere else (invariant 4) — must
+ * agree, and `src` is the only identifier both hold. Collapse is a view
+ * preference, so the document is never touched and markdown export is unchanged.
+ *
+ * The trade `embedCollapse` documents applies here too, and the same way round:
+ * a list PERMITS pruning where a key-per-image would not, and no sweep exists
+ * yet — a src that stops appearing in any block is left in the list.
+ */
+const IMAGE_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'image_collapsed',
+  scope: 'device',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: parseStringArray,
+  serialize: jsonSerialize<string[]>,
+}
+
+/**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
  */
@@ -1297,4 +1320,5 @@ export const PREFERENCES = {
   recentCommandsSlash: RECENT_COMMANDS_SLASH_PREFERENCE,
   blockCollapse: BLOCK_COLLAPSE_PREFERENCE,
   embedCollapse: EMBED_COLLAPSE_PREFERENCE,
+  imageCollapse: IMAGE_COLLAPSE_PREFERENCE,
 } as const
