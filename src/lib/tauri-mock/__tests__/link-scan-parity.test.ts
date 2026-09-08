@@ -98,12 +98,18 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       blocks.set(GONE, gone)
     })
 
-    /** Source block ids the shared derivation says link to `targetId`. */
+    /**
+     * Source block ids the shared derivation says link to `targetId`, minus the
+     * tombstoned ones. `deriveLinkEdges` mirrors the `block_links` TABLE, which
+     * KEEPS a soft-deleted source's row (#4848); every backlink reader — here
+     * and in the backend — drops it at read time (`b.deleted_at IS NULL`), so
+     * the oracle the handlers are compared against applies that filter too.
+     */
     function expectedSources(targetId: string): string[] {
       return [
         ...new Set(
           deriveLinkEdges(blocks)
-            .filter((e) => e.targetId === targetId)
+            .filter((e) => e.targetId === targetId && !blocks.get(e.sourceId)?.['deleted_at'])
             .map((e) => e.sourceId),
         ),
       ].toSorted()

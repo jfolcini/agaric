@@ -185,8 +185,10 @@ export function buildSnapshot(
     return cmpTokens(a['tag_id'] as string, b['tag_id'] as string)
   })
 
-  // Page links — derive [[ULID]] edges from non-deleted block content, mirror
-  // of the backend's `block_links` table joined to the source's page_id. The
+  // Page links — derive [[ULID]] edges from block content, INCLUDING
+  // soft-deleted sources, mirroring the `block_links` table: `DeleteBlock`
+  // enqueues no `ReindexBlockLinks`, so the row survives and readers filter at
+  // query time (#4848). Joined to the source's page_id. The
   // target must reference a live block (mirrors the backend's EXISTS guard).
   //
   // #3332 — the derivation is `deriveLinkEdges`, the function the MOCK runs,
