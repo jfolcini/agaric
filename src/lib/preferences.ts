@@ -615,6 +615,25 @@ const EMOJI_PICKER_ENABLED_PREFERENCE: PreferenceDefinition<boolean> = {
 }
 
 /**
+ * `sidebar-bookmarks-collapsed` — the sidebar Bookmarks section's disclosure
+ * state (#4713). Device-scoped: the bookmarks themselves are per-space (they
+ * are the pinned entries of `recent-pages`), but "keep this section open" is
+ * view chrome for this client. Default false (expanded), so the section is
+ * discoverable on first upgrade.
+ */
+const BOOKMARKS_COLLAPSED_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'sidebar-bookmarks-collapsed',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  // `jsonSerialize` writes the bare `true` / `false` literal, so the raw
+  // comparison is the whole validation — anything else on disk reads as the
+  // expanded default (#3881: no unchecked `JSON.parse(...) as T`).
+  parse: (raw) => raw === 'true',
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
  * `agaric-tab-indents-blocks` — Tab/Shift+Tab indents blocks
  * (`src/lib/editor-preferences.ts`). Default true.
  */
@@ -1254,6 +1273,7 @@ export const PREFERENCES = {
   tagColors: TAG_COLORS_PREFERENCE,
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
+  bookmarksCollapsed: BOOKMARKS_COLLAPSED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
   linkPreviewHoverFetch: LINK_PREVIEW_HOVER_FETCH_PREFERENCE,
   internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,

@@ -51,6 +51,11 @@ export const common: Record<string, string> = {
   'sidebar.offline': 'Offline',
   'sidebar.syncTooltip': 'Sync all devices',
   'sidebar.syncing': 'Syncing...',
+  // #4713 — the sidebar Bookmarks section over the pinned recent pages.
+  'bookmarks.title': 'Bookmarks',
+  'bookmarks.empty': 'No bookmarks',
+  'bookmarks.emptyHint': 'Pin a page from search or the command palette to keep it here.',
+  'bookmarks.remove': 'Remove {{title}} from bookmarks',
   'space.switch': 'Switch space',
   'space.manage': 'Manage spaces…',
   'space.moveTo': 'Move to space',
