@@ -40,7 +40,7 @@ const ANCHOR = {
 
 const ACTIONS: ReadonlyArray<PaletteAction> = [
   { id: 'open', label: 'Open in new tab', hint: '⌘↵' },
-  { id: 'pin', label: 'Pin to sidebar' },
+  { id: 'bookmark', label: 'Bookmark' },
   { id: 'delete', label: 'Delete page' },
 ]
 
@@ -67,7 +67,7 @@ describe('PaletteActionMenu', () => {
     const items = screen.getAllByRole('menuitem')
     expect(items).toHaveLength(ACTIONS.length)
     expect(screen.getByText('Open in new tab')).toBeInTheDocument()
-    expect(screen.getByText('Pin to sidebar')).toBeInTheDocument()
+    expect(screen.getByText('Bookmark')).toBeInTheDocument()
     expect(screen.getByText('Delete page')).toBeInTheDocument()
   })
 
@@ -75,7 +75,7 @@ describe('PaletteActionMenu', () => {
     renderMenu()
 
     expect(screen.getByTestId('palette-action-open')).toBeInTheDocument()
-    expect(screen.getByTestId('palette-action-pin')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-action-bookmark')).toBeInTheDocument()
     expect(screen.getByTestId('palette-action-delete')).toBeInTheDocument()
   })
 
@@ -99,10 +99,10 @@ describe('PaletteActionMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Pin to sidebar'))
+    await user.click(screen.getByText('Bookmark'))
 
     expect(props.onAction).toHaveBeenCalledTimes(1)
-    expect(props.onAction).toHaveBeenCalledWith('pin')
+    expect(props.onAction).toHaveBeenCalledWith('bookmark')
   })
 
   it('clicking a different action fires onAction with its own id', async () => {

@@ -14,22 +14,22 @@ import { buildActionMenuActions } from '@/components/palette/action-menu-actions
 const t = ((key: string) => key) as Parameters<typeof buildActionMenuActions>[2]
 
 describe('buildActionMenuActions', () => {
-  it('recent rows expose the full 6-action set with a pin toggle', () => {
-    const unpinned = buildActionMenuActions('recent', false, t)
-    expect(unpinned.map((a) => a.id)).toEqual([
+  it('recent rows expose the full 6-action set with a bookmark toggle', () => {
+    const plain = buildActionMenuActions('recent', false, t)
+    expect(plain.map((a) => a.id)).toEqual([
       'open',
       'open-new-tab',
-      'pin',
+      'bookmark',
       'reveal-in-pages',
       'copy-page-link',
       'remove-from-recents',
     ])
 
-    const pinned = buildActionMenuActions('recent', true, t)
-    expect(pinned.map((a) => a.id)).toEqual([
+    const bookmarked = buildActionMenuActions('recent', true, t)
+    expect(bookmarked.map((a) => a.id)).toEqual([
       'open',
       'open-new-tab',
-      'unpin',
+      'remove-bookmark',
       'reveal-in-pages',
       'copy-page-link',
       'remove-from-recents',
@@ -70,8 +70,8 @@ describe('buildActionMenuActions', () => {
     expect(newTab?.hint).toBe('⌘↵')
   })
 
-  it('the pin label is locale-keyed and flips with the pinned flag', () => {
-    expect(buildActionMenuActions('recent', false, t)[2]?.label).toBe('palette.actionPin')
-    expect(buildActionMenuActions('recent', true, t)[2]?.label).toBe('palette.actionUnpin')
+  it('the bookmark label is locale-keyed and flips with the flag', () => {
+    expect(buildActionMenuActions('recent', false, t)[2]?.label).toBe('palette.actionBookmark')
+    expect(buildActionMenuActions('recent', true, t)[2]?.label).toBe('palette.actionRemoveBookmark')
   })
 })

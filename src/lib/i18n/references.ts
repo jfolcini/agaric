@@ -504,15 +504,16 @@ export const references: Record<string, string> = {
   'palette.tagsUnnamed': '(unnamed)',
   // Help mode placeholder.
   'palette.helpEmpty': 'No shortcuts match the filter.',
-  // Phase 4 — pin / unpin affordance on the recents rows.
-  'palette.pinRecent': 'Pin {{title}} to recents',
-  'palette.unpinRecent': 'Unpin {{title}} from recents',
+  // Phase 4 — bookmark affordance on the recents rows. Same feature as the
+  // sidebar's Bookmarks section (`bookmarks.*`): one name, one word.
+  'palette.bookmarkPage': 'Bookmark {{title}}',
+  'palette.removeBookmark': 'Remove {{title}} from bookmarks',
   // Phase 5 — per-row action menu labels.
   'palette.actionOpen': 'Open',
   'palette.actionOpenPage': 'Open page',
   'palette.actionOpenNewTab': 'Open in new tab',
-  'palette.actionPin': 'Pin to recents',
-  'palette.actionUnpin': 'Unpin from recents',
+  'palette.actionBookmark': 'Bookmark',
+  'palette.actionRemoveBookmark': 'Remove bookmark',
   // Phase 5 follow-up — expanded action sets.
   'palette.actionReveal': 'Reveal in Pages view',
   'palette.actionCopyPageLink': 'Copy page link',

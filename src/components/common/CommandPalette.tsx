@@ -733,7 +733,7 @@ export function PaletteBody({
   // Per-row-type action handlers — keep each small so the dispatcher
   // (`handleActionMenuAction`) stays under oxlint's eslint/complexity budget.
   function handleRecentRowAction(actionId: string, rowId: string, newTab: boolean): void {
-    if (actionId === 'pin' || actionId === 'unpin') {
+    if (actionId === 'bookmark' || actionId === 'remove-bookmark') {
       togglePinRecentPage(rowId)
       return
     }
@@ -989,7 +989,7 @@ export function PaletteBody({
               <RecentPagesGroup
                 recents={filteredRecents}
                 onSelect={handleRecentClick}
-                onTogglePin={togglePinRecentPage}
+                onToggleBookmark={togglePinRecentPage}
                 t={t}
               />
             )}
