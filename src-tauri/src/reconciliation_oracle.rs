@@ -56,10 +56,10 @@
 //! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
 //! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //! | `blocks.space_id` on DERIVED rows (#3345) | `blocks` — `parent_id`, `block_type`, and the owning PAGE's own `space_id` | `maintain_pages_cache_counts_after_op`'s Create arm (in-tx, from the owning page) + `set_block_space_id_from_parent` (the post-commit re-stamp, the space half of the `SetBlockPageId` task) / `project_set_property_to_sql` + `project_delete_property_to_sql` (the in-tx page-group write of a `space` op) / `rederive_page_and_space_ids` (the in-tx move arm) / `rebuild_space_ids` (the vault-wide arm, second half of `RebuildPageIds`) — see [`rebuild_block_space_ids_from_base`] for what "derived" excludes |
-//! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks.content` | `reindex_block_tag_refs` — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
-//! | `tags_cache.usage_count` (#3345) | `block_tags` | the tag roll-up writers — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
-//! | `agenda_cache` (the date roll-up, #3345) | `block_properties` | the agenda writers — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
-//! | `projected_agenda_cache` (the recurrence horizon, #3345) | `block_properties` | the projection writers — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
+//! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks` — **`blocks.content`** | `reindex_block_tag_refs(_in_tx/_split/_split_in_tx)` / `rebuild_block_tag_refs_cache` (the vault-wide arm) — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
+//! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
+//! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
+//! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
