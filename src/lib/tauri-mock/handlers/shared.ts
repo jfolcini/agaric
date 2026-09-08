@@ -347,9 +347,12 @@ export function inSpaceScope(b: Record<string, unknown>, spaceId: string | null)
  * (no resolvable `page_id`) is NOT inbound. `hasOutbound` is unaffected by
  * those terms — it answers "does this page author any outbound link".
  *
- * A soft-deleted SOURCE is excluded from both terms, the `src.deleted_at IS
- * NULL` that `recompute_all_pages_cache_counts` and Orphan's outbound `NOT
- * EXISTS` (`agaric-store/src/filters/primitive.rs`) both spell. It has to be
+ * A soft-deleted SOURCE is excluded here — the `src.deleted_at IS NULL` that
+ * `recompute_all_pages_cache_counts` and Orphan's outbound `NOT EXISTS`
+ * (`agaric-store/src/filters/primitive.rs`) both spell. It only bites on
+ * `inbound`: `pageScopeIds` is the page plus its NON-deleted descendants at
+ * both call sites, so a tombstoned source can never reach the `hasOutbound`
+ * term anyway. It has to be
  * applied here rather than in `deriveLinkEdges`, which mirrors the `block_links`
  * TABLE — and the table keeps a tombstoned source's row (#4848).
  */
