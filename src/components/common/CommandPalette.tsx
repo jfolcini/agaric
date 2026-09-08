@@ -591,7 +591,7 @@ export function PaletteBody({
   // ── Per-row action menu ──────────────────────────────────
   // Tab on the focused row opens this menu; mouse users can also
   // open it via the `…` button rendered at row-right (which also
-  // hosts the pin button for recents). The menu closes on Escape,
+  // hosts the bookmark button for recents). The menu closes on Escape,
   // click-outside, or after selecting an action.
   interface ActionMenuState {
     rowType: ActionMenuRowType
