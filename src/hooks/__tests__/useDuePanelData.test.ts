@@ -135,10 +135,10 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(result.current.blocks).toHaveLength(1)
     })
-    expect(mockedListBlocks).toHaveBeenCalledWith(
-      expect.objectContaining({ date: '2025-06-15' }),
-      expect.anything(),
-    )
+    expect(mockedListBlocks).toHaveBeenCalledWith(expect.objectContaining({ date: '2025-06-15' }), {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
   })
 
   it('renders no blocks without calling listBlocks when there is no active space (#2248)', async () => {
@@ -210,7 +210,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ date: '2025-06-15' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -221,7 +221,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ date: '2025-06-16' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -245,7 +245,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'column:due_date' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -330,7 +330,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_page2' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -386,7 +386,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: 'cursor_A_page2' }),
-        expect.anything(),
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
