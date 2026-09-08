@@ -5,6 +5,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   openPage,
+  reopenPage,
   test,
   waitForBoot,
 } from './helpers'
@@ -156,6 +157,42 @@ test.describe('Keyboard block movement', () => {
     await page.waitForTimeout(200)
     expect(await getInvokeCalls(page, 'move_block')).toHaveLength(0)
   })
+
+  // ── An in-flight edit survives the restructure ─────────────────────────
+
+  /**
+   * The four move shortcuts flush the roving editor twice: the key handler
+   * calls `onFlush`, and the orchestration handler calls `handleFlush` again
+   * after reading the editor's markdown. `unmount()` wipes the ProseMirror doc
+   * to an empty paragraph, so by the time the second read happens there is
+   * nothing left to read, and the block is remounted blank — losing whatever
+   * had been typed but not yet committed.
+   */
+  const EDITED = 'GS_3 edited before the move'
+
+  for (const [name, key] of [
+    ['Ctrl+Shift+ArrowRight (indent)', 'Control+Shift+ArrowRight'],
+    ['Ctrl+Shift+ArrowLeft (dedent)', 'Control+Shift+ArrowLeft'],
+    ['Ctrl+Shift+ArrowUp (move up)', 'Control+Shift+ArrowUp'],
+    ['Ctrl+Shift+ArrowDown (move down)', 'Control+Shift+ArrowDown'],
+  ] as const) {
+    test(`${name} keeps an uncommitted edit`, async ({ page }) => {
+      await openPage(page, PAGE)
+      const gs3 = (await blockIds(page))[2] as string
+
+      const editor = await focusBlock(page, 2)
+      await editor.fill(EDITED)
+      await page.keyboard.press(key)
+
+      // The editor stays on the same block, so the text must still be there.
+      await expect(page.locator('[data-testid="block-editor"]')).toContainText(EDITED)
+
+      // And it must be what the backend actually holds: navigate away (which
+      // blurs and flushes) and re-fetch the page.
+      await reopenPage(page, PAGE)
+      await expect(page.locator(`[data-block-id="${gs3}"]`).first()).toContainText(EDITED)
+    })
+  }
 
   // ── Subtree integrity: moving a parent carries its child ───────────────
 

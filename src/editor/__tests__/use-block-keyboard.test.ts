@@ -318,8 +318,12 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  // The restructure keys deliberately do NOT call `onFlush`. Their handlers
+  // (`handleIndent` and friends) read the editor's markdown, flush, move, and
+  // remount with what they read; an earlier flush wipes the doc, so the
+  // capture comes back empty and the block is remounted blank.
   describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
-    it('Ctrl+Shift+ArrowRight calls onFlush + onIndent', () => {
+    it('Ctrl+Shift+ArrowRight calls onIndent WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('ArrowRight', { ctrlKey: true, shiftKey: true })
@@ -327,12 +331,12 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onIndent']).toBe(1)
       expect(cbs._calls['onDedent']).toBeUndefined()
     })
 
-    it('Ctrl+Shift+ArrowLeft calls onFlush + onDedent', () => {
+    it('Ctrl+Shift+ArrowLeft calls onDedent WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('ArrowLeft', { ctrlKey: true, shiftKey: true })
@@ -340,7 +344,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onDedent']).toBe(1)
       expect(cbs._calls['onIndent']).toBeUndefined()
     })
@@ -368,7 +372,7 @@ describe('handleBlockKeyDown', () => {
     })
 
     // #912 — Tab / Shift+Tab are now the primary outliner indent/dedent keys.
-    it('Tab calls onFlush + onIndent', () => {
+    it('Tab calls onIndent WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Tab')
@@ -376,12 +380,12 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onIndent']).toBe(1)
       expect(cbs._calls['onDedent']).toBeUndefined()
     })
 
-    it('Shift+Tab calls onFlush + onDedent', () => {
+    it('Shift+Tab calls onDedent WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Tab', { shiftKey: true })
@@ -389,7 +393,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onDedent']).toBe(1)
       expect(cbs._calls['onIndent']).toBeUndefined()
     })
@@ -845,7 +849,7 @@ describe('handleBlockKeyDown', () => {
   })
 
   describe('Ctrl+Shift+Arrow (move block)', () => {
-    it('Ctrl+Shift+ArrowUp calls onFlush + onMoveUp', () => {
+    it('Ctrl+Shift+ArrowUp calls onMoveUp WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('ArrowUp', { ctrlKey: true, shiftKey: true })
@@ -853,11 +857,11 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onMoveUp']).toBe(1)
     })
 
-    it('Ctrl+Shift+ArrowDown calls onFlush + onMoveDown', () => {
+    it('Ctrl+Shift+ArrowDown calls onMoveDown WITHOUT flushing first', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('ArrowDown', { ctrlKey: true, shiftKey: true })
@@ -865,7 +869,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onFlush']).toBeUndefined()
       expect(cbs._calls['onMoveDown']).toBe(1)
     })
 
