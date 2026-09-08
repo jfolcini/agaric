@@ -966,6 +966,20 @@ jobs:
         #
         #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
         #   agaric-engine  566 mutants, 32/shard → 18 shards  (cap 44, est.)
+        #   agaric-sync     82 mutants, 28/shard →  3 shards  (cap 37, est.)
+        #
+        # #4696 lever A added the `agaric-sync` row. Its 82 mutants are the
+        # measured `cargo mutants --list` count for the two examine_globs
+        # (`operations.rs` 55 + `types.rs` 27). It runs at 28/shard rather than
+        # the 37 its capacity allows because that capacity is an estimate, and
+        # a conservative slice is the cheap side of the error: this package's
+        # test phase is the heaviest of the three, so its per-mutant cost is
+        # the one least well described by the borrowed number. Measured test
+        # phases, `cargo nextest run -p <pkg>` on one dev box: store 27.9 s
+        # (1433 tests), engine 36.1 s (1026), sync 65.0 s (1008) — 1.8x the
+        # engine's. Adding ~30 s to the lane's measured 105 s per viable mutant
+        # gives ~135 s, and floor((5400 - ~360 baseline) / 135) = 37. As with
+        # `agaric-engine`, the first crons' PARTIAL notices are what settle it.
         #
         # `agaric-engine` runs at 32/shard rather than the 44 the rule allows:
         # its capacity is borrowed from `agaric-store`, and one mutant of slack
@@ -1013,6 +1027,9 @@ jobs:
           - { package: agaric-engine, shard: 15, shards: 18 }
           - { package: agaric-engine, shard: 16, shards: 18 }
           - { package: agaric-engine, shard: 17, shards: 18 }
+          - { package: agaric-sync, shard: 0, shards: 3 }
+          - { package: agaric-sync, shard: 1, shards: 3 }
+          - { package: agaric-sync, shard: 2, shards: 3 }
     # Job-level so the run step and the guard step below quote the SAME
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
