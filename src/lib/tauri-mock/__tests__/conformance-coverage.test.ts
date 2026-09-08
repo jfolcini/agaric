@@ -327,7 +327,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   start_sync: 'sync transport session; no durable domain state to snapshot',
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
   start_pairing: 'pairing transport session; no durable domain state to snapshot',
-  confirm_pairing: 'pairing transport session; no durable domain state to snapshot',
+  confirm_pairing:
+    'writes the pending-pairing marker (app_settings) and clears unpaired flags ' +
+    '(peer_refs); pairing-window plumbing, not projected block state',
   // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
   // row), so this is no longer "no durable state". It stays excluded for the
   // same reason `confirm_pairing` (which writes that row) is: the marker is
@@ -336,14 +338,14 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_peer_address: 'peer registry (device metadata) outside the conformance snapshot scope',
   update_peer_name: 'peer registry (device metadata) outside the conformance snapshot scope',
   delete_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
+  set_reminder_settings:
+    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
   ingest_otel_spans: 'no persistent state — telemetry export',
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
-  set_reminder_settings:
-    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_rw_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
@@ -497,7 +499,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_device_id: 'no domain state — this install’s device identity',
   get_status: 'no domain state — sync transport status',
   get_recovery_status: 'no domain state — boot recovery status',
-  get_reminder_settings: 'no domain state — device-local reminder preferences',
+  get_reminder_settings:
+    'device-local reminder preferences in `app_settings`, outside the conformance snapshot ' +
+    'scope — the read side of `set_reminder_settings`',
   get_mdns_status: 'no domain state — mDNS discovery status',
   get_bind_exposure_status: 'no domain state — sync endpoint bind exposure',
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
@@ -563,6 +567,7 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'rather than computing one (handlers/search.ts), so a step needs that implemented ' +
     'first (#3927)',
 }
+
 // NOTE for whoever lifts the remaining agenda-date waiver above (and for
 // `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
 // `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
@@ -579,6 +584,154 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
 // Closing it needs `agenda_source` modelled as its own sub-branch (e.g.
 // `list_blocks::agenda-date::due_date`), not just a step with a non-null
 // `date`/`dateRange`.
+
+/**
+ * #4667 — the PERMANENT half of the two allowlists above.
+ *
+ * A waiver here is principled: the command carries no domain state a snapshot
+ * could compare, so no fixture will ever pin it and its entry is not debt.
+ *
+ * The test is each command's OWN reason string, not the section it sits under.
+ * "no durable/persistent state" is permanent; "outside the conformance snapshot
+ * scope" is NOT — that says the snapshot is too narrow, which is a thing a
+ * widened snapshot fixes. Classifying by section header put five `app_settings`
+ * / `peer_refs` writers here on the first pass, next to a `list_peer_refs`
+ * counted as debt for a byte-identical reason.
+ *
+ * Everything else in those allowlists is the OTHER half — a command that could
+ * be pinned and is not yet. That half is a ratchet (`NOT_YET_PINNED_MUTATING`
+ * / `NOT_YET_PINNED_READ` below): the guard that already existed fails on a
+ * stale or now-covered entry, but nothing distinguished "cannot be pinned" from
+ * "nobody has pinned it", so 76% of the surface read as a settled decision
+ * rather than as debt with the commands named.
+ */
+const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
+  // Transport sessions only — these hold no durable row anywhere.
+  'start_sync',
+  'cancel_sync',
+  'start_pairing',
+  // Observability / runtime toggles — no persistent domain state.
+  'log_frontend',
+  'ingest_otel_spans',
+  'set_trace_sampling',
+  'notify_task',
+  'mcp_set_enabled',
+  'mcp_rw_set_enabled',
+  'mcp_disconnect_all',
+  'mcp_rw_disconnect_all',
+])
+
+const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
+  // Process / environment / telemetry status — no domain state.
+  'collect_bug_report_metadata',
+  'read_logs_for_report',
+  'get_device_id',
+  'get_status',
+  'get_recovery_status',
+  'get_mdns_status',
+  'get_bind_exposure_status',
+  'get_os_network_block_status',
+  'is_flatpak',
+  'get_mcp_status',
+  'get_mcp_rw_status',
+  'get_mcp_socket_path',
+  'get_mcp_rw_socket_path',
+  'get_mcp_recent_activity',
+])
+
+/**
+ * The shrink-only ratchet (#4667), mirroring `tauri-import-baseline`: these are
+ * the waived commands that COULD be pinned and are not yet.
+ *
+ * NAMES, not a count, for the reason `check-tauri-import-baseline.mjs` uses a
+ * sorted list: a count nets out. A diff that pins one command and waives a new
+ * one leaves 42 either way and lands green, which is exactly the case this
+ * ratchet exists to make visible. Both directions now name the command in the
+ * diff — pin one and delete its line here, waive one and add it.
+ */
+const NOT_YET_PINNED_MUTATING: readonly string[] = [
+  'add_attachment_with_bytes',
+  'add_tags_by_ids',
+  'cancel_pairing',
+  'compact_op_log_cmd',
+  'confirm_pairing',
+  'create_blocks_batch',
+  'create_page_in_space',
+  'create_property_def',
+  'create_space',
+  'delete_attachment',
+  'delete_blocks_by_ids',
+  'delete_draft',
+  'delete_peer_ref',
+  'delete_property_def',
+  'fetch_link_metadata',
+  'flush_all_drafts',
+  'flush_draft',
+  'import_bibliography',
+  'import_markdown',
+  'move_blocks_batch',
+  'move_blocks_to_space',
+  'purge_all_deleted',
+  'purge_blocks_by_ids',
+  'quick_capture_block',
+  'redo_page_op',
+  'rename_attachment',
+  'restore_all_deleted',
+  'restore_blocks_by_ids',
+  'restore_page_to_op',
+  'revert_ops',
+  'save_draft',
+  'set_page_aliases',
+  'set_peer_address',
+  'set_property_batch',
+  'set_reminder_settings',
+  'set_todo_state_batch',
+  'undo_op',
+  'undo_ops',
+  'undo_page_group',
+  'undo_page_op',
+  'update_peer_name',
+  'update_property_def_options',
+]
+
+const NOT_YET_PINNED_READ: readonly string[] = [
+  'compute_block_vs_current_diff',
+  'compute_edit_diff',
+  'count_agenda_batch_by_source',
+  'count_backlinks_batch',
+  'count_trash',
+  'export_page_markdown',
+  'get_backlinks',
+  'get_block_history',
+  'get_compaction_status',
+  'get_link_metadata',
+  'get_page_aliases',
+  'get_property_def',
+  'get_reminder_settings',
+  'list_attachments',
+  'list_attachments_batch',
+  'list_backlinks_grouped',
+  'list_drafts',
+  'list_page_aliases_by_prefix',
+  'list_page_history',
+  'list_peer_refs',
+  'list_projected_agenda',
+  'list_property_defs',
+  'list_spaces',
+  'list_unlinked_references',
+  'read_attachment_meta',
+  'resolve_page_by_alias',
+  'trash_descendant_counts',
+]
+
+function notYetPinned(
+  allowlist: Readonly<Record<string, string>>,
+  principled: ReadonlySet<string>,
+): string[] {
+  return Object.keys(allowlist)
+    .filter((cmd) => !principled.has(cmd))
+    .toSorted()
+}
 
 // ---------------------------------------------------------------------------
 // Commands whose query steps run on the BACKEND leg only (#3826)
@@ -2520,6 +2673,34 @@ describe('#3083 conformance-coverage ratchet', () => {
         `NO_FIXTURE_ALLOWLIST in this file with a reason. If the command is ` +
         `read-only, give it a query-verb prefix or add it to READ_ONLY_EXACT.`,
     ).toEqual([])
+  })
+
+  // ── #4667: the not-yet-pinned ratchet ──────────────────────────────────
+  //
+  // The honesty tests below already fail on a stale or now-covered waiver.
+  // What they could not say is WHICH waivers are debt: a principled one (no
+  // domain state, no fixture will ever pin it) and an unwritten one read
+  // identically. These two split them and put a number on the second half.
+
+  it('#4667 a principled name must actually be waived', () => {
+    // A principled entry must actually BE waived — otherwise it is a stale
+    // name that silently shrinks the debt count without pinning anything.
+    const orphanMutating = [...NO_DOMAIN_STATE_MUTATING].filter((c) => !(c in NO_FIXTURE_ALLOWLIST))
+    const orphanRead = [...NO_DOMAIN_STATE_READ].filter((c) => !(c in READ_NO_QUERY_ALLOWLIST))
+    expect({ orphanMutating, orphanRead }).toEqual({ orphanMutating: [], orphanRead: [] })
+  })
+
+  it('#4667 the not-yet-pinned lists match exactly (shrink-only)', () => {
+    const message =
+      'not-yet-pinned changed. FIX: pin a command and DELETE its line from the ' +
+      'list below, or justify a new waiver and add it where a reviewer sees it.'
+
+    expect(notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING), message).toEqual(
+      NOT_YET_PINNED_MUTATING,
+    )
+    expect(notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ), message).toEqual(
+      NOT_YET_PINNED_READ,
+    )
   })
 
   it('allowlist stays honest (no stale, read-only, or now-covered entries)', () => {
