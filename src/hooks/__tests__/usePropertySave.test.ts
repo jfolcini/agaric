@@ -20,12 +20,21 @@ import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import type { PropertyRow } from '@/lib/tauri'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** `set_property` answers with the block row inside the `op_refs` envelope. */
+const setPropertyResult = withOps(makeBlockRow({ id: 'BLOCK_1' }))
 
 function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
   return {
@@ -46,10 +55,9 @@ beforeEach(() => {
 describe('usePropertySave handleSave', () => {
   it('calls setProperty and refreshes property list on success', async () => {
     const updatedProps = [makeProp('status', { value_text: 'active' })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return updatedProps
-      return null
+    stubInvoke({
+      set_property: () => setPropertyResult,
+      get_properties: () => updatedProps,
     })
 
     const setProperties = vi.fn()
@@ -71,7 +79,8 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('shows invalidNumber toast when number validation fails', async () => {
-    mockedInvoke.mockImplementation(async () => null)
+    // No IPC should fire: the number validation rejects before `set_property`.
+    stubInvoke({})
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -84,7 +93,7 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('shows saveFailed toast on error', async () => {
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    stubInvoke({ set_property: () => Promise.reject(new Error('backend error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -102,14 +111,17 @@ describe('usePropertySave handleSave', () => {
   // the user exactly as uninformed as the silent misbehaviour the validation
   // replaced, so the reason must reach the toast verbatim.
   it('surfaces the backend reason verbatim for a malformed repeat rule (#3647)', async () => {
-    mockedInvoke.mockRejectedValue(
-      Object.assign(new Error('rejected'), {
-        kind: 'validation',
-        code: 'InvalidRepeatRule',
-        message:
-          "repeat rule '++ 1d' is not valid: it contains a space — write `++1d`, not `++ 1d`",
-      }),
-    )
+    stubInvoke({
+      set_property: () =>
+        Promise.reject(
+          Object.assign(new Error('rejected'), {
+            kind: 'validation',
+            code: 'InvalidRepeatRule',
+            message:
+              "repeat rule '++ 1d' is not valid: it contains a space — write `++1d`, not `++ 1d`",
+          }),
+        ),
+    })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -127,12 +139,15 @@ describe('usePropertySave handleSave', () => {
   // Only the coded repeat rejection is special-cased: any other validation
   // failure keeps the established generic copy.
   it('keeps the generic toast for an uncoded validation failure (#3647)', async () => {
-    mockedInvoke.mockRejectedValue(
-      Object.assign(new Error('rejected'), {
-        kind: 'validation',
-        message: 'set_property.value_text.empty',
-      }),
-    )
+    stubInvoke({
+      set_property: () =>
+        Promise.reject(
+          Object.assign(new Error('rejected'), {
+            kind: 'validation',
+            message: 'set_property.value_text.empty',
+          }),
+        ),
+    })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -147,10 +162,9 @@ describe('usePropertySave handleSave', () => {
   it('announces on save when announceOnSave is set', async () => {
     const { announce } = await import('@/lib/announcer')
     const updatedProps = [makeProp('status', { value_text: 'done' })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return updatedProps
-      return null
+    stubInvoke({
+      set_property: () => setPropertyResult,
+      get_properties: () => updatedProps,
     })
 
     const setProperties = vi.fn()
@@ -172,10 +186,9 @@ describe('usePropertySave handleSave', () => {
   it('does not announce when announceOnSave is not set', async () => {
     const { announce } = await import('@/lib/announcer')
     const updatedProps = [makeProp('status', { value_text: 'done' })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return updatedProps
-      return null
+    stubInvoke({
+      set_property: () => setPropertyResult,
+      get_properties: () => updatedProps,
     })
 
     const setProperties = vi.fn()
@@ -191,7 +204,7 @@ describe('usePropertySave handleSave', () => {
   it('logs errors when logTag is set', async () => {
     const { logger } = await import('@/lib/logger')
     vi.spyOn(logger, 'error').mockImplementation(() => {})
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    stubInvoke({ set_property: () => Promise.reject(new Error('backend error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() =>
@@ -227,7 +240,7 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('supports custom toast keys', async () => {
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    stubInvoke({ set_property: () => Promise.reject(new Error('backend error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() =>
@@ -248,7 +261,7 @@ describe('usePropertySave handleSave', () => {
 
 describe('usePropertySave handleDelete', () => {
   it('calls deleteProperty and removes from list', async () => {
-    mockedInvoke.mockResolvedValue(undefined)
+    stubInvoke({ delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'status' }) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -266,7 +279,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('shows deleteFailed toast on error', async () => {
-    mockedInvoke.mockRejectedValue(new Error('delete error'))
+    stubInvoke({ delete_property: () => Promise.reject(new Error('delete error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -280,7 +293,7 @@ describe('usePropertySave handleDelete', () => {
 
   it('announces on delete when announceOnDelete is set', async () => {
     const { announce } = await import('@/lib/announcer')
-    mockedInvoke.mockResolvedValue(undefined)
+    stubInvoke({ delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'status' }) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() =>
@@ -300,7 +313,7 @@ describe('usePropertySave handleDelete', () => {
 
   it('does not announce when announceOnDelete is not set', async () => {
     const { announce } = await import('@/lib/announcer')
-    mockedInvoke.mockResolvedValue(undefined)
+    stubInvoke({ delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'status' }) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
@@ -327,7 +340,7 @@ describe('usePropertySave handleDelete', () => {
   it('logs errors when logTag is set', async () => {
     const { logger } = await import('@/lib/logger')
     vi.spyOn(logger, 'error').mockImplementation(() => {})
-    mockedInvoke.mockRejectedValue(new Error('delete error'))
+    stubInvoke({ delete_property: () => Promise.reject(new Error('delete error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() =>
@@ -351,7 +364,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('supports custom deleteFailed toast key', async () => {
-    mockedInvoke.mockRejectedValue(new Error('delete error'))
+    stubInvoke({ delete_property: () => Promise.reject(new Error('delete error')) })
 
     const setProperties = vi.fn()
     const { result } = renderHook(() =>
@@ -370,7 +383,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('filter function removes the deleted key from the list', async () => {
-    mockedInvoke.mockResolvedValue(undefined)
+    stubInvoke({ delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'status' }) })
 
     let capturedUpdater: ((prev: PropertyRow[]) => PropertyRow[]) | null = null
     const setProperties = vi.fn((updater) => {

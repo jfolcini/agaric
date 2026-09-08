@@ -18,7 +18,8 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -26,6 +27,11 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
 const mockedToastError = vi.mocked(toast.error)
 
 let pageStore: StoreApi<PageBlockState>
@@ -48,7 +54,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(emptyPage)
+  stubInvoke({ list_blocks: () => emptyPage })
   pageStore = createPageBlockStore('PAGE_1')
 })
 
@@ -74,10 +80,10 @@ describe('useBlockTags allTags', () => {
     }
     // #2248 — an active space is required; seed one so the mount fetch fires.
     useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return tagBlocks
-      if (cmd === 'list_tags_for_block') return []
-      return emptyPage
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => tagBlocks,
+      list_tags_for_block: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -111,9 +117,9 @@ describe('useBlockTags allTags', () => {
   it('short-circuits to an empty tag list without invoking when there is no active space (#2248)', async () => {
     // No space seeded (currentSpaceId is null). `listBlocks` has no
     // cross-space form, so the hook must NOT dispatch and must render empty.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_tags_for_block') return []
-      return emptyPage
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -128,10 +134,17 @@ describe('useBlockTags allTags', () => {
   })
 
   it('shows toast error when loading tags fails', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') throw new Error('Network error')
-      if (cmd === 'list_tags_for_block') return []
-      return emptyPage
+    // Without an active space the hook never calls `list_blocks` at all; the
+    // toast this test names was previously raised by the *other* fetch, whose
+    // untyped `list_inherited_tags_for_block` stub returned a page envelope
+    // where the command returns `string[]`.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => {
+        throw new Error('Network error')
+      },
+      list_tags_for_block: () => [],
     })
 
     renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -151,10 +164,10 @@ describe('useBlockTags allTags', () => {
 
 describe('useBlockTags appliedTagIds', () => {
   it('loads tags for given blockId', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1', 'TAG_3']
-      return emptyPage
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1', 'TAG_3'],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -176,12 +189,11 @@ describe('useBlockTags appliedTagIds', () => {
   // direct only (direct wins, since a direct tag is removable) and never
   // be duplicated into the inherited set.
   it('partitions inherited tags excluding direct ones (direct wins)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_DIR', 'TAG_BOTH']
+    stubInvoke({
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_DIR', 'TAG_BOTH'],
       // TAG_BOTH is also inherited; it must be deduped out (direct wins).
-      if (cmd === 'list_inherited_tags_for_block') return ['TAG_INH', 'TAG_BOTH']
-      return emptyPage
+      list_inherited_tags_for_block: () => ['TAG_INH', 'TAG_BOTH'],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -205,9 +217,8 @@ describe('useBlockTags appliedTagIds', () => {
   })
 
   it('resets appliedTagIds when blockId is null', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      return emptyPage
+    stubInvoke({
+      list_blocks: () => emptyPage,
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -229,10 +240,12 @@ describe('useBlockTags appliedTagIds', () => {
   })
 
   it('shows toast error when loading applied tags fails', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') throw new Error('DB error')
-      return emptyPage
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => {
+        throw new Error('DB error')
+      },
     })
 
     renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -252,13 +265,15 @@ describe('useBlockTags appliedTagIds', () => {
 
 describe('useBlockTags handleAddTag', () => {
   it('calls addTag and updates appliedTagIds', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -280,14 +295,15 @@ describe('useBlockTags handleAddTag', () => {
   })
 
   it('promotes an inherited-only tag to direct on add, removing it from inheritedTagIds (#1423)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'list_inherited_tags_for_block') return ['TAG_INH']
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      list_inherited_tags_for_block: () => ['TAG_INH'],
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -309,9 +325,8 @@ describe('useBlockTags handleAddTag', () => {
   })
 
   it('does nothing when blockId is null', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      return undefined
+    stubInvoke({
+      list_blocks: () => emptyPage,
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -329,11 +344,13 @@ describe('useBlockTags handleAddTag', () => {
   })
 
   it('shows toast error on failure', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      add_tag: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -355,13 +372,15 @@ describe('useBlockTags handleAddTag', () => {
     // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -386,11 +405,11 @@ describe('useBlockTags handleAddTag', () => {
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -412,11 +431,11 @@ describe('useBlockTags handleAddTag', () => {
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1']
-      if (cmd === 'remove_tag') return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1'],
+      remove_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -436,11 +455,13 @@ describe('useBlockTags handleAddTag', () => {
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'add_tag') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      add_tag: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -464,13 +485,15 @@ describe('useBlockTags handleAddTag', () => {
 
 describe('useBlockTags handleRemoveTag', () => {
   it('calls removeTag and updates appliedTagIds', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1', 'TAG_2']
-      if (cmd === 'remove_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 8 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1', 'TAG_2'],
+      remove_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 8 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -493,9 +516,8 @@ describe('useBlockTags handleRemoveTag', () => {
   })
 
   it('does nothing when blockId is null', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      return undefined
+    stubInvoke({
+      list_blocks: () => emptyPage,
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -513,11 +535,13 @@ describe('useBlockTags handleRemoveTag', () => {
   })
 
   it('shows toast error on failure', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1']
-      if (cmd === 'remove_tag') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1'],
+      remove_tag: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -540,13 +564,15 @@ describe('useBlockTags handleRemoveTag', () => {
     // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1']
-      if (cmd === 'remove_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 8 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1'],
+      remove_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 8 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -567,11 +593,13 @@ describe('useBlockTags handleRemoveTag', () => {
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return ['TAG_1']
-      if (cmd === 'remove_tag') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => ['TAG_1'],
+      remove_tag: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -602,14 +630,17 @@ describe('useBlockTags handleCreateTag', () => {
       page_id: null,
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      // `create_block` returns the row inside the `op_refs` envelope.
+      create_block: () => withOps(createdBlock),
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -651,14 +682,16 @@ describe('useBlockTags handleCreateTag', () => {
       page_id: null,
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      create_block: () => withOps(createdBlock),
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -683,10 +716,10 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('does nothing for empty or whitespace-only name', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -711,10 +744,9 @@ describe('useBlockTags handleCreateTag', () => {
       page_id: null,
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'create_block') return createdBlock
-      return undefined
+    stubInvoke({
+      list_blocks: () => emptyPage,
+      create_block: () => withOps(createdBlock),
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -757,14 +789,16 @@ describe('useBlockTags handleCreateTag', () => {
     const resolveSetSpy = vi.fn()
     useResolveStore.setState({ ...useResolveStore.getState(), set: resolveSetSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') {
-        return { block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [{ device_id: 'dev1', seq: 7 }] }
-      }
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      create_block: () => withOps(createdBlock),
+      add_tag: () => ({
+        block_id: 'BLOCK_1',
+        tag_id: 'TAG_1',
+        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -781,11 +815,13 @@ describe('useBlockTags handleCreateTag', () => {
   })
 
   it('shows toast error on failure', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      create_block: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -805,11 +841,13 @@ describe('useBlockTags handleCreateTag', () => {
     const resolveSetSpy = vi.fn()
     useResolveStore.setState({ ...useResolveStore.getState(), set: resolveSetSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      create_block: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -838,12 +876,14 @@ describe('useBlockTags handleCreateTag', () => {
     const onNewActionSpy = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'create_block') return createdBlock
-      if (cmd === 'add_tag') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () => [],
+      create_block: () => withOps(createdBlock),
+      add_tag: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -873,14 +913,13 @@ describe('useBlockTags handleCreateTag', () => {
 describe('useBlockTags loading state', () => {
   it('loading starts true and becomes false after tags load', async () => {
     let resolveTagsForBlock!: (value: string[]) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') {
-        return new Promise<string[]>((resolve) => {
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () =>
+        new Promise<string[]>((resolve) => {
           resolveTagsForBlock = resolve
-        })
-      }
-      return undefined
+        }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -898,14 +937,13 @@ describe('useBlockTags loading state', () => {
 
   it('loading becomes false even when listTagsForBlock fails', async () => {
     let rejectTagsForBlock!: (reason: Error) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') {
-        return new Promise<string[]>((_resolve, reject) => {
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_blocks: () => emptyPage,
+      list_tags_for_block: () =>
+        new Promise<string[]>((_resolve, reject) => {
           rejectTagsForBlock = reject
-        })
-      }
-      return undefined
+        }),
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
@@ -920,9 +958,8 @@ describe('useBlockTags loading state', () => {
   })
 
   it('loading becomes false immediately when blockId is null', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      return undefined
+    stubInvoke({
+      list_blocks: () => emptyPage,
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -944,16 +981,15 @@ describe('useBlockTags staleness guards (#1518)', () => {
     // first, then BLOCK_OLD LAST — without the cancelled guard the late
     // BLOCK_OLD write would overwrite BLOCK_NEW's tags (the #1518 leak).
     const resolvers = new Map<string, (value: string[]) => void>()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_inherited_tags_for_block') return []
-      if (cmd === 'list_tags_for_block') {
+    stubInvoke({
+      list_blocks: () => emptyPage,
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: (args) => {
         const blockId = (args as { blockId: string }).blockId
         return new Promise<string[]>((resolve) => {
           resolvers.set(blockId, resolve)
         })
-      }
-      return emptyPage
+      },
     })
 
     const { result, rerender } = renderHook(({ id }) => useBlockTags(id), {
@@ -1010,15 +1046,14 @@ describe('useBlockTags staleness guards (#1518)', () => {
       resolveOld = resolve
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'list_inherited_tags_for_block') return []
-      if (cmd === 'list_blocks') {
+    stubInvoke({
+      list_tags_for_block: () => [],
+      list_inherited_tags_for_block: () => [],
+      list_blocks: (args) => {
         const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         if (spaceId === 'SPACE_OLD') return oldPending
         return newTags
-      }
-      return emptyPage
+      },
     })
 
     useSpaceStore.setState({ currentSpaceId: 'SPACE_OLD' })
@@ -1060,10 +1095,10 @@ describe('useBlockTags staleness guards (#1518)', () => {
       total_count: null,
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'list_inherited_tags_for_block') return []
-      if (cmd === 'list_blocks') {
+    stubInvoke({
+      list_tags_for_block: () => [],
+      list_inherited_tags_for_block: () => [],
+      list_blocks: (args) => {
         const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         // The FIRST SPACE_A fetch is gated so it can resolve last (stale).
         if (spaceId === 'SPACE_A' && resolveStaleA === null) {
@@ -1074,8 +1109,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
         if (spaceId === 'SPACE_B') return tagsFor('TAG_B', 'B')
         // The SECOND SPACE_A fetch (after switch-back) resolves immediately.
         return tagsFor('TAG_A2', 'A2')
-      }
-      return emptyPage
+      },
     })
 
     useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })

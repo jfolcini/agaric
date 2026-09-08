@@ -17,16 +17,23 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { useBlockAttachments } from '@/hooks/useBlockAttachments'
 import {
   _resetAttachmentInvalidationForTest,
   recordAttachmentInvalidation,
 } from '@/lib/attachment-invalidation'
+import type { AttachmentRow } from '@/lib/bindings'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
 const mockedToastError = vi.mocked(toast.error)
 const mockedToastSuccess = vi.mocked(toast.success)
 
@@ -43,7 +50,7 @@ afterEach(() => {
   })
 })
 
-function makeAttachmentRow(id: string, blockId: string, filename: string) {
+function makeAttachmentRow(id: string, blockId: string, filename: string): AttachmentRow {
   return {
     id,
     block_id: blockId,
@@ -51,13 +58,14 @@ function makeAttachmentRow(id: string, blockId: string, filename: string) {
     mime_type: 'application/pdf',
     size_bytes: 12345,
     fs_path: `/files/${filename}`,
-    created_at: '2025-01-01T00:00:00Z',
+    // Epoch-ms since migration 0081 — the literal here was an ISO string.
+    created_at: 1735689600000,
   }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue([])
+  stubInvoke({ list_attachments: () => [] })
   pageStore = createPageBlockStore('PAGE_1')
   _resetAttachmentInvalidationForTest()
 })
@@ -72,10 +80,7 @@ describe('useBlockAttachments loading', () => {
       makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf'),
       makeAttachmentRow('ATT_2', 'BLOCK_1', 'file2.png'),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return rows
-      return []
-    })
+    stubInvoke({ list_attachments: () => rows })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
@@ -108,14 +113,13 @@ describe('useBlockAttachments loading', () => {
   // to know it should refetch.
   it('refetches when the cross-tree attachment-invalidation bus fires', async () => {
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') {
+    stubInvoke({
+      list_attachments: () => {
         callCount += 1
         return callCount === 1
           ? [makeAttachmentRow('ATT_1', 'BLOCK_1', 'draft.txt')]
           : [makeAttachmentRow('ATT_1', 'BLOCK_1', 'final.txt')]
-      }
-      return []
+      },
     })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
@@ -137,9 +141,10 @@ describe('useBlockAttachments loading', () => {
   })
 
   it('shows toast error when loading attachments fails', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') throw new Error('Network error')
-      return []
+    stubInvoke({
+      list_attachments: () => {
+        throw new Error('Network error')
+      },
     })
 
     renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
@@ -159,14 +164,12 @@ describe('useBlockAttachments loading', () => {
 
 describe('useBlockAttachments loading state', () => {
   it('loading starts true and becomes false after attachments load', async () => {
-    let resolveList!: (value: unknown[]) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') {
-        return new Promise<unknown[]>((resolve) => {
+    let resolveList!: (value: AttachmentRow[]) => void
+    stubInvoke({
+      list_attachments: () =>
+        new Promise<AttachmentRow[]>((resolve) => {
           resolveList = resolve
-        })
-      }
-      return []
+        }),
     })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
@@ -184,13 +187,11 @@ describe('useBlockAttachments loading state', () => {
 
   it('loading becomes false even when listAttachments fails', async () => {
     let rejectList!: (reason: Error) => void
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') {
-        return new Promise<unknown[]>((_resolve, reject) => {
+    stubInvoke({
+      list_attachments: () =>
+        new Promise<AttachmentRow[]>((_resolve, reject) => {
           rejectList = reject
-        })
-      }
-      return []
+        }),
     })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
@@ -228,11 +229,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
       makeAttachmentRow('ATT_2', 'BLOCK_1', 'file2.pdf'),
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return existing
-      if (cmd === 'delete_attachment') return undefined
-      return undefined
-    })
+    stubInvoke({ list_attachments: () => existing, delete_attachment: () => null })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
@@ -262,10 +259,11 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
     const existing = [makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf')]
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return existing
-      if (cmd === 'delete_attachment') throw new Error('IPC failed')
-      return undefined
+    stubInvoke({
+      list_attachments: () => existing,
+      delete_attachment: () => {
+        throw new Error('IPC failed')
+      },
     })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
@@ -286,7 +284,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
   })
 
   it('does nothing when blockId is null', async () => {
-    mockedInvoke.mockResolvedValue(undefined)
+    stubInvoke({ delete_attachment: () => null })
 
     const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
 
@@ -309,7 +307,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
 describe('useBlockAttachments error paths', () => {
   it('listAttachments rejection shows toast and falls back to empty attachments', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('DB connection lost'))
+    stubInvoke({ list_attachments: () => Promise.reject(new Error('DB connection lost')) })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
@@ -329,9 +327,10 @@ describe('useBlockAttachments error paths', () => {
       makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf'),
       makeAttachmentRow('ATT_2', 'BLOCK_1', 'file2.pdf'),
     ]
-    mockedInvoke
-      .mockResolvedValueOnce(existing) // list_attachments succeeds
-      .mockRejectedValueOnce(new Error('FK constraint')) // delete_attachment fails
+    stubInvoke({
+      list_attachments: () => existing,
+      delete_attachment: () => Promise.reject(new Error('FK constraint')),
+    })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
 
@@ -365,10 +364,9 @@ describe('useBlockAttachments batch-provider seeding', () => {
     // Provider's `list_attachments_batch` IPC returns the seeded rows.
     // The per-block `list_attachments` IPC must NEVER fire when the batch
     // already holds the rows.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments_batch') return { BLOCK_BATCH_1: seeded }
-      if (cmd === 'list_attachments') return [] // would be wrong if hit
-      return undefined
+    stubInvoke({
+      list_attachments_batch: () => ({ BLOCK_BATCH_1: seeded }),
+      list_attachments: () => [], // would be wrong if hit
     })
 
     const batchWrapper = ({ children }: { children: ReactNode }) =>
@@ -397,10 +395,7 @@ describe('useBlockAttachments batch-provider seeding', () => {
 
   it('falls back to listAttachments IPC when no provider is mounted', async () => {
     const rows = [makeAttachmentRow('ATT_1', 'BLOCK_NOBATCH', 'x.pdf')]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return rows
-      return []
-    })
+    stubInvoke({ list_attachments: () => rows })
 
     const { result } = renderHook(() => useBlockAttachments('BLOCK_NOBATCH'), {
       wrapper,

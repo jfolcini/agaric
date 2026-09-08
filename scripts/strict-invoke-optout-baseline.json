@@ -6,6 +6,5 @@
   "src/components/query/__tests__/QueryResultList.test.tsx",
   "src/components/query/__tests__/QueryResultTable.test.tsx",
   "src/hooks/__tests__/inline-query-equivalence.test.ts",
-  "src/hooks/__tests__/useAndroidBackButton.test.tsx",
-  "src/hooks/__tests__/useQueryExecution.test.ts"
+  "src/hooks/__tests__/useAndroidBackButton.test.tsx"
 ]

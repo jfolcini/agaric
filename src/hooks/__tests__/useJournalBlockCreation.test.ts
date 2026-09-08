@@ -23,9 +23,13 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
+import type { WithOps } from '@/lib/bindings'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import type { BlockRow } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -44,6 +48,16 @@ import {
 } from '@/lib/template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** `create_block` answers with the row inside the `op_refs` envelope. */
+function createdBlock(parentId: string, position: number): WithOps<BlockRow> {
+  return withOps(makeBlockRow({ id: 'B1', content: '', parent_id: parentId, position }))
+}
+
 const mockedLoadJournalTemplate = vi.mocked(loadJournalTemplate)
 const mockedLoadJournalTemplateForSpace = vi.mocked(loadJournalTemplateForSpace)
 const mockedInsertTemplateBlocks = vi.mocked(insertTemplateBlocks)
@@ -107,10 +121,7 @@ describe('useJournalBlockCreation', () => {
     // `BlockTree.autoCreateFirstBlock` is the single owner of that
     // seed-block create; calling it here too raced and produced two
     // blocks for the same page.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result, pageCreatedCalls } = setup()
 
@@ -142,10 +153,7 @@ describe('useJournalBlockCreation', () => {
   // bus emission it did not reach the picker's cache at all: a journal day
   // the user is looking at was unfindable by the name it displays.
   it("publishes an 'added' event for the date page it creates", async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
@@ -164,6 +172,10 @@ describe('useJournalBlockCreation', () => {
   })
 
   it('publishes nothing when the day already has a page', async () => {
+    // The existing-page path still seeds a block; the previous literal stub
+    // left it unmodelled, so it resolved `null` off a leaked catch-all.
+    stubInvoke({ create_block: () => createdBlock('PEXIST', 1) })
+
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
     try {
@@ -181,12 +193,7 @@ describe('useJournalBlockCreation', () => {
   })
 
   it('does not create a new page when one already exists in pageMap', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') {
-        return { id: 'B1', block_type: 'content', content: '', parent_id: 'PEXIST', position: 1 }
-      }
-      return null
-    })
+    stubInvoke({ create_block: () => createdBlock('PEXIST', 1) })
 
     const { result, pageCreatedCalls } = setup(new Map([['2025-06-15', 'PEXIST']]))
 
@@ -217,10 +224,7 @@ describe('useJournalBlockCreation', () => {
     mockedLoadJournalTemplateForSpace.mockResolvedValue('# Daily plan\n- ')
     mockedInsertTemplateBlocksFromString.mockResolvedValue(['ID1', 'ID2'])
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result } = setup()
 
@@ -259,10 +263,7 @@ describe('useJournalBlockCreation', () => {
     })
     mockedInsertTemplateBlocks.mockResolvedValue(['T1'])
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result } = setup()
 
@@ -289,10 +290,7 @@ describe('useJournalBlockCreation', () => {
     mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
     mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result, pageCreatedCalls } = setup()
 
@@ -335,7 +333,7 @@ describe('useJournalBlockCreation', () => {
   })
 
   it('shows a toast when create_page_in_space rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend down'))
+    stubInvoke({ create_page_in_space: () => Promise.reject(new Error('backend down')) })
 
     const { result } = setup()
 
@@ -349,12 +347,9 @@ describe('useJournalBlockCreation', () => {
   })
 
   it('does not re-create a page once it exists in createdPages (idempotent)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      if (cmd === 'create_block') {
-        return { id: 'B1', block_type: 'content', content: '', parent_id: 'PNEW', position: 0 }
-      }
-      return null
+    stubInvoke({
+      create_page_in_space: () => 'PNEW',
+      create_block: () => createdBlock('PNEW', 0),
     })
 
     const { result } = setup()
@@ -387,13 +382,11 @@ describe('useJournalBlockCreation', () => {
   // same date.
   it('does not fire two create_page_in_space IPCs on a double-click before the first resolves', async () => {
     const resolvers: Array<(v: string) => void> = []
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') {
-        return new Promise((resolve) => {
+    stubInvoke({
+      create_page_in_space: () =>
+        new Promise<string>((resolve) => {
           resolvers.push(resolve)
-        })
-      }
-      return null
+        }),
     })
 
     const { result } = setup()
@@ -421,14 +414,12 @@ describe('useJournalBlockCreation', () => {
   })
 
   it('does not fire two create_block IPCs on a double-click before the first resolves (existing page)', async () => {
-    const resolvers: Array<(v: unknown) => void> = []
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') {
-        return new Promise((resolve) => {
+    const resolvers: Array<(v: WithOps<BlockRow>) => void> = []
+    stubInvoke({
+      create_block: () =>
+        new Promise<WithOps<BlockRow>>((resolve) => {
           resolvers.push(resolve)
-        })
-      }
-      return null
+        }),
     })
 
     const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
@@ -443,13 +434,7 @@ describe('useJournalBlockCreation', () => {
     expect(resolvers).toHaveLength(1)
 
     await act(async () => {
-      resolvers[0]?.({
-        id: 'B1',
-        block_type: 'content',
-        content: '',
-        parent_id: 'PEXIST',
-        position: 1,
-      })
+      resolvers[0]?.(createdBlock('PEXIST', 1))
       await Promise.all([p1, p2])
     })
 
@@ -474,12 +459,7 @@ describe('useJournalBlockCreation', () => {
       selectionFocusId: 'OTHER_B',
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') {
-        return { id: 'B1', block_type: 'content', content: '', parent_id: 'PEXIST', position: 1 }
-      }
-      return null
-    })
+    stubInvoke({ create_block: () => createdBlock('PEXIST', 1) })
 
     const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
 
@@ -507,10 +487,7 @@ describe('useJournalBlockCreation', () => {
     mockedLoadJournalTemplateForSpace.mockResolvedValue('# Daily plan\n- ')
     mockedInsertTemplateBlocksFromString.mockResolvedValue(['ID1', 'ID2'])
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') return 'PNEW'
-      return null
-    })
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result } = setup()
 

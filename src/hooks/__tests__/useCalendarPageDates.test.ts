@@ -16,15 +16,26 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makePage } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   __resetCalendarPageDatesForTests,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
+import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
+
+/**
+ * What the next `list_journal_pages_in_range` answers with. Reassigned per
+ * test rather than re-stubbed, so the command-keyed seam stays installed and
+ * a test that needs per-call behaviour (a deferred resolve, a first-call
+ * failure) owns that state explicitly instead of through a positional queue.
+ */
+let journalPagesResponse: () => BlockRow[] | Promise<BlockRow[]> = () => []
 
 /** Count of `list_journal_pages_in_range` IPC round trips so far. */
 function fetchCallCount(): number {
@@ -47,7 +58,10 @@ beforeEach(() => {
   })
   // Follow-up: the underlying fetch is `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (not a paginated envelope).
-  mockedInvoke.mockResolvedValue([])
+  journalPagesResponse = () => []
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ list_journal_pages_in_range: () => journalPagesResponse() }),
+  )
 })
 
 afterEach(() => {
@@ -67,10 +81,10 @@ describe('useCalendarPageDates', () => {
   })
 
   it('populates pageMap with pages returned by list_journal_pages_in_range', async () => {
-    mockedInvoke.mockResolvedValue([
-      { id: 'P1', block_type: 'page', content: '2025-06-15' },
-      { id: 'P2', block_type: 'page', content: '2025-06-16' },
-    ])
+    journalPagesResponse = () => [
+      makePage({ id: 'P1', content: '2025-06-15' }),
+      makePage({ id: 'P2', content: '2025-06-16' }),
+    ]
 
     const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -114,7 +128,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('exposes highlightedDays derived from pageMap keys', async () => {
-    mockedInvoke.mockResolvedValue([{ id: 'P1', block_type: 'page', content: '2025-06-15' }])
+    journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
 
     const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -148,7 +162,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('addPage is a no-op when the entry already matches', async () => {
-    mockedInvoke.mockResolvedValue([{ id: 'P1', block_type: 'page', content: '2025-06-15' }])
+    journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
 
     const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -208,10 +222,10 @@ describe('useCalendarPageDates', () => {
   it('issues a single un-paginated fetch', async () => {
     // Replaces the cursor-paginated `list_blocks` loop with a
     // single `list_journal_pages_in_range` call.
-    mockedInvoke.mockResolvedValue([
-      { id: 'P1', block_type: 'page', content: '2025-06-01' },
-      { id: 'P2', block_type: 'page', content: '2025-06-02' },
-    ])
+    journalPagesResponse = () => [
+      makePage({ id: 'P1', content: '2025-06-01' }),
+      makePage({ id: 'P2', content: '2025-06-02' }),
+    ]
 
     const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -230,7 +244,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('shows toast on fetch failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('boom'))
+    journalPagesResponse = () => Promise.reject(new Error('boom'))
 
     const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -274,7 +288,7 @@ describe('useCalendarPageDates', () => {
   })
 
   it('the cached result still carries the fetched page map to the second subscriber (#3626)', async () => {
-    mockedInvoke.mockResolvedValue([{ id: 'P1', block_type: 'page', content: '2025-06-15' }])
+    journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
 
     const first = renderHook(() => useCalendarPageDates(RANGE))
     await waitFor(() => {
@@ -315,13 +329,15 @@ describe('useCalendarPageDates', () => {
     // pre-mutation world and must not be promoted into the cache when it
     // lands, or the invalidation is silently undone by the very request it
     // was racing.
-    let release: (rows: unknown[]) => void = () => {}
-    mockedInvoke.mockImplementationOnce(
-      async () =>
-        await new Promise<unknown[]>((resolve) => {
-          release = resolve
-        }),
-    )
+    let release: (rows: BlockRow[]) => void = () => {}
+    let deferred = true
+    journalPagesResponse = () => {
+      if (!deferred) return []
+      deferred = false
+      return new Promise<BlockRow[]>((resolve) => {
+        release = resolve
+      })
+    }
 
     const first = renderHook(() => useCalendarPageDates(RANGE))
     invalidateCalendarPageDates()
@@ -363,7 +379,11 @@ describe('useCalendarPageDates', () => {
   })
 
   it('a rejected fetch is not cached — the next subscriber retries (#3626)', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('boom'))
+    let attempts = 0
+    journalPagesResponse = () => {
+      attempts += 1
+      return attempts === 1 ? Promise.reject(new Error('boom')) : []
+    }
 
     const first = renderHook(() => useCalendarPageDates(RANGE))
     await waitFor(() => {

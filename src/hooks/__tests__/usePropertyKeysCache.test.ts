@@ -33,6 +33,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 // hits the mocked `listen()` above.
 ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   _resetPropertyKeysCacheForTest,
   invalidatePropertyKeysCache,
@@ -41,11 +42,24 @@ import {
 
 const mockedInvoke = vi.mocked(invoke)
 
+/**
+ * What `list_property_keys` currently returns. Tests that exercise a refetch
+ * reassign this instead of re-stubbing, so the seam stays installed for the
+ * whole test and the refetch is what changes the answer.
+ */
+let propertyKeys: string[] | (() => never) = ['project', 'effort']
+
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
   _resetPropertyKeysCacheForTest()
-  mockedInvoke.mockResolvedValue(['project', 'effort'])
+  propertyKeys = ['project', 'effort']
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      list_property_keys: () =>
+        typeof propertyKeys === 'function' ? propertyKeys() : propertyKeys,
+    }),
+  )
 })
 
 afterEach(() => {
@@ -98,10 +112,7 @@ describe('usePropertyKeysCache', () => {
   // (b) Different spaceIds fire separate IPCs
   // ------------------------------------------------------------------
   it('fetches independently for different spaceIds', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_keys') return ['key-from-current-space']
-      return undefined
-    })
+    propertyKeys = ['key-from-current-space']
 
     const { result: rA } = renderHook(() => usePropertyKeysCache('SPACE_A'))
     const { result: rB } = renderHook(() => usePropertyKeysCache('SPACE_B'))
@@ -139,7 +150,7 @@ describe('usePropertyKeysCache', () => {
     // The Tauri listener was registered on first mount — fire the
     // materializer event with a NEW key and confirm the active consumer
     // refetches the refreshed key list (#2507 keyed invalidation).
-    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
+    propertyKeys = ['project', 'effort', 'assignee']
     act(() => {
       fireInvalidationEvent(['assignee'])
     })
@@ -173,7 +184,7 @@ describe('usePropertyKeysCache', () => {
       expect(result.current).toEqual(['project', 'effort'])
     })
 
-    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
+    propertyKeys = ['project', 'effort', 'assignee']
     act(() => {
       invalidatePropertyKeysCache()
     })
@@ -199,7 +210,7 @@ describe('usePropertyKeysCache', () => {
 
     // Materializer signals that a new property key appeared — the active
     // observers refetch through the shared query (a single fresh IPC).
-    mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee'])
+    propertyKeys = ['project', 'effort', 'assignee']
     act(() => {
       fireInvalidationEvent(['assignee'])
     })
@@ -218,7 +229,9 @@ describe('usePropertyKeysCache', () => {
   // Misc: error path falls back to empty array
   // ------------------------------------------------------------------
   it('falls back to an empty array when listPropertyKeys rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
+    propertyKeys = () => {
+      throw new Error('IPC failure')
+    }
 
     const { result } = renderHook(() => usePropertyKeysCache('SPACE_A'))
 

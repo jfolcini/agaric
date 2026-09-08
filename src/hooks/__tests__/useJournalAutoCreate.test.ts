@@ -3,16 +3,25 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makePage } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useJournalAutoCreate } from '@/hooks/useJournalAutoCreate'
+import type { BlockRow } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
+
+/** What the `get_journal_page_by_date` probe answers with; `null` = no page. */
+let journalPageProbe: BlockRow | null = null
 
 beforeEach(() => {
   vi.clearAllMocks()
   // The hook now probes `get_journal_page_by_date` instead of
   // checking an in-memory pageMap. Default to "no page exists" so the
   // existing auto-create assertions still hold without per-test setup.
-  mockedInvoke.mockResolvedValue(null)
+  journalPageProbe = null
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ get_journal_page_by_date: () => journalPageProbe }),
+  )
 })
 
 /** Today's date in `YYYY-MM-DD` form — auto-create only fires when
@@ -69,7 +78,7 @@ describe('useJournalAutoCreate', () => {
   })
 
   it('does not auto-create when get_journal_page_by_date returns an existing page', async () => {
-    mockedInvoke.mockResolvedValue({ id: 'EXISTING', block_type: 'page', content: todayStr })
+    journalPageProbe = makePage({ id: 'EXISTING', content: todayStr })
     const opts = makeOptions()
     renderHook(() => useJournalAutoCreate(opts))
 
@@ -223,7 +232,7 @@ describe('useJournalAutoCreate', () => {
   it('does not trigger shortcut when probe reports an existing page', async () => {
     // Existing-page probe response — both the mount-effect probe and the
     // shortcut-driven probe see this answer.
-    mockedInvoke.mockResolvedValue({ id: 'EXISTING', block_type: 'page', content: todayStr })
+    journalPageProbe = makePage({ id: 'EXISTING', content: todayStr })
     const opts = makeOptions()
     renderHook(() => useJournalAutoCreate(opts))
 
