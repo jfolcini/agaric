@@ -105,7 +105,7 @@ return reddens the tokenizer one, so the `void` rewrite kept both honest. The
 The six touched files run 584 tests green; `src/editor` plus `EditableBlock`,
 which is the blast radius of the `use-roving-editor` hoist, another 2181.
 
-## Addendum — the stale line is corrected
+## Addendum — the stale line is corrected, then corrected again
 
 The maintainer approved editing `src/__tests__/AGENTS.md`, so the claim that
 `Storage.prototype` spies do not intercept `localStorage` under happy-dom is
@@ -114,3 +114,18 @@ there and why it is not true on happy-dom 20.12.0 — with the two tests that
 depend on the working behaviour named, and a re-check trigger for the next
 happy-dom major. Deleting the clause outright would have left the next person
 who remembers the old rule free to reinstate it.
+
+The first correction was itself too strong. It said the spies work, full stop.
+They work once per file: happy-dom's `Storage` is a `Proxy` whose `get` trap
+copies the prototype method onto the instance as an own bound property on first
+access and caches the name, so the first `Storage.prototype` spy in a file
+intercepts and every later one is invisible. jsdom forwards to the prototype on
+every access, which is why the same file passes there. Four files stay pinned to
+jsdom for exactly that, and one of them is order-dependent — it passes in
+isolation and fails once a preceding test has frozen the binding.
+
+The two tests the review note worried about are fine because their spy is the
+first in the file, which is what the three probes measured. The mechanism is
+what the probes did not reach, and the paragraph now names it, along with the
+trap that follows from it: a `not.toHaveBeenCalled()` behind a later spy is
+vacuous under happy-dom rather than red.
