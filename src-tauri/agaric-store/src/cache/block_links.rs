@@ -332,6 +332,129 @@ pub async fn rebuild_block_links_unresolved(pool: &SqlitePool) -> Result<(), App
 }
 
 // ---------------------------------------------------------------------------
+// backfill_block_links — the one-shot vault-wide fill
+// ---------------------------------------------------------------------------
+
+/// `app_settings` key recording that [`backfill_block_links`] has run.
+///
+/// Versioned so a future correction can re-arm the pass by bumping the
+/// suffix, the way `repair.tag_space_misfiled.v1` does.
+const BLOCK_LINKS_BACKFILL_MARKER: &str = "repair.block_links_backfill.v1";
+
+/// One-shot vault-wide backfill of `block_links` (and, through the reindexer,
+/// `block_links_unresolved`) from block content.
+///
+/// # The hole this fills
+///
+/// `block_links` has only ever been maintained INCREMENTALLY, by
+/// [`reindex_block_links`] on the write paths. Nothing has ever derived it
+/// vault-wide: migration 0001 creates the table empty, 0061 only rebuilds it
+/// to add FK cascades, `db/recovery/` does not touch it, and there is no
+/// `rebuild_block_links` behind the per-block reindexer the way
+/// [`rebuild_block_links_unresolved`] sits behind `sync_unresolved_links`.
+///
+/// So every `[[ULID]]` / `((ULID))` token written before its block was last
+/// re-saved is absent from the link graph, permanently. The user sees it as
+/// missing backlinks: `page_link_cache` and `pages_cache.inbound_link_count`
+/// are both rolled up FROM `block_links`, so the hole propagates to every
+/// linked-references panel and inbound count in the app.
+///
+/// This is the same defect #3839 fixed one layer up. Migration 0110
+/// backfilled `page_link_cache` "for every vault upgrading past migration
+/// 0065 (which created the table with NO backfill)" — but it rebuilt the
+/// rollup from `block_links`, which had the identical hole underneath it, so
+/// the rollup faithfully reproduced it.
+///
+/// # Why Rust and not a migration
+///
+/// 0110 could be SQL because it transcribed SQL. This one cannot: the source
+/// of truth is `ULID_LINK_RE`, which deliberately accepts MIXED delimiters
+/// (`[[ULID))`), and hand-writing that in a recursive CTE would be a second
+/// implementation of the tokenizer — the thing the shared-regex comment in
+/// `cache/mod.rs` exists to prevent. Reindexing each candidate through the
+/// production path instead means the backfill cannot disagree with the
+/// incremental writer about what a link is.
+///
+/// # Why gated to run once
+///
+/// The candidate scan is a sequential `LIKE` over `blocks`, and a block whose
+/// tokens are all cross-space or self-referential legitimately produces no
+/// row — so "has tokens but no edges" cannot distinguish a hole from a
+/// converged vault, and there is no cheap precondition to test. The damage is
+/// historical: every write path since has maintained the graph correctly.
+/// Paying a full scan on every boot forever to find something that can only
+/// exist once is the wrong trade, so the marker retires it. A regression that
+/// reintroduces holes is caught by `reconciliation_oracle.rs`'s
+/// `block_links.row` arm, which is what found this one.
+///
+/// The marker is written even when nothing needed repair: its point is to
+/// retire the SCAN, not to record that work happened.
+///
+/// # Errors
+/// Returns [`AppError`] if any statement fails. The caller treats that as
+/// best-effort — the marker is only written on the committed path, so a
+/// failed run is retried on the next boot.
+pub async fn backfill_block_links(pool: &SqlitePool) -> Result<usize, AppError> {
+    let done: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        BLOCK_LINKS_BACKFILL_MARKER,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if done.is_some() {
+        return Ok(0);
+    }
+
+    let mut tx = crate::db::begin_immediate_logged(pool, "block_links_backfill").await?;
+
+    // The `LIKE` pair is a cheap prefilter, not the tokenizer: it only has to
+    // be a SUPERSET of what `ULID_LINK_RE` matches, and every token it can
+    // match opens with `[[` or `((`. `reindex_block_links_conn` decides what
+    // is actually a link.
+    let candidates: Vec<String> = sqlx::query_scalar!(
+        "SELECT id FROM blocks          WHERE deleted_at IS NULL            AND (content LIKE '%[[%' OR content LIKE '%((%')",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
+        .fetch_one(&mut *tx)
+        .await?;
+
+    for id in &candidates {
+        reindex_block_links_conn(&mut tx, id).await?;
+    }
+
+    let after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
+        .fetch_one(&mut *tx)
+        .await?;
+
+    let now = crate::db::now_ms();
+    let scanned = candidates.len().to_string();
+    sqlx::query!(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        BLOCK_LINKS_BACKFILL_MARKER,
+        scanned,
+        now,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // The rollups read `block_links`, so they are rebuilt only when it
+    // actually moved. Outside the transaction above because both take a pool
+    // and open their own; the window between is pre-UI at boot, and each is
+    // idempotent, so a crash inside it heals on the next rebuild.
+    let added = usize::try_from(after.saturating_sub(before)).unwrap_or(0);
+    if added > 0 {
+        crate::cache::rebuild_page_link_cache(pool).await?;
+        crate::cache::rebuild_pages_cache_counts(pool).await?;
+    }
+
+    Ok(added)
+}
+// ---------------------------------------------------------------------------
 // reindex_block_links (p1-t21)
 // ---------------------------------------------------------------------------
 

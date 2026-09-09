@@ -1241,6 +1241,22 @@ fn bootstrap_spaces_and_sweep(
         device_id,
         materializer,
     ));
+
+    // `block_links` has only ever been maintained incrementally, so every
+    // link token written before its block was last re-saved is missing from
+    // the graph — and `page_link_cache` / `pages_cache.inbound_link_count`
+    // roll up from it, so the user sees it as missing backlinks. One-shot,
+    // marker-gated, best-effort like its neighbours. Last, because the
+    // repairs above can rehome content and a link's eligibility depends on
+    // the source's resolved space.
+    if let Err(e) =
+        tauri::async_runtime::block_on(agaric_store::cache::backfill_block_links(&pools.write))
+    {
+        tracing::error!(
+            error = %e,
+            "link-graph backfill failed — boot continues; the next boot retries it"
+        );
+    }
     Ok(())
 }
 

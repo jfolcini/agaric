@@ -5894,3 +5894,122 @@ fn rebuild_block_links_unresolved_residency_at_50k_blocks_4242() {
 fn rebuild_block_links_unresolved_residency_at_100k_blocks_4242() {
     residency_lane_is_not_linux_4273();
 }
+
+// ====================================================================
+// backfill_block_links — the one-shot vault-wide fill
+// ====================================================================
+
+/// The historical hole: content full of link tokens, `block_links` empty,
+/// because nothing ever derived it vault-wide and these blocks have not been
+/// re-saved since. This is the shape a real vault was found in — 234 of 315
+/// tokens unrepresented, and every backlink panel short by that much.
+#[tokio::test]
+async fn backfill_block_links_fills_a_vault_that_never_indexed_its_links() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "01HZ00000000000000000000AB", "page", "Target A").await;
+    insert_block(&pool, "01HZ00000000000000000000CD", "page", "Target B").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "See [[01HZ00000000000000000000AB]] and [[01HZ00000000000000000000CD]]",
+    )
+    .await;
+
+    // No reindex ran, so the graph is empty exactly as the defect leaves it.
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        0,
+        "precondition: the vault has never indexed a link"
+    );
+
+    let added = backfill_block_links(&pool).await.unwrap();
+
+    assert_eq!(added, 2, "both tokens must reach the graph");
+    let rows = sqlx::query!(
+        "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+        "01HZ0000000000000000000SRC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+    assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+
+    // The rollup the user actually sees is rebuilt from it, not left behind.
+    assert!(
+        count_rows(&pool, "page_link_cache").await > 0,
+        "page_link_cache must be re-derived once block_links moves — it is \
+         what backlinks and inbound counts read"
+    );
+}
+
+/// A token whose target does not exist is an obligation, not a link: it
+/// belongs in `block_links_unresolved` so the referrer is re-linked if the
+/// target ever arrives. The backfill must record those too, or the vault is
+/// left with a hole that no later create can close.
+#[tokio::test]
+async fn backfill_block_links_records_unresolvable_tokens_as_obligations() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "See [[01HZ0000000000000000MISSING]] and [[01HZ00000000000000000000ZZ]]",
+    )
+    .await;
+
+    backfill_block_links(&pool).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        0,
+        "neither target exists, so nothing is linkable"
+    );
+    assert_eq!(
+        count_rows(&pool, "block_links_unresolved").await,
+        1,
+        "the one well-formed unresolvable token is recorded as an obligation"
+    );
+}
+
+/// The marker retires the scan. Without this the pass would re-scan every
+/// boot forever, which is the trade the marker exists to refuse.
+#[tokio::test]
+async fn backfill_block_links_runs_once_per_vault() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "01HZ00000000000000000000AB", "page", "Target A").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "See [[01HZ00000000000000000000AB]]",
+    )
+    .await;
+    assert_eq!(backfill_block_links(&pool).await.unwrap(), 1);
+
+    // A second link-bearing block arrives without a reindex. The real write
+    // path would have indexed it; the backfill must NOT go looking again.
+    insert_block(
+        &pool,
+        "01HZ000000000000000000SRC2",
+        "content",
+        "Also [[01HZ00000000000000000000AB]]",
+    )
+    .await;
+
+    assert_eq!(
+        backfill_block_links(&pool).await.unwrap(),
+        0,
+        "the marker must retire the scan"
+    );
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        1,
+        "the second block is the incremental path's job, not the backfill's"
+    );
+}
