@@ -1294,7 +1294,7 @@ describe('useNavigationStore', () => {
       expect(parsed.state).not.toHaveProperty('currentView')
     })
 
-    it('restores tabs from the tabs storage key on re-create', () => {
+    it('restores tabs from the tabs storage key on re-create', async () => {
       const persistedState = {
         state: {
           tabs: [
@@ -1310,7 +1310,7 @@ describe('useNavigationStore', () => {
       localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(persistedState))
 
       // Trigger rehydration
-      useTabsStore.persist.rehydrate()
+      await useTabsStore.persist.rehydrate()
 
       const tabs = useTabsStore.getState()
       expect(tabs.tabs).toHaveLength(2)
@@ -1345,7 +1345,7 @@ describe('useNavigationStore', () => {
       expect(useTabsStore.getState().tabs).toBeDefined()
     })
 
-    it('derives nextTabId from persisted tabs to avoid ID collisions', () => {
+    it('derives nextTabId from persisted tabs to avoid ID collisions', async () => {
       const persistedState = {
         state: {
           tabs: [
@@ -1360,7 +1360,7 @@ describe('useNavigationStore', () => {
       }
       localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(persistedState))
 
-      useTabsStore.persist.rehydrate()
+      await useTabsStore.persist.rehydrate()
 
       // After rehydrating tabs with max ID '5', new tabs should get ID '6'+
       useTabsStore.getState().openInNewTab('P3', 'Page 3')
@@ -1370,7 +1370,7 @@ describe('useNavigationStore', () => {
       expect(newTabId).toBeGreaterThanOrEqual(6)
     })
 
-    it('navigation v1→v2 migrate strips tab fields from legacy persisted blob', () => {
+    it('navigation v1→v2 migrate strips tab fields from legacy persisted blob', async () => {
       // Simulate a pre-split user who had tabs persisted under the
       // navigation key. The v2 migrate function drops them — users get a
       // fresh tab list on first post-split boot (documented one-time UX
@@ -1387,7 +1387,7 @@ describe('useNavigationStore', () => {
       }
       localStorage.setItem(NAV_STORAGE_KEY, JSON.stringify(legacyShape))
 
-      useNavigationStore.persist.rehydrate()
+      await useNavigationStore.persist.rehydrate()
 
       const state = useNavigationStore.getState()
       // currentView survives the migration.

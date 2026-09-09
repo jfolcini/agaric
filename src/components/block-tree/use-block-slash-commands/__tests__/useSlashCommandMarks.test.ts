@@ -100,11 +100,11 @@ describe('useSlashCommandMarks — registration', () => {
 })
 
 describe('useSlashCommandMarks — with a selection: toggle the mark', () => {
-  it.each(MARK_IDS)('/%s toggles the mark when text is selected', (id) => {
+  it.each(MARK_IDS)('/%s toggles the mark when text is selected', async (id) => {
     const { result } = renderHook(() => useSlashCommandMarks())
     const { ctx, chainCalls, insertContentArgs } = ctxWithEditor({ from: 3, to: 8 })
 
-    result.current.exact[id]?.(ctx, { id, label: id })
+    await result.current.exact[id]?.(ctx, { id, label: id })
 
     expect(chainCalls).toContain(EXPECTED[id].toggle)
     // No delimiter insertion on the selection path.
@@ -113,25 +113,25 @@ describe('useSlashCommandMarks — with a selection: toggle the mark', () => {
 })
 
 describe('useSlashCommandMarks — no selection: insert delimiter pair, park caret', () => {
-  it.each(MARK_IDS)('/%s inserts the doubled delimiter and centres the caret', (id) => {
+  it.each(MARK_IDS)('/%s inserts the doubled delimiter and centres the caret', async (id) => {
     const { result } = renderHook(() => useSlashCommandMarks())
     // Empty selection at pos 5. After inserting the pair the caret sits after
     // both delimiters (5 + 2·len); the handler rewinds by one delimiter to land
     // *between* the pair → 5 + len.
     const { ctx, insertContentArgs, setTextSelectionArgs } = ctxWithEditor({ from: 5, to: 5 })
 
-    result.current.exact[id]?.(ctx, { id, label: id })
+    await result.current.exact[id]?.(ctx, { id, label: id })
 
     const { delimiter } = EXPECTED[id]
     expect(insertContentArgs).toEqual([delimiter + delimiter])
     expect(setTextSelectionArgs).toEqual([5 + delimiter.length])
   })
 
-  it('does not toggle a mark when there is no selection', () => {
+  it('does not toggle a mark when there is no selection', async () => {
     const { result } = renderHook(() => useSlashCommandMarks())
     const { ctx, chainCalls } = ctxWithEditor({ from: 2, to: 2 })
 
-    result.current.exact['bold']?.(ctx, { id: 'bold', label: 'bold' })
+    await result.current.exact['bold']?.(ctx, { id: 'bold', label: 'bold' })
 
     expect(chainCalls).not.toContain('toggleBold')
     expect(chainCalls).toContain('insertContent')

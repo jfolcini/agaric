@@ -468,17 +468,17 @@ describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quot
     },
   )
 
-  it('/query opens the visual builder instead of inserting raw syntax (#215)', () => {
+  it('/query opens the visual builder instead of inserting raw syntax (#215)', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, openQueryBuilder } = makeSyntheticCtx()
-    result.current.exact['query']?.(ctx, { id: 'query', label: 'Query' })
+    await result.current.exact['query']?.(ctx, { id: 'query', label: 'Query' })
     expect(openQueryBuilder).toHaveBeenCalledOnce()
   })
 
-  it('/emoji opens the browse-grid picker instead of inserting text (#286)', () => {
+  it('/emoji opens the browse-grid picker instead of inserting text (#286)', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, openEmojiPicker } = makeSyntheticCtx()
-    result.current.exact['emoji']?.(ctx, { id: 'emoji', label: 'Emoji' })
+    await result.current.exact['emoji']?.(ctx, { id: 'emoji', label: 'Emoji' })
     expect(openEmojiPicker).toHaveBeenCalledOnce()
   })
 })
@@ -511,17 +511,17 @@ describe('useSlashCommandStructural — table', () => {
     return { ctx, insertTable }
   }
 
-  it('/table inserts a 3×3 table WITH a header row', () => {
+  it('/table inserts a 3×3 table WITH a header row', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, insertTable } = ctxWithInsertTableSpy()
-    result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
+    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
     expect(insertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
   })
 
-  it('/table-no-header inserts a 3×3 table WITHOUT a header row (#215)', () => {
+  it('/table-no-header inserts a 3×3 table WITHOUT a header row (#215)', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, insertTable } = ctxWithInsertTableSpy()
-    result.current.exact['table-no-header']?.(ctx, {
+    await result.current.exact['table-no-header']?.(ctx, {
       id: 'table-no-header',
       label: 'Table (no header)',
     })

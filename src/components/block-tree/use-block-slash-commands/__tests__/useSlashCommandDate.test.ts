@@ -16,41 +16,41 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 describe('useSlashCommandDate', () => {
-  it('opens picker in `date` mode for /date', () => {
+  it('opens picker in `date` mode for /date', async () => {
     const { result } = renderHook(() => useSlashCommandDate())
     const { ctx, setDatePickerMode, setDatePickerOpen } = makeSyntheticCtx()
 
-    result.current.exact['date']?.(ctx, { id: 'date', label: 'DATE' })
+    await result.current.exact['date']?.(ctx, { id: 'date', label: 'DATE' })
 
     expect(setDatePickerMode).toHaveBeenCalledWith('date')
     expect(setDatePickerOpen).toHaveBeenCalledWith(true)
   })
 
-  it('opens picker in `due` mode for /due', () => {
+  it('opens picker in `due` mode for /due', async () => {
     const { result } = renderHook(() => useSlashCommandDate())
     const { ctx, setDatePickerMode, setDatePickerOpen } = makeSyntheticCtx()
 
-    result.current.exact['due']?.(ctx, { id: 'due', label: 'DUE' })
+    await result.current.exact['due']?.(ctx, { id: 'due', label: 'DUE' })
 
     expect(setDatePickerMode).toHaveBeenCalledWith('due')
     expect(setDatePickerOpen).toHaveBeenCalledWith(true)
   })
 
-  it('opens picker in `schedule` mode for /schedule', () => {
+  it('opens picker in `schedule` mode for /schedule', async () => {
     const { result } = renderHook(() => useSlashCommandDate())
     const { ctx, setDatePickerMode, setDatePickerOpen } = makeSyntheticCtx()
 
-    result.current.exact['schedule']?.(ctx, { id: 'schedule', label: 'SCHEDULED' })
+    await result.current.exact['schedule']?.(ctx, { id: 'schedule', label: 'SCHEDULED' })
 
     expect(setDatePickerMode).toHaveBeenCalledWith('schedule')
     expect(setDatePickerOpen).toHaveBeenCalledWith(true)
   })
 
-  it('opens picker in `repeat-until` mode for /repeat-until', () => {
+  it('opens picker in `repeat-until` mode for /repeat-until', async () => {
     const { result } = renderHook(() => useSlashCommandDate())
     const { ctx, setDatePickerMode, setDatePickerOpen } = makeSyntheticCtx()
 
-    result.current.exact['repeat-until']?.(ctx, { id: 'repeat-until', label: 'REPEAT UNTIL' })
+    await result.current.exact['repeat-until']?.(ctx, { id: 'repeat-until', label: 'REPEAT UNTIL' })
 
     expect(setDatePickerMode).toHaveBeenCalledWith('repeat-until')
     expect(setDatePickerOpen).toHaveBeenCalledWith(true)

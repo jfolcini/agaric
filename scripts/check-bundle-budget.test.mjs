@@ -4,7 +4,10 @@ import test from 'node:test'
 import { evaluateBudgets, TRACKED } from './check-bundle-budget.mjs'
 import { VENDOR_CHUNK_GROUPS } from './vendor-chunk-groups.ts'
 
-test('every declared vendor chunk is tracked by the budget gate', () => {
+// Every `test()` below is `void`-ed: node:test's returned promise fulfils even
+// when the test fails — the runner owns the failure report and the exit code —
+// so there is nothing for a caller to await or catch.
+void test('every declared vendor chunk is tracked by the budget gate', () => {
   assert.equal(TRACKED[0], 'index')
   assert.deepEqual(
     TRACKED.slice(1),
@@ -12,7 +15,7 @@ test('every declared vendor chunk is tracked by the budget gate', () => {
   )
 })
 
-test('sizes within complete budgets pass evaluation', () => {
+void test('sizes within complete budgets pass evaluation', () => {
   const result = evaluateBudgets({ index: 100, vendor: 40 }, { index: 110, vendor: 50 }, [
     'index',
     'vendor',
@@ -21,7 +24,7 @@ test('sizes within complete budgets pass evaluation', () => {
   assert.deepEqual(result, { failures: [], missing: [], ok: true })
 })
 
-test('a declared chunk with no checked-in budget fails evaluation', () => {
+void test('a declared chunk with no checked-in budget fails evaluation', () => {
   const result = evaluateBudgets({ index: 100, 'declared-vendor': 40 }, { index: 110 }, [
     'index',
     'declared-vendor',
@@ -33,14 +36,14 @@ test('a declared chunk with no checked-in budget fails evaluation', () => {
   assert.match(result.missing[0], /budget for tracked chunk "declared-vendor" missing/)
 })
 
-test('a stale budget for an undeclared chunk fails evaluation', () => {
+void test('a stale budget for an undeclared chunk fails evaluation', () => {
   const result = evaluateBudgets({ index: 100 }, { index: 110, 'retired-vendor': 30 }, ['index'])
 
   assert.equal(result.ok, false)
   assert.match(result.missing[0], /stale budget for undeclared chunk "retired-vendor"/)
 })
 
-test('duplicate declared chunk names fail evaluation', () => {
+void test('duplicate declared chunk names fail evaluation', () => {
   const result = evaluateBudgets({ index: 100, vendor: 40 }, { index: 110, vendor: 50 }, [
     'index',
     'vendor',

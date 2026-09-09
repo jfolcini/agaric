@@ -25,7 +25,9 @@ describe('useLongPress', () => {
     const { result } = renderHook(() => useLongPress({ onLongPress }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
     expect(onLongPress).not.toHaveBeenCalled()
-    act(() => vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY))
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+    })
     expect(onLongPress).toHaveBeenCalledTimes(1)
   })
 
@@ -33,9 +35,13 @@ describe('useLongPress', () => {
     const onLongPress = vi.fn()
     const { result } = renderHook(() => useLongPress({ onLongPress }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
-    act(() => vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY - 50))
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY - 50)
+    })
     act(() => result.current.onPointerUp())
-    act(() => vi.advanceTimersByTime(100))
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
     expect(onLongPress).not.toHaveBeenCalled()
   })
 
@@ -44,7 +50,9 @@ describe('useLongPress', () => {
     const { result } = renderHook(() => useLongPress({ onLongPress }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
     act(() => result.current.onPointerMove(pointerEvent(0, 40)))
-    act(() => vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY))
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+    })
     expect(onLongPress).not.toHaveBeenCalled()
   })
 
@@ -53,7 +61,9 @@ describe('useLongPress', () => {
     const { result } = renderHook(() => useLongPress({ onLongPress }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
     act(() => result.current.onPointerMove(pointerEvent(2, 3)))
-    act(() => vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY))
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+    })
     expect(onLongPress).toHaveBeenCalledTimes(1)
   })
 
@@ -62,7 +72,9 @@ describe('useLongPress', () => {
     const { result } = renderHook(() => useLongPress({ onLongPress }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
     act(() => result.current.onPointerLeave())
-    act(() => vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY))
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+    })
     expect(onLongPress).not.toHaveBeenCalled()
   })
 
@@ -70,9 +82,13 @@ describe('useLongPress', () => {
     const onLongPress = vi.fn()
     const { result } = renderHook(() => useLongPress({ onLongPress, delay: 1000 }))
     act(() => result.current.onPointerDown(pointerEvent(0, 0)))
-    act(() => vi.advanceTimersByTime(600))
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
     expect(onLongPress).not.toHaveBeenCalled()
-    act(() => vi.advanceTimersByTime(400))
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
     expect(onLongPress).toHaveBeenCalledTimes(1)
   })
 })

@@ -365,9 +365,12 @@ describe('useSyncTrigger', () => {
 
     const { result } = renderHook(() => useSyncTrigger())
 
-    // Start first sync
+    // Start the first sync but do NOT settle it — the whole point is to hold it
+    // inside its critical section while the second call is attempted. Its
+    // promise is kept so the test can settle it before finishing.
+    let firstSync: Promise<void> | undefined
     act(() => {
-      result.current.syncAll()
+      firstSync = result.current.syncAll()
     })
 
     // Wait a tick for the first syncAll to enter the critical section
@@ -383,9 +386,11 @@ describe('useSyncTrigger', () => {
     // Only one startSync call
     expect(mockStartSync).toHaveBeenCalledTimes(1)
 
-    // Resolve the first
+    // Resolve the first and wait for it to unwind, so the run is finished
+    // before the test tears the hook down.
     await act(async () => {
       resolveSync?.()
+      await firstSync
     })
   })
 
