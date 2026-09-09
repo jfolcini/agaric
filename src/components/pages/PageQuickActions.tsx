@@ -13,7 +13,7 @@
  * the success toast's Undo action (owned by `usePageDeleteAction`).
  *
  * The component is *display only*. State comes from:
- *   - `useStarredPages()` for the star toggle.
+ *   - `useStarredPages()` for the bookmark toggle.
  *   - `usePageDeleteAction()` (owned by the host) for the delete flow —
  *     this component just calls the `onDeleteRequest` callback the host
  *     wires to `requestDelete`. Centralising the dialog in the host is
@@ -22,7 +22,7 @@
  *     kebab "Delete page" item; only one dialog ever renders).
  *
  * a11y:
- *   - Star: `aria-pressed`, state-driven `aria-label`, fills when starred.
+ *   - Bookmark: `aria-pressed`, state-driven `aria-label`, fills when set.
  *   - Delete: state-driven `aria-label` (always "Delete page" for now).
  *   - 44 px touch targets on coarse pointers via the standard
  *     `[@media(pointer:coarse)]:h-11` pattern (reused from DensityRow).
@@ -40,7 +40,7 @@
  *     without touching this file's surface area.
  */
 
-import { Star, Trash2 } from 'lucide-react'
+import { Bookmark, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -140,7 +140,7 @@ export function PageQuickActions({
     onDeleteRequest(pageId, title)
   }, [deleting, onDeleteRequest, pageId, title])
 
-  const starLabel = starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')
+  const bookmarkLabel = starred ? t('pageHeader.removeBookmark') : t('pageHeader.addBookmark')
   const deleteLabel = t('pageHeader.deletePage')
 
   const revealClass = preset.hoverReveal ? HOVER_REVEAL : 'shrink-0'
@@ -154,8 +154,8 @@ export function PageQuickActions({
       <IconButton
         variant="ghost"
         size={preset.size}
-        tooltip={starLabel}
-        ariaLabel={starLabel}
+        tooltip={bookmarkLabel}
+        ariaLabel={bookmarkLabel}
         aria-pressed={starred}
         data-starred={starred}
         onClick={handleToggleStar}
@@ -165,7 +165,7 @@ export function PageQuickActions({
           'text-muted-foreground hover:text-star data-[starred=true]:text-star data-[starred=true]:opacity-100',
         )}
       >
-        <Star className={preset.iconClass} fill={starred ? 'currentColor' : 'none'} />
+        <Bookmark className={preset.iconClass} fill={starred ? 'currentColor' : 'none'} />
       </IconButton>
       {showDelete && (
         <IconButton

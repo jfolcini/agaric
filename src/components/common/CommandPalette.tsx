@@ -84,6 +84,7 @@ import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
+import { useStarredPages } from '@/hooks/useStarredPages'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
@@ -466,7 +467,9 @@ export function PaletteBody({
   // list stays live without a manual `setRecents(getRecentPages())` re-read.
   const addRecentPage = useRecentPagesStore((s) => s.addRecentPage)
   const removeRecentPage = useRecentPagesStore((s) => s.removeRecentPage)
-  const togglePinRecentPage = useRecentPagesStore((s) => s.togglePinRecentPage)
+  // The one bookmark list, shared with the page header, the Pages browser and
+  // the sidebar's Bookmarks section.
+  const { starredIds: bookmarkedIds, toggle: toggleBookmark } = useStarredPages()
   const recentPageRefs = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
   const recents: RecentPage[] = recentPageRefs.map(toRecentPage)
 
@@ -596,8 +599,8 @@ export function PaletteBody({
   interface ActionMenuState {
     rowType: ActionMenuRowType
     rowId: string
-    /** Pinned state captured at open-time; affects the recent-row action label. */
-    pinned: boolean
+    /** Bookmarked at open-time; picks the recent-row action's label. */
+    bookmarked: boolean
     /** Row bounding rect at open-time — the menu positions itself below this. */
     rect: DOMRect
   }
@@ -649,12 +652,10 @@ export function PaletteBody({
       return false
     }
     e.preventDefault()
-    const isPinned =
-      parsed.type === 'recent' && recents.find((p) => p.id === parsed.id)?.pinned === true
     setActionMenu({
       rowType: parsed.type,
       rowId: parsed.id,
-      pinned: isPinned,
+      bookmarked: parsed.type === 'recent' && bookmarkedIds.has(parsed.id),
       rect: active.getBoundingClientRect(),
     })
     return true
@@ -707,7 +708,9 @@ export function PaletteBody({
   // rendered menu stable across unrelated re-renders.
   const actionMenuActions = useMemo<readonly PaletteAction[]>(
     () =>
-      actionMenu == null ? [] : buildActionMenuActions(actionMenu.rowType, actionMenu.pinned, t),
+      actionMenu == null
+        ? []
+        : buildActionMenuActions(actionMenu.rowType, actionMenu.bookmarked, t),
     [actionMenu, t],
   )
 
@@ -734,7 +737,7 @@ export function PaletteBody({
   // (`handleActionMenuAction`) stays under oxlint's eslint/complexity budget.
   function handleRecentRowAction(actionId: string, rowId: string, newTab: boolean): void {
     if (actionId === 'bookmark' || actionId === 'remove-bookmark') {
-      togglePinRecentPage(rowId)
+      toggleBookmark(rowId)
       return
     }
     if (actionId === 'remove-from-recents') {
@@ -989,7 +992,8 @@ export function PaletteBody({
               <RecentPagesGroup
                 recents={filteredRecents}
                 onSelect={handleRecentClick}
-                onToggleBookmark={togglePinRecentPage}
+                bookmarkedIds={bookmarkedIds}
+                onToggleBookmark={toggleBookmark}
                 t={t}
               />
             )}

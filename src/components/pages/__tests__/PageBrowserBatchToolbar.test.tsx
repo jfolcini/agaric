@@ -467,9 +467,9 @@ describe('PageBrowserBatchToolbar', () => {
     const user = userEvent.setup()
     const { onClearSelection, onMutated } = renderToolbar()
 
-    const starBtn = screen.getByTestId('page-batch-star-btn')
+    const starBtn = screen.getByTestId('page-batch-bookmark-btn')
     expect(starBtn).toBeInTheDocument()
-    expect(screen.queryByTestId('page-batch-unstar-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-remove-bookmark-btn')).not.toBeInTheDocument()
 
     await user.click(starBtn)
 
@@ -486,9 +486,9 @@ describe('PageBrowserBatchToolbar', () => {
     localStorage.setItem('starred-pages', JSON.stringify(SELECTED))
     const { onClearSelection } = renderToolbar()
 
-    const unstarBtn = screen.getByTestId('page-batch-unstar-btn')
+    const unstarBtn = screen.getByTestId('page-batch-remove-bookmark-btn')
     expect(unstarBtn).toBeInTheDocument()
-    expect(screen.queryByTestId('page-batch-star-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-bookmark-btn')).not.toBeInTheDocument()
 
     await user.click(unstarBtn)
 
@@ -503,9 +503,9 @@ describe('PageBrowserBatchToolbar', () => {
     localStorage.setItem('starred-pages', JSON.stringify(['P1']))
     const { onClearSelection } = renderToolbar()
 
-    const starBtn = screen.getByTestId('page-batch-star-btn')
+    const starBtn = screen.getByTestId('page-batch-bookmark-btn')
     expect(starBtn).toBeInTheDocument()
-    expect(screen.queryByTestId('page-batch-unstar-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-remove-bookmark-btn')).not.toBeInTheDocument()
 
     await user.click(starBtn)
 
@@ -518,8 +518,8 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('the star toggle control has no a11y violations', async () => {
     const { container } = renderToolbar()
-    const starBtn = screen.getByTestId('page-batch-star-btn')
-    expect(starBtn).toHaveAccessibleName(t('pageBrowser.batch.starSelected'))
+    const starBtn = screen.getByTestId('page-batch-bookmark-btn')
+    expect(starBtn).toHaveAccessibleName(t('pageBrowser.batch.bookmarkSelected'))
     await waitFor(
       async () => {
         expect(await axe(container)).toHaveNoViolations()

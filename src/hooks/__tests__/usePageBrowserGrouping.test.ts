@@ -94,7 +94,7 @@ describe('buildMultiPageBranch', () => {
     expect(result.groupedRows[3]).toMatchObject({ kind: 'page', page: { id: 'P2' } })
   })
 
-  it('starred-and-namespaced pages render TWICE — once in Starred, once nested in Pages', () => {
+  it('starred-and-namespaced pages render TWICE — once in Bookmarks, once nested in Pages', () => {
     const a = makePage({ id: 'P1', content: 'work/foo' })
     const b = makePage({ id: 'P2', content: 'home' })
     const starred: ReadonlySet<string> = new Set(['P1'])

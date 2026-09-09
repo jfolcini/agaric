@@ -161,10 +161,10 @@ describe('PageBrowserRowRenderer — header rows', () => {
     const section = container.querySelector('[data-page-section="starred"]')
     expect(section).not.toBeNull()
     // Visible label + count.
-    expect(screen.getByText('Starred')).toBeInTheDocument()
+    expect(screen.getByText('Bookmarks')).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
     // Accessible label carries the count via the labelledby span.
-    expect(screen.getByText('Starred, 3 pages')).toBeInTheDocument()
+    expect(screen.getByText('Bookmarks, 3 pages')).toBeInTheDocument()
     // Not a page leaf, not a tree row.
     expect(container.querySelector('[data-page-item]')).toBeNull()
     expect(container.querySelector('[data-page-tree-row]')).toBeNull()

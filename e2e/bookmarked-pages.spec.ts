@@ -39,7 +39,7 @@ async function openPagesView(page: import('@playwright/test').Page) {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-test.describe(' + PageBrowser unified Starred + Pages model', () => {
+test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     // Reset starred-pages so each test starts from a clean slate even
@@ -47,9 +47,7 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     await page.evaluate(() => window.localStorage.removeItem('starred-pages'))
   })
 
-  test('no Starred header visible when no pages are starred; Pages still renders', async ({
-    page,
-  }) => {
+  test('no Bookmarks header when nothing is bookmarked; Pages still renders', async ({ page }) => {
     await openPagesView(page)
 
     // The `Starred` section is hidden because it would be empty.
@@ -61,7 +59,7 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     await expect(grid).toHaveAttribute('aria-label', 'Page list')
   })
 
-  test('starring a page surfaces the Starred header and moves the row to the top', async ({
+  test('bookmarking a page surfaces the Bookmarks header and moves the row to the top', async ({
     page,
   }) => {
     await openPagesView(page)
@@ -83,11 +81,11 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     // Viewport aria-label reflects the grouped state.
     await expect(page.getByRole('grid')).toHaveAttribute(
       'aria-label',
-      'Page list, grouped by starred',
+      'Page list, grouped by bookmarked',
     )
   })
 
-  test('starred set persists across reload via localStorage', async ({ page }) => {
+  test('the bookmark list persists across reload via localStorage', async ({ page }) => {
     await openPagesView(page)
 
     // Star "Projects".
@@ -107,7 +105,7 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
-  test('starring a second page respects the active sort within the group', async ({ page }) => {
+  test('bookmarking a second page respects the active sort within the group', async ({ page }) => {
     await openPagesView(page)
 
     // Star "Quick Notes" then "Meetings". Default sort is alphabetical
@@ -120,7 +118,7 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     await expect(pageRows.nth(1)).toContainText('Quick Notes')
   })
 
-  test('unstarring drops the page back into Pages', async ({ page }) => {
+  test('removing a bookmark drops the page back into Pages', async ({ page }) => {
     await openPagesView(page)
 
     // Star then unstar "Quick Notes" — should round-trip out of the
@@ -158,7 +156,7 @@ test.describe(' + PageBrowser unified Starred + Pages model', () => {
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
-  test('namespaced pages and starred pages coexist in the unified layout', async ({ page }) => {
+  test('namespaced pages and bookmarks coexist in the unified layout', async ({ page }) => {
     await openPagesView(page)
 
     // Create a namespaced page — under this no longer flips

@@ -706,14 +706,14 @@ describe('ToggleGroup', () => {
 describe('IconButton', () => {
   it('renders as a button with data-slot="icon-button" and the supplied aria-label', () => {
     render(
-      <IconButton tooltip="Star this page" ariaLabel="Star this page">
+      <IconButton tooltip="Bookmark this page" ariaLabel="Bookmark this page">
         <span aria-hidden="true">★</span>
       </IconButton>,
     )
-    const btn = screen.getByRole('button', { name: 'Star this page' })
+    const btn = screen.getByRole('button', { name: 'Bookmark this page' })
     expect(btn).toBeInTheDocument()
     expect(btn).toHaveAttribute('data-slot', 'icon-button')
-    expect(btn).toHaveAttribute('aria-label', 'Star this page')
+    expect(btn).toHaveAttribute('aria-label', 'Bookmark this page')
   })
 
   it('defaults to size="icon" (36 px square)', () => {

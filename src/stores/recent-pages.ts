@@ -20,7 +20,6 @@
  * sync API) which independently tracked visits under `recent_pages:<spaceId>`
  * keys; a visit recorded in one was invisible to the other's ordering. The
  * lib's superset of features is folded in here:
- *   - pinning (`togglePinRecentPage`, pin-first ordering, pin-exempt cap),
  *   - single-entry removal (`removeRecentPage`), and
  *   - the imperative `addRecentPage(id, title)` entry point used by the
  *     search/palette click handlers.
@@ -34,38 +33,32 @@ import { persist } from 'zustand/middleware'
 
 import { activeSpaceKey } from '@/lib/active-space'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
+import { setStarred } from '@/lib/starred-pages'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 /**
- * A recent-page entry. `pageId` + `title` are always present; `visitedAt`
- * and `pinned` are folded in from the former `lib/recent-pages.ts`
- * `RecentPage` (#1149):
- *   - `visitedAt` (ISO string) is stamped by `addRecentPage`; the
- *     navigation-recorded `recordVisit` path omits it (the MRU array order
- *     is the recency signal those consumers rely on), so it is optional.
- *   - `pinned` entries sort first (in pin order) and are exempt from the
- *     `MAX_RETAINED` eviction. Omitted when false so unpinned entries stay
- *     minimal (and the legacy `recordVisit` round-trip shape is unchanged).
+ * A recent-page entry. `pageId` + `title` are always present. `visitedAt`
+ * (ISO string) is stamped by `addRecentPage`; the navigation-recorded
+ * `recordVisit` path omits it (the MRU array order is the recency signal
+ * those consumers rely on), so it is optional.
  */
 export interface PageRef {
   pageId: string
   title: string
   visitedAt?: string
-  pinned?: boolean
 }
 
 /**
  * #1149 — the shape the former `lib/recent-pages.ts` exposed to
  * SearchPanel / CommandPalette / PageBrowser. Kept as a thin id-keyed
  * view over the store's `PageRef` so those consumers' `.id` / `.visitedAt`
- * / `.pinned` reads survive the migration without a sweeping rename.
+ * reads survive the migration without a sweeping rename.
  */
 export interface RecentPage {
   id: string
   title: string
   visitedAt: string
-  pinned?: boolean
 }
 
 /**
@@ -104,13 +97,12 @@ interface RecentPagesState {
   recordVisit: (pageRef: PageRef) => void
   /**
    * #1149 — imperative add (search-result / palette click). Stamps a fresh
-   * `visitedAt`, dedups by id, preserves an existing entry's pinned flag,
-   * and applies the pin-exempt MAX_RETAINED cap.
+   * `visitedAt`, dedups by id, and applies the MAX_RETAINED cap.
    */
   addRecentPage: (id: string, title: string) => void
   /**
    * #3322 — retitle the active space's entry for `pageId` in place, keeping
-   * its MRU position, `visitedAt` and pinned flag. A no-op when the page is
+   * its MRU position and `visitedAt`. A no-op when the page is
    * not in this space's MRU (or already carries `title`). The entry is
    * PERSISTED, so without this a rename left the recents strip — and the
    * `navigateToPage(pageId, title)` call it makes on click, which re-stamps
@@ -119,16 +111,9 @@ interface RecentPagesState {
    */
   renamePage: (pageId: string, title: string) => void
   /**
-   * #1149 — remove a single entry (any partition). Pin status does not block
-   * removal. Returns true if the id was found and removed.
+   * #1149 — remove a single entry. Returns true if the id was found.
    */
   removeRecentPage: (id: string) => boolean
-  /**
-   * #1149 — toggle pinned state. Pinning preserves `visitedAt`; unpinning
-   * re-stamps it to now so the entry's MRU position reflects the unpin
-   * moment. Returns the new pinned state, or null if the id was not found.
-   */
-  togglePinRecentPage: (id: string) => boolean | null
   /** Clear the MRU list for the active space (does not affect other spaces). */
   clear: () => void
 }
@@ -150,16 +135,9 @@ type RecentState = RecentPagesState
  */
 const EMPTY_PAGE_REFS: readonly PageRef[] = Object.freeze([])
 
-/**
- * Pin-first ordering + pin-exempt MAX_RETAINED cap (folded in from the
- * former `lib/recent-pages.ts` `writeRecentPages`). Pinned entries are kept
- * first in their stored order and are never evicted; the unpinned partition
- * is MRU-ordered and capped at `MAX_RETAINED`.
- */
-function applyPinFirstCap(pages: PageRef[]): PageRef[] {
-  const pinned = pages.filter((p) => p.pinned === true)
-  const unpinned = pages.filter((p) => p.pinned !== true).slice(0, MAX_RETAINED)
-  return [...pinned, ...unpinned]
+/** MRU cap (folded in from the former `lib/recent-pages.ts` `writeRecentPages`). */
+function applyCap(pages: PageRef[]): PageRef[] {
+  return pages.slice(0, MAX_RETAINED)
 }
 
 /**
@@ -181,7 +159,7 @@ export function selectRecentPagesForSpace(state: RecentState, spaceId: string | 
  * #1149 — non-reactive snapshot read for the `RecentPage`-shaped consumers
  * (PageBrowser sort/grouping, and the SearchPanel/CommandPalette mount-time
  * seed). Returns the active-space slice (or the slice for `spaceId` when
- * given) as `RecentPage[]`, pin-first sorted. Reads `getState()` so it works
+ * given) as `RecentPage[]`. Reads `getState()` so it works
  * outside React (plain comparator helpers) as well as inside hooks.
  *
  * Prefer the reactive `useRecentPagesStore` + `selectRecentPagesForSpace`
@@ -191,7 +169,7 @@ export function getRecentPagesForSpace(spaceId?: string | null): RecentPage[] {
   const state = useRecentPagesStore.getState()
   const key = spaceId === undefined ? activeSpaceKey() : (spaceId ?? LEGACY_SPACE_KEY)
   const slice = state.recentPagesBySpace[key] ?? []
-  return applyPinFirstCap(slice).map(toRecentPage)
+  return applyCap(slice).map(toRecentPage)
 }
 
 /** Adapt a store `PageRef` to the id-keyed `RecentPage` view. */
@@ -200,7 +178,6 @@ export function toRecentPage(ref: PageRef): RecentPage {
     id: ref.pageId,
     title: ref.title,
     visitedAt: ref.visitedAt ?? '',
-    ...(ref.pinned === true && { pinned: true }),
   }
 }
 
@@ -211,9 +188,8 @@ export function toRecentPage(ref: PageRef): RecentPage {
  *
  *  - Entries present only in the raw key are appended after the store's
  *    existing slice (the store's recency wins for shared ids).
- *  - A shared id keeps the store entry but inherits `pinned: true` if it
- *    was pinned in EITHER source, and keeps the newer `visitedAt`.
- *  - The merged slice is pin-first sorted and pin-exempt capped.
+ *  - A shared id keeps the store entry and the newer `visitedAt`.
+ *  - The merged slice is MRU capped.
  *
  * The legacy unscoped `recent_pages` key (if present) is folded into the
  * `__legacy__` slot. After a successful merge the raw keys are removed so a
@@ -292,13 +268,12 @@ function mergeSlices(storeSlice: PageRef[], rawEntries: RawRecentPage[]): PageRe
     merged.push(rawToPageRef(raw))
     seen.add(raw.id)
   }
-  return applyPinFirstCap(merged)
+  return applyCap(merged)
 }
 
-/** Combine a store entry with its optional raw twin (pins union, newer visitedAt wins). */
+/** Combine a store entry with its optional raw twin (newer visitedAt wins). */
 function mergeOne(ref: PageRef, raw: RawRecentPage | undefined): PageRef {
   if (raw == null) return ref
-  const pinned = ref.pinned === true || raw.pinned === true
   const visitedAt =
     ref.visitedAt != null && raw.visitedAt != null
       ? ref.visitedAt > raw.visitedAt
@@ -309,7 +284,6 @@ function mergeOne(ref: PageRef, raw: RawRecentPage | undefined): PageRef {
     pageId: ref.pageId,
     title: ref.title,
     ...(visitedAt != null && { visitedAt }),
-    ...(pinned && { pinned: true }),
   }
 }
 
@@ -318,7 +292,6 @@ function rawToPageRef(raw: RawRecentPage): PageRef {
     pageId: raw.id,
     title: raw.title,
     visitedAt: raw.visitedAt,
-    ...(raw.pinned === true && { pinned: true }),
   }
 }
 
@@ -327,20 +300,16 @@ interface RawRecentPage {
   id: string
   title: string
   visitedAt: string
-  pinned?: boolean
 }
 
 function isRawRecentPage(item: unknown): item is RawRecentPage {
   if (item === null || typeof item !== 'object') return false
   const r = item as Record<string, unknown>
-  if (
-    typeof r['id'] !== 'string' ||
-    typeof r['title'] !== 'string' ||
-    typeof r['visitedAt'] !== 'string'
-  ) {
-    return false
-  }
-  return r['pinned'] === undefined || typeof r['pinned'] === 'boolean'
+  return (
+    typeof r['id'] === 'string' &&
+    typeof r['title'] === 'string' &&
+    typeof r['visitedAt'] === 'string'
+  )
 }
 
 function parseRawRecentPages(raw: string | null): RawRecentPage[] {
@@ -359,9 +328,9 @@ function parseRawRecentPages(raw: string | null): RawRecentPage[] {
  * or `null` if the shape is unrecoverable. `localStorage` can hold anything
  * (manual edits, a corrupt write, a future-shape downgrade); hydrating it with
  * a bare cast lets a malformed blob crash `recordVisit` /
- * `selectRecentPagesForSpace` / `applyPinFirstCap`. Requires `pageId` + `title`
- * to be strings; keeps the optional `visitedAt` / `pinned` only when they carry
- * the right primitive type, dropping garbage values.
+ * `selectRecentPagesForSpace` / `applyCap`. Requires `pageId` + `title` to be
+ * strings; keeps the optional `visitedAt` only when it carries the right
+ * primitive type, dropping garbage values.
  */
 function coercePageRef(raw: unknown): PageRef | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -371,7 +340,6 @@ function coercePageRef(raw: unknown): PageRef | null {
     pageId: obj['pageId'],
     title: obj['title'],
     ...(typeof obj['visitedAt'] === 'string' && { visitedAt: obj['visitedAt'] }),
-    ...(obj['pinned'] === true && { pinned: true }),
   }
 }
 
@@ -400,6 +368,45 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
   }
   return out
 }
+
+/**
+ * Fold any pre-consolidation `pinned` entries into the bookmark list.
+ *
+ * Bookmarks used to be a `pinned` flag on these rows; they are now the
+ * `starred-pages` preference, and the coercion below drops the flag. Without
+ * this, upgrading silently loses every bookmark made from the command palette
+ * — and bookmarks are device-local, so a device this has not run on still has
+ * its own to rescue. Runs on the raw blob before coercion, adds only ids that
+ * are not already bookmarked, and is a no-op once the flag is gone.
+ */
+function rescuePinnedAsBookmarks(persisted: unknown): boolean {
+  if (persisted == null || typeof persisted !== 'object') return false
+  const blob = persisted as Record<string, unknown>
+  const lists: unknown[] = [blob['recentPages']]
+  const bySpace = blob['recentPagesBySpace']
+  if (bySpace != null && typeof bySpace === 'object') {
+    lists.push(...Object.values(bySpace as Record<string, unknown>))
+  }
+  const pinned: string[] = []
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue
+    for (const row of list) {
+      if (row == null || typeof row !== 'object') continue
+      const r = row as Record<string, unknown>
+      if (r['pinned'] === true && typeof r['pageId'] === 'string') pinned.push(r['pageId'])
+    }
+  }
+  if (pinned.length === 0) return false
+  setStarred(pinned, true)
+  return true
+}
+
+/**
+ * Module-scope handoff from `merge`/`migrate` to `onRehydrateStorage`, the
+ * only hook that can force the write which strips the rescued flags from
+ * storage. Mirrors the `pendingSplits` registry in `use-block-flush.ts`.
+ */
+let pinnedRescueNeedsPersist = false
 
 /**
  * CR-PERSIST (#1578) — coerce an entire persisted recent-pages blob
@@ -474,35 +481,29 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         // list, e.g. after rehydrate) would be copied into this space's slice
         // and durably persisted.
         const current = state.recentPagesBySpace[key] ?? []
-        const existing = current.find((p) => p.pageId === ref.pageId)
         const filtered = current.filter((p) => p.pageId !== ref.pageId)
-        // #1149 — re-visiting a pinned page keeps it pinned (mirrors the
-        // former lib's `addRecentPage` pinned-preservation). The
-        // navigation-recorded path stores only `{pageId, title}` (+ pinned
-        // when carried) — no `visitedAt`, since the array order is the
-        // recency signal these consumers read.
+        // The navigation-recorded path stores only `{pageId, title}` — no
+        // `visitedAt`, since the array order is the recency signal these
+        // consumers read.
         const nextEntry: PageRef = {
           pageId: ref.pageId,
           title: ref.title,
           ...(ref.visitedAt != null && { visitedAt: ref.visitedAt }),
-          ...((ref.pinned === true || existing?.pinned === true) && { pinned: true }),
         }
-        const next = applyPinFirstCap([nextEntry, ...filtered])
+        const next = applyCap([nextEntry, ...filtered])
         set(recentPagesSlice.applyActive(state, next))
       },
       addRecentPage: (id, title) => {
         const state = get()
         const key = activeSpaceKey()
         const current = state.recentPagesBySpace[key] ?? []
-        const existing = current.find((p) => p.pageId === id)
         const filtered = current.filter((p) => p.pageId !== id)
         const nextEntry: PageRef = {
           pageId: id,
           title,
           visitedAt: new Date().toISOString(),
-          ...(existing?.pinned === true && { pinned: true }),
         }
-        const next = applyPinFirstCap([nextEntry, ...filtered])
+        const next = applyCap([nextEntry, ...filtered])
         set(recentPagesSlice.applyActive(state, next))
       },
       renamePage: (pageId, title) => {
@@ -528,30 +529,6 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         set(recentPagesSlice.applyActive(state, next))
         return true
       },
-      togglePinRecentPage: (id) => {
-        const state = get()
-        const key = activeSpaceKey()
-        const current = state.recentPagesBySpace[key] ?? []
-        const idx = current.findIndex((p) => p.pageId === id)
-        if (idx < 0) return null
-        const entry = current[idx]
-        if (entry == null) return null
-        const wasPinned = entry.pinned === true
-        // Pinning preserves `visitedAt`; unpinning re-stamps to now so the
-        // entry slots at the top of the unpinned partition (mirrors the
-        // former lib's `togglePinRecentPage`).
-        const nextVisitedAt = wasPinned ? new Date().toISOString() : entry.visitedAt
-        const updated: PageRef = {
-          pageId: entry.pageId,
-          title: entry.title,
-          ...(nextVisitedAt != null && { visitedAt: nextVisitedAt }),
-          ...(!wasPinned && { pinned: true }),
-        }
-        const reordered = [...current.slice(0, idx), updated, ...current.slice(idx + 1)]
-        const next = applyPinFirstCap(reordered)
-        set(recentPagesSlice.applyActive(state, next))
-        return !wasPinned
-      },
       clear: () => {
         const state = get()
         set(recentPagesSlice.applyActive(state, []))
@@ -568,7 +545,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       }),
       // CR-PERSIST (#1578) — coercing migrate. Validates every field so a
       // legacy/version-mismatched blob (and the v0→v1 flat-only shape) can't
-      // poison `recordVisit` / `selectRecentPagesForSpace` / `applyPinFirstCap`.
+      // poison `recordVisit` / `selectRecentPagesForSpace` / `applyCap`.
       // The v0→v1 carry (flat `recentPages` → `__legacy__` slot) lives in
       // `coercePersistedRecentPages` so it applies on every entry path.
       //
@@ -577,7 +554,10 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // same-version blobs are coerced by `merge`. The bare `version >= 1` cast
       // this replaced let an already-current-version corrupt blob flow through
       // unvalidated.
-      migrate: (persisted: unknown, _version: number) => coercePersistedRecentPages(persisted),
+      migrate: (persisted: unknown, _version: number) => {
+        pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
+        return coercePersistedRecentPages(persisted)
+      },
       // CR-PERSIST (#1578) — zustand skips `migrate` when the stored version
       // equals `options.version` (or isn't a number), handing the raw blob
       // straight to the default shallow `merge`. Coerce here too so a corrupt
@@ -585,15 +565,32 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // PageRef entries, a non-array `recentPages`, bad `recentPagesBySpace`
       // values) can't poison the recent-pages reducers / selectors. Mirrors
       // tabs.ts / journal.ts.
-      merge: (persisted, current) => ({
-        ...current,
-        ...coercePersistedRecentPages(persisted),
-      }),
+      merge: (persisted, current) => {
+        pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
+        return { ...current, ...coercePersistedRecentPages(persisted) }
+      },
       // #1149 — after rehydrate, one-time merge the raw `recent_pages:*`
       // localStorage keys (written by the removed `lib/recent-pages.ts`) into
       // `recentPagesBySpace`, then clear them. Guarded by `rawKeysMerged` so
       // it runs at most once across the persisted lifetime.
       onRehydrateStorage: () => (state) => {
+        // Force one write after a rescue, before the raw-key early return —
+        // which fires on exactly the devices that carry pinned rows, so a
+        // write behind it would never happen for them. The point is the write
+        // itself: it persists the COERCED rows, which no longer carry the
+        // flag, so the rescue cannot run twice and resurrect a bookmark the
+        // user has since removed. An empty patch is enough to trigger it.
+        if (pinnedRescueNeedsPersist) {
+          pinnedRescueNeedsPersist = false
+          // Deferred: for synchronous storage this callback runs INSIDE
+          // `create()`, before the `useRecentPagesStore` binding exists, and
+          // the resulting ReferenceError is swallowed by zustand's hydrate
+          // chain — leaving the flags in storage and the rescue repeating on
+          // every boot. A microtask lands after the binding is initialised.
+          queueMicrotask(() => {
+            useRecentPagesStore.setState({})
+          })
+        }
         if (state == null || state.rawKeysMerged) return
         const { bySpace, changed } = migrateRawRecentPagesKeys(state.recentPagesBySpace)
         const effectiveBySpace = changed ? bySpace : state.recentPagesBySpace

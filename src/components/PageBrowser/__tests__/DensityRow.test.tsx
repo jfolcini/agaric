@@ -183,7 +183,7 @@ describe('DensityRow', () => {
     const onToggleStar = vi.fn()
     const user = userEvent.setup()
     render(<DensityRow {...baseProps({ pageId: 'page-7', onToggleStar })} />)
-    await user.click(screen.getByRole('button', { name: /star page/i }))
+    await user.click(screen.getByRole('button', { name: /bookmark page/i }))
     expect(onToggleStar).toHaveBeenCalledWith('page-7')
   })
 
@@ -192,7 +192,7 @@ describe('DensityRow', () => {
   // hard-sized to h-6 w-6 (24px), which was sub-WCAG on touch.
   it('star toggle has the 44px touch-target hit-area (matches delete button)', () => {
     render(<DensityRow {...baseProps()} />)
-    const star = screen.getByRole('button', { name: /star page/i })
+    const star = screen.getByRole('button', { name: /bookmark page/i })
     expect(star.className).toContain('touch-target')
     expect(star.className).not.toContain('h-6 w-6')
   })

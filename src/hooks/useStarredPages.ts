@@ -1,5 +1,8 @@
 /**
- * useStarredPages — localStorage-backed starred pages with cross-instance sync.
+ * useStarredPages — the bookmark list, with cross-instance sync.
+ *
+ * "Starred" is the storage name only (see `src/lib/starred-pages.ts`); every
+ * surface that renders this calls it a bookmark.
  *
  * The localStorage shape is owned by `src/lib/starred-pages.ts` (a JSON
  * array under the `starred-pages` key, registered as
