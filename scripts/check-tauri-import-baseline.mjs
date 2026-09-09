@@ -281,7 +281,9 @@ function isFullySanctioned(stripped, sanctioned) {
  * is a file whose `@/lib/tauri` dependency nobody verified (#3993).
  */
 function analyze({ root, srcDir, baseline, sanctioned = new Set() }) {
+  /** @type {Set<string>} */
   const baselineSet = new Set(baseline)
+  /** @type {string[]} */
   const importers = []
   const scanErrors = []
   let scanned = 0
@@ -301,12 +303,10 @@ function analyze({ root, srcDir, baseline, sanctioned = new Set() }) {
       importers.push(rel)
     }
   }
-  importers.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  importers.sort()
   const importerSet = new Set(importers)
   const newImporters = importers.filter((f) => !baselineSet.has(f))
-  const staleBaseline = [...baselineSet]
-    .filter((f) => !importerSet.has(f))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const staleBaseline = [...baselineSet].filter((f) => !importerSet.has(f)).toSorted()
   return { importers, newImporters, staleBaseline, scanned, scanErrors }
 }
 

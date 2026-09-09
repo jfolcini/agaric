@@ -399,19 +399,20 @@ export function parseKnownStreaks(body) {
   return map
 }
 
-/** Diffs the currently-failing set against the tracked one. */
+/**
+ * Diffs the currently-failing set against the tracked one.
+ *
+ * @param {string[]} current
+ * @param {Set<string>} known
+ */
 export function diffLanes(current, known) {
   const currentSet = new Set(current)
-  const newOnes = [...currentSet]
-    .filter((j) => !known.has(j))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const resolvedOnes = [...known]
-    .filter((j) => !currentSet.has(j))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const newOnes = [...currentSet].filter((j) => !known.has(j)).toSorted()
+  const resolvedOnes = [...known].filter((j) => !currentSet.has(j)).toSorted()
   return {
     newOnes,
     resolvedOnes,
-    all: [...currentSet].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    all: [...currentSet].toSorted(),
   }
 }
 

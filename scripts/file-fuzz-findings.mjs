@@ -232,6 +232,7 @@ export function firstCompilerError(log) {
 export function reproducersFor({ artifacts, log }, prefixes) {
   const matches = artifacts.filter((a) => prefixes.some((p) => basename(a).startsWith(`${p}-`)))
   if (matches.length > 0) return matches.map((m) => basename(m)).toSorted()
+  /** @type {Set<string>} */
   const fromLog = new Set()
   for (const line of log.split('\n')) {
     const m = /(?:Test unit|artifact_prefix).*?([\w-]*(?:crash|timeout|leak|oom)-[0-9a-f]+)/i.exec(
@@ -239,7 +240,7 @@ export function reproducersFor({ artifacts, log }, prefixes) {
     )
     if (m) fromLog.add(m[1])
   }
-  return [...fromLog].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return [...fromLog].toSorted()
 }
 
 // ---------------------------------------------------------------------------
@@ -347,20 +348,15 @@ export function parseKnownFindings(body) {
   )
 }
 
+/**
+ * @param {{ id: string }[]} current
+ * @param {Set<string>} known
+ */
 export function diffFindings(current, known) {
   const byId = new Map(current.map((f) => [f.id, f]))
-  const newOnes = [...byId.keys()]
-    .filter((id) => !known.has(id))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const resolvedOnes = [...known]
-    .filter((id) => !byId.has(id))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  return {
-    newOnes,
-    resolvedOnes,
-    all: [...byId.keys()].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-    byId,
-  }
+  const newOnes = [...byId.keys()].filter((id) => !known.has(id)).toSorted()
+  const resolvedOnes = [...known].filter((id) => !byId.has(id)).toSorted()
+  return { newOnes, resolvedOnes, all: [...byId.keys()].toSorted(), byId }
 }
 
 // ---------------------------------------------------------------------------

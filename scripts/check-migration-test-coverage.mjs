@@ -260,6 +260,7 @@ export function computeUncovered(migrationNumbers, testNames) {
  * `check-doc-code-paths.mjs` uses.
  *
  * @param {string} path
+ * @returns {Set<string>}
  */
 export function readBaseline(path = BASELINE_FILE) {
   if (!existsSync(path)) return new Set()
@@ -349,9 +350,7 @@ export function runCheck({
   // its baseline entry is not stale, it is simply not the thing keeping the
   // guard red.
   const notCovered = new Set([...uncovered, ...beyondCeiling])
-  const staleBaseline = [...baseline]
-    .filter((n) => !notCovered.has(n))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const staleBaseline = [...baseline].filter((n) => !notCovered.has(n)).toSorted()
 
   if (newUncovered.length === 0 && beyondCeiling.length === 0 && staleBaseline.length === 0) {
     return {

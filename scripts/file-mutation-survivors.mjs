@@ -883,6 +883,8 @@ export function parseFirstSeen(body) {
  * prefix can never become part of the id. An entry a triager pasted without a
  * date must parse to the same id as the same entry with one, or the block
  * would silently suppress nothing on the run after it was written.
+ *
+ * @returns {Set<string>}
  */
 export function parseAcceptedSurvivors(body) {
   return new Set(acceptedBlockLines(body).map((l) => l.replace(FIRST_SEEN_PREFIX, '')))
@@ -958,6 +960,10 @@ export function groupByArea(ids) {
     )
 }
 
+/**
+ * @param {string[]} current
+ * @param {Set<string>} known
+ */
 export function diffSurvivors(current, known) {
   const currentSet = new Set(current)
   // #3788 — a tracked id whose successor is in `current` was not resolved, and
@@ -974,15 +980,9 @@ export function diffSurvivors(current, known) {
   }
   const newOnes = [...currentSet]
     .filter((s) => !known.has(s) && !superseded.has(legacyFrontendId(s)))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const resolvedOnes = [...known]
-    .filter((s) => !currentSet.has(s) && !superseded.has(s))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  return {
-    newOnes,
-    resolvedOnes,
-    all: [...currentSet].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-  }
+    .toSorted()
+  const resolvedOnes = [...known].filter((s) => !currentSet.has(s) && !superseded.has(s)).toSorted()
+  return { newOnes, resolvedOnes, all: [...currentSet].toSorted() }
 }
 
 /**
@@ -2003,9 +2003,7 @@ function assertLaneInputsPresent(args, frontendReports) {
  */
 function applyAcceptedGaps({ body, current }) {
   const observed = new Set(current)
-  const recorded = [...parseAcceptedSurvivors(body)].toSorted((a, b) =>
-    a < b ? -1 : a > b ? 1 : 0,
-  )
+  const recorded = [...parseAcceptedSurvivors(body)].toSorted()
   const accepted = recorded.filter((id) => observed.has(id))
   const stale = recorded.filter((id) => !observed.has(id))
   const acceptedSet = new Set(accepted)
@@ -3412,14 +3410,14 @@ function selfTestChildGh({ check }) {
       'bootstrap: each area is looked up, then filed, then the parent is edited once',
       `gh sequence was: ${seq || '(no gh calls at all)'}`,
     )
+    /** @type {string[]} */
+    const createdTitles = created.map((c) => c.title)
     check(
       created.length === 2 &&
-        created
-          .map((c) => c.title)
-          .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-          .join(' | ') === [childIssueTitle(OP), childIssueTitle(REV)].toSorted().join(' | '),
+        createdTitles.toSorted().join(' | ') ===
+          [childIssueTitle(OP), childIssueTitle(REV)].toSorted().join(' | '),
       'bootstrap files one child per area, under the derived titles',
-      created.map((c) => c.title).join(' | '),
+      createdTitles.join(' | '),
     )
     // …and each names its LANE's parent. On a bootstrap there is no parent
     // NUMBER (the stub's issue is 0, which the ref ternary treats as absent),

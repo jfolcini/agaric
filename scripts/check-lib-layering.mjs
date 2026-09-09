@@ -170,7 +170,9 @@ export function specifierTier(spec, fromFile, srcDir) {
  *   illegally imports (for the error message only — not baseline schema).
  */
 export function analyze({ root, srcDir, baseline }) {
+  /** @type {Set<string>} */
   const baselineSet = new Set(baseline)
+  /** @type {string[]} */
   const violators = []
   const details = new Map()
   let scanned = 0
@@ -180,6 +182,7 @@ export function analyze({ root, srcDir, baseline }) {
     for (const file of listSourceFiles(tierDir)) {
       scanned += 1
       const src = fs.readFileSync(file, 'utf8')
+      /** @type {Set<string>} */
       const badTiers = new Set()
       for (const spec of detectImports(src)) {
         const targetTier = specifierTier(spec, file, srcDir)
@@ -190,20 +193,15 @@ export function analyze({ root, srcDir, baseline }) {
       if (badTiers.size > 0) {
         const rel = toPosix(path.relative(root, file))
         violators.push(rel)
-        details.set(
-          rel,
-          [...badTiers].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-        )
+        details.set(rel, [...badTiers].toSorted())
       }
     }
   }
 
-  violators.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  violators.sort()
   const violatorSet = new Set(violators)
   const newViolators = violators.filter((f) => !baselineSet.has(f))
-  const staleBaseline = [...baselineSet]
-    .filter((f) => !violatorSet.has(f))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const staleBaseline = [...baselineSet].filter((f) => !violatorSet.has(f)).toSorted()
   return { violators, details, newViolators, staleBaseline, scanned }
 }
 

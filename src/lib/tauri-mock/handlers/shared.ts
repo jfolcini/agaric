@@ -712,11 +712,8 @@ export function propertyLikeMatches(
   if (!prop || !vc || vc.col === 'value_num') return false
   const stored = prop[vc.col] ?? null
   if (stored == null) return false
-  // `value_num` is excluded above, so the remaining columns are all TEXT and
-  // the cast holds without a `String()` over it — but only for values the
-  // typed IPC boundary produced: `asciiLowercase` calls `.replace`, so a
-  // number written straight into `value_text` would throw here where the old
-  // coercion absorbed it.
+  // `value_num` is excluded above, so the remaining columns are all TEXT,
+  // which is what `asciiLowercase` needs — it is a `.replace`, not a coercion.
   const hay = asciiLowercase(stored as string)
   const needle = asciiLowercase(String(vc.wanted))
   return contains ? hay.includes(needle) : hay.startsWith(needle)

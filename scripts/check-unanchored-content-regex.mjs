@@ -275,6 +275,7 @@ function toPosix(p) {
  * self-test can prove the walk never leaves `srcDir`.
  */
 export function listSourceFiles(srcDir) {
+  /** @type {string[]} */
   const out = []
   const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -294,7 +295,7 @@ export function listSourceFiles(srcDir) {
     }
   }
   visit(srcDir)
-  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return out.toSorted()
 }
 
 /**
