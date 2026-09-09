@@ -14,7 +14,9 @@
 | E2E — mock backend | Playwright | Full app in Chromium against a static `vite preview` build | [`e2e/AGENTS.md`](../../e2e/AGENTS.md) |
 | E2E — real backend | WebdriverIO + tauri-driver | The desktop binary over real Tauri IPC (`e2e-tauri/*.e2e.ts`) | [`wdio.conf.ts`](../../wdio.conf.ts) |
 
-**Environment.** Default is happy-dom (`test.environment` in [`vitest.config.ts`](../../vitest.config.ts)). Opt a file into jsdom with a top-of-file `// @vitest-environment jsdom` only for behavior happy-dom does not match — known cases: vitest-axe's `aria-hidden-focus` rule fires on Radix focus-guard sentinels (the shared wrapper [`src/__tests__/helpers/axe.ts`](helpers/axe.ts) disables it), and `Storage.prototype` spies do not intercept `localStorage`. A test that passes in one environment and fails in the other: the environment is the first suspect.
+**Environment.** Default is happy-dom (`test.environment` in [`vitest.config.ts`](../../vitest.config.ts)). Opt a file into jsdom with a top-of-file `// @vitest-environment jsdom` only for behavior happy-dom does not match — known case: vitest-axe's `aria-hidden-focus` rule fires on Radix focus-guard sentinels (the shared wrapper [`src/__tests__/helpers/axe.ts`](helpers/axe.ts) disables it). A test that passes in one environment and fails in the other: the environment is the first suspect.
+
+`Storage.prototype` spies were listed here as a second case. They are not one on happy-dom 20.12.0: `Object.getPrototypeOf(localStorage) === Storage.prototype`, so `vi.spyOn(Storage.prototype, 'setItem')` records the call and a throwing implementation reaches the code under test — `useTheme.test.ts` and `useDeepLinkRouter.test.ts` both depend on that and neither opts into jsdom. Do not opt a file in for this reason; re-check when happy-dom takes a major.
 
 No vitest globals — import explicitly (`import { describe, expect, it, vi } from 'vitest'`).
 

@@ -104,3 +104,13 @@ return reddens the tokenizer one, so the `void` rewrite kept both honest. The
 
 The six touched files run 584 tests green; `src/editor` plus `EditableBlock`,
 which is the blast radius of the `use-roving-editor` hoist, another 2181.
+
+## Addendum — the stale line is corrected
+
+The maintainer approved editing `src/__tests__/AGENTS.md`, so the claim that
+`Storage.prototype` spies do not intercept `localStorage` under happy-dom is
+gone from its "known cases" list, and a short paragraph records that it was
+there and why it is not true on happy-dom 20.12.0 — with the two tests that
+depend on the working behaviour named, and a re-check trigger for the next
+happy-dom major. Deleting the clause outright would have left the next person
+who remembers the old rule free to reinstate it.
