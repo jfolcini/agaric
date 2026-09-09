@@ -391,10 +391,14 @@ interface IgnoreMutationSelf {
 const EXPOSED_NODE = { isLeaf: false, isAtom: false }
 
 /** tiptap's real default, invoked against a hand-built `this`. */
-const defaultIgnoreMutation = NodeView.prototype.ignoreMutation as unknown as (
-  this: IgnoreMutationSelf,
-  mutation: ViewMutationRecord,
-) => boolean
+function defaultIgnoreMutation(this: IgnoreMutationSelf, mutation: ViewMutationRecord): boolean {
+  return (
+    NodeView.prototype.ignoreMutation as unknown as (
+      this: IgnoreMutationSelf,
+      mutation: ViewMutationRecord,
+    ) => boolean
+  ).call(this, mutation)
+}
 
 /** A node view DOM: a React content host plus some React-owned chrome beside it. */
 function buildNodeViewDom(): { dom: HTMLElement; contentHost: HTMLElement; chrome: HTMLElement } {
@@ -755,10 +759,17 @@ interface MarkIgnoreMutationSelf {
 }
 
 /** tiptap's real `MarkView` default, invoked against a hand-built `this`. */
-const defaultMarkIgnoreMutation = MarkView.prototype.ignoreMutation as unknown as (
+function defaultMarkIgnoreMutation(
   this: MarkIgnoreMutationSelf,
   mutation: ViewMutationRecord,
-) => boolean
+): boolean {
+  return (
+    MarkView.prototype.ignoreMutation as unknown as (
+      this: MarkIgnoreMutationSelf,
+      mutation: ViewMutationRecord,
+    ) => boolean
+  ).call(this, mutation)
+}
 
 describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored contract)', () => {
   it('has NO leaf/atom guard: the same `this` a NodeView ignores, a MarkView does not', () => {

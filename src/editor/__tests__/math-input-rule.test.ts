@@ -129,8 +129,8 @@ function runHandler(
     range,
     match,
     commands: editor.commands as never,
-    chain: editor.chain as never,
-    can: editor.can as never,
+    chain: editor.chain.bind(editor) as never,
+    can: editor.can.bind(editor) as never,
   })
   return tr
 }

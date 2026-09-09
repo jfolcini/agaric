@@ -47,10 +47,10 @@ vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
 describe('createSuggestionRenderer', () => {
   it('returns an object with the four lifecycle methods', () => {
     const renderer = createSuggestionRenderer()
-    expect(renderer.onStart).toBeTypeOf('function')
-    expect(renderer.onUpdate).toBeTypeOf('function')
-    expect(renderer.onKeyDown).toBeTypeOf('function')
-    expect(renderer.onExit).toBeTypeOf('function')
+    expect(typeof renderer.onStart).toBe('function')
+    expect(typeof renderer.onUpdate).toBe('function')
+    expect(typeof renderer.onKeyDown).toBe('function')
+    expect(typeof renderer.onExit).toBe('function')
   })
 
   it('passes label prop to ReactRenderer when label is provided', async () => {

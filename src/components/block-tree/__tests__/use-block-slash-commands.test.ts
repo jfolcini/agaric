@@ -507,14 +507,8 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
   // programmatic file dialog, etc.) surface a toast + logger.warn instead of
   // letting the exception bubble out as an unhandled rejection.
   it('surfaces toast + logger.warn when input.click() throws', async () => {
-    const originalClick = HTMLInputElement.prototype.click
-    const clickMock = vi.fn(() => {
+    const clickMock = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {
       throw new Error('mock click')
-    })
-    Object.defineProperty(HTMLInputElement.prototype, 'click', {
-      value: clickMock,
-      configurable: true,
-      writable: true,
     })
 
     try {
@@ -534,11 +528,7 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
         expect.any(Error),
       )
     } finally {
-      Object.defineProperty(HTMLInputElement.prototype, 'click', {
-        value: originalClick,
-        configurable: true,
-        writable: true,
-      })
+      clickMock.mockRestore()
     }
   })
 })

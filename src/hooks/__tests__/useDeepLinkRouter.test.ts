@@ -434,8 +434,7 @@ describe('handleOpenSettingsPayload', () => {
   })
 
   it('still switches view if localStorage write throws', () => {
-    const original = Storage.prototype.setItem
-    Storage.prototype.setItem = vi.fn(() => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
     try {
@@ -443,7 +442,7 @@ describe('handleOpenSettingsPayload', () => {
       expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
       expect(mockSetView).toHaveBeenCalledWith('settings')
     } finally {
-      Storage.prototype.setItem = original
+      setItem.mockRestore()
     }
   })
 })

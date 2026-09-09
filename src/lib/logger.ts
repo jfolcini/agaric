@@ -167,18 +167,26 @@ function bridgeToBackend(
 
 // ── Logger ───────────────────────────────────────────────────────────────
 
+// `this: void` on every method: this is a namespace object, not a class, so a bare
+// `logger.warn` reference detaches safely (`useIpcCommand` picks a level that way).
 export const logger = {
-  debug(module: string, message: string, data?: Record<string, unknown>) {
+  debug(this: void, module: string, message: string, data?: Record<string, unknown>) {
     // oxlint-disable-next-line eslint/no-console -- logger primitive — wraps console for app-wide structured logging
     if (shouldLog('debug')) console.debug(formatMessage('debug', module, message, data))
   },
 
-  info(module: string, message: string, data?: Record<string, unknown>) {
+  info(this: void, module: string, message: string, data?: Record<string, unknown>) {
     // oxlint-disable-next-line eslint/no-console -- logger primitive — wraps console for app-wide structured logging
     if (shouldLog('info')) console.info(formatMessage('info', module, message, data))
   },
 
-  warn(module: string, message: string, data?: Record<string, unknown>, cause?: unknown) {
+  warn(
+    this: void,
+    module: string,
+    message: string,
+    data?: Record<string, unknown>,
+    cause?: unknown,
+  ) {
     if (!shouldLog('warn')) return
     if (isRateLimited(module, message)) return
 
@@ -200,7 +208,13 @@ export const logger = {
     bridgeToBackend('warn', module, message, stack, context, data)
   },
 
-  error(module: string, message: string, data?: Record<string, unknown>, cause?: unknown) {
+  error(
+    this: void,
+    module: string,
+    message: string,
+    data?: Record<string, unknown>,
+    cause?: unknown,
+  ) {
     if (!shouldLog('error')) return
     if (isRateLimited(module, message)) return
 

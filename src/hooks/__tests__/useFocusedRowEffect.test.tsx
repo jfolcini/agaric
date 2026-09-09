@@ -11,7 +11,7 @@
 import { render } from '@testing-library/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 
@@ -78,10 +78,13 @@ function Harness({
   )
 }
 
+let scrollIntoView: MockInstance<Element['scrollIntoView']>
+
 beforeEach(() => {
   // jsdom doesn't implement scrollIntoView; stub it on the prototype so
-  // the hook's call doesn't throw.
-  Element.prototype.scrollIntoView = vi.fn()
+  // the hook's call doesn't throw. A spy, not a bare assignment, so the
+  // afterEach restore actually puts the prototype back.
+  scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -113,9 +116,8 @@ describe('useFocusedRowEffect', () => {
 
   it('scrolls the focused row into view when focusedRowId is set', () => {
     const setFocusedIndex = vi.fn()
-    const scrollSpy = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>
     render(<Harness focusedRowId="B" setFocusedIndex={setFocusedIndex} resetDeps={['x']} />)
-    expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   it('applies focus classes to the focused row element', () => {
@@ -145,9 +147,8 @@ describe('useFocusedRowEffect', () => {
 
   it('does nothing for the scroll/class effect when focusedRowId is null', () => {
     const setFocusedIndex = vi.fn()
-    const scrollSpy = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>
     render(<Harness focusedRowId={null} setFocusedIndex={setFocusedIndex} resetDeps={['x']} />)
-    expect(scrollSpy).not.toHaveBeenCalled()
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
   it('skips the focus-class loop when focusClasses is empty', () => {
@@ -206,7 +207,7 @@ describe('useFocusedRowEffect', () => {
         containerFocused={false}
       />,
     )
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollIntoView).not.toHaveBeenCalled()
     const row = container.querySelector('[data-row-id="B"]') as HTMLElement
     for (const cls of FOCUS_CLASSES) expect(row.classList.contains(cls)).toBe(false)
   })
