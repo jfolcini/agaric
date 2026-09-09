@@ -30,6 +30,11 @@ export interface SubmitSectionProps {
   submitting: boolean
   /** True while the initial metadata IPC is still loading. */
   loadingMetadata: boolean
+  /** #4886: true while the integrity sweep is in flight. Gates copy and
+   *  submit, which carry the section, but NOT Download zip — the ZIP holds
+   *  logs and metadata only, and a user in a broken vault should be able to
+   *  save diagnostics without waiting for a whole-vault rebuild. */
+  runningIntegrity: boolean
   /** True while a logs-IPC is in flight (gates the Download zip button). */
   loadingLogs: boolean
   /** True when metadata has not yet resolved (disables Download zip). */
@@ -48,6 +53,7 @@ export function SubmitSection({
   confirmed,
   submitting,
   loadingMetadata,
+  runningIntegrity,
   loadingLogs,
   metadataReady,
   bodyLength,
@@ -63,7 +69,11 @@ export function SubmitSection({
       <Button variant="outline" onClick={onCancel}>
         {t('bugReport.cancel')}
       </Button>
-      <Button variant="outline" onClick={onCopy} disabled={loadingMetadata || bodyLength === 0}>
+      <Button
+        variant="outline"
+        onClick={onCopy}
+        disabled={loadingMetadata || runningIntegrity || bodyLength === 0}
+      >
         {t('bugReport.copy')}
       </Button>
       {/* PEND-bug-report-zip-affordance: split the old "Open in
@@ -86,7 +96,9 @@ export function SubmitSection({
       )}
       <Button
         onClick={onSubmit}
-        disabled={!confirmed || submitting || loadingMetadata || bodyLength === 0}
+        disabled={
+          !confirmed || submitting || loadingMetadata || runningIntegrity || bodyLength === 0
+        }
         aria-label={includeLogs ? t('bugReport.openGitHubIssue') : t('bugReport.openIssue')}
         data-testid="bug-report-open-github"
       >

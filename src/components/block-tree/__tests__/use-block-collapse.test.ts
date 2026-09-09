@@ -121,34 +121,36 @@ describe('useBlockCollapse', () => {
 
   it('keeps expandBlock stable and leaves an already-expanded block unchanged', () => {
     const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
-    const onBeforeCollapse = vi.fn()
-    const { result } = renderHook(() =>
-      useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1', onBeforeCollapse }),
-    )
-    const initialExpand = result.current.expandBlock
+    try {
+      const onBeforeCollapse = vi.fn()
+      const { result } = renderHook(() =>
+        useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1', onBeforeCollapse }),
+      )
+      const initialExpand = result.current.expandBlock
 
-    act(() => {
-      result.current.expandBlock('A')
-    })
+      act(() => {
+        result.current.expandBlock('A')
+      })
 
-    expect(result.current.collapsedIds.has('A')).toBe(false)
-    expect(result.current.expandBlock).toBe(initialExpand)
-    expect(onBeforeCollapse).not.toHaveBeenCalled()
-    expect(setItemSpy).not.toHaveBeenCalled()
+      expect(result.current.collapsedIds.has('A')).toBe(false)
+      expect(result.current.expandBlock).toBe(initialExpand)
+      expect(onBeforeCollapse).not.toHaveBeenCalled()
+      expect(setItemSpy).not.toHaveBeenCalled()
 
-    act(() => {
-      result.current.toggleCollapse('A')
-    })
-    expect(result.current.expandBlock).toBe(initialExpand)
+      act(() => {
+        result.current.toggleCollapse('A')
+      })
+      expect(result.current.expandBlock).toBe(initialExpand)
 
-    act(() => {
-      result.current.expandBlock('A')
-    })
-    expect(result.current.collapsedIds.has('A')).toBe(false)
-    expect(result.current.expandBlock).toBe(initialExpand)
-    expect(onBeforeCollapse).toHaveBeenCalledTimes(1)
-
-    setItemSpy.mockRestore()
+      act(() => {
+        result.current.expandBlock('A')
+      })
+      expect(result.current.collapsedIds.has('A')).toBe(false)
+      expect(result.current.expandBlock).toBe(initialExpand)
+      expect(onBeforeCollapse).toHaveBeenCalledTimes(1)
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 
   it('filters descendants of collapsed blocks from visibleBlocks', () => {
@@ -197,19 +199,21 @@ describe('useBlockCollapse', () => {
   // the old single global `collapsed_ids` key shared across all pages/spaces.
   it('persists collapsed IDs to the page-scoped localStorage key', () => {
     const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
-    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+    try {
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
 
-    act(() => {
-      result.current.toggleCollapse('A')
-    })
+      act(() => {
+        result.current.toggleCollapse('A')
+      })
 
-    expect(setItemSpy).toHaveBeenCalledWith('collapsed_ids:PAGE_1', expect.any(String))
-    const stored = JSON.parse(setItemSpy.mock.calls[0]?.[1] as string) as string[]
-    expect(stored).toContain('A')
-    // The legacy global key is never written again.
-    expect(localStorage.getItem('collapsed_ids')).toBeNull()
-
-    setItemSpy.mockRestore()
+      expect(setItemSpy).toHaveBeenCalledWith('collapsed_ids:PAGE_1', expect.any(String))
+      const stored = JSON.parse(setItemSpy.mock.calls[0]?.[1] as string) as string[]
+      expect(stored).toContain('A')
+      // The legacy global key is never written again.
+      expect(localStorage.getItem('collapsed_ids')).toBeNull()
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 
   it('restores collapsed IDs from the page-scoped localStorage key on init', () => {
@@ -273,16 +277,18 @@ describe('useBlockCollapse', () => {
 
   it('does not persist when pageKey is absent (in-memory only)', () => {
     const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
-    const { result } = renderHook(() => useBlockCollapse(flatBlocks))
+    try {
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
-    act(() => {
-      result.current.toggleCollapse('A')
-    })
+      act(() => {
+        result.current.toggleCollapse('A')
+      })
 
-    expect(result.current.collapsedIds.has('A')).toBe(true)
-    expect(setItemSpy).not.toHaveBeenCalled()
-
-    setItemSpy.mockRestore()
+      expect(result.current.collapsedIds.has('A')).toBe(true)
+      expect(setItemSpy).not.toHaveBeenCalled()
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 
   it('handles empty block list gracefully', () => {

@@ -107,8 +107,9 @@ export function BugReportDialog({
   // #4886 — the reconciliation oracle. Opt-in and off by default: the sweep
   // rebuilds every derived table from the base tables, so it runs only for a
   // user who turned the Data-tab setting on, and only once this dialog is
-  // open. `runningIntegrity` joins the metadata gate below so the issue
-  // cannot be filed with the section the user asked for still missing.
+  // open. `runningIntegrity` gates copy and submit so the issue cannot be
+  // filed with the section the user asked for still missing; it deliberately
+  // does not gate Download zip, which carries no integrity section.
   const [integrityEnabled] = usePreference(PREFERENCES.integrityCheck)
   const {
     report: integrityReport,
@@ -486,7 +487,8 @@ export function BugReportDialog({
             includeLogs={includeLogs}
             confirmed={confirmed}
             submitting={submitting}
-            loadingMetadata={loadingMetadata || runningIntegrity}
+            loadingMetadata={loadingMetadata}
+            runningIntegrity={runningIntegrity}
             loadingLogs={loadingLogs}
             metadataReady={metadata != null}
             bodyLength={body.length}

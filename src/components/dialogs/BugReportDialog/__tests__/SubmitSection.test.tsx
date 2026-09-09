@@ -8,6 +8,7 @@
  *  - The primary button is disabled until confirmed AND bodyLength > 0
  *    AND not submitting / loading metadata.
  *  - The Copy button is disabled while loadingMetadata or bodyLength === 0.
+ *  - runningIntegrity gates copy + submit but leaves Download zip enabled.
  *  - The Download-zip button is disabled while submitting / loading /
  *    metadataReady=false.
  *  - The primary button's accessible name flips between logs-on/off.
@@ -31,6 +32,7 @@ function renderSection(overrides?: Partial<SubmitSectionProps>) {
     confirmed: false,
     submitting: false,
     loadingMetadata: false,
+    runningIntegrity: false,
     loadingLogs: false,
     metadataReady: true,
     bodyLength: 42,
@@ -134,6 +136,17 @@ describe('SubmitSection', () => {
 
     renderSection({ includeLogs: true, metadataReady: false })
     expect(screen.getByTestId('bug-report-download-zip')).toBeDisabled()
+  })
+
+  // #4886 review note: the ZIP carries logs and metadata, never the integrity
+  // section, so a whole-vault sweep must not stop a user in a broken vault
+  // from saving diagnostics. Copy and submit DO carry the section, so they
+  // wait for it.
+  it('leaves Download zip enabled while the integrity sweep runs, and gates copy + submit', () => {
+    renderSection({ includeLogs: true, confirmed: true, runningIntegrity: true })
+    expect(screen.getByTestId('bug-report-download-zip')).toBeEnabled()
+    expect(screen.getByRole('button', { name: t('bugReport.copy') })).toBeDisabled()
+    expect(screen.getByTestId('bug-report-open-github')).toBeDisabled()
   })
 
   it('has no a11y violations', async () => {

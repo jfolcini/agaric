@@ -429,4 +429,41 @@ describe('the integrity section in a bug report', () => {
     // The other notes lines survive alongside it.
     expect(fields.notes).toContain('Arch: x86_64')
   })
+
+  // The section shares the prefill URL budget with `logs`, and its worst case
+  // is the oracle's full surface: 21 artefacts x SAMPLE_KEYS_PER_ARTEFACT
+  // ULIDs. Uncapped that is kilobytes, and GitHub drops an over-long prefill
+  // silently — taking the description the reporter typed with it.
+  it('caps the integrity section in `notes` while the copied body keeps it whole', () => {
+    const worstCase: ReconciliationReport = {
+      blocks_scanned: 100_000,
+      today: '2026-09-09',
+      total_divergences: 210,
+      artefacts: Array.from({ length: 21 }, (_artefact, i) => ({
+        artefact: `artefact_number_${i}.some_column`,
+        count: 10,
+        sample_keys: Array.from({ length: 10 }, (_key, k) => `01ARZ3NDEKTSV4RRFFQ69G5FA${i}${k}`),
+      })),
+    }
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: 't',
+      description: 'x',
+      reconciliation: worstCase,
+    })
+    const section = fields.notes.slice(fields.notes.indexOf('## Integrity check'))
+    expect(section.length).toBeLessThanOrEqual(_internals.MAX_INTEGRITY_CHARS)
+    expect(section.endsWith(_internals.INTEGRITY_TRUNCATION_MARKER)).toBe(true)
+    // The summary line survives the cut — it is the part a triager reads.
+    expect(section).toContain('210 divergences over 100000 blocks scanned')
+
+    // The clipboard copy has no URL ceiling, so it is not cut.
+    const body = formatReportBody({
+      metadata: SAMPLE_METADATA,
+      description: 'x',
+      reconciliation: worstCase,
+    })
+    expect(body).toContain('artefact_number_20.some_column')
+    expect(body).not.toContain(_internals.INTEGRITY_TRUNCATION_MARKER)
+  })
 })
