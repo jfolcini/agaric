@@ -162,13 +162,12 @@ describe('BookmarksSection', () => {
     })
 
     /**
-     * Titles arrive with the resolve cache's first full scan. Before it lands
-     * every bookmark looks unresolved, and an empty state here would tell the
-     * user they have no bookmarks on every cold boot.
+     * Titles arrive with the resolve cache. Before it holds this bookmark —
+     * cold boot, or a space switch that flushed it — an empty state would
+     * tell a user with plenty of bookmarks that they have none.
      */
-    it('renders neither list nor empty state before the resolve cache loads', () => {
+    it('renders neither list nor empty state while a bookmark is unresolved', () => {
       writePreference(PREFERENCES.starredPages, ['A'])
-      useResolveStore.setState({ _preloaded: false })
 
       renderSection()
 

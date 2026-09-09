@@ -50,10 +50,6 @@ export function BookmarksSection(): ReactElement {
   // Re-resolve when the cache lands new titles, a rename edits one, or a
   // space switch flushes the previous space's entries.
   const resolveVersion = useResolveStore((s) => s.version)
-  // Titles arrive with the resolve cache's first full scan. Until it lands
-  // every bookmark looks unresolved, so an empty state here would tell the
-  // user they have no bookmarks on every cold boot. Render nothing instead.
-  const preloaded = useResolveStore((s) => s._preloaded)
   const bookmarks = useMemo(() => {
     const resolve = useResolveStore.getState()
     return [...starredIds]
@@ -86,11 +82,14 @@ export function BookmarksSection(): ReactElement {
       {!collapsed && (
         <SidebarGroupContent>
           {bookmarks.length === 0 ? (
-            // Before the resolve cache's first scan every bookmark looks
-            // unresolved, so an empty state would claim there are none.
+            // "No bookmarks" is claimed from the LIST, never from what
+            // resolved: titles arrive with the resolve cache, so a bookmark
+            // that has not resolved yet — cold boot, or a space switch that
+            // flushed the cache — would otherwise flash that text at a user
+            // who has plenty. With ids but nothing resolved, render nothing.
             // The dashed empty box has no icon-rail layout, and the rail
             // already hides the header that explains it.
-            preloaded ? (
+            starredIds.size === 0 ? (
               <div className="group-data-[collapsible=icon]:hidden">
                 <EmptyState
                   compact

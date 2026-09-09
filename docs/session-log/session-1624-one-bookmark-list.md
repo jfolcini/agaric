@@ -86,6 +86,26 @@ The write is what fixes it, because it persists the coerced rows and those no
 longer carry the flag. The flag is deleted rather than kept as a second guard
 for the first.
 
+## A fourth round: the boot path had no coverage
+
+The review then blocked on the idempotence fix, with a hypothesis it could not
+run: for synchronous storage the first hydrate happens inside `create()`,
+before the store binding exists, so the forced write throws into a swallowed
+catch and the flags survive after all. The passing test only proved the
+manual-`rehydrate()` path, which runs after module init.
+
+Reproduced: a test that seeds storage, resets the module registry and
+re-imports the store fails on the blob still containing `pinned`. The write is
+deferred to a microtask, and that boot-path test is kept — the pre-existing
+raw-key write it borrows from had no coverage either.
+
+The second non-blocking note found the cold-boot flash reachable through
+another door: `_preloaded` is never reset, so a space switch flushes the cache
+while the flag stays true. The gate is now on the bookmark LIST rather than on
+the cache — "no bookmarks" is claimed only when there are none, and ids that
+have not resolved yet render nothing. That closes both doors and drops the
+`_preloaded` read entirely.
+
 ## Verification
 
 Two falsifications, each against a `cp` backup restored and `cmp`-checked in
@@ -101,7 +121,7 @@ cross-space case be written at all. Two of its cases carry properties that
 were false under the old model — a bookmark outliving the recents cap, and the
 space filter.
 
-18970 unit tests pass across the whole frontend, plus 53 Playwright cases over
+18971 unit tests pass across the whole frontend, plus 53 Playwright cases over
 the Pages view, the palette and the bookmark specs. `npm run typecheck` is
 clean. `e2e/starred-pages.spec.ts` and `PageBrowser.starred-pages.test.tsx`
 are renamed to match what they test.

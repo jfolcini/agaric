@@ -582,7 +582,14 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         // user has since removed. An empty patch is enough to trigger it.
         if (pinnedRescueNeedsPersist) {
           pinnedRescueNeedsPersist = false
-          useRecentPagesStore.setState({})
+          // Deferred: for synchronous storage this callback runs INSIDE
+          // `create()`, before the `useRecentPagesStore` binding exists, and
+          // the resulting ReferenceError is swallowed by zustand's hydrate
+          // chain — leaving the flags in storage and the rescue repeating on
+          // every boot. A microtask lands after the binding is initialised.
+          queueMicrotask(() => {
+            useRecentPagesStore.setState({})
+          })
         }
         if (state == null || state.rawKeysMerged) return
         const { bySpace, changed } = migrateRawRecentPagesKeys(state.recentPagesBySpace)
