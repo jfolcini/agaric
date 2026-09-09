@@ -473,7 +473,7 @@ describe('useSlashCommandProperty — attach', () => {
     try {
       const { result } = renderHook(() => useSlashCommandProperty())
       const { ctx } = makeSyntheticCtx()
-      result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+      await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
 
       const el = input.get()
       expect(el).not.toBeNull()
@@ -501,7 +501,7 @@ describe('useSlashCommandProperty — attach', () => {
     try {
       const { result } = renderHook(() => useSlashCommandProperty())
       const { ctx } = makeSyntheticCtx()
-      result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+      await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
 
       const el = input.get()
       const file = new File([new Uint8Array([0, 1])], 'evil.exe', {
@@ -530,7 +530,7 @@ describe('useSlashCommandProperty — attach', () => {
     try {
       const { result } = renderHook(() => useSlashCommandProperty())
       const { ctx } = makeSyntheticCtx()
-      result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+      await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
       expect(clickMock).toHaveBeenCalled()
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('attachments.openFileDialogFailed')
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(

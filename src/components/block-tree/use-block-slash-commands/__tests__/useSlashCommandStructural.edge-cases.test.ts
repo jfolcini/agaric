@@ -96,7 +96,7 @@ function firstParaText(): string {
 }
 
 describe('T3 — /link selection replacement', () => {
-  it('replaces selected text with the `[[` trigger', () => {
+  it('replaces selected text with the `[[` trigger', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('hello world')
     if (!editor) throw new Error('no editor')
@@ -106,7 +106,7 @@ describe('T3 — /link selection replacement', () => {
     editor.commands.setTextSelection({ from: 7, to: 12 })
     expect(editor.state.doc.textBetween(7, 12)).toBe('world')
 
-    result.current.exact['link']?.(ctx, { id: 'link', label: 'Link' })
+    await result.current.exact['link']?.(ctx, { id: 'link', label: 'Link' })
 
     // The selected "world" is gone; the trigger replaced it. "hello " stays.
     expect(firstParaText()).toBe('hello [[')
@@ -114,7 +114,7 @@ describe('T3 — /link selection replacement', () => {
 })
 
 describe('T3 — /tag with a multi-word selection', () => {
-  it('replaces the whole multi-word selection with the `@` trigger', () => {
+  it('replaces the whole multi-word selection with the `@` trigger', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('one two three')
     if (!editor) throw new Error('no editor')
@@ -123,18 +123,18 @@ describe('T3 — /tag with a multi-word selection', () => {
     editor.commands.setTextSelection({ from: 5, to: 14 })
     expect(editor.state.doc.textBetween(5, 14)).toBe('two three')
 
-    result.current.exact['tag']?.(ctx, { id: 'tag', label: 'Tag' })
+    await result.current.exact['tag']?.(ctx, { id: 'tag', label: 'Tag' })
 
     expect(firstParaText()).toBe('one @')
   })
 
-  it('/block-ref replaces a selection with the `((` trigger', () => {
+  it('/block-ref replaces a selection with the `((` trigger', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('see other')
     if (!editor) throw new Error('no editor')
 
     editor.commands.setTextSelection({ from: 5, to: 10 }) // "other"
-    result.current.exact['block-ref']?.(ctx, { id: 'block-ref', label: 'Block ref' })
+    await result.current.exact['block-ref']?.(ctx, { id: 'block-ref', label: 'Block ref' })
 
     expect(firstParaText()).toBe('see ((')
   })
@@ -152,13 +152,13 @@ describe('T3 — /table at pos 0 vs mid-block', () => {
     return { rows, headerCells }
   }
 
-  it('inserts a 3×3 table (with header row) when the caret is at pos 0', () => {
+  it('inserts a 3×3 table (with header row) when the caret is at pos 0', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('paragraph text')
     if (!editor) throw new Error('no editor')
 
     editor.commands.setTextSelection({ from: 0, to: 0 })
-    result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
+    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
 
     const { rows, headerCells } = tableDims()
     expect(rows).toBe(3)
@@ -168,14 +168,14 @@ describe('T3 — /table at pos 0 vs mid-block', () => {
     expect(editor.state.doc.textContent).toContain('paragraph text')
   })
 
-  it('inserts a table when the caret is mid-paragraph without losing the text', () => {
+  it('inserts a table when the caret is mid-paragraph without losing the text', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('alpha beta')
     if (!editor) throw new Error('no editor')
 
     // Caret between "alpha" and " beta" (offset 5 → pos 6).
     editor.commands.setTextSelection({ from: 6, to: 6 })
-    result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
+    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
 
     const { rows } = tableDims()
     expect(rows).toBe(3)
@@ -183,12 +183,12 @@ describe('T3 — /table at pos 0 vs mid-block', () => {
     expect(editor.state.doc.textContent).toContain('beta')
   })
 
-  it('/table-no-header inserts a table whose first row has NO header cells', () => {
+  it('/table-no-header inserts a table whose first row has NO header cells', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('')
     if (!editor) throw new Error('no editor')
 
-    result.current.exact['table-no-header']?.(ctx, {
+    await result.current.exact['table-no-header']?.(ctx, {
       id: 'table-no-header',
       label: 'Table (no header)',
     })
@@ -200,13 +200,13 @@ describe('T3 — /table at pos 0 vs mid-block', () => {
 })
 
 describe('T3 — /code and /quote from a non-default block state', () => {
-  it('/code toggles a paragraph WITH an active text selection into a code block', () => {
+  it('/code toggles a paragraph WITH an active text selection into a code block', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const ctx = buildCtxWithEditor('const x = 1')
     if (!editor) throw new Error('no editor')
 
     editor.commands.setTextSelection({ from: 1, to: 12 }) // whole line selected
-    result.current.exact['code']?.(ctx, { id: 'code', label: 'Code' })
+    await result.current.exact['code']?.(ctx, { id: 'code', label: 'Code' })
 
     // First block is now a code block carrying the original text.
     expect(editor.state.doc.child(0).type.name).toBe('codeBlock')
@@ -215,7 +215,7 @@ describe('T3 — /code and /quote from a non-default block state', () => {
     expect(editor.state.selection.empty).toBe(true)
   })
 
-  it('/quote toggles a heading block (non-default state) into a blockquote', () => {
+  it('/quote toggles a heading block (non-default state) into a blockquote', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     editor = new Editor({
       element: document.createElement('div'),
@@ -231,7 +231,7 @@ describe('T3 — /code and /quote from a non-default block state', () => {
     ctx.rovingEditor.editor = editor as unknown as typeof ctx.rovingEditor.editor
 
     editor.commands.setTextSelection({ from: 1, to: 6 })
-    result.current.exact['quote']?.(ctx, { id: 'quote', label: 'Quote' })
+    await result.current.exact['quote']?.(ctx, { id: 'quote', label: 'Quote' })
 
     // The heading is now wrapped in a blockquote (toggleBlockquote wraps the
     // current block); the title text is preserved inside.
@@ -241,7 +241,7 @@ describe('T3 — /code and /quote from a non-default block state', () => {
 })
 
 describe('T3 — insert-then-immediate-blur draft autosave state', () => {
-  it('reading the editor JSON right after /link insert captures the post-insert draft', () => {
+  it('reading the editor JSON right after /link insert captures the post-insert draft', async () => {
     // Draft autosave (EditableBlock blur → unmount → computeContentDelta) reads
     // `editor.getJSON()`. After a /link insert + selection replacement, that
     // snapshot must reflect the replaced text, not the pre-insert content.
@@ -250,7 +250,7 @@ describe('T3 — insert-then-immediate-blur draft autosave state', () => {
     if (!editor) throw new Error('no editor')
 
     editor.commands.setTextSelection({ from: 7, to: 11 }) // "body"
-    result.current.exact['link']?.(ctx, { id: 'link', label: 'Link' })
+    await result.current.exact['link']?.(ctx, { id: 'link', label: 'Link' })
 
     // Simulate the blur read: serialize-ready JSON of the live doc.
     const json = editor.getJSON() as DocNode

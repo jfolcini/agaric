@@ -14,6 +14,10 @@ import { resolveDiffBase } from './pr-diff-base.mjs'
 
 const SCRIPT_PATH = join(import.meta.dirname, 'pr-diff-base.mjs')
 
+// Every `test()` below is `void`-ed: node:test's returned promise fulfils even
+// when the test fails — the runner owns the failure report and the exit code —
+// so there is nothing for a caller to await or catch.
+
 /**
  * Reproduce #4544's fixture: a PR branch forked from `main`, `main` then
  * advanced with an UNRELATED file (standing in for somebody else's merge
@@ -79,7 +83,7 @@ function changedFiles(dir, env, base, head) {
     .toSorted()
 }
 
-test('#4544: the resolved base is main’s CURRENT tip, not the stale base.sha the triggering event captured', () => {
+void test('#4544: the resolved base is main’s CURRENT tip, not the stale base.sha the triggering event captured', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -102,7 +106,7 @@ test('#4544: the resolved base is main’s CURRENT tip, not the stale base.sha t
   }
 })
 
-test('#4544: the diff from the resolved base names ONLY the PR branch’s own file, never the one main gained', () => {
+void test('#4544: the diff from the resolved base names ONLY the PR branch’s own file, never the one main gained', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -121,7 +125,7 @@ test('#4544: the diff from the resolved base names ONLY the PR branch’s own fi
   }
 })
 
-test('#4544 control: the OLD stale base.sha attributes main’s own file to the PR too (proves the fixture reproduces the report)', () => {
+void test('#4544 control: the OLD stale base.sha attributes main’s own file to the PR too (proves the fixture reproduces the report)', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -152,7 +156,7 @@ function advanceMainPastTheMergeRef(fx) {
   return newerMainSha
 }
 
-test('#4544: when origin/main has advanced PAST the merge ref, the base is the merge ref’s own parent — not the newer tip', () => {
+void test('#4544: when origin/main has advanced PAST the merge ref, the base is the merge ref’s own parent — not the newer tip', () => {
   // The other direction of the property every review of this PR leaned on to
   // call the fix stale-proof, and the one the fixture did not reach: merge-base
   // must resolve BACKWARDS to the merge ref's main-side parent. Returning the
@@ -186,11 +190,11 @@ test('#4544: when origin/main has advanced PAST the merge ref, the base is the m
   }
 })
 
-test('resolveDiffBase throws a clear error when baseRef is missing, rather than resolving nothing', () => {
+void test('resolveDiffBase throws a clear error when baseRef is missing, rather than resolving nothing', () => {
   assert.throws(() => resolveDiffBase({ cwd: process.cwd() }), /baseRef is required/)
 })
 
-test('resolveDiffBase fails loudly — never an empty base — when the ref cannot be found or fetched', () => {
+void test('resolveDiffBase fails loudly — never an empty base — when the ref cannot be found or fetched', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-nofetch-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -213,7 +217,7 @@ test('resolveDiffBase fails loudly — never an empty base — when the ref cann
   }
 })
 
-test('CLI: prints the resolved base SHA to stdout and nothing else', () => {
+void test('CLI: prints the resolved base SHA to stdout and nothing else', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-ok-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -231,7 +235,7 @@ test('CLI: prints the resolved base SHA to stdout and nothing else', () => {
   }
 })
 
-test('CLI: --cwd and --head are honoured, not silently defaulted into process.cwd()', () => {
+void test('CLI: --cwd and --head are honoured, not silently defaulted into process.cwd()', () => {
   // These two flags had NO caller and NO test: the suite reached `head` only
   // through the library API. So the `value()` guard added to stop `--cwd` as a
   // trailing argument from silently falling back to process.cwd() was itself
@@ -255,7 +259,7 @@ test('CLI: --cwd and --head are honoured, not silently defaulted into process.cw
   }
 })
 
-test('CLI: every bad-usage shape exits 2, not 1', () => {
+void test('CLI: every bad-usage shape exits 2, not 1', () => {
   // Both the usage path and the resolution path emit `::error::`, so the exit
   // CODE is the only thing distinguishing "you called it wrong" from "the repo
   // could not answer". The exit-1 half of that split is pinned by the next test;
@@ -284,7 +288,7 @@ test('CLI: every bad-usage shape exits 2, not 1', () => {
   }
 })
 
-test('CLI: a base that cannot be resolved exits 1 — the resolution failure, not a usage error', () => {
+void test('CLI: a base that cannot be resolved exits 1 — the resolution failure, not a usage error', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-fail-'))
   try {
     withScrubbedProcessEnv(root, () => {
