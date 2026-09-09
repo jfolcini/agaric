@@ -5924,10 +5924,10 @@ async fn backfill_block_links_fills_a_vault_that_never_indexed_its_links() {
         "precondition: the vault has never indexed a link"
     );
 
-    let outcome = backfill_block_links(&pool).await.unwrap();
-
-    assert_eq!(outcome.added, 2, "both tokens must reach the graph");
-    assert!(outcome.ran);
+    assert!(
+        backfill_block_links(&pool).await.unwrap(),
+        "the pass must report that it scanned"
+    );
     let rows = sqlx::query!(
         "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
         "01HZ0000000000000000000SRC",
@@ -5969,15 +5969,10 @@ async fn backfill_block_links_signals_a_rebuild_on_a_net_zero_pass() {
     .await
     .unwrap();
 
-    let outcome = backfill_block_links(&pool).await.unwrap();
-
-    assert_eq!(
-        outcome.added, 0,
-        "one edge in, one out — every COUNT(*) is identical either side"
-    );
     assert!(
-        outcome.ran,
-        "which is why the caller rebuilds on `ran`, not on any count"
+        backfill_block_links(&pool).await.unwrap(),
+        "one edge in, one out — every COUNT(*) is identical either side, which \
+         is why the caller rebuilds on this and not on a count"
     );
     assert_eq!(count_rows(&pool, "block_links").await, 1);
 }
@@ -6026,7 +6021,7 @@ async fn backfill_block_links_runs_once_per_vault() {
         "See [[01HZ00000000000000000000AB]]",
     )
     .await;
-    assert_eq!(backfill_block_links(&pool).await.unwrap().added, 1);
+    assert!(backfill_block_links(&pool).await.unwrap());
 
     // A second link-bearing block arrives without a reindex. The real write
     // path would have indexed it; the backfill must NOT go looking again.
@@ -6038,9 +6033,8 @@ async fn backfill_block_links_runs_once_per_vault() {
     )
     .await;
 
-    assert_eq!(
-        backfill_block_links(&pool).await.unwrap().added,
-        0,
+    assert!(
+        !backfill_block_links(&pool).await.unwrap(),
         "the marker must retire the scan"
     );
     assert_eq!(
