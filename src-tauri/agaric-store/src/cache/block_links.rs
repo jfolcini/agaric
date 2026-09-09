@@ -335,6 +335,20 @@ pub async fn rebuild_block_links_unresolved(pool: &SqlitePool) -> Result<(), App
 // backfill_block_links — the one-shot vault-wide fill
 // ---------------------------------------------------------------------------
 
+/// What one [`backfill_block_links`] pass did.
+pub struct LinkBackfill {
+    /// Rows added to `block_links`. For the log line only.
+    pub added: usize,
+    /// Whether this pass actually scanned, i.e. the marker was not already
+    /// set. The caller rebuilds the rollups on THIS, never on a count: a pass
+    /// that drops one stale edge and adds one missing edge leaves the row
+    /// count identical while changing which edges exist, so no arithmetic over
+    /// `COUNT(*)` can answer "did the graph move". Since the scan happens once
+    /// per vault, rebuilding unconditionally on that one occasion is both
+    /// cheaper to reason about and always right.
+    pub ran: bool,
+}
+
 /// `app_settings` key recording that [`backfill_block_links`] has run.
 ///
 /// Versioned so a future correction can re-arm the pass by bumping the
@@ -394,7 +408,7 @@ const BLOCK_LINKS_BACKFILL_MARKER: &str = "repair.block_links_backfill.v1";
 /// Returns [`AppError`] if any statement fails. The caller treats that as
 /// best-effort — the marker is only written on the committed path, so a
 /// failed run is retried on the next boot.
-pub async fn backfill_block_links(pool: &SqlitePool) -> Result<usize, AppError> {
+pub async fn backfill_block_links(pool: &SqlitePool) -> Result<LinkBackfill, AppError> {
     let done: Option<String> = sqlx::query_scalar!(
         "SELECT value FROM app_settings WHERE key = ?",
         BLOCK_LINKS_BACKFILL_MARKER,
@@ -402,7 +416,10 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<usize, AppError> 
     .fetch_optional(pool)
     .await?;
     if done.is_some() {
-        return Ok(0);
+        return Ok(LinkBackfill {
+            added: 0,
+            ran: false,
+        });
     }
 
     let mut tx = crate::db::begin_immediate_logged(pool, "block_links_backfill").await?;
@@ -442,17 +459,17 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<usize, AppError> 
 
     tx.commit().await?;
 
-    // The rollups read `block_links`, so they are rebuilt only when it
-    // actually moved. Outside the transaction above because both take a pool
-    // and open their own; the window between is pre-UI at boot, and each is
-    // idempotent, so a crash inside it heals on the next rebuild.
-    let added = usize::try_from(after.saturating_sub(before)).unwrap_or(0);
-    if added > 0 {
-        crate::cache::rebuild_page_link_cache(pool).await?;
-        crate::cache::rebuild_pages_cache_counts(pool).await?;
-    }
-
-    Ok(added)
+    // `page_link_cache` and `pages_cache.inbound_link_count` roll up from
+    // `block_links`, so they are stale the moment this pass changes it. They
+    // are the CALLER's to rebuild, through the materializer: doing it here
+    // would run after the marker has already committed, so a rebuild that
+    // failed would leave the pass recorded as done and the rollups wrong,
+    // with nothing to retry it. The materializer's queue persists a shed or
+    // failed task; an `await` here does not.
+    Ok(LinkBackfill {
+        added: usize::try_from(after.saturating_sub(before)).unwrap_or(0),
+        ran: true,
+    })
 }
 // ---------------------------------------------------------------------------
 // reindex_block_links (p1-t21)

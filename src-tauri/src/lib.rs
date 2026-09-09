@@ -1249,13 +1249,29 @@ fn bootstrap_spaces_and_sweep(
     // marker-gated, best-effort like its neighbours. Last, because the
     // repairs above can rehome content and a link's eligibility depends on
     // the source's resolved space.
-    if let Err(e) =
-        tauri::async_runtime::block_on(agaric_store::cache::backfill_block_links(&pools.write))
-    {
-        tracing::error!(
+    match tauri::async_runtime::block_on(agaric_store::cache::backfill_block_links(&pools.write)) {
+        Ok(outcome) if outcome.ran => {
+            tracing::info!(
+                added = outcome.added,
+                "link-graph backfill filled the graph"
+            );
+            // The two rollups that read `block_links`. Through the queue, not
+            // awaited here: a failed rebuild then persists for retry instead
+            // of leaving the backfill's marker set and the rollups stale.
+            for task in [
+                materializer::MaterializeTask::RebuildPageLinkCache,
+                materializer::MaterializeTask::RebuildPagesCacheCounts,
+            ] {
+                if let Err(e) = materializer.try_enqueue_background(task) {
+                    tracing::error!(error = %e, "could not queue a post-backfill rollup rebuild");
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(
             error = %e,
             "link-graph backfill failed — boot continues; the next boot retries it"
-        );
+        ),
     }
     Ok(())
 }
