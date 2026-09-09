@@ -17,16 +17,11 @@ import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-m
 import {
   type TypedHandlers,
   applyUndoForTarget,
-  deleteCohort,
-  insertAtLiveSlotAndRenumber,
-  nextCohortMarker,
   notFoundRejection,
   pageRequestLimit,
-  refreshDescendantPageIds,
-  renumberLiveSiblings,
   resolveUndoTarget,
-  restoreCohort,
   reverseOpTypeFor,
+  reversePayloadFor,
   sortOpLogNewestFirst,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -294,35 +289,19 @@ export const historyHandlers = {
       const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
       if (!target) continue
 
-      // #4868 — a REVERSE row's payload is a bookkeeping stash (`reversed` /
-      // `re_applied` / `reverted`), not a forward payload, so
-      // `applyRevertForOp` would read every key it needs as absent: the
-      // `edit_block` arm alone would write `from_text ?? null` and WIPE the
-      // block's content. Before this file gave those rows a real `op_type` and
-      // `block_id` the same click was a silent no-op, because no arm matched;
-      // keep it one rather than turn it destructive.
-      //
-      // The backend reverts these rows properly — its reverse row IS a real op
-      // carrying a real payload. Closing that gap means giving the mock's
-      // reverse rows genuine reverse payloads across all eleven op types, which
-      // is #4870, not a line here. Until then the divergence is a no-op in the
-      // safe direction, and it is the same one that leaves an undo row
-      // non-restorable in browser-mode block history.
-      const stash = JSON.parse(target.payload) as Record<string, unknown>
-      const isBookkeepingRow =
-        stash['reversed'] !== undefined ||
-        stash['re_applied'] !== undefined ||
-        stash['reverted'] !== undefined
-      if (isBookkeepingRow) continue
-
+      // #4870 — a reverse row carries a genuine forward payload of its reverse
+      // type, so reverting one re-applies the op it reversed, exactly as on the
+      // backend. This used to skip such rows (`isBookkeepingRow`): their
+      // payload was a stash with no `from_text`, and the `edit_block` arm would
+      // have WIPED the block's content.
+      const reversePayload = reversePayloadFor(target)
       applyRevertForOp(target, blocks, { properties, blockTags })
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
-      // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`, plus a `block_id`
-      // for the history readers.
+      // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
       const newOp = pushOp(
         reverseOpTypeFor(target.op_type),
-        { reverted: target, block_id: stash['block_id'] },
+        { ...reversePayload, reverted: target },
         true,
       )
       results.push(newOp)
@@ -355,87 +334,32 @@ export const historyHandlers = {
     if (!picked) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
 
     // #4868 — a REDO op is undoable (it is `is_undo = 0`), and undoing it
-    // means reversing the op it re-applied. The backend gets this for free:
-    // its redo row IS a real op carrying its own payload. The mock's redo row
-    // carries a bookkeeping stash instead, so resolve through it — the same
-    // hop `resolveUndoTarget` makes for the ref-addressed path.
+    // means reversing the op it re-applied, so that the result names the
+    // original — the same hop `resolveUndoTarget` makes for the ref-addressed
+    // path.
     const reApplied = (JSON.parse(picked.payload) as { re_applied?: MockOpLogEntry }).re_applied
     const target = reApplied ?? picked
 
-    const payload = JSON.parse(target.payload) as Record<string, unknown>
-    // The shared table, not a local default. The if/else below owns the EFFECT
-    // and covers the five block-row types; its `reverseOpType` local defaulted
+    // The shared table, not a local default. A `reverseOpType` local defaulted
     // to `edit_block`, so a positional undo of a `set_property` / `add_tag` /
     // `remove_tag` op stamped `edit_block` on the reverse row. Since #4868 that
     // row is one History displays and the #763 op-log digest compares, so the
     // wrong type is now observable rather than inert.
     const reverseOpType = reverseOpTypeFor(target.op_type)
-    // #3331 — the two soft-delete lifecycle arms are COHORT operations on the
-    // backend (`reverse_create_block` → `DeleteBlock` cascades the active
-    // subtree; `reverse_delete_block` → `RestoreBlock { deleted_at_ref }`
-    // restores the whole cohort). They used to name the reverse op correctly
-    // while mutating the target row alone, so undoing a subtree delete here
-    // left the children in Trash. Route both through the same walks the
-    // forward `delete_block` / `restore_block` handlers use.
-    if (target.op_type === 'create_block') {
-      deleteCohort(blocks, payload['block_id'] as string, nextCohortMarker())
-    } else if (target.op_type === 'delete_block') {
-      restoreCohort(blocks, payload['block_id'] as string)
-    } else if (target.op_type === 'edit_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['content'] = (payload['from_text'] as string | null) ?? null
-    } else if (target.op_type === 'move_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) {
-        // #958 — reverse a move by RE-INSERTING the block at its old SLOT in the
-        // old parent group, exactly like the forward `move_block` handler. The
-        // old code wrote the raw `old_position` back without re-slotting: the
-        // moved block then collided (same `position`) with the sibling now in
-        // its old slot, and `load_page_subtree` orders by `position ASC, id
-        // ASC`, so the tie broke on id — NOT the intended pre-move order. The
-        // "Undone" toast fired but the order/depth did not revert in place (it
-        // only "healed" on a full reopen, where the backend re-materializes
-        // dense ranks). `old_position` is a 1-based dense rank, so the 0-based
-        // insertion slot among the OTHER siblings is `old_position - 1`.
-        const curParentId = (b['parent_id'] as string | null) ?? null
-        const oldParentId = (payload['old_parent_id'] as string | null) ?? null
-        const oldSlot = ((payload['old_position'] as number) ?? 1) - 1
-        b['parent_id'] = oldParentId
-        // Recompute page_id from the restored parent (mirrors `move_block`).
-        if (oldParentId) {
-          const oldParent = blocks.get(oldParentId)
-          if (oldParent) {
-            b['page_id'] =
-              oldParent['block_type'] === 'page'
-                ? (oldParent['id'] as string)
-                : (oldParent['page_id'] as string | null)
-          }
-        } else {
-          b['page_id'] = null
-        }
-        // #957 — undoing a cross-parent move must also restore the subtree's
-        // descendant `page_id`s to the (now-restored) page root.
-        refreshDescendantPageIds(payload['block_id'] as string)
-        // #4669 — the LIVE-only reverse pair, not the forward helpers. The
-        // backend's reverse-apply path excludes tombstones from both the slot
-        // and the densification; the forward one ranks them. Sharing the
-        // forward helper here renumbered a tombstone on every undo.
-        insertAtLiveSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
-        // Collapse the vacated source group too (skip when same parent — the
-        // insert already renumbered it).
-        if (curParentId !== oldParentId) renumberLiveSiblings(curParentId)
-      }
-    } else if (target.op_type === 'restore_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = new Date().toISOString()
-    }
+    // #4870 — the shared reversal core, not a second per-type chain. This arm
+    // owned an if/else covering the five block-row types only, so it stamped a
+    // `remove_tag` reverse row while `blockTags` kept the tag, and reversed
+    // `restore_block` on the target row alone where the backend cascades the
+    // cohort. Two paths with different coverage is what produced that.
+    const reversePayload = reversePayloadFor(target)
+    applyRevertForOp(target, blocks, { properties, blockTags })
 
     // #4868 — the GENUINE reverse op type with `is_undo`, the way the backend
-    // appends it, and a `block_id` so `opBlockId` can find one: without it the
-    // per-page scope and `get_block_history` drop every undo the backend lists.
-    // `reversed` rides along for `redo_page_op`'s lookup; payload is not
-    // compared cross-stack.
-    const newOp = pushOp(reverseOpType, { reversed: target, block_id: payload['block_id'] }, true)
+    // appends it, over a genuine reverse payload (#4870) whose `block_id` is
+    // what `opBlockId` reads: without one the per-page scope and
+    // `get_block_history` drop every undo the backend lists. `reversed` rides
+    // along for `redo_page_op`'s lookup.
+    const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: target }, true)
     return {
       reversed_op: { device_id: target.device_id, seq: target.seq },
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
@@ -473,71 +397,22 @@ export const historyHandlers = {
     // call via `reverse::compute_reverse`, it never stores it).
     if (!originalOp) throw new Error('undo op carries no reversed payload')
 
-    const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
-
     const redoOpType = reverseOpTypeFor(undoOp.op_type)
-    // `create_block` and `restore_block` re-apply identically — both make the
-    // block live again — now that neither carries type bookkeeping.
-    if (originalOp.op_type === 'create_block' || originalOp.op_type === 'restore_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = null
-    } else if (originalOp.op_type === 'delete_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = new Date().toISOString()
-    } else if (originalOp.op_type === 'edit_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['content'] = (payload['to_text'] as string | null) ?? null
-    } else if (originalOp.op_type === 'move_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) {
-        // #958 — re-apply a move by RE-INSERTING at the new SLOT (see the undo
-        // path above for why a raw `new_position` write collides and breaks
-        // `position ASC, id ASC`). `new_position` is a 1-based dense rank → the
-        // 0-based insertion slot among the OTHER siblings is `new_position - 1`.
-        const curParentId = (b['parent_id'] as string | null) ?? null
-        const newParentId = (payload['new_parent_id'] as string | null) ?? null
-        const newSlot = ((payload['new_position'] as number) ?? 1) - 1
-        b['parent_id'] = newParentId
-        if (newParentId) {
-          const newParent = blocks.get(newParentId)
-          if (newParent) {
-            b['page_id'] =
-              newParent['block_type'] === 'page'
-                ? (newParent['id'] as string)
-                : (newParent['page_id'] as string | null)
-          }
-        } else {
-          b['page_id'] = null
-        }
-        // #957 — re-applying a cross-parent move must also re-refresh the
-        // subtree's descendant `page_id`s to the new page root.
-        refreshDescendantPageIds(payload['block_id'] as string)
-        // #4669 — the LIVE-only reverse pair, like the undo arm above. A redo
-        // is NOT a re-apply of the forward path: `redo_page_op` builds a
-        // reverse payload and runs it through `apply_reverse_in_tx`
-        // (`src-tauri/src/commands/history.rs`), which takes its target group
-        // with `WHERE deleted_at IS NULL`, clamps the slot to that LIVE count,
-        // and densifies over the live list. With a tombstone in the group the
-        // forward helpers put the block one rank too high.
-        insertAtLiveSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
-        if (curParentId !== newParentId) renumberLiveSiblings(curParentId)
-      }
-    }
+    // #4870 — a redo is the REVERSE OF THE UNDO, which is exactly what the
+    // backend computes: `redo_page_op` builds `compute_reverse(undo_op)` and
+    // runs it through `apply_reverse_in_tx`
+    // (`src-tauri/src/commands/history.rs`). Now that the undo row carries a
+    // genuine payload rather than a stash, reversing it here says the same
+    // thing the per-type chain this replaces spelled out for five op types and
+    // stayed silent on for the property and tag ones.
+    const redoPayload = reversePayloadFor(undoOp)
+    applyRevertForOp(undoOp, blocks, { properties, blockTags })
 
     // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
     // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable.
-    //
-    // The type is the reverse of the UNDO op, not of the original. The backend
-    // builds it as `compute_reverse(undo_op)`, so redoing a `create_block`
-    // reverses the undo's `delete_block` and lands on `restore_block` — not on
-    // `create_block`, which is what deriving it from the original gives. The
-    // if/else chain above still owns the EFFECT; only the type comes from
-    // here.
-    const newOp = pushOp(
-      redoOpType,
-      { re_applied: originalOp, block_id: payload['block_id'] },
-      false,
-    )
+    // `re_applied` rides along for `resolveUndoTarget`'s hop back to the
+    // original.
+    const newOp = pushOp(redoOpType, { ...redoPayload, re_applied: originalOp }, false)
     return {
       reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
