@@ -1,11 +1,3 @@
-// @vitest-environment jsdom
-// happy-dom copies each Storage method onto the `localStorage` instance the
-// first time it is touched (ClassMethodBinder) and never rebinds it, so only
-// a `Storage.prototype` spy installed before that first touch intercepts.
-// The throwing getItem/setItem/removeItem spies below are not the first,
-// and under happy-dom their implementations never reach the code under
-// test, so the swallow-and-warn tests fail.
-
 /**
  * Tests for the preferences registry (`src/lib/preferences.ts`): the pure
  * `effectiveKey` / `readPreference` / `writePreference` helpers and the
@@ -160,7 +152,7 @@ describe('readPreference / writePreference', () => {
 
   it('swallows a write throw and warns', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
     expect(() => writePreference(DEVICE_DEF, 'c')).not.toThrow()
@@ -170,7 +162,7 @@ describe('readPreference / writePreference', () => {
 
   it('swallows a read throw and warns', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
     expect(readPreference(DEVICE_DEF)).toBe('a')
@@ -287,7 +279,7 @@ describe('hasPreference', () => {
 
   it('a read error degrades to false instead of throwing', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
     expect(() => hasPreference(DEVICE_DEF)).not.toThrow()
@@ -315,7 +307,7 @@ describe('removePreference', () => {
 
   it('a write-side error is swallowed instead of throwing', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    const removeItem = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
     expect(() => removePreference(DEVICE_DEF)).not.toThrow()
@@ -372,7 +364,7 @@ describe('registry write broadcast (#2666)', () => {
 
   it('a failed write does not broadcast', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
     const events: StorageEvent[] = []

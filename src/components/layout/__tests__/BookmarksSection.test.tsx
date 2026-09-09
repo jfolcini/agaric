@@ -1,10 +1,3 @@
-// @vitest-environment jsdom
-// Under happy-dom the `Storage.prototype.setItem` spy in "still toggles when
-// persisting the preference throws" records 0 calls: `bookmark()` writes through
-// `writePreference` on the line above it and freezes the binding, so the throw never
-// reaches the preference write and the test asserts nothing.
-// Mechanism: src/__tests__/AGENTS.md.
-
 /**
  * Tests for BookmarksSection (#4713) — the sidebar view over the one bookmark
  * list, the `starred-pages` preference that the page header and the Pages
@@ -265,18 +258,22 @@ describe('BookmarksSection', () => {
     it('still toggles when persisting the preference throws', async () => {
       const user = userEvent.setup()
       bookmark([{ id: 'A', title: 'Alpha' }])
-      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
         throw new Error('QuotaExceededError')
       })
 
-      renderSection()
-      await user.click(screen.getByRole('button', { name: 'Collapse Bookmarks' }))
+      try {
+        renderSection()
+        await user.click(screen.getByRole('button', { name: 'Collapse Bookmarks' }))
 
-      expect(screen.getByRole('button', { name: 'Expand Bookmarks' })).toHaveAttribute(
-        'aria-expanded',
-        'false',
-      )
-      expect(bookmarkList()).toBeNull()
+        expect(screen.getByRole('button', { name: 'Expand Bookmarks' })).toHaveAttribute(
+          'aria-expanded',
+          'false',
+        )
+        expect(bookmarkList()).toBeNull()
+      } finally {
+        setItem.mockRestore()
+      }
     })
   })
 

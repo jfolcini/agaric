@@ -1,11 +1,3 @@
-// @vitest-environment jsdom
-// happy-dom copies each Storage method onto the `localStorage` instance the
-// first time it is touched (ClassMethodBinder) and never rebinds it, so only
-// a `Storage.prototype` spy installed before that first touch intercepts.
-// The throwing setItem/removeItem spies below are not the first, and under
-// happy-dom their implementations never reach the code under test, so the
-// storage-failure tests fail.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -199,17 +191,20 @@ describe('keyboard-config', () => {
   // returned for this call.
   it('a failed heal write-back is caught, logged, and still returns the sanitized overrides', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ prevBlock: 'Ctrl + P', nextBlock: 42 }))
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
-    expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
-    expect(mockedLogger.warn).toHaveBeenCalledWith(
-      'KeyboardConfig',
-      'Failed to persist healed shortcut overrides',
-      { key: STORAGE_KEY },
-      expect.any(Error),
-    )
-    vi.restoreAllMocks()
+    try {
+      expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'KeyboardConfig',
+        'Failed to persist healed shortcut overrides',
+        { key: STORAGE_KEY },
+        expect.any(Error),
+      )
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('setCustomShortcut stores override', () => {
@@ -714,11 +709,14 @@ describe('keyboard-config', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + 3' }))
     expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 3' })
 
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
-    setCustomShortcut('dedentBlock', 'Ctrl + Alt + 4')
-    vi.restoreAllMocks()
+    try {
+      setCustomShortcut('dedentBlock', 'Ctrl + Alt + 4')
+    } finally {
+      setItem.mockRestore()
+    }
 
     // The write never landed; the cached view must still mirror storage.
     expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 3' })
@@ -739,40 +737,52 @@ describe('keyboard-config', () => {
   })
 
   it('handles localStorage.setItem throwing (setCustomShortcut)', () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
 
-    // Should not throw
-    expect(() => setCustomShortcut('prevBlock', 'Ctrl + P')).not.toThrow()
-    expect(mockedLogger.warn).toHaveBeenCalledWith(
-      'KeyboardConfig',
-      'failed to save keyboard shortcut override',
-    )
+    try {
+      // Should not throw
+      expect(() => setCustomShortcut('prevBlock', 'Ctrl + P')).not.toThrow()
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'KeyboardConfig',
+        'failed to save keyboard shortcut override',
+      )
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('handles localStorage.setItem throwing (resetShortcut)', () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceeded')
     })
 
-    expect(() => resetShortcut('prevBlock')).not.toThrow()
-    expect(mockedLogger.warn).toHaveBeenCalledWith(
-      'KeyboardConfig',
-      'failed to reset keyboard shortcut',
-    )
+    try {
+      expect(() => resetShortcut('prevBlock')).not.toThrow()
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'KeyboardConfig',
+        'failed to reset keyboard shortcut',
+      )
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('handles localStorage.removeItem throwing (resetAllShortcuts)', () => {
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    const removeItem = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
 
-    expect(() => resetAllShortcuts()).not.toThrow()
-    expect(mockedLogger.warn).toHaveBeenCalledWith(
-      'KeyboardConfig',
-      'failed to reset all keyboard shortcuts',
-    )
+    try {
+      expect(() => resetAllShortcuts()).not.toThrow()
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'KeyboardConfig',
+        'failed to reset all keyboard shortcuts',
+      )
+    } finally {
+      removeItem.mockRestore()
+    }
   })
 
   describe('Block Tree shortcuts (F-38)', () => {
