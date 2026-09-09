@@ -1250,11 +1250,8 @@ fn bootstrap_spaces_and_sweep(
     // repairs above can rehome content and a link's eligibility depends on
     // the source's resolved space.
     match tauri::async_runtime::block_on(agaric_store::cache::backfill_block_links(&pools.write)) {
-        Ok(outcome) if outcome.ran => {
-            tracing::info!(
-                added = outcome.added,
-                "link-graph backfill filled the graph"
-            );
+        Ok(true) => {
+            tracing::info!("link-graph backfill ran");
             // The two rollups that read `block_links`. Through the queue, not
             // awaited here: a failed rebuild then persists for retry instead
             // of leaving the backfill's marker set and the rollups stale.
@@ -1267,7 +1264,7 @@ fn bootstrap_spaces_and_sweep(
                 }
             }
         }
-        Ok(_) => {}
+        Ok(false) => {}
         Err(e) => tracing::error!(
             error = %e,
             "link-graph backfill failed — boot continues; the next boot retries it"
