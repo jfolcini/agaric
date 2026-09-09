@@ -271,6 +271,9 @@ describe('BookmarksSection', () => {
           'false',
         )
         expect(bookmarkList()).toBeNull()
+        // The toggle happens whether or not the write throws, so this is what
+        // pins the failure path this test is named for.
+        expect(setItem).toHaveBeenCalled()
       } finally {
         setItem.mockRestore()
       }

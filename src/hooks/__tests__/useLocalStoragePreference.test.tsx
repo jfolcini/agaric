@@ -147,23 +147,26 @@ describe('useLocalStoragePreference', () => {
     })
     const warnSpy = vi.spyOn(logger, 'warn')
     let captured: string | null = null
-    render(
-      <Harness
-        storageKey="test:throw-read"
-        defaultValue="fallback"
-        onState={(v) => {
-          captured = v
-        }}
-      />,
-    )
-    expect(captured).toBe('fallback')
-    expect(warnSpy).toHaveBeenCalledWith(
-      'useLocalStoragePreference',
-      'Failed to read localStorage preference',
-      { key: 'test:throw-read' },
-      expect.any(Error),
-    )
-    getItemSpy.mockRestore()
+    try {
+      render(
+        <Harness
+          storageKey="test:throw-read"
+          defaultValue="fallback"
+          onState={(v) => {
+            captured = v
+          }}
+        />,
+      )
+      expect(captured).toBe('fallback')
+      expect(warnSpy).toHaveBeenCalledWith(
+        'useLocalStoragePreference',
+        'Failed to read localStorage preference',
+        { key: 'test:throw-read' },
+        expect.any(Error),
+      )
+    } finally {
+      getItemSpy.mockRestore()
+    }
   })
 
   it('persists JSON-encoded value to localStorage on mount and on update', () => {
@@ -190,14 +193,17 @@ describe('useLocalStoragePreference', () => {
       throw new Error('quota exceeded')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
-    expect(() => render(<Harness storageKey="test:write-throw" defaultValue="x" />)).not.toThrow()
-    expect(warnSpy).toHaveBeenCalledWith(
-      'useLocalStoragePreference',
-      'Failed to write localStorage preference',
-      { key: 'test:write-throw' },
-      expect.any(Error),
-    )
-    setItemSpy.mockRestore()
+    try {
+      expect(() => render(<Harness storageKey="test:write-throw" defaultValue="x" />)).not.toThrow()
+      expect(warnSpy).toHaveBeenCalledWith(
+        'useLocalStoragePreference',
+        'Failed to write localStorage preference',
+        { key: 'test:write-throw' },
+        expect.any(Error),
+      )
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 
   it('respects the source label in log messages', () => {
@@ -205,20 +211,23 @@ describe('useLocalStoragePreference', () => {
       throw new Error('boom')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
-    render(
-      <Harness
-        storageKey="test:custom-source"
-        defaultValue={0}
-        options={{ source: 'MyComponent' }}
-      />,
-    )
-    expect(warnSpy).toHaveBeenCalledWith(
-      'MyComponent',
-      'Failed to read localStorage preference',
-      { key: 'test:custom-source' },
-      expect.any(Error),
-    )
-    getItemSpy.mockRestore()
+    try {
+      render(
+        <Harness
+          storageKey="test:custom-source"
+          defaultValue={0}
+          options={{ source: 'MyComponent' }}
+        />,
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        'MyComponent',
+        'Failed to read localStorage preference',
+        { key: 'test:custom-source' },
+        expect.any(Error),
+      )
+    } finally {
+      getItemSpy.mockRestore()
+    }
   })
 
   it('uses custom parse/serialize for legacy bare-string formats', () => {

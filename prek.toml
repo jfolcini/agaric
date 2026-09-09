@@ -592,7 +592,7 @@ name = "no expired REMOVE AFTER markers (#4129)"
 entry = "node scripts/check-remove-after-markers.mjs"
 language = "system"
 pass_filenames = false
-files = '\.(rs|ts|tsx|py|sh|md)$|^(package(-lock)?\.json|src-tauri/(Cargo\.(toml|lock)|tauri\.conf\.json))$'
+files = '\.(rs|ts|tsx|js|mjs|py|sh|md)$|^(package(-lock)?\.json|src-tauri/(Cargo\.(toml|lock)|tauri\.conf\.json))$'
 stages = ["pre-commit"]
 
 # Self-test the guard's own falsifiable behaviour (an expired marker rejects,
