@@ -30,6 +30,14 @@ const loggerMock = {
   error: vi.fn(),
 }
 
+// `main()` is invoked as an import side effect and its promise is not exported,
+// so these three cases can only wait for it. The default `vi.waitFor` budget of
+// 1000 ms is not enough: the boot awaits two dynamic imports (`@/lib/tauri-mock`
+// and the locale chunk) before it can reach either outcome. Measured at 20-238 ms
+// per case locally and 1029 ms on a loaded CI shard, which is where it timed out
+// and reported the fallback screen as missing rather than late.
+const BOOT_WAIT = { timeout: 15_000 } as const
+
 const renderMock = vi.fn()
 const createRootMock = vi.fn(() => ({ render: renderMock, unmount: vi.fn() }))
 
@@ -89,7 +97,7 @@ describe('main.tsx — observability init failure does not block render', () => 
 
     await vi.waitFor(() => {
       expect(renderMock).toHaveBeenCalledTimes(1)
-    })
+    }, BOOT_WAIT)
 
     expect(createRootMock).toHaveBeenCalledTimes(1)
     expect(loggerMock.warn).toHaveBeenCalledWith(
@@ -117,7 +125,7 @@ describe('main.tsx — pre-mount failure renders a static fallback screen', () =
 
     await vi.waitFor(() => {
       expect(document.querySelector('[role="alert"]')).not.toBeNull()
-    })
+    }, BOOT_WAIT)
 
     expect(createRootMock).not.toHaveBeenCalled()
     const alert = document.querySelector('[role="alert"]')
@@ -157,7 +165,7 @@ describe('main.tsx — pre-mount failure renders a static fallback screen', () =
 
     await vi.waitFor(() => {
       expect(document.querySelector('[role="alert"]')).not.toBeNull()
-    })
+    }, BOOT_WAIT)
 
     expect(createRootMock).not.toHaveBeenCalled()
     const alert = document.querySelector('[role="alert"]')
