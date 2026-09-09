@@ -864,24 +864,26 @@ describe('GraphFilterBar', () => {
         throw new Error('QuotaExceeded')
       })
 
-      render(<StatefulHarness />)
+      try {
+        render(<StatefulHarness />)
 
-      await waitFor(() => {
-        expect(logger.warn).toHaveBeenCalledWith(
+        await waitFor(() => {
+          expect(logger.warn).toHaveBeenCalledWith(
+            'GraphFilterBar',
+            'Failed to persist healed (self-cleaned) filters',
+            { key: STORAGE_KEY },
+            expect.any(Error),
+          )
+        })
+        expect(logger.warn).not.toHaveBeenCalledWith(
           'GraphFilterBar',
-          'Failed to persist healed (self-cleaned) filters',
-          { key: STORAGE_KEY },
-          expect.any(Error),
+          'Failed to read persisted filters',
+          expect.anything(),
+          expect.anything(),
         )
-      })
-      expect(logger.warn).not.toHaveBeenCalledWith(
-        'GraphFilterBar',
-        'Failed to read persisted filters',
-        expect.anything(),
-        expect.anything(),
-      )
-
-      setItemSpy.mockRestore()
+      } finally {
+        setItemSpy.mockRestore()
+      }
     })
 
     // PR #3913 review note 5 — the legacy (non-canonical, `type`-discriminated)

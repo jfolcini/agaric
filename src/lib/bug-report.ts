@@ -19,6 +19,19 @@ const MAX_BODY_CHARS = 7000
  *  should see this and know to check the attached ZIP for full context. */
 const TRUNCATION_MARKER = '\n\n…[truncated — full log available in the attached ZIP if enabled]'
 
+/** Cap the integrity section inside the `notes` field. It shares the prefill
+ *  URL budget with `logs`, and unlike `logs` its worst case is not a tail the
+ *  user can shrink: 21 artefacts (`reconciliation_oracle.rs`) x 10 sample keys
+ *  (`SAMPLE_KEYS_PER_ARTEFACT`) is ~6.8 KB of ULIDs, and doubles again for the
+ *  artefacts whose key is an arrow-joined pair — over budget on its own before
+ *  URL-encoding inflates every backtick and em-dash. The uncapped section is
+ *  still in the preview and the copied body, which have no URL ceiling. */
+const MAX_INTEGRITY_CHARS = 1500
+
+/** Ellipsis marker for the integrity section. Points at the copied report
+ *  rather than the ZIP: the integrity section is not in the ZIP. */
+const INTEGRITY_TRUNCATION_MARKER = '\n…[truncated — full section in the copied report]'
+
 /** GitHub-owner/repo pair. Kept minimal on purpose — any concrete call site
  *  should source this from `src/lib/config.ts` so the tracker URL moves in
  *  lockstep with `tauri.conf.json`'s updater endpoint. */
@@ -261,9 +274,11 @@ export interface FormatReportFieldsParams {
  *  Only fields the app can populate are returned; the form's other required
  *  fields (reproduction steps, expected behaviour, platform, the "Before you
  *  file" checkboxes) are left for the user to complete in GitHub. The `logs`
- *  field is capped at [`MAX_BODY_CHARS`] (with [`TRUNCATION_MARKER`]) — it is
- *  the one unbounded input, and the full log is available in the diagnostic
- *  ZIP. The device ID is truncated (#609) before it can reach a public issue. */
+ *  field is capped at [`MAX_BODY_CHARS`] (with [`TRUNCATION_MARKER`]) and the
+ *  integrity section at [`MAX_INTEGRITY_CHARS`] — the two inputs large enough
+ *  to cost the reporter the prefill. The full log is in the diagnostic ZIP and
+ *  the full integrity section in the copied report. The device ID is truncated
+ *  (#609) before it can reach a public issue. */
 export function formatReportFields(params: FormatReportFieldsParams) {
   const { metadata, title, description, zipFileName, reconciliation } = params
 
@@ -283,7 +298,13 @@ export function formatReportFields(params: FormatReportFieldsParams) {
     notesLines.push(`Diagnostic ZIP to attach: ${zipFileName}`)
   }
   if (reconciliation !== undefined) {
-    notesLines.push(formatIntegrityReport(reconciliation))
+    const section = formatIntegrityReport(reconciliation)
+    notesLines.push(
+      section.length > MAX_INTEGRITY_CHARS
+        ? section.slice(0, MAX_INTEGRITY_CHARS - INTEGRITY_TRUNCATION_MARKER.length) +
+            INTEGRITY_TRUNCATION_MARKER
+        : section,
+    )
   }
 
   return {
@@ -300,4 +321,6 @@ export function formatReportFields(params: FormatReportFieldsParams) {
 export const _internals = {
   MAX_BODY_CHARS,
   TRUNCATION_MARKER,
+  MAX_INTEGRITY_CHARS,
+  INTEGRITY_TRUNCATION_MARKER,
 }

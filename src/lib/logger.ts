@@ -59,7 +59,7 @@ interface CauseInfo {
 /**
  * Extract a single cause entry from an unknown value.
  */
-function extractSingleCause(cause: unknown): CauseInfo | null {
+function extractSingleCause(cause: unknown): CauseInfo {
   if (cause instanceof Error) {
     return cause.stack ? { message: cause.message, stack: cause.stack } : { message: cause.message }
   }
@@ -72,7 +72,6 @@ function extractSingleCause(cause: unknown): CauseInfo | null {
   ) {
     return { message: (cause as { message: string }).message }
   }
-  if (cause == null) return null
   // Every primitive has a `String()` form worth logging (a symbol only via
   // `String`, never a template — `${sym}` throws), so they are spelled out
   // positively: TypeScript cannot subtract `object` from `unknown`, and the
@@ -99,9 +98,7 @@ function extractCauseChain(cause: unknown, maxDepth = 3): CauseInfo[] {
   const chain: CauseInfo[] = []
   let current: unknown = cause
   for (let i = 0; i < maxDepth && current != null; i++) {
-    const info = extractSingleCause(current)
-    if (!info) break
-    chain.push(info)
+    chain.push(extractSingleCause(current))
     // Follow the .cause chain if present
     current = current instanceof Error ? current.cause : undefined
   }

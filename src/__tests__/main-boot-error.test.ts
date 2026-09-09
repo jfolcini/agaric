@@ -32,10 +32,14 @@ const loggerMock = {
 
 // `main()` is invoked as an import side effect and its promise is not exported,
 // so these three cases can only wait for it. The default `vi.waitFor` budget of
-// 1000 ms is not enough: the boot awaits two dynamic imports (`@/lib/tauri-mock`
-// and the locale chunk) before it can reach either outcome. Measured at 20-238 ms
-// per case locally and 1029 ms on a loaded CI shard, which is where it timed out
-// and reported the fallback screen as missing rather than late.
+// 1000 ms is not enough. The cost is not a dynamic import: `beforeEach` sets
+// `__TAURI_INTERNALS__`, so the one `await import()` in `main.tsx` is gated off,
+// and `@/lib/tauri-mock` is `vi.doMock`ed besides; `setLocale` is a static
+// import that loads no chunk for `en`. What has to happen inside the window is
+// evaluating this file's module graph and rendering, and that is enough under
+// shard load: measured at 20-238 ms per case locally and 1029 ms on a loaded CI
+// shard, which is where it timed out and reported the fallback screen as
+// missing rather than late.
 const BOOT_WAIT = { timeout: 15_000 } as const
 
 const renderMock = vi.fn()
