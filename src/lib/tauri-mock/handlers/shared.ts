@@ -1225,63 +1225,6 @@ export function refreshDescendantPageIds(rootBlockId: string): void {
   }
 }
 
-/**
- * #4669 — the REVERSE-path pair of {@link renumberSiblings} /
- * {@link insertAtSlotAndRenumber}, live-only on both counts.
- *
- * The backend ranks tombstones on the FORWARD apply path
- * (`reproject_dense_positions`, #419) and excludes them on the REVERSE one:
- * `apply_reverse_in_tx`'s MoveBlock arm takes its target group with
- * `WHERE parent_id IS ? AND deleted_at IS NULL`, clamps the slot to that live
- * count, and densifies through `reproject_live_sibling_group` — "tombstoned
- * siblings are excluded: they are not part of the live order a user sees"
- * (`src-tauri/src/commands/history.rs`).
- *
- * So an undo leaves a tombstone's stale rank alone, and a restored live block
- * may legitimately land on the same number. Reusing the forward helpers here
- * instead renumbers the tombstone, which is a `position` divergence on rows the
- * conformance snapshot compares.
- */
-export function renumberLiveSiblings(parentId: string | null): void {
-  const siblings = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'],
-  )
-  siblings.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
-  siblings.forEach((b, i) => {
-    b['position'] = i + 1
-  })
-}
-
-/** Reverse-path insert: live-only slot AND live-only densification. */
-export function insertAtLiveSlotAndRenumber(
-  parentId: string | null,
-  blockId: string,
-  slot: number,
-): void {
-  const moved = blocks.get(blockId)
-  if (!moved) return
-  const others = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'] && b['id'] !== blockId,
-  )
-  others.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
-  const clamped = Math.max(0, Math.min(slot, others.length))
-  others.forEach((b, i) => {
-    b['position'] = i + 1
-  })
-  moved['position'] = clamped + 0.5
-  renumberLiveSiblings(parentId)
-}
-
 // -- filtered_blocks_query helpers (extracted to keep the handler flat) -------
 
 /** Reserved row-level columns and the value column they compare against. */
