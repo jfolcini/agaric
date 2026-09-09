@@ -4,7 +4,7 @@
  * Collapse is a VIEW preference, not document content. The block's markdown
  * stays `![alt](url)`, so nothing is appended to the op log, markdown export is
  * unchanged, and two devices can never disagree about it. The state is one
- * registry preference (`PREFERENCES.imageCollapse`, a list of collapsed `src`s),
+ * registry preference (`PREFERENCES.imageCollapse`, a list of collapsed image keys),
  * which is what makes it survive a reload AND hold across the two surfaces the
  * same image renders on: the roving TipTap node view on the focused block
  * (`ImageNodeView`) and the static renderer everywhere else
@@ -16,12 +16,12 @@
  * every mounted copy of one image folds together instead of drifting apart.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GatedImage } from '@/components/rendering/GatedImage'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { PREFERENCES, usePreference } from '@/lib/preferences'
+import { imageCollapseKey, PREFERENCES, usePreference } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
 
 /** Longest label the collapsed chip shows; a `data:` src has no short name. */
@@ -55,8 +55,16 @@ export function CollapsibleImage({
   imgClassName,
 }: CollapsibleImageProps): React.ReactElement {
   const { t } = useTranslation()
-  const [collapsedSrcs, setCollapsedSrcs] = usePreference(PREFERENCES.imageCollapse)
-  const collapsed = collapsedSrcs.includes(src)
+  const [collapsedKeys, setCollapsedKeys] = usePreference(PREFERENCES.imageCollapse)
+  // A digest, never the src: a pasted screenshot's `data:` src is megabytes,
+  // and the stored list has to stay inside the origin's quota (#4864).
+  //
+  // Memoised because the digest walks the whole src, and `usePreference`
+  // subscribes every mounted copy to the `image_collapsed` broadcast: folding
+  // one image re-renders all of them, so an unmemoised call would re-hash
+  // every megabyte-sized src on the page for one toggle.
+  const key = useMemo(() => imageCollapseKey(src), [src])
+  const collapsed = collapsedKeys.includes(key)
   const label = collapsedLabel(alt, src)
 
   // Folding is a view action on the image, never on whatever contains it. Every
@@ -67,11 +75,11 @@ export function CollapsibleImage({
   const toggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      setCollapsedSrcs((prev) =>
-        prev.includes(src) ? prev.filter((s) => s !== src) : [...prev, src],
+      setCollapsedKeys((prev) =>
+        prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
       )
     },
-    [setCollapsedSrcs, src],
+    [setCollapsedKeys, key],
   )
 
   // No `preventDefault`: the button's native Enter/Space activation is what
