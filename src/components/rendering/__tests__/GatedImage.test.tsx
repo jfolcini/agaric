@@ -125,7 +125,7 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
   let createObjectURL: MockInstance<typeof URL.createObjectURL>
   let revokeObjectURL: MockInstance<typeof URL.revokeObjectURL>
   beforeEach(() => {
-    createObjectURL = vi.spyOn(URL, 'createObjectURL')
+    createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:obj')
     revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   })
   afterEach(() => {
@@ -134,21 +134,19 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
   })
 
   it('resolves `attachment:<id>` to an object URL and renders the <img>', async () => {
-    createObjectURL.mockReturnValue('blob:obj-1')
     mockReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
 
     render(<GatedImage src="attachment:ATT_1" alt="pasted" />)
 
     // The attachment bytes are read by id, then the <img> renders the object URL.
     await waitFor(() => {
-      expect(screen.getByTestId('image-rendered').getAttribute('src')).toBe('blob:obj-1')
+      expect(screen.getByTestId('image-rendered').getAttribute('src')).toBe('blob:obj')
     })
     expect(mockReadAttachment).toHaveBeenCalledWith('ATT_1')
     expect(screen.getByTestId('image-rendered').getAttribute('alt')).toBe('pasted')
   })
 
   it('shows the broken-image placeholder when the attachment fails to load', async () => {
-    createObjectURL.mockReturnValue('blob:obj-2')
     mockReadAttachment.mockRejectedValue(new Error('gone'))
 
     render(<GatedImage src="attachment:MISSING" alt="pasted" />)
@@ -160,7 +158,6 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
   })
 
   it('revokes the object URL on unmount', async () => {
-    createObjectURL.mockReturnValue('blob:obj-3')
     mockReadAttachment.mockResolvedValue(new Uint8Array([9]))
 
     const { unmount } = render(<GatedImage src="attachment:ATT_2" alt="x" />)
@@ -168,6 +165,6 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
       expect(screen.getByTestId('image-rendered')).toBeTruthy()
     })
     unmount()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:obj-3')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:obj')
   })
 })

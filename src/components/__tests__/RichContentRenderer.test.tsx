@@ -1471,20 +1471,22 @@ describe('RichContentRenderer', () => {
       const md = 'Some **content** with a [[link]] and #tag'
       // Same content, different resolve callbacks/options each time — this is
       // exactly what a resolveVersion bump does to a visible StaticBlock.
-      render(renderRichContent(md, { resolveBlockTitle: () => 'v1' }))
-      render(renderRichContent(md, { resolveBlockTitle: () => 'v2' }))
-      render(renderRichContent(md, { interactive: true, resolveBlockTitle: () => 'v3' }))
+      // `renderRichContent` parses before it returns, so the call alone is what
+      // these count — `void` discards the node without a mount nothing reads.
+      void renderRichContent(md, { resolveBlockTitle: () => 'v1' })
+      void renderRichContent(md, { resolveBlockTitle: () => 'v2' })
+      void renderRichContent(md, { interactive: true, resolveBlockTitle: () => 'v3' })
       expect(mockedParse).toHaveBeenCalledTimes(1)
     })
 
     it('re-parses when the markdown content actually changes (cache miss)', () => {
-      render(renderRichContent('first content', {}))
-      render(renderRichContent('second content', {}))
+      void renderRichContent('first content', {})
+      void renderRichContent('second content', {})
       expect(mockedParse).toHaveBeenCalledTimes(2)
     })
 
     it('does not invoke the tokenizer for empty content', () => {
-      render(renderRichContent('', {}))
+      void renderRichContent('', {})
       expect(mockedParse).not.toHaveBeenCalled()
     })
   })

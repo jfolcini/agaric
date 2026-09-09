@@ -712,9 +712,12 @@ export function propertyLikeMatches(
   if (!prop || !vc || vc.col === 'value_num') return false
   const stored = prop[vc.col] ?? null
   if (stored == null) return false
-  // `value_num` is excluded above, so the column is one of the TEXT ones; the
-  // cast is what tells the compiler that, the `String` is what makes it true.
-  const hay = asciiLowercase(String(stored as string))
+  // `value_num` is excluded above, so the column is `value_text`/`value_ref`/
+  // `value_date` — all TEXT, so the cast holds and no coercion is layered over
+  // it (same cast-and-trust as `propertyCompareMatches` just above).
+  // `vc.wanted` is the one that still needs `String`: a `Date` comparand is a
+  // string but the union it arrives in is `string | number`.
+  const hay = asciiLowercase(stored as string)
   const needle = asciiLowercase(String(vc.wanted))
   return contains ? hay.includes(needle) : hay.startsWith(needle)
 }

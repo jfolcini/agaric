@@ -681,6 +681,9 @@ export function replaceDocSilently(editor: Editor, json: Record<string, unknown>
   editor.view.dispatch(tr)
 }
 
+/** `searchBlockRefs` fallback: the picker asks, nothing matches. */
+const noBlockRefs = (): Promise<PickerItem[]> => Promise.resolve([])
+
 export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditorHandle {
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
@@ -734,9 +737,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const onPropertySelectRef = useRef(onPropertySelect)
   const onCheckboxRef = useRef(onCheckbox)
   const onListStyleRef = useRef(onListStyle)
-  const searchBlockRefsRef = useRef(
-    options.searchBlockRefs ?? (() => Promise.resolve([] as PickerItem[])),
-  )
+  const searchBlockRefsRef = useRef(options.searchBlockRefs ?? noBlockRefs)
   const searchTagsRef = useRef(searchTags)
   const searchPagesRef = useRef(searchPages)
   const searchSlashCommandsRef = useRef(searchSlashCommands)
@@ -756,8 +757,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onPropertySelectRef.current = onPropertySelect
     onCheckboxRef.current = onCheckbox
     onListStyleRef.current = onListStyle
-    searchBlockRefsRef.current =
-      options.searchBlockRefs ?? (() => Promise.resolve([] as PickerItem[]))
+    searchBlockRefsRef.current = options.searchBlockRefs ?? noBlockRefs
     searchTagsRef.current = searchTags
     searchPagesRef.current = searchPages
     searchSlashCommandsRef.current = searchSlashCommands
