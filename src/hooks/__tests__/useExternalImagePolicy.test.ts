@@ -64,8 +64,14 @@ describe('useExternalImagePolicy', () => {
     const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError')
     })
-    expect(() => act(() => result.current.setPolicy('always'))).not.toThrow()
-    spy.mockRestore()
+    try {
+      expect(() => act(() => result.current.setPolicy('always'))).not.toThrow()
+      // `not.toThrow()` also passes with a dead spy; this is what pins the
+      // swallowed write.
+      expect(spy).toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('non-hook getter returns the stored policy', () => {
@@ -127,7 +133,13 @@ describe('useExternalImageAllowlist', () => {
     const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError')
     })
-    expect(() => act(() => result.current.addHost('example.com'))).not.toThrow()
-    spy.mockRestore()
+    try {
+      expect(() => act(() => result.current.addHost('example.com'))).not.toThrow()
+      // `not.toThrow()` also passes with a dead spy; this is what pins the
+      // swallowed write.
+      expect(spy).toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

@@ -374,9 +374,7 @@ export function analyze({ root, srcDir, baseline }) {
 
   offenders.sort()
   const scanErrorFiles = new Set(scanErrors.map((e) => e.file))
-  const newOffenders = offenders
-    .filter((f) => details.get(f).length > (baselineCounts[f] ?? 0))
-    .toSorted()
+  const newOffenders = offenders.filter((f) => details.get(f).length > (baselineCounts[f] ?? 0))
   const staleBaseline = Object.keys(baselineCounts)
     .filter((f) => !scanErrorFiles.has(f) && (details.get(f)?.length ?? 0) < baselineCounts[f])
     .toSorted()
@@ -401,10 +399,10 @@ function readBaseline() {
   return raw
 }
 
-/** @param {string[]} offenders */
+/** @param {string[]} offenders already sorted by `analyze`; the baseline file keeps that order */
 function writeBaseline(offenders, details) {
   const obj = {}
-  for (const f of [...offenders].toSorted()) obj[f] = details.get(f).length
+  for (const f of offenders) obj[f] = details.get(f).length
   fs.writeFileSync(BASELINE_FILE, `${JSON.stringify(obj, null, 2)}\n`)
 }
 

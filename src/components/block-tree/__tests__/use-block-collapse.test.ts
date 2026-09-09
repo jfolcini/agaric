@@ -147,6 +147,8 @@ describe('useBlockCollapse', () => {
     expect(result.current.collapsedIds.has('A')).toBe(false)
     expect(result.current.expandBlock).toBe(initialExpand)
     expect(onBeforeCollapse).toHaveBeenCalledTimes(1)
+
+    setItemSpy.mockRestore()
   })
 
   it('filters descendants of collapsed blocks from visibleBlocks', () => {
@@ -206,6 +208,8 @@ describe('useBlockCollapse', () => {
     expect(stored).toContain('A')
     // The legacy global key is never written again.
     expect(localStorage.getItem('collapsed_ids')).toBeNull()
+
+    setItemSpy.mockRestore()
   })
 
   it('restores collapsed IDs from the page-scoped localStorage key on init', () => {
@@ -277,6 +281,8 @@ describe('useBlockCollapse', () => {
 
     expect(result.current.collapsedIds.has('A')).toBe(true)
     expect(setItemSpy).not.toHaveBeenCalled()
+
+    setItemSpy.mockRestore()
   })
 
   it('handles empty block list gracefully', () => {

@@ -155,9 +155,12 @@ describe('readPreference / writePreference', () => {
     const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
-    expect(() => writePreference(DEVICE_DEF, 'c')).not.toThrow()
-    expect(warn).toHaveBeenCalledTimes(1)
-    setItem.mockRestore()
+    try {
+      expect(() => writePreference(DEVICE_DEF, 'c')).not.toThrow()
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('swallows a read throw and warns', () => {
@@ -165,9 +168,12 @@ describe('readPreference / writePreference', () => {
     const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
-    expect(readPreference(DEVICE_DEF)).toBe('a')
-    expect(warn).toHaveBeenCalledTimes(1)
-    getItem.mockRestore()
+    try {
+      expect(readPreference(DEVICE_DEF)).toBe('a')
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      getItem.mockRestore()
+    }
   })
 })
 
@@ -282,10 +288,13 @@ describe('hasPreference', () => {
     const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError')
     })
-    expect(() => hasPreference(DEVICE_DEF)).not.toThrow()
-    expect(hasPreference(DEVICE_DEF)).toBe(false)
-    expect(warn).toHaveBeenCalled()
-    getItem.mockRestore()
+    try {
+      expect(() => hasPreference(DEVICE_DEF)).not.toThrow()
+      expect(hasPreference(DEVICE_DEF)).toBe(false)
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      getItem.mockRestore()
+    }
   })
 })
 
@@ -310,9 +319,12 @@ describe('removePreference', () => {
     const removeItem = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
-    expect(() => removePreference(DEVICE_DEF)).not.toThrow()
-    expect(warn).toHaveBeenCalledTimes(1)
-    removeItem.mockRestore()
+    try {
+      expect(() => removePreference(DEVICE_DEF)).not.toThrow()
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      removeItem.mockRestore()
+    }
   })
 })
 

@@ -124,11 +124,16 @@ describe('useAgendaPreferences', () => {
         throw new Error('access denied')
       })
 
-      const { result } = renderHook(() => useAgendaPreferences())
-      expect(result.current.groupBy).toBe('page')
-      expect(result.current.sortBy).toBe('state')
-
-      spy.mockRestore()
+      try {
+        const { result } = renderHook(() => useAgendaPreferences())
+        // The defaults below also hold against an untouched, empty
+        // localStorage, so without this the test passes with a dead spy.
+        expect(spy).toHaveBeenCalled()
+        expect(result.current.groupBy).toBe('page')
+        expect(result.current.sortBy).toBe('state')
+      } finally {
+        spy.mockRestore()
+      }
     })
 
     it('does not throw when setItem throws', () => {
@@ -136,17 +141,22 @@ describe('useAgendaPreferences', () => {
         throw new Error('quota exceeded')
       })
 
-      const { result } = renderHook(() => useAgendaPreferences())
+      try {
+        const { result } = renderHook(() => useAgendaPreferences())
 
-      // Should not throw
-      act(() => {
-        result.current.setGroupBy('priority')
-      })
+        // Should not throw
+        act(() => {
+          result.current.setGroupBy('priority')
+        })
 
-      // State should still update in React
-      expect(result.current.groupBy).toBe('priority')
-
-      spy.mockRestore()
+        // State should still update in React
+        expect(result.current.groupBy).toBe('priority')
+        // React state updates whether or not the write throws, so this is what
+        // pins the throwing write actually happening.
+        expect(spy).toHaveBeenCalled()
+      } finally {
+        spy.mockRestore()
+      }
     })
   })
 
