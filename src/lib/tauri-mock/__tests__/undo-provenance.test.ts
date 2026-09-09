@@ -151,24 +151,8 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
     expect(reverse?.is_undo).toBe(true)
   })
 
-  it('reverting a reverse row leaves the content alone, it does not wipe it', () => {
-    // The reverse row now advertises `edit_block` with a resolvable
-    // `block_id`, so `revert_ops` reaches `applyRevertForOp`'s edit arm —
-    // which writes `payload.from_text ?? null`. The row's payload is a
-    // bookkeeping stash and has no `from_text`, so an unguarded revert sets
-    // the content to NULL. The backend re-applies the original edit instead;
-    // a no-op is the safe half of that divergence, a wipe is not (#4870).
-    dispatch('edit_block', { blockId: A, toText: 'edited once' })
-    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
-    expect(blocks.get(A)?.['content']).toBe('original')
-
-    const reverseRow = opLog.at(-1)
-    dispatch('revert_ops', {
-      ops: [{ device_id: reverseRow?.device_id, seq: reverseRow?.seq }],
-    })
-
-    expect(blocks.get(A)?.['content']).toBe('original')
-  })
+  // Reverting a reverse row is pinned by #4870's `reverse-payload.test.ts`,
+  // which asserts the re-apply this file's stopgap could only make safe.
 
   it('a positional undo of a tag op stamps remove_tag, not edit_block', () => {
     // The effect chain covers the five block-row types and defaulted to

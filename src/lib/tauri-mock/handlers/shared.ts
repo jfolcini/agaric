@@ -1225,63 +1225,6 @@ export function refreshDescendantPageIds(rootBlockId: string): void {
   }
 }
 
-/**
- * #4669 — the REVERSE-path pair of {@link renumberSiblings} /
- * {@link insertAtSlotAndRenumber}, live-only on both counts.
- *
- * The backend ranks tombstones on the FORWARD apply path
- * (`reproject_dense_positions`, #419) and excludes them on the REVERSE one:
- * `apply_reverse_in_tx`'s MoveBlock arm takes its target group with
- * `WHERE parent_id IS ? AND deleted_at IS NULL`, clamps the slot to that live
- * count, and densifies through `reproject_live_sibling_group` — "tombstoned
- * siblings are excluded: they are not part of the live order a user sees"
- * (`src-tauri/src/commands/history.rs`).
- *
- * So an undo leaves a tombstone's stale rank alone, and a restored live block
- * may legitimately land on the same number. Reusing the forward helpers here
- * instead renumbers the tombstone, which is a `position` divergence on rows the
- * conformance snapshot compares.
- */
-export function renumberLiveSiblings(parentId: string | null): void {
-  const siblings = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'],
-  )
-  siblings.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
-  siblings.forEach((b, i) => {
-    b['position'] = i + 1
-  })
-}
-
-/** Reverse-path insert: live-only slot AND live-only densification. */
-export function insertAtLiveSlotAndRenumber(
-  parentId: string | null,
-  blockId: string,
-  slot: number,
-): void {
-  const moved = blocks.get(blockId)
-  if (!moved) return
-  const others = [...blocks.values()].filter(
-    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'] && b['id'] !== blockId,
-  )
-  others.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
-  const clamped = Math.max(0, Math.min(slot, others.length))
-  others.forEach((b, i) => {
-    b['position'] = i + 1
-  })
-  moved['position'] = clamped + 0.5
-  renumberLiveSiblings(parentId)
-}
-
 // -- filtered_blocks_query helpers (extracted to keep the handler flat) -------
 
 /** Reserved row-level columns and the value column they compare against. */
@@ -1568,6 +1511,86 @@ export function reverseOpTypeFor(opType: string): string {
   }
 }
 
+/** The five typed value columns of `key`'s CURRENT `block_properties` row,
+ *  in the `from_value` shape `set_property` / `delete_property` capture. */
+function currentPropertyValue(blockId: string, key: string): Record<string, unknown> | null {
+  const row = properties.get(blockId)?.get(key)
+  if (!row) return null
+  return {
+    value_text: (row['value_text'] as string | null) ?? null,
+    value_num: (row['value_num'] as number | null) ?? null,
+    value_date: (row['value_date'] as string | null) ?? null,
+    value_ref: (row['value_ref'] as string | null) ?? null,
+    value_bool: (row['value_bool'] as number | null) ?? null,
+  }
+}
+
+/**
+ * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target.op_type)`:
+ * what the backend's reverse row carries, in place of the bookkeeping stash
+ * (`{ reversed }` / `{ re_applied }` / `{ reverted }`) the mock used to write.
+ * The stash rides along on top of it — `redo_page_op` and
+ * {@link timesReversedNet} look it up, and payload is not compared cross-stack.
+ *
+ * A genuine payload is what makes a reverse row behave like the op it claims
+ * to be: {@link applyRevertForOp} over it re-applies `target`, which is how
+ * `revert_ops` and `redo_page_op` reach through it, and an `edit_block` reverse
+ * carries the `to_text` that makes an undo restorable in block history.
+ *
+ * Must be built BEFORE the reverse is applied: `set_property`'s inverse needs
+ * the value the op SET, and the mock's forward payload records only the value
+ * it replaced (`from_value`), so the only source is the live properties map.
+ *
+ * The shapes are not symmetric with their forward twins. `set_property`'s
+ * inverse is another `set_property` whose `from_value` is the value being
+ * undone; `delete_property`'s inverse re-adds the prior value under a
+ * `from_value` of NULL, so that reverting IT deletes the key again.
+ */
+export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknown> {
+  const p = JSON.parse(target.payload) as Record<string, unknown>
+  const blockId = p['block_id']
+  switch (target.op_type) {
+    case 'edit_block': {
+      return { block_id: blockId, from_text: p['to_text'], to_text: p['from_text'] }
+    }
+    case 'move_block': {
+      return {
+        block_id: blockId,
+        old_parent_id: p['new_parent_id'] ?? null,
+        old_position: p['new_position'],
+        new_parent_id: p['old_parent_id'] ?? null,
+        new_position: p['old_position'],
+      }
+    }
+    case 'set_todo_state': {
+      return { block_id: blockId, state: p['from_state'] ?? null, from_state: p['state'] ?? null }
+    }
+    case 'set_priority': {
+      return { block_id: blockId, level: p['from_level'] ?? null, from_level: p['level'] ?? null }
+    }
+    case 'set_due_date':
+    case 'set_scheduled_date': {
+      return { block_id: blockId, date: p['from_date'] ?? null, from_date: p['date'] ?? null }
+    }
+    case 'set_property': {
+      const key = p['key'] as string
+      return { block_id: blockId, key, from_value: currentPropertyValue(blockId as string, key) }
+    }
+    case 'delete_property': {
+      return { block_id: blockId, key: p['key'], from_value: null }
+    }
+    case 'add_tag':
+    case 'remove_tag': {
+      return { block_id: blockId, tag_id: p['tag_id'] }
+    }
+    default: {
+      // The soft-delete lifecycle trio reverses into `delete_block` /
+      // `restore_block`, both of which carry the id alone.
+      return { block_id: blockId }
+    }
+  }
+}
+
 /**
  * Net reversal count for a forward op: +1 per `is_undo` op whose stashed
  * `reversed` payload references it, -1 per redo op that re-applied it.
@@ -1665,18 +1688,15 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
 /**
  * Apply the reverse of a validated target via the shared reversal core and
  * append the reverse op: the GENUINE reverse type flagged `is_undo` (#4868),
- * carrying the `{ reversed }` stash `redo_page_op` looks up and a `block_id`
- * so the history readers can scope it.
+ * carrying a genuine reverse payload (#4870) with the `{ reversed }` stash
+ * `redo_page_op` looks up riding along.
  */
 export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, unknown> {
-  applyRevertForOp(effective, blocks, { properties, blockTags })
   const reverseOpType = reverseOpTypeFor(effective.op_type)
-  const targetPayload = JSON.parse(effective.payload) as Record<string, unknown>
-  const newOp = pushOp(
-    reverseOpType,
-    { reversed: effective, block_id: targetPayload['block_id'] },
-    true,
-  )
+  // Before the revert: see `reversePayloadFor`.
+  const reversePayload = reversePayloadFor(effective)
+  applyRevertForOp(effective, blocks, { properties, blockTags })
+  const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: effective }, true)
   return {
     reversed_op: { device_id: effective.device_id, seq: effective.seq },
     reversed_op_type: effective.op_type,
