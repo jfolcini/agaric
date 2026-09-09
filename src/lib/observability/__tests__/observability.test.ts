@@ -10,6 +10,7 @@
 
 import { type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 
 import type { FrontendSpan } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -246,8 +247,8 @@ describe('traceInteraction: endError re-throws and records an error span', () =>
     const boom = new Error('sync boom')
 
     // Spy on the live span so we can assert the exact exception + status calls.
-    let recordException: ReturnType<typeof vi.spyOn> | undefined
-    let setStatus: ReturnType<typeof vi.spyOn> | undefined
+    let recordException: MockInstance | undefined
+    let setStatus: MockInstance | undefined
 
     // The call itself must throw synchronously — endError re-raises.
     expect(() =>
@@ -273,8 +274,8 @@ describe('traceInteraction: endError re-throws and records an error span', () =>
     const batches = captureSpans()
     const boom = new Error('async boom')
 
-    let recordException: ReturnType<typeof vi.spyOn> | undefined
-    let setStatus: ReturnType<typeof vi.spyOn> | undefined
+    let recordException: MockInstance | undefined
+    let setStatus: MockInstance | undefined
 
     const pending = traceInteraction(INTERACTIONS.SEARCH, (span: Span) => {
       recordException = vi.spyOn(span, 'recordException')

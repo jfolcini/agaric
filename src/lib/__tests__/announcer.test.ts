@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 
 import { __resetAnnouncerForTests, announce } from '@/lib/announcer'
 
@@ -258,7 +259,7 @@ describe('announce', () => {
   })
 
   describe('backgrounded-tab fallback (#1617)', () => {
-    let hiddenSpy: ReturnType<typeof vi.spyOn> | null = null
+    let hiddenSpy: MockInstance | null = null
 
     afterEach(() => {
       hiddenSpy?.mockRestore()

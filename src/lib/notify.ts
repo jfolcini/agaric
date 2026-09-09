@@ -56,10 +56,7 @@ type OptionalOpts = [ExternalToast?]
  * `notify.retry` below for the action-bearing variant with the same
  * dedup contract.
  */
-function notifyError(
-  messageOrError: string | number | Error | unknown,
-  ...rest: OptionalOpts
-): string | number {
+function notifyError(messageOrError: unknown, ...rest: OptionalOpts): string | number {
   // Pre-built human strings/numbers render verbatim — no code/kind to
   // surface, and existing call sites pass already-translated copy.
   if (typeof messageOrError === 'string' || typeof messageOrError === 'number') {

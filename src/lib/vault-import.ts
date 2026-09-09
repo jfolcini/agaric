@@ -253,11 +253,12 @@ export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
     return {
       name,
       bytes: content.length,
-      load: async () => ({
-        content,
-        path: name,
-        vaultFiles: attachmentsToVaultFiles(note.attachments),
-      }),
+      load: () =>
+        Promise.resolve({
+          content,
+          path: name,
+          vaultFiles: attachmentsToVaultFiles(note.attachments),
+        }),
     }
   })
 }
@@ -278,11 +279,12 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
     return {
       name,
       bytes: content.length,
-      load: async () => ({
-        content,
-        path: name,
-        vaultFiles: attachmentsToVaultFiles(note.attachments),
-      }),
+      load: () =>
+        Promise.resolve({
+          content,
+          path: name,
+          vaultFiles: attachmentsToVaultFiles(note.attachments),
+        }),
     }
   })
 }

@@ -141,7 +141,7 @@ function pathsOf(pr) {
  *
  * @param {{pr: number, prs: object[], divergedPaths?: string[] | null}} opts
  */
-export function computeOverlap({ pr, prs = [], divergedPaths = null }) {
+export function computeOverlap({ pr, prs, divergedPaths = null }) {
   const self = prs.find((p) => Number(p?.number) === Number(pr)) ?? null
   const mine = new Set(pathsOf(self))
   const others = prs.filter((p) => Number(p?.number) !== Number(pr))

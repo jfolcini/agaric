@@ -562,8 +562,8 @@ export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>):
  */
 export function sortAgendaBlocksBy(
   blocks: BlockRow[],
-  sortBy?: AgendaSortBy | undefined,
-  pageTitles?: Map<string, string> | undefined,
+  sortBy?: AgendaSortBy,
+  pageTitles?: Map<string, string>,
 ): BlockRow[] {
   switch (sortBy) {
     case 'priority': {
