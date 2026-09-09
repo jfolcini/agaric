@@ -117,6 +117,43 @@ describe('useRecentPagesStore', () => {
       expect(parsed.state.recentPages[0]).toEqual({ pageId: 'A', title: 'Alpha' })
     })
 
+    /**
+     * Bookmarks used to be a `pinned` flag on these rows and are now the
+     * `starred-pages` preference. The coercion drops the flag, so rehydrate
+     * has to rescue it first or upgrading silently loses every bookmark made
+     * from the command palette — on any device this has not run on yet.
+     */
+    it('folds pre-consolidation pinned entries into the bookmark list', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            recentPages: [{ pageId: 'FLAT', title: 'Flat', pinned: true }],
+            recentPagesBySpace: {
+              'space-1': [
+                { pageId: 'PINNED', title: 'Pinned', pinned: true },
+                { pageId: 'PLAIN', title: 'Plain' },
+              ],
+            },
+          },
+          version: 0,
+        }),
+      )
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]').toSorted()).toEqual([
+        'FLAT',
+        'PINNED',
+      ])
+      // The flag itself is gone from the rehydrated rows.
+      const slice = useRecentPagesStore.getState().recentPagesBySpace['space-1'] ?? []
+      expect(slice).toEqual([
+        { pageId: 'PINNED', title: 'Pinned' },
+        { pageId: 'PLAIN', title: 'Plain' },
+      ])
+    })
+
     it('round-trips a visit through localStorage rehydrate', async () => {
       // Seed localStorage directly (mimicking a prior session). Avoids the
       // zustand-persist write-on-setState behaviour that would otherwise

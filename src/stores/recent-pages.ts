@@ -20,7 +20,6 @@
  * sync API) which independently tracked visits under `recent_pages:<spaceId>`
  * keys; a visit recorded in one was invisible to the other's ordering. The
  * lib's superset of features is folded in here:
- *   - pinning (`togglePinRecentPage`, pin-first ordering, pin-exempt cap),
  *   - single-entry removal (`removeRecentPage`), and
  *   - the imperative `addRecentPage(id, title)` entry point used by the
  *     search/palette click handlers.
@@ -34,6 +33,7 @@ import { persist } from 'zustand/middleware'
 
 import { activeSpaceKey } from '@/lib/active-space'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
+import { setStarred } from '@/lib/starred-pages'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
@@ -370,6 +370,37 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
 }
 
 /**
+ * Fold any pre-consolidation `pinned` entries into the bookmark list.
+ *
+ * Bookmarks used to be a `pinned` flag on these rows; they are now the
+ * `starred-pages` preference, and the coercion below drops the flag. Without
+ * this, upgrading silently loses every bookmark made from the command palette
+ * — and bookmarks are device-local, so a device this has not run on still has
+ * its own to rescue. Runs on the raw blob before coercion, adds only ids that
+ * are not already bookmarked, and is a no-op once the flag is gone.
+ */
+function rescuePinnedAsBookmarks(persisted: unknown): void {
+  if (persisted == null || typeof persisted !== 'object') return
+  const blob = persisted as Record<string, unknown>
+  const lists: unknown[] = [blob['recentPages']]
+  const bySpace = blob['recentPagesBySpace']
+  if (bySpace != null && typeof bySpace === 'object') {
+    lists.push(...Object.values(bySpace as Record<string, unknown>))
+  }
+  const pinned: string[] = []
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue
+    for (const row of list) {
+      if (row == null || typeof row !== 'object') continue
+      const r = row as Record<string, unknown>
+      if (r['pinned'] === true && typeof r['pageId'] === 'string') pinned.push(r['pageId'])
+    }
+  }
+  if (pinned.length === 0) return
+  setStarred(pinned, true)
+}
+
+/**
  * CR-PERSIST (#1578) — coerce an entire persisted recent-pages blob
  * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
  * (same-version blobs): zustand's persist middleware only calls `migrate` when
@@ -515,7 +546,10 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // same-version blobs are coerced by `merge`. The bare `version >= 1` cast
       // this replaced let an already-current-version corrupt blob flow through
       // unvalidated.
-      migrate: (persisted: unknown, _version: number) => coercePersistedRecentPages(persisted),
+      migrate: (persisted: unknown, _version: number) => {
+        rescuePinnedAsBookmarks(persisted)
+        return coercePersistedRecentPages(persisted)
+      },
       // CR-PERSIST (#1578) — zustand skips `migrate` when the stored version
       // equals `options.version` (or isn't a number), handing the raw blob
       // straight to the default shallow `merge`. Coerce here too so a corrupt
@@ -523,10 +557,10 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // PageRef entries, a non-array `recentPages`, bad `recentPagesBySpace`
       // values) can't poison the recent-pages reducers / selectors. Mirrors
       // tabs.ts / journal.ts.
-      merge: (persisted, current) => ({
-        ...current,
-        ...coercePersistedRecentPages(persisted),
-      }),
+      merge: (persisted, current) => {
+        rescuePinnedAsBookmarks(persisted)
+        return { ...current, ...coercePersistedRecentPages(persisted) }
+      },
       // #1149 — after rehydrate, one-time merge the raw `recent_pages:*`
       // localStorage keys (written by the removed `lib/recent-pages.ts`) into
       // `recentPagesBySpace`, then clear them. Guarded by `rawKeysMerged` so

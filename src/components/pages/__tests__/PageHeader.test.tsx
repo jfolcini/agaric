@@ -105,7 +105,6 @@ vi.mock('lucide-react', () => ({
   Settings2: () => <svg data-testid="settings2-icon" />,
   Smile: (props: Record<string, unknown>) => <svg data-testid="smile-icon" {...props} />,
   Bookmark: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
-  Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
   StickyNote: () => <svg data-testid="sticky-note-icon" />,
   Tag: () => <svg data-testid="tag-icon" />,
   Trash2: () => <svg data-testid="trash2-icon" />,

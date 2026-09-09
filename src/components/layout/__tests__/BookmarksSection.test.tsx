@@ -86,7 +86,8 @@ beforeEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
   await new Promise<void>((r) => queueMicrotask(r))
-  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  // Steady state: the resolve cache's first full scan has landed.
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: true })
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {}, rawKeysMerged: true })
   useSpaceStore.setState({
     currentSpaceId: SPACE_A,
@@ -158,6 +159,21 @@ describe('BookmarksSection', () => {
       expect(bookmarkList()).toBeNull()
       expect(screen.getByText(t('bookmarks.empty'))).toBeInTheDocument()
       expect(screen.getByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
+    })
+
+    /**
+     * Titles arrive with the resolve cache's first full scan. Before it lands
+     * every bookmark looks unresolved, and an empty state here would tell the
+     * user they have no bookmarks on every cold boot.
+     */
+    it('renders neither list nor empty state before the resolve cache loads', () => {
+      writePreference(PREFERENCES.starredPages, ['A'])
+      useResolveStore.setState({ _preloaded: false })
+
+      renderSection()
+
+      expect(bookmarkList()).toBeNull()
+      expect(screen.queryByText(t('bookmarks.empty'))).toBeNull()
     })
 
     it('shows only the active space bookmarks', () => {

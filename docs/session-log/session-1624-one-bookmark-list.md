@@ -49,6 +49,27 @@ The storage key is still `starred-pages`, and so are the identifiers in
 migrating everyone's bookmarks for a string no user ever sees, so the seam
 stops at that file, which now says so in its docblock.
 
+## Two fixes from the PR's own review
+
+The review raised six non-blocking notes; two named a concrete failure this
+change introduced, so they were fixed before merging rather than deferred.
+
+A bookmark's title comes from the resolve cache, which is empty until its
+first full scan lands, so the sidebar rendered "No bookmarks" on every cold
+boot until then — the old model read titles off persisted recents and rendered
+immediately. The empty state is now gated on that scan having run.
+
+And `pinned` entries were dropped by the persist coercion with nothing to
+catch them. This vault has none, but bookmarks are device-local and only this
+machine was measured, so another of the user's devices could still hold some.
+Rehydrate now folds any `pinned` id into the bookmark list first.
+
+The rest were the trivial ones: a docblock line listing deleted features, a
+duplicate `Star` lucide mock sharing a test id with the new `Bookmark` one, and
+an empty hint that still named the command palette as the only writer. The one
+left alone is the resolve cache's LRU eviction above ten thousand entries,
+which would hide a bookmark in a vault far larger than this one.
+
 ## Verification
 
 Two falsifications, each against a `cp` backup restored and `cmp`-checked in
@@ -64,7 +85,7 @@ cross-space case be written at all. Two of its cases carry properties that
 were false under the old model — a bookmark outliving the recents cap, and the
 space filter.
 
-18967 unit tests pass across the whole frontend, plus 53 Playwright cases over
+18969 unit tests pass across the whole frontend, plus 53 Playwright cases over
 the Pages view, the palette and the bookmark specs. `npm run typecheck` is
 clean. `e2e/starred-pages.spec.ts` and `PageBrowser.starred-pages.test.tsx`
 are renamed to match what they test.
