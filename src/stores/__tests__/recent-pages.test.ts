@@ -180,6 +180,28 @@ describe('useRecentPagesStore', () => {
       expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toEqual([])
     })
 
+    it('rescues pinned entries from the pre-#1149 raw keys too', async () => {
+      // A device that never ran #1149's migration keeps its pins in the raw
+      // key, which spells the id `id` rather than `pageId`.
+      localStorage.setItem(
+        'recent_pages:space-1',
+        JSON.stringify([
+          {
+            id: 'RAWPIN',
+            title: 'Raw pinned',
+            visitedAt: '2026-01-01T00:00:00.000Z',
+            pinned: true,
+          },
+          { id: 'RAWPLAIN', title: 'Raw plain', visitedAt: '2026-01-02T00:00:00.000Z' },
+        ]),
+      )
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: { recentPages: [] }, version: 1 }))
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toEqual(['RAWPIN'])
+    })
+
     it('round-trips a visit through localStorage rehydrate', async () => {
       // Seed localStorage directly (mimicking a prior session). Avoids the
       // zustand-persist write-on-setState behaviour that would otherwise

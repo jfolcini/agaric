@@ -175,6 +175,18 @@ describe('BookmarksSection', () => {
       expect(screen.queryByText(t('bookmarks.empty'))).toBeNull()
     })
 
+    it('shows the empty state in a space whose pages have loaded', () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      useSpaceStore.setState({ currentSpaceId: SPACE_B })
+      // SPACE_B's scan landed; it just holds none of the bookmarks.
+      useResolveStore.getState().batchSet([{ id: 'OTHER', title: 'Other', deleted: false }])
+
+      renderSection()
+
+      expect(bookmarkList()).toBeNull()
+      expect(screen.getByText(t('bookmarks.empty'))).toBeInTheDocument()
+    })
+
     it('shows only the active space bookmarks', () => {
       bookmark([{ id: 'A', title: 'Alpha' }])
       useSpaceStore.setState({ currentSpaceId: SPACE_B })
