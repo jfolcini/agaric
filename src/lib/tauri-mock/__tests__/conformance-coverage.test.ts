@@ -466,6 +466,17 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   list_projected_agenda:
     'wall-clock dependent: `list_projected_agenda_inner` anchors the `.+` / `++` ' +
     'recurrence projection (and the cache-freshness horizon) to `chrono::Local::now()`',
+  // #4886 — same clock, one level up: the report CARRIES `today`, the local
+  // date the projected-agenda rebuild is pinned to, so a backend-authored
+  // `expected` binds the day it was generated on. And the subject is the
+  // consistency of derived tables (`pages_cache`, `fts_blocks`,
+  // `page_link_cache`, …) the mock does not keep — its handler answers a
+  // constant zero over `blocks.size` — so a step would pin that constant
+  // against a real diff, not two implementations of one rule.
+  compute_reconciliation_report:
+    'wall-clock dependent: the report carries `today` from `chrono::Local::now()` (the ' +
+    'projected-agenda pin); and it diffs derived tables the mock has no copy of, so the ' +
+    "mock's answer is a constant no query step could bind to the backend's",
 
   // ── Trash ──
   count_trash: 'returns a bare `i64`; the query projection has no row identity to bind it to',
@@ -719,6 +730,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
 const NOT_YET_PINNED_READ: readonly string[] = [
   'compute_block_vs_current_diff',
   'compute_edit_diff',
+  'compute_reconciliation_report',
   'count_agenda_batch_by_source',
   'count_backlinks_batch',
   'count_trash',

@@ -278,6 +278,8 @@ macro_rules! agaric_commands {
             // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata,
             $crate::commands::bug_report::read_logs_for_report,
+            // Reconciliation oracle against the live vault (#4886)
+            $crate::commands::reconciliation::compute_reconciliation_report,
             // MCP — Settings "Agent access" tab
             $crate::commands::mcp::get_mcp_status,
             $crate::commands::mcp::get_mcp_socket_path,
@@ -394,9 +396,11 @@ mod materializer_app_tests;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
-/// `materializer::handlers::apply_reproject_proptest` (op-sequence wiring) and
-/// by its own attachment-lifecycle property test.
-#[cfg(test)]
+/// `materializer::handlers::apply_reproject_proptest` (op-sequence wiring), by
+/// its own attachment-lifecycle property test, and since #4886 by
+/// `commands::reconciliation` in release builds, so a user can run it against
+/// a real vault. Its test-only half (settles, coverage, panicking asserts)
+/// stays under `cfg(test)` in `reconciliation_oracle/harness.rs`.
 mod reconciliation_oracle;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).

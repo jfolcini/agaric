@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page FROM page_link_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "source_page_id"
+          }
+        }
+      },
+      {
+        "name": "target_page_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "target_page_id"
+          }
+        }
+      },
+      {
+        "name": "edge_count",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "edge_count"
+          }
+        }
+      },
+      {
+        "name": "src_deleted",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "src_deleted"
+          }
+        }
+      },
+      {
+        "name": "tgt_deleted",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "tgt_deleted"
+          }
+        }
+      },
+      {
+        "name": "tgt_is_page",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "tgt_is_page"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "14910de5c1314bdc8c2ababc96b2bc33eda2551ebbffec17dcb64467e6a0f391"
+}

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, projected_date, source FROM projected_agenda_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projected_agenda_cache",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "projected_date",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projected_agenda_cache",
+            "name": "projected_date"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projected_agenda_cache",
+            "name": "source"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3ede680a06de4ed9d50a6bd02c52454f716eb4e6aac19a76c7c43dd76ea3bac0"
+}

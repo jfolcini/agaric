@@ -10,6 +10,7 @@
  */
 
 import { type TypedHandlers, returnEmptyArray, returnNull } from '@/lib/tauri-mock/handlers/shared'
+import { blocks } from '@/lib/tauri-mock/seed'
 
 export const systemHandlers = {
   // #2110 M3b — OpenTelemetry frontend-span ingest. Off by default; the frontend
@@ -77,6 +78,25 @@ export const systemHandlers = {
 
   read_logs_for_report: () => [],
 
+  // #4886 — the reconciliation oracle. The backend rebuilds every derived
+  // artefact (pages_cache, fts_blocks, page_link_cache, agenda_cache, …) from
+  // base tables and diffs it against the maintained state. The mock keeps no
+  // derived tables at all — every read recomputes from `blocks` — so there is
+  // nothing to diverge, and "zero divergences over the blocks held" is the one
+  // answer it can honestly give: a real vault whose derived state agrees with
+  // its base tables answers exactly this. `today` is the local calendar date
+  // the backend pins the projected-agenda rebuild to (`chrono::Local`).
+  compute_reconciliation_report: () => {
+    const now = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    return {
+      blocks_scanned: blocks.size,
+      today: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+      total_divergences: 0,
+      artefacts: [],
+    }
+  },
+
   // ---------------------------------------------------------------------------
   // Op log compaction commands
   // ---------------------------------------------------------------------------
@@ -101,6 +121,7 @@ export const systemHandlers = {
   | 'log_frontend'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
+  | 'compute_reconciliation_report'
   | 'save_draft'
   | 'flush_draft'
   | 'delete_draft'

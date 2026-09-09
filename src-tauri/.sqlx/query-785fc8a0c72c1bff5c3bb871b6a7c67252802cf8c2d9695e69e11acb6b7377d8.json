@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id FROM pages_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "785fc8a0c72c1bff5c3bb871b6a7c67252802cf8c2d9695e69e11acb6b7377d8"
+}

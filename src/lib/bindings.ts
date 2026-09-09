@@ -797,6 +797,11 @@ export const commands = {
 	 *  Delegates to [`read_logs_for_report_inner`].
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
+	/**
+	 *  Tauri command: rebuild every derived artefact from base tables and report
+	 *  where the live vault disagrees. Reader pool; writes nothing.
+	 */
+	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
 	/**  Tauri command: return the current MCP RO status for the Settings tab. */
 	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
 	/**  Tauri command: return the default socket path for the current platform. */
@@ -1486,6 +1491,24 @@ export type AppErrorKind = "database" | "not_found" |
  *  original frontend contract; deliberately NOT `pool_timed_out`).
  */
 "pool_busy" | "conflict" | "migration" | "io" | "json" | "ulid" | "invalid_operation" | "channel" | "internal" | "snapshot" | "validation" | "non_reversible" | "cancelled";
+
+/**  One derived artefact's disagreement with its from-base rebuild. */
+export type ArtefactDivergences = {
+	/**
+	 *  Derived table and column, e.g. `pages_cache.child_block_count`. The
+	 *  header table in `reconciliation_oracle.rs` maps it to the maintenance
+	 *  site that owns the arm.
+	 */
+	artefact: string,
+	/**  Rows that diverged. */
+	count: number,
+	/**
+	 *  The first [`SAMPLE_KEYS_PER_ARTEFACT`] row keys, in the oracle's stable
+	 *  order — a block id, a `(source -> target)` pair, a `date / block_id`
+	 *  agenda key, a content hash.
+	 */
+	sample_keys: string[],
+};
 
 export type AttachmentRow = {
 	id: BlockId,
@@ -3355,6 +3378,31 @@ export type QueryResultRow = {
 	 */
 	score?: number | null,
 } & ActiveBlockRow;
+
+/**  What [`compute_reconciliation_report`] returns. */
+export type ReconciliationReport = {
+	/**
+	 *  Rows in `blocks` — live and tombstoned — at the time of the run: what
+	 *  every rebuild folded. The non-vacuity figure: zero divergences over
+	 *  zero blocks describes an empty vault, not a clean one.
+	 */
+	blocks_scanned: number,
+	/**
+	 *  The local calendar date (`YYYY-MM-DD`) the projected-agenda rebuild
+	 *  was pinned to — the one artefact that is not a pure function of the
+	 *  database (`reconciliation_oracle::rebuild_projected_agenda_from_base`).
+	 *  Recorded so a run that straddled local midnight is diagnosable.
+	 */
+	today: string,
+	/**  Sum of `count` over `artefacts`. */
+	total_divergences: number,
+	/**
+	 *  One entry per artefact that diverged, in the oracle's root-cause-first
+	 *  order (`blocks.page_id` before the `pages_cache` counts keyed on it).
+	 *  An artefact that agreed with its rebuild is absent.
+	 */
+	artefacts: ArtefactDivergences[],
+};
 
 /**
  *  #1255: durable, user-visible boot-recovery status.

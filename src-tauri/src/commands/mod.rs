@@ -57,6 +57,7 @@ pub mod observability;
 pub mod pages;
 pub mod properties;
 pub mod queries;
+pub mod reconciliation;
 pub mod recovery;
 pub mod spaces;
 pub mod sync_cmds;
