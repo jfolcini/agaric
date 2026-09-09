@@ -76,6 +76,22 @@ Measured on this machine, not estimated.
 
 The CI `lint` job has a 30-minute budget against an observed ~11 minutes.
 
+## The weekly lane stays
+
+A blocking type-aware gate overlaps the weekly `type-aware-lint` lane, and
+AGENTS.md § "Guards earn their keep" says adding a guard means deleting or
+justifying every guard it overlaps. The maintainer's call is that it stays, and
+the justification is the liveness guard rather than the findings.
+
+The blocking gate cannot tell "clean" from "not scanned". A tsgolint that stops
+resolving types reports zero findings and the hook passes — the same failure
+`react/rule-suppression` argues about one level up in `.oxlintrc.json`, and the
+same one #3330 hit on `mutants-frontend`. `check-type-aware-liveness.mjs` is the
+only thing in the tree that reds when the type-aware machinery goes quiet, and
+the lane's 30-day report artifact is the trail for reading a regression back.
+Its header comment is rewritten to say so; the old text justified the lane by
+"hundreds of pre-existing findings", which is no longer true of anything.
+
 ## Verification
 
 `npm run lint` exits 0 with the flag on, printing the 47 held-at-warn findings.
