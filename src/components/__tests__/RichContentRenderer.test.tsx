@@ -1471,8 +1471,10 @@ describe('RichContentRenderer', () => {
       const md = 'Some **content** with a [[link]] and #tag'
       // Same content, different resolve callbacks/options each time — this is
       // exactly what a resolveVersion bump does to a visible StaticBlock.
-      // `renderRichContent` parses before it returns, so the call alone is what
-      // these count — `void` discards the node without a mount nothing reads.
+      // `renderRichContent` parses before it returns, so the call alone is what these
+      // count. The `void` is load-bearing, not decorative: React 19 types `ReactNode`
+      // as a union that includes `Promise<AwaitedReactNode>`, so a bare call statement
+      // reds `no-floating-promises`.
       void renderRichContent(md, { resolveBlockTitle: () => 'v1' })
       void renderRichContent(md, { resolveBlockTitle: () => 'v2' })
       void renderRichContent(md, { interactive: true, resolveBlockTitle: () => 'v3' })

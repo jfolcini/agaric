@@ -42,6 +42,7 @@ const HANDLERS_DOMAIN_DIR = path.join(ROOT, 'src/lib/tauri-mock/handlers')
 // `handlers.ts` and remove the entry from this list. The list should
 // only ever shrink, never grow — adding a new IPC command without a
 // handler means that command will silently return `null` to the UI.
+/** @type {Set<string>} */
 const KNOWN_UNMOCKED = new Set([
   // (Empty — added mock handlers for the previous 15 entries
   // (5 GCal + 4 MCP RO + 4 MCP RW + trash_descendant_counts + quick_capture_block)
@@ -58,6 +59,7 @@ const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')
 // matcher is intentionally narrow: literal double-quoted snake_case
 // arg, no template literals, no concatenation. Anything else is a
 // generated-code drift signal and should be reviewed by hand.
+/** @type {Set<string>} */
 const expected = new Set()
 for (const m of bindingsSrc.matchAll(/__TAURI_INVOKE\("([a-z][a-z0-9_]*)"/g)) {
   expected.add(m[1])
@@ -95,6 +97,7 @@ if (domainFiles.length === 0) {
   console.error(`ERROR: found 0 domain handler modules in ${HANDLERS_DOMAIN_DIR}`)
   process.exit(2)
 }
+/** @type {Set<string>} */
 const mocked = new Set()
 for (const file of domainFiles) {
   const src = fs.readFileSync(path.join(HANDLERS_DOMAIN_DIR, file), 'utf8')
@@ -119,16 +122,10 @@ if (mocked.size === 0) {
 }
 
 // ─── 3. Compute missing / extra ─────────────────────────────────────
-const missingAll = [...expected]
-  .filter((c) => !mocked.has(c))
-  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+const missingAll = [...expected].filter((c) => !mocked.has(c)).toSorted()
 const missingNew = missingAll.filter((c) => !KNOWN_UNMOCKED.has(c))
-const allowlistStale = [...KNOWN_UNMOCKED]
-  .filter((c) => !missingAll.includes(c))
-  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-const extra = [...mocked]
-  .filter((c) => !expected.has(c))
-  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+const allowlistStale = [...KNOWN_UNMOCKED].filter((c) => !missingAll.includes(c)).toSorted()
+const extra = [...mocked].filter((c) => !expected.has(c)).toSorted()
 
 let exitCode = 0
 

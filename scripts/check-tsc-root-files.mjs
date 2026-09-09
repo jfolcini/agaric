@@ -187,6 +187,7 @@ function collapseStem(file) {
  */
 function resolveIntendedSet(baseDir, include, exclude) {
   const excludePreds = (exclude ?? []).map((p) => excludePredicate(baseDir, p))
+  /** @type {Set<string>} */
   const set = new Set()
   for (const pattern of include ?? []) {
     for (const abs of expandInclude(baseDir, pattern)) {
@@ -203,6 +204,7 @@ function resolveIntendedSet(baseDir, include, exclude) {
 
 /** The `.ts`/`.tsx` file set tsc actually resolved as this project's root files. */
 function resolveActualSet(baseDir, files) {
+  /** @type {Set<string>} */
   const set = new Set()
   for (const f of files ?? []) {
     const abs = path.resolve(baseDir, f)
@@ -214,14 +216,13 @@ function resolveActualSet(baseDir, files) {
 /**
  * Compare a project's intended vs. actual `.ts`/`.tsx` root-file sets.
  * Returns `{ missing, extra }` (both sorted absolute-path arrays).
+ *
+ * @param {Set<string>} intended
+ * @param {Set<string>} actual
  */
 function diffSets(intended, actual) {
-  const missing = [...intended]
-    .filter((f) => !actual.has(f))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const extra = [...actual]
-    .filter((f) => !intended.has(f))
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const missing = [...intended].filter((f) => !actual.has(f)).toSorted()
+  const extra = [...actual].filter((f) => !intended.has(f)).toSorted()
   return { missing, extra }
 }
 

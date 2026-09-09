@@ -258,12 +258,10 @@ function verifyIndexFraming({ dir, env, file, decoys, check }) {
   const expected = [...decoys.keys()]
     .map((i) => `decoy-${i}-${file}`)
     .concat(`dupe-${file}`, file)
-    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted()
   check(
     'many files: the fixture enumeration is the FIXTURE, not the ambient repository',
-    entries !== null &&
-      entries.paths.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join('\n') ===
-        expected.join('\n'),
+    entries !== null && entries.paths.toSorted().join('\n') === expected.join('\n'),
     `expected exactly ${expected.length} fixture paths, got ${entries?.paths?.length}: ` +
       `${entries?.paths?.slice(0, 5).join(', ')}…`,
   )

@@ -742,6 +742,7 @@ export function hasCronTrigger(workflowText) {
  * permanently open on a workflow nobody can fix.
  */
 export function findUnwatchedWorkflows(files, watched = WATCHED) {
+  /** @type {Set<string>} */
   const scheduled = new Set(files.filter((f) => hasCronTrigger(f.text)).map((f) => f.name))
   // The invariant is over the CRON-watched entries only. A push-watched entry
   // has no cron, so it is neither a phantom nor a licence: were `ci.yml` to
@@ -749,9 +750,7 @@ export function findUnwatchedWorkflows(files, watched = WATCHED) {
   // which is what forces a proper windowed entry for it.
   const watchedNames = new Set(watched.filter((w) => w.event !== 'push').map((w) => w.workflow))
   return {
-    unwatched: [...scheduled]
-      .filter((n) => !watchedNames.has(n))
-      .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    unwatched: [...scheduled].filter((n) => !watchedNames.has(n)).toSorted(),
     phantom: [...watchedNames].filter((n) => !scheduled.has(n)).toSorted(),
   }
 }

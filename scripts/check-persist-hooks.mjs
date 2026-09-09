@@ -500,6 +500,7 @@ export function scanSource(src) {
 
 /** Walk `dir` for `*.ts`/`*.tsx`, excluding test files and `__tests__`/`tests` dirs. */
 function listStoreFiles(dir) {
+  /** @type {string[]} */
   const out = []
   const visit = (d) => {
     for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
@@ -519,7 +520,7 @@ function listStoreFiles(dir) {
     }
   }
   visit(dir)
-  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return out.toSorted()
 }
 
 /**

@@ -716,6 +716,7 @@ export function listTrackedEntries(repoRoot, { env } = {}) {
     if (/not a git repository/i.test(stderr)) return null
     throw err
   }
+  /** @type {string[]} */
   const paths = []
   const byPath = new Map()
   // `-z` rather than plain `ls-files -s`: NUL-separated records mean a path

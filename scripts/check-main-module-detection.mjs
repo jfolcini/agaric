@@ -387,6 +387,7 @@ function isScanned(name) {
  * @returns {string[]}
  */
 export function listScannedFiles(root) {
+  /** @type {string[]} */
   const out = []
   const visit = (dir) => {
     if (!existsSync(dir)) return
@@ -405,7 +406,7 @@ export function listScannedFiles(root) {
       if (entry.isFile() && isScanned(entry.name)) out.push(path.join(root, entry.name))
     }
   }
-  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return out.toSorted()
 }
 
 /**

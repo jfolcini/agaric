@@ -636,6 +636,7 @@ export function analyze({ root, srcDirs, baseline }) {
   const testKinds = testFnKinds(srcDirs)
 
   const missing = [] // in the tree, not in the baseline
+  /** @type {string[]} */
   const stale = [] // in the baseline, gone from the tree
   const kindDrift = []
   const deadTests = [] // `covered`, but the named test does not run
@@ -680,7 +681,7 @@ export function analyze({ root, srcDirs, baseline }) {
   return {
     live,
     missing: missing.toSorted((a, b) => a.fn.localeCompare(b.fn)),
-    stale: stale.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    stale: stale.toSorted(),
     kindDrift: kindDrift.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     deadTests: deadTests.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     undecided: undecided.toSorted((a, b) => a.fn.localeCompare(b.fn)),

@@ -463,6 +463,7 @@ export function analyzeSource(rawSrc) {
  *   scanErrors: {file: string, message: string}[], scanned: number }}
  */
 export function analyze({ root, typesDir }) {
+  /** @type {string[]} */
   const offenders = []
   const details = new Map()
   const scanErrors = []
@@ -486,7 +487,7 @@ export function analyze({ root, typesDir }) {
     }
   }
 
-  offenders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  offenders.sort()
   return { offenders, details, scanErrors, scanned }
 }
 
