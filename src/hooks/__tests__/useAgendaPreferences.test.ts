@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// Under happy-dom the `getItem` and `setItem` spies in "localStorage error
+// handling" record 0 calls: the seeding writes and hook reads above them bind both
+// methods onto the instance first, so neither throw reaches the hook and both
+// error-handling tests assert nothing.
+// Mechanism: src/__tests__/AGENTS.md.
+
 /**
  * Tests for src/hooks/useAgendaPreferences.ts — localStorage persistence
  * for agenda groupBy/sortBy preferences.

@@ -63,11 +63,8 @@ function extractSingleCause(cause: unknown): CauseInfo | null {
   if (cause instanceof Error) {
     return cause.stack ? { message: cause.message, stack: cause.stack } : { message: cause.message }
   }
-  // `typeof … === 'string'`, not just `'message' in cause`: an AppError-shaped
-  // wrapper whose `message` is itself an object (`{ message: { kind } }`) would
-  // otherwise stringify to `[object Object]` — the exact loss the fallback
-  // below exists to prevent. `main.tsx`'s `renderFatalBootError` reads it the
-  // same way.
+  // Not just `'message' in cause`: a `message` that is itself an object
+  // stringifies to `[object Object]`, the loss the fallback below prevents.
   if (
     cause &&
     typeof cause === 'object' &&

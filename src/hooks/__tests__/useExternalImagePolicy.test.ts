@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// Under happy-dom neither `Storage.prototype.setItem` spy below records a call:
+// the `setPolicy` / `addHost` tests above them touch `localStorage.setItem` first
+// and freeze the binding, so the thrown QuotaExceededError never reaches the hook
+// and both "degrades to a no-op" tests assert nothing.
+// Mechanism: src/__tests__/AGENTS.md.
+
 /**
  * Tests for the external-image policy + allowlist persistence hooks (#1492).
  *

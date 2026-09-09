@@ -2,9 +2,11 @@
 
 Four PRs (#4884, #4887, #4888, #4889) turned `oxlint --type-aware` on one rule
 at a time and merged approved. Between them they collected six non-blocking
-notes, batched here. Two of the six turned out to rest on a premise that is no
-longer true, and one had to be resolved the opposite way round from how it was
-written, because the fix the note preferred is itself a type-aware violation.
+notes, batched here. One had to be resolved the opposite way round from how it
+was written, because the fix the note preferred is itself a type-aware
+violation. One I first judged to rest on a stale premise and was wrong about
+twice — see the addendum at the end, which is the part of this log worth
+reading.
 
 ## The cause chain still had an `[object Object]` arm
 
@@ -40,28 +42,20 @@ now says why the cast holds — `value_num` is excluded by the guard, so the
 column is one of the three TEXT ones — instead of admitting to the belt and
 braces. `String(vc.wanted)` stays; that one is a real `string | number` union.
 
-## The `Storage.prototype` spies do intercept — the note's premise is stale
+## The `Storage.prototype` spies — I called this one wrong, twice
 
 Two tests spy on `Storage.prototype.setItem` and make it throw:
 `useTheme.test.ts` ("keeps instances in sync even when localStorage writes
 fail") and `useDeepLinkRouter.test.ts` ("still switches view if localStorage
-write throws"). `src/__tests__/AGENTS.md` records that such a spy does not
+write throws"). `src/__tests__/AGENTS.md` recorded that such a spy does not
 intercept `localStorage` under happy-dom and neither file opts into jsdom, which
-would make both tests vacuous — they would pass without anything ever throwing.
+would make both tests vacuous.
 
-It is not true on happy-dom 20.12.0. A probe run under the repo's own vitest
-config reports `Object.getPrototypeOf(localStorage) === Storage.prototype` and
-the spy called once with the write throwing. Adding
-`expect(setItem).toHaveBeenCalled()` to each of the two tests passed, and
-inverting it to `toHaveBeenCalledTimes(99)` reddened with "expected setItem to
-be called 99 times, but got 1 times" — so the throwing implementation really
-runs, and the assertions after it really are made against a failed write.
-
-Both tests are left exactly as they were; the probes were run against `cp`
-backups and restored. The stale line is in `src/__tests__/AGENTS.md`, which is
-not this PR's to edit — it needs maintainer approval, and it is worth one,
-because the file is what a future author will consult before choosing an
-environment.
+The recorded reason was wrong — the prototype is not bypassed — and I stopped
+there, concluding the tests were fine. They are not. The addendum below has the
+whole thing; the short version is that the probes which said "spy called once"
+were `-t` filtered, and a filtered run skips the earlier test whose write freezes
+the binding. Unfiltered, the same probe reports zero.
 
 ## Two test hooks and a mount that nothing read
 
@@ -105,27 +99,33 @@ return reddens the tokenizer one, so the `void` rewrite kept both honest. The
 The six touched files run 584 tests green; `src/editor` plus `EditableBlock`,
 which is the blast radius of the `use-roving-editor` hoist, another 2181.
 
-## Addendum — the stale line is corrected, then corrected again
+## Addendum — the note was right and I was wrong twice
 
-The maintainer approved editing `src/__tests__/AGENTS.md`, so the claim that
-`Storage.prototype` spies do not intercept `localStorage` under happy-dom is
-gone from its "known cases" list, and a short paragraph records that it was
-there and why it is not true on happy-dom 20.12.0 — with the two tests that
-depend on the working behaviour named, and a re-check trigger for the next
-happy-dom major. Deleting the clause outright would have left the next person
-who remembers the old rule free to reinstate it.
+The #4887 review note said `useTheme.test.ts` and `useDeepLinkRouter.test.ts`
+might be vacuous. This log's first version contradicted it on the strength of
+three probes. The reviewer on #4891 blocked that, and the reviewer was right.
 
-The first correction was itself too strong. It said the spies work, full stop.
-They work once per file: happy-dom's `Storage` is a `Proxy` whose `get` trap
-copies the prototype method onto the instance as an own bound property on first
-access and caches the name, so the first `Storage.prototype` spy in a file
-intercepts and every later one is invisible. jsdom forwards to the prototype on
-every access, which is why the same file passes there. Four files stay pinned to
-jsdom for exactly that, and one of them is order-dependent — it passes in
-isolation and fails once a preceding test has frozen the binding.
+The mechanism is real: happy-dom's `Storage` is a `Proxy` whose `get` trap runs
+`ClassMethodBinder.bind`, which reads the descriptor off `Storage.prototype` at
+that moment, copies it onto the instance as an own bound property, and caches
+the name so it never rebinds. Interception is first-come, per file.
 
-The two tests the review note worried about are fine because their spy is the
-first in the file, which is what the three probes measured. The mechanism is
-what the probes did not reach, and the paragraph now names it, along with the
-trap that follows from it: a `not.toHaveBeenCalled()` behind a later spy is
-vacuous under happy-dom rather than red.
+What was wrong was applying it. `useTheme.test.ts` writes
+`localStorage.setItem('theme-preference', 'dark')` at line 67, in the second
+test in the file — 380 lines before the spy at :447. By the paragraph's own
+rule that spy is dead, and it is. Re-running the probe over the whole file
+**unfiltered** reports `expected "setItem" to be called 99 times, but got 0
+times`. The earlier probes that reported 1 must have been `-t` filtered, which
+skips the test whose write froze the binding. A filtered probe is live and the
+same spy is dead in CI, which is the worst possible shape for a check.
+
+So `src/__tests__/AGENTS.md` now carries the rule without the roster of
+supposedly-fine files, plus the thing the roster was missing: how to prove a spy
+live, and that the proof has to run the whole file. Session 1636 carries the
+audit of every remaining `Storage.prototype` spy in a happy-dom file and the
+tests that turned out to be asserting nothing.
+
+Two corrections in one paragraph is worth stating plainly: the first version of
+this note claimed the spies always work, the second claimed they work once per
+file *and* that these two files were on the right side of that line. Only the
+mechanism survived.

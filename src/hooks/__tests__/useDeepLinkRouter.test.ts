@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// Under happy-dom the `Storage.prototype.setItem` spy in "still switches view if
+// localStorage write throws" records 0 calls: the `handleOpenSettingsPayload` tests
+// above it write the settings tab first and freeze the binding, so the throw never
+// reaches the handler and the test asserts nothing.
+// Mechanism: src/__tests__/AGENTS.md.
+
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
