@@ -85,18 +85,22 @@ export function BookmarksSection(): ReactElement {
 
       {!collapsed && (
         <SidebarGroupContent>
-          {bookmarks.length === 0 && !preloaded ? null : bookmarks.length === 0 ? (
+          {bookmarks.length === 0 ? (
+            // Before the resolve cache's first scan every bookmark looks
+            // unresolved, so an empty state would claim there are none.
             // The dashed empty box has no icon-rail layout, and the rail
             // already hides the header that explains it.
-            <div className="group-data-[collapsible=icon]:hidden">
-              <EmptyState
-                compact
-                headingLevel="p"
-                icon={Bookmark}
-                message={t('bookmarks.empty')}
-                description={t('bookmarks.emptyHint')}
-              />
-            </div>
+            preloaded ? (
+              <div className="group-data-[collapsible=icon]:hidden">
+                <EmptyState
+                  compact
+                  headingLevel="p"
+                  icon={Bookmark}
+                  message={t('bookmarks.empty')}
+                  description={t('bookmarks.emptyHint')}
+                />
+              </div>
+            ) : null
           ) : (
             <SidebarMenu aria-label={t('bookmarks.title')}>
               {bookmarks.map((page) => {

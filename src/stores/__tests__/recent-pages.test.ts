@@ -154,6 +154,32 @@ describe('useRecentPagesStore', () => {
       ])
     })
 
+    /**
+     * The rescue is one-time. Without a persisted guard it re-runs on every
+     * boot: a device that already merged the raw keys never rewrites its blob
+     * on hydrate, so the `pinned` flags survive, and a bookmark the user
+     * removed from the sidebar comes back on the next launch.
+     */
+    it('does not resurrect a rescued bookmark the user removed', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            recentPages: [{ pageId: 'P', title: 'Pinned', pinned: true }],
+            rawKeysMerged: true,
+          },
+          version: 1,
+        }),
+      )
+      await useRecentPagesStore.persist.rehydrate()
+      expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toEqual(['P'])
+
+      localStorage.setItem('starred-pages', JSON.stringify([]))
+      await useRecentPagesStore.persist.rehydrate()
+
+      expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toEqual([])
+    })
+
     it('round-trips a visit through localStorage rehydrate', async () => {
       // Seed localStorage directly (mimicking a prior session). Avoids the
       // zustand-persist write-on-setState behaviour that would otherwise

@@ -70,6 +70,22 @@ an empty hint that still named the command palette as the only writer. The one
 left alone is the resolve cache's LRU eviction above ten thousand entries,
 which would hide a bookmark in a vault far larger than this one.
 
+## A third round, and a guard that was not one
+
+The next review caught that the rescue had no idempotence: on a device that
+had already merged the pre-#1149 raw keys, hydrate never rewrites the blob, so
+the `pinned` flags survive, the rescue re-runs every launch, and a bookmark
+removed from the sidebar comes back. Reproduced before fixing — the first
+attempt at a repro passed, because it seeded a blob without `rawKeysMerged`
+and so took the branch that does rewrite.
+
+The first fix carried a persisted `pinnedRescued` flag as well as a forced
+write. Falsifying them one at a time showed the flag prevented nothing:
+removing it left every test green, while removing the write reddened the case.
+The write is what fixes it, because it persists the coerced rows and those no
+longer carry the flag. The flag is deleted rather than kept as a second guard
+for the first.
+
 ## Verification
 
 Two falsifications, each against a `cp` backup restored and `cmp`-checked in
@@ -85,7 +101,7 @@ cross-space case be written at all. Two of its cases carry properties that
 were false under the old model — a bookmark outliving the recents cap, and the
 space filter.
 
-18969 unit tests pass across the whole frontend, plus 53 Playwright cases over
+18970 unit tests pass across the whole frontend, plus 53 Playwright cases over
 the Pages view, the palette and the bookmark specs. `npm run typecheck` is
 clean. `e2e/starred-pages.spec.ts` and `PageBrowser.starred-pages.test.tsx`
 are renamed to match what they test.

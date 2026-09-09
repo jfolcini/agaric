@@ -379,8 +379,8 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
  * its own to rescue. Runs on the raw blob before coercion, adds only ids that
  * are not already bookmarked, and is a no-op once the flag is gone.
  */
-function rescuePinnedAsBookmarks(persisted: unknown): void {
-  if (persisted == null || typeof persisted !== 'object') return
+function rescuePinnedAsBookmarks(persisted: unknown): boolean {
+  if (persisted == null || typeof persisted !== 'object') return false
   const blob = persisted as Record<string, unknown>
   const lists: unknown[] = [blob['recentPages']]
   const bySpace = blob['recentPagesBySpace']
@@ -396,9 +396,17 @@ function rescuePinnedAsBookmarks(persisted: unknown): void {
       if (r['pinned'] === true && typeof r['pageId'] === 'string') pinned.push(r['pageId'])
     }
   }
-  if (pinned.length === 0) return
+  if (pinned.length === 0) return false
   setStarred(pinned, true)
+  return true
 }
+
+/**
+ * Module-scope handoff from `merge`/`migrate` to `onRehydrateStorage`, the
+ * only hook that can force the write which strips the rescued flags from
+ * storage. Mirrors the `pendingSplits` registry in `use-block-flush.ts`.
+ */
+let pinnedRescueNeedsPersist = false
 
 /**
  * CR-PERSIST (#1578) — coerce an entire persisted recent-pages blob
@@ -547,7 +555,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // this replaced let an already-current-version corrupt blob flow through
       // unvalidated.
       migrate: (persisted: unknown, _version: number) => {
-        rescuePinnedAsBookmarks(persisted)
+        pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
         return coercePersistedRecentPages(persisted)
       },
       // CR-PERSIST (#1578) — zustand skips `migrate` when the stored version
@@ -558,7 +566,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // values) can't poison the recent-pages reducers / selectors. Mirrors
       // tabs.ts / journal.ts.
       merge: (persisted, current) => {
-        rescuePinnedAsBookmarks(persisted)
+        pinnedRescueNeedsPersist = rescuePinnedAsBookmarks(persisted) || pinnedRescueNeedsPersist
         return { ...current, ...coercePersistedRecentPages(persisted) }
       },
       // #1149 — after rehydrate, one-time merge the raw `recent_pages:*`
@@ -566,6 +574,16 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       // `recentPagesBySpace`, then clear them. Guarded by `rawKeysMerged` so
       // it runs at most once across the persisted lifetime.
       onRehydrateStorage: () => (state) => {
+        // Force one write after a rescue, before the raw-key early return —
+        // which fires on exactly the devices that carry pinned rows, so a
+        // write behind it would never happen for them. The point is the write
+        // itself: it persists the COERCED rows, which no longer carry the
+        // flag, so the rescue cannot run twice and resurrect a bookmark the
+        // user has since removed. An empty patch is enough to trigger it.
+        if (pinnedRescueNeedsPersist) {
+          pinnedRescueNeedsPersist = false
+          useRecentPagesStore.setState({})
+        }
         if (state == null || state.rawKeysMerged) return
         const { bySpace, changed } = migrateRawRecentPagesKeys(state.recentPagesBySpace)
         const effectiveBySpace = changed ? bySpace : state.recentPagesBySpace
