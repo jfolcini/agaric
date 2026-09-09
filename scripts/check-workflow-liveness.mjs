@@ -749,7 +749,9 @@ export function findUnwatchedWorkflows(files, watched = WATCHED) {
   // which is what forces a proper windowed entry for it.
   const watchedNames = new Set(watched.filter((w) => w.event !== 'push').map((w) => w.workflow))
   return {
-    unwatched: [...scheduled].filter((n) => !watchedNames.has(n)).toSorted(),
+    unwatched: [...scheduled]
+      .filter((n) => !watchedNames.has(n))
+      .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
     phantom: [...watchedNames].filter((n) => !scheduled.has(n)).toSorted(),
   }
 }

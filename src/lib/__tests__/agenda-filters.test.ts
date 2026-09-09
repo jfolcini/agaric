@@ -948,7 +948,7 @@ describe('executeAgendaFilters', () => {
 
       const prefixCalls = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'list_tags_by_prefix',
-      ) as Array<[string, Record<string, unknown>]>
+      ) as Array<[string, { prefix: string }]>
       // Exactly 2 lookups, one per distinct prefix.
       expect(prefixCalls).toHaveLength(2)
       const prefixes = prefixCalls.map(([, a]) => a['prefix']).toSorted()

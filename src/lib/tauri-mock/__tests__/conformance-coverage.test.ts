@@ -2987,13 +2987,13 @@ describe('#3083 conformance-coverage ratchet', () => {
     // `sort` entirely runs that arm.
     expect(dim.discriminators.length + 1).toBe(expectedVariants.length)
     expect(
-      dim.discriminators.map((d) => d.equals).toSorted(),
+      dim.discriminators.map((d) => d.equals).toSorted((a, b) => (a ?? '').localeCompare(b ?? '')),
       `Every non-default PageSort variant must have a discriminator declaring its WIRE value.`,
     ).toEqual(
       expectedVariants
         .filter((v) => v !== 'Alphabetical')
         .map((v) => WIRE[v])
-        .toSorted(),
+        .toSorted((a, b) => (a ?? '').localeCompare(b ?? '')),
     )
     expect(
       dim.discriminators.every((d) => d.field === 'sort'),

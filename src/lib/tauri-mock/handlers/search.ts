@@ -1123,7 +1123,7 @@ function capPaletteContent(
   content: string | null,
 ): Record<string, unknown> {
   if (typeof content !== 'string') return row
-  const points = [...content]
+  const points = Array.from(content)
   if (points.length <= PALETTE_CONTENT_PREVIEW_CAP) return row
   const cut: Record<string, unknown> = {}
   for (const key of Object.keys(row)) {

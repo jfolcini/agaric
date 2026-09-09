@@ -80,7 +80,7 @@ function changedFiles(dir, env, base, head) {
     .split('\n')
     .filter(Boolean)
     .map((line) => line.split('\t').at(-1))
-    .toSorted()
+    .toSorted((a, b) => (a ?? '').localeCompare(b ?? ''))
 }
 
 void test('#4544: the resolved base is main’s CURRENT tip, not the stale base.sha the triggering event captured', () => {

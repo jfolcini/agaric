@@ -216,7 +216,7 @@ describe('search_blocks_partitioned — item 2: content preview cap (#4159)', ()
     const res = partitioned({ query: 'zebrafish', filter: {} })
     expect(ids(res.blocks)).toEqual([LONG])
     const shipped = res.blocks.items[0]?.['content'] as string
-    expect([...shipped]).toHaveLength(512)
+    expect(Array.from(shipped)).toHaveLength(512)
     // Not 512 UTF-16 units: the cut counts codepoints, so 512 astral chars
     // occupy 1024 units and no surrogate pair is split.
     expect(shipped).toHaveLength(1024)

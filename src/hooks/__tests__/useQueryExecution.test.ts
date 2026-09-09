@@ -641,7 +641,7 @@ describe('fetchFilteredQuery', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     const [cmd, args] = mockedInvoke.mock.calls[0] as [string, Record<string, unknown>]
     expect(cmd).toBe('filtered_blocks_query')
-    const filters = args['propertyFilters'] as Array<Record<string, unknown>>
+    const filters = args['propertyFilters'] as Array<{ key: string }>
     expect(filters).toHaveLength(2)
     expect(filters.map((f) => f['key']).toSorted()).toEqual(['priority', 'todo_state'])
     // Legacy fan-out endpoints must NOT be touched.

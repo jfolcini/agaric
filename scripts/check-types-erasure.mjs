@@ -486,7 +486,7 @@ export function analyze({ root, typesDir }) {
     }
   }
 
-  offenders.sort()
+  offenders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   return { offenders, details, scanErrors, scanned }
 }
 

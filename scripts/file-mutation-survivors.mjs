@@ -974,9 +974,15 @@ export function diffSurvivors(current, known) {
   }
   const newOnes = [...currentSet]
     .filter((s) => !known.has(s) && !superseded.has(legacyFrontendId(s)))
-    .toSorted()
-  const resolvedOnes = [...known].filter((s) => !currentSet.has(s) && !superseded.has(s)).toSorted()
-  return { newOnes, resolvedOnes, all: [...currentSet].toSorted() }
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const resolvedOnes = [...known]
+    .filter((s) => !currentSet.has(s) && !superseded.has(s))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return {
+    newOnes,
+    resolvedOnes,
+    all: [...currentSet].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+  }
 }
 
 /**
@@ -1997,7 +2003,9 @@ function assertLaneInputsPresent(args, frontendReports) {
  */
 function applyAcceptedGaps({ body, current }) {
   const observed = new Set(current)
-  const recorded = [...parseAcceptedSurvivors(body)].toSorted()
+  const recorded = [...parseAcceptedSurvivors(body)].toSorted((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )
   const accepted = recorded.filter((id) => observed.has(id))
   const stale = recorded.filter((id) => !observed.has(id))
   const acceptedSet = new Set(accepted)
@@ -3408,7 +3416,7 @@ function selfTestChildGh({ check }) {
       created.length === 2 &&
         created
           .map((c) => c.title)
-          .toSorted()
+          .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
           .join(' | ') === [childIssueTitle(OP), childIssueTitle(REV)].toSorted().join(' | '),
       'bootstrap files one child per area, under the derived titles',
       created.map((c) => c.title).join(' | '),

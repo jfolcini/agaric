@@ -216,8 +216,12 @@ function resolveActualSet(baseDir, files) {
  * Returns `{ missing, extra }` (both sorted absolute-path arrays).
  */
 function diffSets(intended, actual) {
-  const missing = [...intended].filter((f) => !actual.has(f)).toSorted()
-  const extra = [...actual].filter((f) => !intended.has(f)).toSorted()
+  const missing = [...intended]
+    .filter((f) => !actual.has(f))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const extra = [...actual]
+    .filter((f) => !intended.has(f))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   return { missing, extra }
 }
 

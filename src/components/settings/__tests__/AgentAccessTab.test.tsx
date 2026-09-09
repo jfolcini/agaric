@@ -1110,7 +1110,9 @@ describe('AgentAccessTab — revert session', () => {
     await screen.findAllByTestId('mcp-activity-row')
     const headers = screen.getAllByTestId('mcp-activity-session-header')
     expect(headers).toHaveLength(2)
-    const sessionIds = headers.map((h) => h.getAttribute('data-session-id')).toSorted()
+    const sessionIds = headers
+      .map((h) => h.getAttribute('data-session-id'))
+      .toSorted((a, b) => (a ?? '').localeCompare(b ?? ''))
     expect(sessionIds).toEqual(['SESSION_ALPHA', 'SESSION_BETA'])
   })
 
