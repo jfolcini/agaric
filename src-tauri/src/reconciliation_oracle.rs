@@ -2359,6 +2359,11 @@ fn fold_ref_maps(
 /// rebuild states it without a carve-out: a tombstoned block owes no row, and
 /// a row it still has is reported.
 ///
+/// The rows earlier deletes had ALREADY stranded are swept once by migration
+/// 0118 (#4904). Nothing else reached them: the only pass that would,
+/// `RebuildFtsIndex`, is enqueued at boot solely when `fts_blocks` is entirely
+/// empty, which a vault carrying residue is not.
+///
 /// The reference maps ARE folded independently (see [`fold_ref_maps`]) and
 /// re-read on every call, which is what makes a stale row after a tag rename
 /// or a page retitle expressible: production propagates those through

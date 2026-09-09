@@ -6434,3 +6434,104 @@ async fn agenda_cache_0117_date_source_index_covers_the_by_source_count_4770() {
          sort SQLite pays per calendar repaint; plan was {detail}"
     );
 }
+
+// ----------------------------------------------------------------------
+// #4904 — migration 0118: sweep the `fts_blocks` rows whose block can no
+// longer be indexed.
+//
+// #4733 stopped a delete from leaving a descendant's row behind, but nothing
+// ever went back for the rows earlier deletes had already stranded. The one
+// thing that would sweep them, `RebuildFtsIndex`, is enqueued at boot only
+// when `fts_blocks` is ENTIRELY empty — and a vault carrying residue is not.
+// ----------------------------------------------------------------------
+
+/// Migration 0118 must delete exactly the rows a from-base rebuild would not
+/// produce — a soft-deleted block's, a purged block's, a content-NULL block's
+/// — and leave every live indexed row alone.
+///
+/// Both arms matter. A sweep that took the live rows too would empty a real
+/// vault's search index, and it would still pass an assertion that only
+/// counted what went away.
+#[tokio::test]
+async fn migration_0118_sweeps_only_the_unindexable_fts_rows_4904() {
+    let page = "PA000000000000000000000000";
+    let live = "L0000000000000000000000001";
+    let tombstoned = "D0000000000000000000000001";
+    let content_null = "N0000000000000000000000001";
+    let purged = "X0000000000000000000000001";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 117).await;
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'A', ?)")
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', 'still here', ?, ?, 1)",
+    )
+    .bind(live)
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position, deleted_at) \
+         VALUES (?, 'content', 'deleted before #4733', ?, ?, 2, 1600000000000)",
+    )
+    .bind(tombstoned)
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', NULL, ?, ?, 3)",
+    )
+    .bind(content_null)
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // `purged` deliberately gets no `blocks` row: the oracle's EXTRA arm
+    // reports a row whose block is "tombstoned, gone from `blocks`, or its
+    // content is NULL", and all three shapes are residue.
+    for id in [page, live, tombstoned, content_null, purged] {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'x')")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, 5,
+        "seed: an upgrading vault reaches 0118 carrying a row for every id it \
+         ever indexed, live or not"
+    );
+
+    apply_migrations_through(&pool, 117, 118).await;
+
+    let mut kept: Vec<String> = sqlx::query_scalar("SELECT block_id FROM fts_blocks")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    kept.sort();
+    assert_eq!(
+        kept,
+        vec![live.to_owned(), page.to_owned()],
+        "0118 must keep the row of every live block with content and drop the \
+         soft-deleted, purged and content-NULL ones"
+    );
+}
