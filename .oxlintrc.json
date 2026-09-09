@@ -18,7 +18,7 @@
     "eslint/prefer-const": "error",
     "unicorn/explicit-length-check": "error",
     "import/no-default-export": "error",
-    "typescript/only-throw-error": "error",
+    "typescript/only-throw-error": ["error", { "allow": [{ "from": "file", "name": "AppError" }] }],
     "typescript/require-await": "error",
     "eslint/no-console": ["warn", { "allow": ["warn", "error"] }],
     "eslint/complexity": ["warn", { "max": 25 }],
@@ -219,7 +219,32 @@
     "react/incompatible-library": "error",
     "react/static-components": "error",
     "react/preserve-manual-memoization": "error",
-    "react/purity": "error"
+    "react/purity": "error",
+
+    // Type-aware rules (#4408). `oxlint --type-aware` needs the separately
+    // published `oxlint-tsgolint` binary, which has been a pinned
+    // devDependency since #4408 but ran only in the weekly reporting lane of
+    // `scheduled-deep-checks.yml` — so none of these rules had ever blocked
+    // anything. The flag is now passed by `npm run lint` and by the `oxlint`
+    // prek hook, which is what CI runs.
+    //
+    // Ten of the twelve are already at `error` through the `correctness`
+    // category and are at zero: #4884 cleared require-await,
+    // no-duplicate-type-constituents, no-redundant-type-constituents and
+    // no-useless-default-assignment; #4887 unbound-method; #4888
+    // no-floating-promises; #4889 no-base-to-string,
+    // restrict-template-expressions and await-thenable; and only-throw-error
+    // is cleared above, where its `allow` names the one type this codebase
+    // legitimately throws.
+    //
+    // The two below are the remainder, held at `warn` on the same ratchet the
+    // React Compiler block above documents: `warn` keeps every finding printed
+    // while the burn-down runs, and each line is promoted to `error` in the PR
+    // that takes its count to zero. Deliberately NOT `off` — an `off` rule
+    // reports nothing, and a rule that reports nothing cannot tell "clean"
+    // apart from "not scanned".
+    "typescript/require-array-sort-compare": "warn",
+    "typescript/no-misused-spread": "warn"
   },
   "overrides": [
     {

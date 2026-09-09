@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import type { AppError } from '@/lib/app-error'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
@@ -870,14 +871,16 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def')
-        throw {
+      if (cmd === 'create_property_def') {
+        const rejection: AppError = {
           kind: 'validation',
           code: null,
           message:
             "cannot declare property 'status' as 'text': 2 value(s) already stored under this " +
             'key would be rejected by that type (2 stored as number).',
         }
+        throw rejection
+      }
       return null
     })
 
@@ -953,8 +956,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def') {
-        const err: Record<string, unknown> = new Error() as unknown as Record<string, unknown>
-        err['message'] = undefined
+        const err = new Error()
+        Reflect.set(err, 'message', undefined)
         throw err
       }
       return null
@@ -999,8 +1002,14 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       // #4399 — the wire shape a real `set_property` rejection has (an
       // `AppError` OBJECT, which is what `unwrap` throws), not an `Error`,
       // which `typedError` rethrows and no backend rejection ever produces.
-      if (cmd === 'set_property')
-        throw { kind: 'validation', code: null, message: 'set failed after create' }
+      if (cmd === 'set_property') {
+        const rejection: AppError = {
+          kind: 'validation',
+          code: null,
+          message: 'set failed after create',
+        }
+        throw rejection
+      }
       return null
     })
 

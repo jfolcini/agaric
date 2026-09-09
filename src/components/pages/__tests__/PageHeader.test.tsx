@@ -24,6 +24,7 @@ import type { StoreApi } from 'zustand'
 
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -464,11 +465,12 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'edit_block') {
-        throw {
+        const rejection: AppError = {
           kind: 'validation',
           code: 'DuplicatePageTitle',
           message: "a page titled 'Taken' already exists in space 'S'",
         }
+        throw rejection
       }
       if (cmd === 'get_page_aliases') return []
       return null
