@@ -39,7 +39,8 @@ import {
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { getPageDisplayName } from '@/lib/page-display'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
-import { useResolveStore } from '@/stores/resolve'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 export function BookmarksSection(): ReactElement {
@@ -47,6 +48,7 @@ export function BookmarksSection(): ReactElement {
   const [collapsed, setCollapsed] = usePreference(PREFERENCES.bookmarksCollapsed)
 
   const { starredIds, toggle } = useStarredPages()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // Re-resolve when the cache lands new titles, a rename edits one, or a
   // space switch flushes the previous space's entries.
   const resolveVersion = useResolveStore((s) => s.version)
@@ -57,6 +59,23 @@ export function BookmarksSection(): ReactElement {
       .map((id) => ({ pageId: id, title: resolve.resolveTitle(id) }))
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the store is read imperatively so the memo does not re-run per unrelated cache write
   }, [starredIds, resolveVersion])
+
+  /**
+   * Has the resolve cache produced anything for the active space yet?
+   *
+   * This is what separates "you have no bookmarks here" from "they have not
+   * loaded yet". Nothing cached for this space means the scan has not landed —
+   * cold boot, or a space switch that flushed it — and claiming emptiness then
+   * is wrong. One cached entry is enough, so the loop exits on the first hit.
+   */
+  const spaceResolved = useMemo(() => {
+    const prefix = keyFor(currentSpaceId, '')
+    for (const key of useResolveStore.getState().cache.keys()) {
+      if (key.startsWith(prefix)) return true
+    }
+    return false
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the cache is read imperatively
+  }, [currentSpaceId, resolveVersion])
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -82,14 +101,14 @@ export function BookmarksSection(): ReactElement {
       {!collapsed && (
         <SidebarGroupContent>
           {bookmarks.length === 0 ? (
-            // "No bookmarks" is claimed from the LIST, never from what
-            // resolved: titles arrive with the resolve cache, so a bookmark
-            // that has not resolved yet — cold boot, or a space switch that
-            // flushed the cache — would otherwise flash that text at a user
-            // who has plenty. With ids but nothing resolved, render nothing.
+            // Claim emptiness only when it is true: either there are no
+            // bookmarks at all, or this space's titles have loaded and none of
+            // them are here. Before that scan lands — cold boot, or a space
+            // switch that flushed the cache — every bookmark looks unresolved,
+            // and this would tell a user with plenty that they have none.
             // The dashed empty box has no icon-rail layout, and the rail
             // already hides the header that explains it.
-            starredIds.size === 0 ? (
+            starredIds.size === 0 || spaceResolved ? (
               <div className="group-data-[collapsible=icon]:hidden">
                 <EmptyState
                   compact

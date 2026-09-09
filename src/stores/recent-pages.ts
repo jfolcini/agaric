@@ -249,9 +249,9 @@ export function migrateRawRecentPagesKeys(bySpace: Record<string, PageRef[]>): {
 
 /**
  * Merge a raw `RecentPage[]` (id-keyed) into a store `PageRef[]` slice
- * (pageId-keyed), preserving recency order + pins. The store slice's order
- * wins for shared ids (it is the canonical recency signal); raw-only ids are
- * appended after. Pins union; the newer `visitedAt` is kept.
+ * (pageId-keyed), preserving recency order. The store slice's order wins for
+ * shared ids (it is the canonical recency signal); raw-only ids are appended
+ * after, and the newer `visitedAt` is kept.
  */
 function mergeSlices(storeSlice: PageRef[], rawEntries: RawRecentPage[]): PageRef[] {
   const rawById = new Map(rawEntries.map((r) => [r.id, r]))
@@ -372,28 +372,75 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
 /**
  * Fold any pre-consolidation `pinned` entries into the bookmark list.
  *
- * Bookmarks used to be a `pinned` flag on these rows; they are now the
+ * Bookmarks used to be a `pinned` flag on recent-page rows; they are now the
  * `starred-pages` preference, and the coercion below drops the flag. Without
  * this, upgrading silently loses every bookmark made from the command palette
  * — and bookmarks are device-local, so a device this has not run on still has
- * its own to rescue. Runs on the raw blob before coercion, adds only ids that
- * are not already bookmarked, and is a no-op once the flag is gone.
+ * its own to rescue.
+ *
+ * Both storage locations are scanned, because the flag outlived the split
+ * between them: the persisted store blob (`pageId`-keyed) and the pre-#1149
+ * raw `recent_pages:*` keys (`id`-keyed), which a device that has not yet run
+ * that migration still holds. Runs before coercion, adds only ids that are not
+ * already bookmarked, and is a no-op once the flag is gone.
  */
-function rescuePinnedAsBookmarks(persisted: unknown): boolean {
-  if (persisted == null || typeof persisted !== 'object') return false
-  const blob = persisted as Record<string, unknown>
-  const lists: unknown[] = [blob['recentPages']]
-  const bySpace = blob['recentPagesBySpace']
-  if (bySpace != null && typeof bySpace === 'object') {
-    lists.push(...Object.values(bySpace as Record<string, unknown>))
+/**
+ * The contents of every pre-#1149 `recent_pages*` key still on this device.
+ *
+ * Reads through a local `Storage` binding, as `migrateRawRecentPagesKeys`
+ * above does: these are foreign legacy keys being migrated away, not app
+ * preferences to declare in the registry.
+ */
+function rawRecentPageLists(): unknown[][] {
+  let storage: Storage
+  try {
+    storage = localStorage
+  } catch {
+    // localStorage unavailable — nothing to scan.
+    return []
   }
+  const out: unknown[][] = []
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i)
+      if (key == null) continue
+      if (key !== RAW_LEGACY_UNSCOPED_KEY && !key.startsWith(`${RAW_KEY_PREFIX}:`)) continue
+      const raw = storage.getItem(key)
+      if (raw == null) continue
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) out.push(parsed)
+    }
+  } catch {
+    // A corrupt entry or a storage read that threw mid-scan: keep whatever
+    // was collected rather than losing the store blob's half too.
+  }
+  return out
+}
+
+function rescuePinnedAsBookmarks(persisted: unknown): boolean {
+  const lists: unknown[] = []
+  // A device may hold either location, or both: the store blob is absent on
+  // one that never ran this build, and the raw keys are gone once #1149's
+  // migration has run.
+  if (persisted != null && typeof persisted === 'object') {
+    const blob = persisted as Record<string, unknown>
+    lists.push(blob['recentPages'])
+    const bySpace = blob['recentPagesBySpace']
+    if (bySpace != null && typeof bySpace === 'object') {
+      lists.push(...Object.values(bySpace as Record<string, unknown>))
+    }
+  }
+  lists.push(...rawRecentPageLists())
   const pinned: string[] = []
   for (const list of lists) {
     if (!Array.isArray(list)) continue
     for (const row of list) {
       if (row == null || typeof row !== 'object') continue
       const r = row as Record<string, unknown>
-      if (r['pinned'] === true && typeof r['pageId'] === 'string') pinned.push(r['pageId'])
+      if (r['pinned'] !== true) continue
+      // The store blob keys the id `pageId`; the raw keys spell it `id`.
+      const id = typeof r['pageId'] === 'string' ? r['pageId'] : r['id']
+      if (typeof id === 'string') pinned.push(id)
     }
   }
   if (pinned.length === 0) return false
