@@ -496,6 +496,35 @@ export const common: Record<string, string> = {
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.
   'data.exportAllSpacesNoSpaces': 'No spaces to export',
+  // #4886 — the reconciliation oracle, reachable from Settings → Data. It
+  // rebuilds every derived table (page counts, links, tags, the agenda) from
+  // your notes and reports the rows that disagree. Off by default: the sweep
+  // reads the whole vault, so it only ever runs when the user asks.
+  'integrity.title': 'Integrity check',
+  'integrity.description':
+    'Rebuilds the tables Agaric derives from your notes — page counts, links, tags, the agenda — and reports any row that disagrees. Your notes are only read, never changed.',
+  'integrity.toggleLabel': 'Enable the integrity check',
+  'integrity.toggleHelp':
+    'Off by default. Turning it on adds the Run button below, and includes the result in any bug report you file. The check reads your whole vault, so it can take a while on a large one.',
+  'integrity.runButton': 'Run check',
+  'integrity.running': 'Checking…',
+  'integrity.resultLabel': 'Integrity check result',
+  'integrity.runFailed': 'Integrity check failed',
+  'integrity.cleanTitle': 'Everything matches',
+  'integrity.cleanDetail_one':
+    'Rebuilt every derived table from {{count}} block on {{date}} and found no differences.',
+  'integrity.cleanDetail_other':
+    'Rebuilt every derived table from {{count}} blocks on {{date}} and found no differences.',
+  'integrity.divergedSummary_one':
+    '{{count}} row does not match a fresh rebuild ({{blocks}} blocks checked, {{date}}).',
+  'integrity.divergedSummary_other':
+    '{{count}} rows do not match a fresh rebuild ({{blocks}} blocks checked, {{date}}).',
+  'integrity.artefactLine_one': '{{count}} row diverged in {{artefact}}',
+  'integrity.artefactLine_other': '{{count}} rows diverged in {{artefact}}',
+  'integrity.sampleKeys': 'Examples: {{keys}}',
+  'integrity.copyButton': 'Copy for a bug report',
+  'integrity.copied': 'Integrity report copied',
+  'integrity.copyFailed': 'Could not copy the integrity report',
   'help.reportBugTitle': 'Report a bug',
   'help.reportBugDescription':
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',

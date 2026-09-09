@@ -927,7 +927,7 @@ def run_self_test() -> int:
     # have recorded — a fixture with zero sites could not tell the two
     # implementations apart.
     remedy_fixtures = [
-        ("src-tauri/src/reconciliation_oracle.rs", "whole-file #![cfg(test)] module"),
+        ("src-tauri/src/bulk_equivalence/mod.rs", "whole-file #![cfg(test)] module"),
         ("src-tauri/agaric-store/src/test_support.rs", "test/fixture glob"),
         ("src-tauri/src/definitely-not-here-3659.rs", "deleted file"),
     ]
