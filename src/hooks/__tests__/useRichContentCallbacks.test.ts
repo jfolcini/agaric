@@ -184,7 +184,7 @@ describe('resolveTagStatus', () => {
 describe('useTagClickHandler', () => {
   // Intersection type so the spy satisfies both Zustand's store signature
   // and Vitest's `expect(mock).toHaveBeenCalled…` assertions.
-  let navigateToPage: Mock & ((pageId: string, title: string, blockId?: string | undefined) => void)
+  let navigateToPage: Mock & ((pageId: string, title: string, blockId?: string) => void)
 
   beforeEach(() => {
     // #2996 — reset the guard-path IPC/notifier mocks so per-test call-count

@@ -734,7 +734,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const onPropertySelectRef = useRef(onPropertySelect)
   const onCheckboxRef = useRef(onCheckbox)
   const onListStyleRef = useRef(onListStyle)
-  const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
+  const searchBlockRefsRef = useRef(
+    options.searchBlockRefs ?? (() => Promise.resolve([] as PickerItem[])),
+  )
   const searchTagsRef = useRef(searchTags)
   const searchPagesRef = useRef(searchPages)
   const searchSlashCommandsRef = useRef(searchSlashCommands)
@@ -754,7 +756,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onPropertySelectRef.current = onPropertySelect
     onCheckboxRef.current = onCheckbox
     onListStyleRef.current = onListStyle
-    searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
+    searchBlockRefsRef.current =
+      options.searchBlockRefs ?? (() => Promise.resolve([] as PickerItem[]))
     searchTagsRef.current = searchTags
     searchPagesRef.current = searchPages
     searchSlashCommandsRef.current = searchSlashCommands

@@ -206,7 +206,7 @@ function resolveInlineRefs(
 export function resolveBlockDisplay(
   block: BlockRow,
   pageTitles: Map<string, string>,
-  resolveBlockTitle?: ((id: string) => string) | undefined,
+  resolveBlockTitle?: (id: string) => string,
   resolveRefTitle: ((id: string) => string) | undefined = resolveBlockTitle,
 ): { title: string; displayMarkdown: string | null; pageTitle: string | undefined } {
   const resolved = resolveBlockTitle ? resolveBlockTitle(block.id) : ''
@@ -232,7 +232,7 @@ export function resolveBlockDisplay(
  */
 export function handleBlockNavigation(
   block: BlockRow,
-  onNavigate?: ((pageId: string) => void) | undefined,
+  onNavigate?: (pageId: string) => void,
 ): void {
   if (block.page_id && onNavigate) {
     onNavigate(block.page_id)

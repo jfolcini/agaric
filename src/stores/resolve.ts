@@ -240,9 +240,9 @@ interface ResolveStore {
    * targeted result.
    */
   preload: (
-    spaceId?: string | null | undefined,
+    spaceId?: string | null,
     forceRefresh?: boolean,
-    changedPageIds?: ReadonlySet<string> | undefined,
+    changedPageIds?: ReadonlySet<string>,
   ) => Promise<void>
   /**
    * Add/update a single entry under the active space.

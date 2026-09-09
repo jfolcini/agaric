@@ -1,5 +1,6 @@
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 
 import { createSuggestionRenderer } from '@/editor/suggestion-renderer'
 
@@ -580,8 +581,8 @@ describe('outside-click dismissal', () => {
     }
   }
 
-  let addSpy: ReturnType<typeof vi.spyOn>
-  let removeSpy: ReturnType<typeof vi.spyOn>
+  let addSpy: MockInstance
+  let removeSpy: MockInstance
 
   beforeEach(() => {
     addSpy = vi.spyOn(document, 'addEventListener')
@@ -1018,7 +1019,7 @@ describe('viewport handling on coarse pointers', () => {
     }
   }
 
-  let matchMediaSpy: ReturnType<typeof vi.spyOn> | null = null
+  let matchMediaSpy: MockInstance | null = null
 
   function stubCoarsePointer(coarse: boolean) {
     matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => {
