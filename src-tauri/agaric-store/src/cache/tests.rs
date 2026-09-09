@@ -5924,9 +5924,10 @@ async fn backfill_block_links_fills_a_vault_that_never_indexed_its_links() {
         "precondition: the vault has never indexed a link"
     );
 
-    let added = backfill_block_links(&pool).await.unwrap();
+    let outcome = backfill_block_links(&pool).await.unwrap();
 
-    assert_eq!(added, 2, "both tokens must reach the graph");
+    assert_eq!(outcome.added, 2, "both tokens must reach the graph");
+    assert!(outcome.ran);
     let rows = sqlx::query!(
         "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
         "01HZ0000000000000000000SRC",
@@ -5937,13 +5938,48 @@ async fn backfill_block_links_fills_a_vault_that_never_indexed_its_links() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
     assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
+}
 
-    // The rollup the user actually sees is rebuilt from it, not left behind.
-    assert!(
-        count_rows(&pool, "page_link_cache").await > 0,
-        "page_link_cache must be re-derived once block_links moves — it is \
-         what backlinks and inbound counts read"
+/// The caller rebuilds the rollups on "did the scan run", and this is why no
+/// count can replace it: a pass that drops one stale edge while adding one
+/// missing edge leaves every `COUNT(*)` identical on both sides while
+/// changing which edges exist. Gate on arithmetic and `page_link_cache` keeps
+/// an edge that no longer exists.
+#[tokio::test]
+async fn backfill_block_links_signals_a_rebuild_on_a_net_zero_pass() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "01HZ00000000000000000000AB", "page", "Target A").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "Now names [[01HZ00000000000000000000AB]]",
+    )
+    .await;
+    // A stale edge to a target the content no longer names: one row will go
+    // out as one comes in.
+    insert_block(&pool, "01HZ00000000000000000000CD", "page", "Target B").await;
+    sqlx::query!(
+        "INSERT INTO block_links (source_id, target_id) VALUES (?, ?)",
+        "01HZ0000000000000000000SRC",
+        "01HZ00000000000000000000CD",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let outcome = backfill_block_links(&pool).await.unwrap();
+
+    assert_eq!(
+        outcome.added, 0,
+        "one edge in, one out — every COUNT(*) is identical either side"
     );
+    assert!(
+        outcome.ran,
+        "which is why the caller rebuilds on `ran`, not on any count"
+    );
+    assert_eq!(count_rows(&pool, "block_links").await, 1);
 }
 
 /// A token whose target does not exist is an obligation, not a link: it
@@ -5990,7 +6026,7 @@ async fn backfill_block_links_runs_once_per_vault() {
         "See [[01HZ00000000000000000000AB]]",
     )
     .await;
-    assert_eq!(backfill_block_links(&pool).await.unwrap(), 1);
+    assert_eq!(backfill_block_links(&pool).await.unwrap().added, 1);
 
     // A second link-bearing block arrives without a reindex. The real write
     // path would have indexed it; the backfill must NOT go looking again.
@@ -6003,7 +6039,7 @@ async fn backfill_block_links_runs_once_per_vault() {
     .await;
 
     assert_eq!(
-        backfill_block_links(&pool).await.unwrap(),
+        backfill_block_links(&pool).await.unwrap().added,
         0,
         "the marker must retire the scan"
     );
