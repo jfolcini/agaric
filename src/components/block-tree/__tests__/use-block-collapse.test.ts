@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// `vi.spyOn(Storage.prototype, 'setItem')` doesn't intercept
-// `localStorage.setItem` calls under happy-dom (its Storage impl bypasses
-// the prototype method). Pin to jsdom until the spy pattern is refactored
-// to target the instance directly.
+// happy-dom copies each Storage method onto the `localStorage` instance the
+// first time it is touched (ClassMethodBinder) and never rebinds it, so only
+// a `Storage.prototype` spy installed before that first touch intercepts.
+// The spy in "persists collapsed IDs to the page-scoped localStorage key"
+// is not the first, and under happy-dom it records nothing.
 
 /**
  * Tests for useBlockCollapse hook.

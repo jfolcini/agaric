@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
-// Same as useBlockCollapse — spies on `Storage.prototype.{getItem,setItem}`
-// don't intercept under happy-dom. Pin to jsdom until refactored.
+// happy-dom copies each Storage method onto the `localStorage` instance the
+// first time it is touched (ClassMethodBinder) and never rebinds it, so only
+// a `Storage.prototype` spy installed before that first touch intercepts.
+// The throwing getItem/setItem spies below are not the first, and under
+// happy-dom their implementations never reach the hook, so the fallback
+// and degrade-to-in-memory tests fail.
 
 /**
  * Tests for useLocalStoragePreference hook.

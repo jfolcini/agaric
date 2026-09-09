@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-// Spies on `Storage.prototype.{getItem,setItem}` don't intercept under
-// happy-dom (its Storage impl bypasses the prototype method). Pin to jsdom,
-// matching useLocalStoragePreference.test.tsx / useBlockCollapse.test.ts.
+// happy-dom copies each Storage method onto the `localStorage` instance the
+// first time it is touched (ClassMethodBinder) and never rebinds it, so only
+// a `Storage.prototype` spy installed before that first touch intercepts.
+// The throwing getItem/setItem/removeItem spies below are not the first,
+// and under happy-dom their implementations never reach the code under
+// test, so the swallow-and-warn tests fail.
 
 /**
  * Tests for the preferences registry (`src/lib/preferences.ts`): the pure

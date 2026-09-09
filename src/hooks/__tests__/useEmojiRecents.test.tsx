@@ -1,8 +1,3 @@
-// @vitest-environment jsdom
-// Spies on `Storage.prototype.*` don't intercept under happy-dom; this hook is
-// localStorage-backed, so pin to jsdom (same rationale as
-// useLocalStoragePreference.test.tsx).
-
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

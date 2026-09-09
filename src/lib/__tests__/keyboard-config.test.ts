@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-// Same Storage-prototype-spy pattern as useBlockCollapse /
-// useLocalStoragePreference — pin to jsdom until the spies target the
-// instance directly.
+// happy-dom copies each Storage method onto the `localStorage` instance the
+// first time it is touched (ClassMethodBinder) and never rebinds it, so only
+// a `Storage.prototype` spy installed before that first touch intercepts.
+// The throwing setItem/removeItem spies below are not the first, and under
+// happy-dom their implementations never reach the code under test, so the
+// storage-failure tests fail.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
