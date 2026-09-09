@@ -133,4 +133,35 @@ describe('main.tsx — pre-mount failure renders a static fallback screen', () =
       expect.objectContaining({ stack: expect.any(String) }),
     )
   })
+
+  it('shows an AppError rejection\'s own message, not "[object Object]"', async () => {
+    // A rejected Tauri IPC call throws a bare `AppError` object, not an
+    // `Error`. `String(err)` renders one as the literal text "[object
+    // Object]", which tells the user nothing on the one screen they get.
+    // `ErrorBoundary` reads `.message` off whatever it is handed; the fatal
+    // boot screen has to agree with it.
+    document.body.innerHTML = '<div id="root"></div>'
+    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    mockCommonDeps()
+    const appError: unknown = { kind: 'Internal', message: 'boot ipc failed' }
+    vi.doMock('@/lib/tauri-mock', () => ({
+      setupMock: () => {
+        throw appError
+      },
+    }))
+    vi.doMock('@/lib/observability', () => ({
+      initFrontendObservability: vi.fn().mockResolvedValue(undefined),
+    }))
+
+    await import('@/main')
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="alert"]')).not.toBeNull()
+    })
+
+    expect(createRootMock).not.toHaveBeenCalled()
+    const alert = document.querySelector('[role="alert"]')
+    expect(alert?.textContent).not.toContain('[object Object]')
+    expect(alert?.textContent).toContain('boot ipc failed')
+  })
 })

@@ -194,8 +194,15 @@ async function main() {
 // mirrors `ErrorBoundary`'s fallback (`src/components/common/ErrorBoundary.tsx`)
 // so a pre-mount crash and a post-mount crash look the same to the user.
 function renderFatalBootError(error: unknown): void {
-  const message =
-    error instanceof Error ? error.message : String(error ?? 'An unexpected error occurred')
+  // `String(error)` renders a non-`Error` rejection — a bare IPC `AppError`
+  // object, say — as the literal text "[object Object]" on the fatal screen,
+  // which tells the user nothing. Read `.message` the way `ErrorBoundary`
+  // does, so the two screens keep saying the same thing.
+  let message = 'An unexpected error occurred'
+  if (error instanceof Error) message = error.message
+  else if (typeof error === 'string') message = error
+  else if (typeof (error as { message?: unknown } | null)?.message === 'string')
+    message = (error as { message: string }).message
   logger.error('main', 'Fatal error before the app could render', {
     stack: error instanceof Error ? (error.stack ?? '') : '',
   })

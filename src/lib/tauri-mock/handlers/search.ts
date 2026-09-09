@@ -1793,10 +1793,12 @@ function decodeSearchCursor(s: string): SearchCursor {
   // A MISSING `version` decodes as the current one — `Cursor::decode`'s
   // `None => CURRENT_CURSOR_VERSION` arm (`src-tauri/agaric-store/src/pagination/mod.rs:657`), the pre-versioning
   // compatibility clause `QueryCursor::decode` has no equivalent of.
-  const version = rawVersion === undefined ? PAGINATION_CURSOR_VERSION : rawVersion
+  // `cursorVersionSlotIsU8` above has already refused everything that is not
+  // a `u8` number, so the slot is one by the time it is reported here.
+  const version = rawVersion === undefined ? PAGINATION_CURSOR_VERSION : (rawVersion as number)
   if (version !== PAGINATION_CURSOR_VERSION) {
     throw validationRejection(
-      `cursor: unsupported version ${String(version)} (expected ${PAGINATION_CURSOR_VERSION})`,
+      `cursor: unsupported version ${version} (expected ${PAGINATION_CURSOR_VERSION})`,
     )
   }
   if (typeof obj['id'] !== 'string') {

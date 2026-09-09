@@ -2372,14 +2372,11 @@ describe('code block node view re-syncs the <pre> after an attribute-only edit',
           attributes: {
             codeLabel: {
               default: 'snippet',
-              renderHTML: (attributes: Record<string, unknown>) => ({
+              renderHTML: (attributes: Record<string, string | null>) => ({
                 // `null` for a cleared attribute, mirroring `CodeBlock`'s own
                 // `class: node.attrs.language ? … : null` — `renderSpec` emits
                 // no attribute at all for a null value.
-                class:
-                  attributes['codeLabel'] == null
-                    ? null
-                    : `label-${String(attributes['codeLabel'])}`,
+                class: attributes['codeLabel'] == null ? null : `label-${attributes['codeLabel']}`,
               }),
             },
           },
@@ -2398,9 +2395,8 @@ describe('code block node view re-syncs the <pre> after an attribute-only edit',
           attributes: {
             accent: {
               default: 'red',
-              renderHTML: (attributes: Record<string, unknown>) => ({
-                style:
-                  attributes['accent'] == null ? null : `color: ${String(attributes['accent'])}`,
+              renderHTML: (attributes: Record<string, string | null>) => ({
+                style: attributes['accent'] == null ? null : `color: ${attributes['accent']}`,
               }),
             },
           },
@@ -2423,10 +2419,8 @@ describe('code block node view re-syncs the <pre> after an attribute-only edit',
           attributes: {
             lateLabel: {
               default: null,
-              renderHTML: (attributes: Record<string, unknown>) =>
-                attributes['lateLabel'] == null
-                  ? {}
-                  : { 'data-late': String(attributes['lateLabel']) },
+              renderHTML: (attributes: Record<string, string | null>) =>
+                attributes['lateLabel'] == null ? {} : { 'data-late': attributes['lateLabel'] },
             },
           },
         },

@@ -28,7 +28,7 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    proof the React tree booted (BootGate resolved) against the real
     //    backend. The default window is 1024px wide, above the md breakpoint,
     //    so the sidebar is visible.
-    const sidebar = await $('[data-slot="sidebar"]')
+    const sidebar = $('[data-slot="sidebar"]')
     await sidebar.waitForExist({ timeout: 60_000 })
 
     //    First boot shows the modal onboarding dialog (WelcomeModal.tsx) which
@@ -45,7 +45,7 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    renders the `t('sidebar.journal')` title as an `<h1>` — same accessible
     //    name as the nav button) or the QuickAccessBar chip. This was the #155
     //    first-live-run nav defect; see helpers.ts for the full rationale.
-    const journalNav = await sidebar.$('.//button[.//span[normalize-space(.)="Journal"]]')
+    const journalNav = sidebar.$('.//button[.//span[normalize-space(.)="Journal"]]')
     await journalNav.waitForDisplayed({ timeout: 60_000 })
 
     // 3. Add a block via the Journal daily view's first-block CTA. On a vault
@@ -77,8 +77,12 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    This makes a failure at step 7 self-diagnosing — 0 static rows means
     //    the block never committed through the live backend; a static row
     //    present but without our marker means "committed, text mismatch".
-    const staticBlocks = await $$('[data-testid="block-static"]')
-    const editorBlocks = await $$('[data-testid="block-editor"]')
+    //    `getElements()` resolves the lazy `$$` chain into a plain array, as
+    //    `e2e-tauri/helpers.ts` does. WDIO types `$$` as a NON-thenable
+    //    chainable whose `.length` is a `Promise<number>`, so `await $$(…)`
+    //    is a typed no-op that leaves `.length` a promise on paper.
+    const staticBlocks = await $$('[data-testid="block-static"]').getElements()
+    const editorBlocks = await $$('[data-testid="block-editor"]').getElements()
     console.warn(
       `[smoke probe] block-static=${staticBlocks.length} block-editor=${editorBlocks.length} marker=${JSON.stringify(marker)}`,
     )
@@ -87,7 +91,7 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    block renders as StaticBlock (`data-testid="block-static"`) now
     //    containing our marker text. This only passes if the real backend
     //    accepted the create op and the frontend reprojected it.
-    const persisted = await $(`[data-testid="block-static"]*=${marker}`)
+    const persisted = $(`[data-testid="block-static"]*=${marker}`)
     await expect(persisted).toBeDisplayed()
   })
 })

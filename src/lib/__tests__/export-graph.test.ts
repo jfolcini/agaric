@@ -137,7 +137,16 @@ describe('exportGraphAsZip', () => {
 
     // Content round-trips correctly for every entry — proves no entry was
     // overwritten by a colliding path (the failure mode #2723 fixes).
-    const contents = await Promise.all(sameNameMd.map((f) => unzipped.file(f)?.async('string')))
+    // A missing entry is the very failure mode under test, so name it here
+    // rather than letting `?.` fold it into `undefined` and reporting it
+    // below as a content mismatch.
+    const contents = await Promise.all(
+      sameNameMd.map((f) => {
+        const entry = unzipped.file(f)
+        if (!entry) throw new Error(`export zip is missing entry ${f}`)
+        return entry.async('string')
+      }),
+    )
     expect(new Set(contents)).toEqual(new Set([`# ${ulid1}`, `# ${ulid2}`, `# ${ulid3}`]))
   })
 

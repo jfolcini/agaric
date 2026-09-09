@@ -55,7 +55,7 @@ function listPagesWithMetadataLimit(raw: unknown): number {
   if (!Number.isInteger(limit) || limit < 1 || limit > LIST_PAGES_WITH_METADATA_MAX_LIMIT) {
     throw validationRejection(
       `list_pages_with_metadata limit must be in [1, ${LIST_PAGES_WITH_METADATA_MAX_LIMIT}]; ` +
-        `got ${String(raw)}`,
+        `got ${String(limit)}`,
     )
   }
   return limit

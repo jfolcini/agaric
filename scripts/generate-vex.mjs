@@ -206,14 +206,15 @@ function readPackageVersion() {
 }
 
 function parseArgs(argv) {
+  /** @type {{ output: string | null, version: string | null }} */
   const args = { output: null, version: null }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--output' || arg === '-o') {
-      args.output = argv[++i]
+      args.output = argv[++i] ?? null
       if (!args.output) throw new Error('--output requires a path argument')
     } else if (arg === '--version' || arg === '-v') {
-      args.version = argv[++i]
+      args.version = argv[++i] ?? null
       if (!args.version) throw new Error('--version requires a value')
     } else if (arg === '--help' || arg === '-h') {
       process.stdout.write(

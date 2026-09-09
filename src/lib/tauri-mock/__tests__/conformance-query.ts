@@ -891,7 +891,12 @@ function attrValue(name: string, v: unknown): string {
   if (v == null) return 'null'
   if (name === 'deleted_at') return DELETED_SENTINEL
   if (typeof v === 'string') return v
-  return String(v)
+  // Numbers and booleans are the whole of the Rust twin's remaining arms.
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  // Nothing else can reach here from a mock row. If one ever does, `String()`
+  // would render every distinct object as "[object Object]", collapsing them
+  // onto a single token — an expectation that cannot disagree.
+  return JSON.stringify(v)
 }
 
 /** Build `<row[idKey]>#<attr>=<value>…` for one row. */

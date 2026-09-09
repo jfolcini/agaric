@@ -1141,7 +1141,7 @@ export const config: WebdriverIO.Config = {
 
     // (c) Sidebar innerHTML (capped) — the nav is where 4 specs failed.
     try {
-      const sidebar = await $('[data-slot="sidebar"]')
+      const sidebar = $('[data-slot="sidebar"]')
       if (await sidebar.isExisting()) {
         const html = await sidebar.getHTML()
         console.warn(`[afterTest] sidebar HTML (capped): ${html.slice(0, DIAG_EXCERPT_CAP)}`)
