@@ -30,7 +30,7 @@ function shouldLog(level: LogLevel): boolean {
   return LEVELS[level] >= LEVELS[minLevel]
 }
 
-function safeStringify(data: Record<string, unknown>): string {
+function safeStringify(data: unknown): string {
   try {
     return JSON.stringify(data)
   } catch {
@@ -66,7 +66,23 @@ function extractSingleCause(cause: unknown): CauseInfo | null {
   if (cause && typeof cause === 'object' && 'message' in cause) {
     return { message: String((cause as { message: unknown }).message) }
   }
-  return cause != null ? { message: String(cause) } : null
+  if (cause == null) return null
+  // Every primitive has a `String()` form worth logging (a symbol only via
+  // `String`, never a template — `${sym}` throws), so they are spelled out
+  // positively: TypeScript cannot subtract `object` from `unknown`, and the
+  // one case left over is the one that matters — an object with no `message`
+  // logs as `[object Object]`, hiding the shape this chain exists to show.
+  if (
+    typeof cause === 'string' ||
+    typeof cause === 'number' ||
+    typeof cause === 'boolean' ||
+    typeof cause === 'bigint' ||
+    typeof cause === 'symbol' ||
+    typeof cause === 'function'
+  ) {
+    return { message: String(cause) }
+  }
+  return { message: safeStringify(cause) }
 }
 
 /**

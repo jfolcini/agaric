@@ -4184,6 +4184,9 @@ describe('list_pages_with_metadata — compound filters', () => {
 describe('list_pages_with_metadata — sort ordering (#1886)', () => {
   type Row = Record<string, unknown>
 
+  /** `content`, `lastModifiedAt` and `id` are `string | null` on the wire. */
+  const text = (v: unknown) => (typeof v === 'string' ? v : '')
+
   const allPages = (sort: string): Row[] =>
     (
       invoke('list_pages_with_metadata', {
@@ -4199,23 +4202,19 @@ describe('list_pages_with_metadata — sort ordering (#1886)', () => {
   // purpose — if the mock comparator drifts from this contract, the handler's
   // output order stops matching and the test fails.
   function expectedComparator(sort: string): (x: Row, y: Row) => number {
-    const id = (r: Row) => String(r['id'])
+    const id = (r: Row) => text(r['id'])
     const tiebreak = (x: Row, y: Row) => id(x).localeCompare(id(y))
     return (x, y) => {
       let primary = 0
       switch (sort) {
         case 'alphabetical': {
           // content ASC, case-insensitive
-          primary = String(x['content'] ?? '')
-            .toLowerCase()
-            .localeCompare(String(y['content'] ?? '').toLowerCase())
+          primary = text(x['content']).toLowerCase().localeCompare(text(y['content']).toLowerCase())
           break
         }
         case 'recently-modified': {
           // most recent first → lastModifiedAt DESC
-          primary = String(y['lastModifiedAt'] ?? '').localeCompare(
-            String(x['lastModifiedAt'] ?? ''),
-          )
+          primary = text(y['lastModifiedAt']).localeCompare(text(x['lastModifiedAt']))
           break
         }
         case 'most-linked': {
@@ -4246,7 +4245,7 @@ describe('list_pages_with_metadata — sort ordering (#1886)', () => {
   }
 
   it('alphabetical order is case-insensitively non-decreasing by title', () => {
-    const titles = allPages('alphabetical').map((r) => String(r['content'] ?? '').toLowerCase())
+    const titles = allPages('alphabetical').map((r) => text(r['content']).toLowerCase())
     expect(titles).toEqual([...titles].toSorted((a, b) => a.localeCompare(b)))
   })
 
@@ -4254,7 +4253,7 @@ describe('list_pages_with_metadata — sort ordering (#1886)', () => {
     // Pages with no inbound links all share inboundLinkCount 0, so most-linked
     // collapses entirely onto the id tiebreak — a direct probe of the tiebreak.
     const items = allPages('most-linked').filter((r) => Number(r['inboundLinkCount']) === 0)
-    const ids = items.map((r) => String(r['id']))
+    const ids = items.map((r) => text(r['id']))
     expect(ids).toEqual([...ids].toSorted((a, b) => a.localeCompare(b)))
   })
 })

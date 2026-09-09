@@ -362,8 +362,10 @@ function checkGlobReachability({ root, globs, excludes, examinedDirs, workspace,
  * not read as an artifact of that name.
  */
 function uploadsIn(lines) {
+  /** @type {{ step: string, name: string | undefined, path: string | undefined }[]} */
   const uploads = []
   let step = '<unnamed step>'
+  /** @type {{ step: string, name: string | undefined, path: string | undefined } | undefined} */
   let current
   for (const line of lines) {
     const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(line)
@@ -635,7 +637,9 @@ export function checkFilerPlumbing({ lines, push }) {
     }
   }
 
+  /** @type {{ name: string | undefined, path: string | undefined }[]} */
   const downloads = []
+  /** @type {{ name: string | undefined, path: string | undefined } | undefined} */
   let current
   for (const line of lines) {
     if (/^\s*-\s+(name|uses):/.test(line)) current = undefined

@@ -57,7 +57,9 @@ describe('Agaric real-backend reserved-property round-trip (#3085)', () => {
     const staticBlock = blockStaticByMarker(MARKER)
     await staticBlock.waitForExist({ timeout: ACTION_TIMEOUT })
     const blockId = await staticBlock.getAttribute('data-block-id')
-    await expect(blockId).toBeTruthy()
+    // Not awaited: `toBeTruthy` on a plain string is expect's SYNCHRONOUS
+    // matcher (only the element matchers — `toBeDisplayed` &c. — are async).
+    expect(blockId).toBeTruthy()
 
     const row = $(`[data-block-id="${blockId}"]`)
     const taskMarker = row.$('[data-testid="task-marker"]')

@@ -712,7 +712,9 @@ export function propertyLikeMatches(
   if (!prop || !vc || vc.col === 'value_num') return false
   const stored = prop[vc.col] ?? null
   if (stored == null) return false
-  const hay = asciiLowercase(String(stored))
+  // `value_num` is excluded above, so the column is one of the TEXT ones; the
+  // cast is what tells the compiler that, the `String` is what makes it true.
+  const hay = asciiLowercase(String(stored as string))
   const needle = asciiLowercase(String(vc.wanted))
   return contains ? hay.includes(needle) : hay.startsWith(needle)
 }

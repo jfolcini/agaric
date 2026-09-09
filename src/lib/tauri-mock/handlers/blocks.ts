@@ -220,7 +220,7 @@ function listBlocksLimit(raw: unknown): number {
   const limit = raw as number
   if (!Number.isInteger(limit) || limit < 1 || limit > LIST_BLOCKS_MAX_LIMIT) {
     throw validationRejection(
-      `list_blocks limit must be in [1, ${LIST_BLOCKS_MAX_LIMIT}]; got ${String(raw)}. ` +
+      `list_blocks limit must be in [1, ${LIST_BLOCKS_MAX_LIMIT}]; got ${String(limit)}. ` +
         `For larger result sets, use cursor pagination.`,
     )
   }

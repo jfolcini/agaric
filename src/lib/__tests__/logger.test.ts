@@ -352,6 +352,15 @@ describe('cause extraction', () => {
     expect(parsed[0].stack).toBeUndefined()
   })
 
+  it('serialises an object cause with no message property instead of "[object Object]"', () => {
+    enableTauri()
+    logger.error('M', 'fail', undefined, { kind: 'Validation', code: 'InvalidRegex' })
+
+    const context = mockLogFrontend.mock.calls[0]?.[4]
+    const parsed = JSON.parse(context ?? '[]')
+    expect(parsed[0].message).toBe('{"kind":"Validation","code":"InvalidRegex"}')
+  })
+
   it('extracts nested .cause chain up to 3 levels', () => {
     enableTauri()
     const root = new Error('level 0')

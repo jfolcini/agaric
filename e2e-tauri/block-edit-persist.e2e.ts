@@ -69,8 +69,12 @@ describe('Agaric real-backend edit persistence (#3085)', () => {
     //    static rows means the edit never round-tripped through the live
     //    backend; a static row present without the combined text means the edit
     //    committed but the text diverged.
-    const staticBlocks = await $$('[data-testid="block-static"]')
-    const editorBlocks = await $$('[data-testid="block-editor"]')
+    //    `getElements()` resolves the lazy `$$` chain into a plain array, as
+    //    `e2e-tauri/helpers.ts` does. WDIO types `$$` as a NON-thenable
+    //    chainable whose `.length` is a `Promise<number>`, so `await $$(…)`
+    //    is a typed no-op that leaves `.length` a promise on paper.
+    const staticBlocks = await $$('[data-testid="block-static"]').getElements()
+    const editorBlocks = await $$('[data-testid="block-editor"]').getElements()
     console.warn(
       `[block-edit-persist probe] block-static=${staticBlocks.length} block-editor=${editorBlocks.length} expected=${JSON.stringify(combined)}`,
     )

@@ -617,7 +617,7 @@ export const historyHandlers = {
     const a = args as Record<string, unknown>
     const blockId = (a['blockId'] as string).toUpperCase()
     const historicalSeq = a['historicalSeq'] as number
-    const historicalCreatedAt = a['historicalCreatedAt']
+    const historicalCreatedAt = a['historicalCreatedAt'] as string | null | undefined
     const block = blocks.get(blockId)
     if (!block || block['deleted_at']) {
       throw notFoundRejection(
@@ -629,7 +629,7 @@ export const historyHandlers = {
     // or before the selected point for this block, bounding on
     // `(created_at, seq)` so a cross-device op with a smaller seq but a
     // later created_at cannot leak past the selected point.
-    const createdBound = historicalCreatedAt == null ? null : String(historicalCreatedAt)
+    const createdBound = historicalCreatedAt ?? null
     const candidates = opLog.filter((o) => {
       if (o.op_type !== 'edit_block' && o.op_type !== 'create_block') return false
       if (createdBound == null) {

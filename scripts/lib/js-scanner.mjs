@@ -2382,12 +2382,14 @@ function runSelfTest() {
     try {
       stripped = stripComments(src)
     } catch (err) {
-      threw = err
+      // Recorded as text: a thrown non-`Error` has no `String()` form beyond
+      // "[object Object]", which would make every one of them read alike.
+      threw = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err)
     }
     check(
       'a glob in bare JSX text (`path:Journal/*`) neither raises nor blanks the file',
       threw === null && stripped !== null && stripped.includes('const after = 1'),
-      threw ? String(threw) : JSON.stringify(stripped),
+      threw ?? JSON.stringify(stripped),
     )
   }
 

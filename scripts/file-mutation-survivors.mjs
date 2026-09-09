@@ -4353,7 +4353,7 @@ function selfTestAcceptedBlockShape({ ok, fail }) {
     else
       fail(
         'an accepted entry parses to the same id with or without its date prefix (#4173)',
-        `dated=${[...dated]} undated=${[...undated]}`,
+        `dated=${[...dated].join(',')} undated=${[...undated].join(',')}`,
       )
 
     // …and the accepted block is invisible to the survivor reader, or every

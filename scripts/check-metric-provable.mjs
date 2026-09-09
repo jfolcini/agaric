@@ -2974,12 +2974,12 @@ function runProofAndEnumerationSelfTest(ctx) {
   // Crediting `let rose = metric > before;` because `rose` is referenced
   // later was tried and reverted: the three shapes below are all "bound and
   // later read" and none of them can fail. See `findFiringAssertions`.
-  for (const [label, tail] of [
+  for (const [label, tail] of /** @type {[string, string[]][]} */ ([
     ['merely logged', ['    tracing::debug!(rose, "observed");']],
     ['read by a no-op `if`', ['    if rose {', '        println!("nice");', '    }']],
     ['rebound to another name', ['    let _also = rose;']],
     ['never read at all (dead store)', []],
-  ]) {
+  ])) {
     root = build({
       metricsFile: goodMetrics,
       extra: {
@@ -3848,7 +3848,7 @@ function runLimitClosureSelfTest(ctx) {
   // …and the sibling shapes that must STAY uncredited. Each is
   // `assert_eq!(metric, <binding>)` — textually the same assertion — and none
   // of them can fail once the emit site is deleted.
-  for (const [label, lines] of [
+  for (const [label, lines] of /** @type {[string, string[]][]} */ ([
     [
       'a projection of the same counter (the live `fifo_status.rs` shape)',
       [
@@ -3890,7 +3890,7 @@ function runLimitClosureSelfTest(ctx) {
         '    assert_eq!(m.good.load(Ordering::Relaxed), n, "circular ground truth");',
       ],
     ],
-  ]) {
+  ])) {
     res = run(build(withTest(test(...lines))))
     expect(
       `\`assert_eq!(metric, …)\` against ${label} is NOT a firing proof`,
@@ -3945,7 +3945,7 @@ function runLimitClosureSelfTest(ctx) {
     `status=${res.status} out=${res.stdout}${res.stderr}`,
   )
 
-  for (const [label, lines] of [
+  for (const [label, lines] of /** @type {[string, string[]][]} */ ([
     [
       'the NEGATION of one',
       [
@@ -3958,7 +3958,7 @@ function runLimitClosureSelfTest(ctx) {
       'a bound comparison that is not a firing one',
       ['    let flat = m.good.load(Ordering::Relaxed) >= 0;', '    assert!(flat, "always true");'],
     ],
-  ]) {
+  ])) {
     res = run(build(withTest(test(...lines))))
     expect(
       `an \`assert!\` on ${label} is NOT a proof`,

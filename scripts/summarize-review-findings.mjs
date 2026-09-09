@@ -687,7 +687,7 @@ function main(argv) {
       reviewerLogin: args.reviewerLogin,
     })
   } catch (err) {
-    console.error(`summarize-review-findings: ${err instanceof Error ? err.stack : err}`)
+    console.error(`summarize-review-findings: ${err instanceof Error ? err.stack : String(err)}`)
     result = failureResult(args.headSha, err)
   }
   console.log(JSON.stringify({ ...result, details: undefined }, null, 2))

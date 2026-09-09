@@ -42,7 +42,7 @@ vi.mock('@/components/editor/SortableBlock', () => ({
     return (
       <button
         type="button"
-        data-testid={`sortable-block-${props['blockId']}`}
+        data-testid={`sortable-block-${String(props['blockId'])}`}
         data-depth={String(props['depth'])}
         data-host-aria-level={String(hostAriaLevel)}
         data-is-selected={String(props['isSelected'])}
