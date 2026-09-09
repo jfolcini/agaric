@@ -63,8 +63,14 @@ function extractSingleCause(cause: unknown): CauseInfo | null {
   if (cause instanceof Error) {
     return cause.stack ? { message: cause.message, stack: cause.stack } : { message: cause.message }
   }
-  if (cause && typeof cause === 'object' && 'message' in cause) {
-    return { message: String((cause as { message: unknown }).message) }
+  // Not just `'message' in cause`: a `message` that is itself an object
+  // stringifies to `[object Object]`, the loss the fallback below prevents.
+  if (
+    cause &&
+    typeof cause === 'object' &&
+    typeof (cause as { message?: unknown }).message === 'string'
+  ) {
+    return { message: (cause as { message: string }).message }
   }
   if (cause == null) return null
   // Every primitive has a `String()` form worth logging (a symbol only via

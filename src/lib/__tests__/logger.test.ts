@@ -361,6 +361,15 @@ describe('cause extraction', () => {
     expect(parsed[0].message).toBe('{"kind":"Validation","code":"InvalidRegex"}')
   })
 
+  it('serialises an object cause whose `message` is itself an object', () => {
+    enableTauri()
+    logger.error('M', 'fail', undefined, { message: { kind: 'Internal' } })
+
+    const context = mockLogFrontend.mock.calls[0]?.[4]
+    const parsed = JSON.parse(context ?? '[]')
+    expect(parsed[0].message).toBe('{"message":{"kind":"Internal"}}')
+  })
+
   it('extracts nested .cause chain up to 3 levels', () => {
     enableTauri()
     const root = new Error('level 0')

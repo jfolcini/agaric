@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// Under happy-dom both `Storage.prototype.setItem` spies below record 0 calls —
+// even a direct `localStorage.setItem` — because the `setTheme` tests above them
+// bind the method onto the instance first. That leaves the `not.toHaveBeenCalled()`
+// in "setting same theme is a no-op" asserting nothing.
+// Mechanism: src/__tests__/AGENTS.md.
+
 /**
  * Tests for useTheme hook.
  *
