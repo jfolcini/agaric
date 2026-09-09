@@ -8,7 +8,8 @@
  * as the roving editor moves a block between the node view and the static
  * renderer (invariant 4); the toggle does not activate the row it sits in; the
  * chip's label falls back from alt to filename and
- * is capped; a11y in both states.
+ * is capped; folding a multi-megabyte `data:` image stores a bounded key
+ * (#4864); a11y in both states.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -110,6 +111,28 @@ describe('CollapsibleImage', () => {
     const label = screen.getByTestId('image-collapsed-label').textContent ?? ''
     expect(label).toHaveLength(41)
     expect(label.endsWith('…')).toBe(true)
+  })
+
+  // #4864 — the fold used to store the src verbatim, so one pasted screenshot
+  // filled the ~5 MB origin quota and, because the resulting
+  // `QuotaExceededError` is swallowed, silently stopped every OTHER preference
+  // in the app from persisting.
+  it('folds a multi-megabyte data: image without storing the src', async () => {
+    const user = userEvent.setup()
+    const src = `data:image/png;base64,${'A'.repeat(2_000_000)}`
+    const { unmount } = render(<CollapsibleImage src={src} alt="a screenshot" />)
+
+    await user.click(screen.getByTestId('image-collapse-toggle'))
+
+    const stored = localStorage.getItem('image_collapsed') ?? ''
+    expect(stored.length).toBeLessThan(100)
+
+    // Still the same image on the way back: a bounded key is only useful if it
+    // is the identity the next mount looks up.
+    unmount()
+    render(<CollapsibleImage src={src} alt="a screenshot" />)
+    expect(screen.getByTestId('image-collapsed-label')).toBeInTheDocument()
+    expect(screen.queryByTestId('image-rendered')).toBeNull()
   })
 
   it('does not activate the row it is rendered inside', async () => {

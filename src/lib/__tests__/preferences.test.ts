@@ -13,6 +13,7 @@ import {
   type PreferenceDefinition,
   effectiveKey,
   hasPreference,
+  imageCollapseKey,
   PREFERENCES,
   readPreference,
   removePreference,
@@ -446,5 +447,51 @@ describe('representative real preferences (#2466 migration)', () => {
     writePreference(PREFERENCES.recentSearches, ['todo'], 'space-1')
     expect(localStorage.getItem('agaric:pathHistory:v1:space-1')).toBe('["*.md"]')
     expect(localStorage.getItem('recent_searches:space-1')).toBe('["todo"]')
+  })
+})
+
+/**
+ * #4864 — `image_collapsed` used to store each `src` verbatim, and
+ * `isValidImageSrc` accepts `data:`, so folding one pasted screenshot wrote
+ * megabytes into a ~5 MB origin quota. `writePreference` swallows the
+ * resulting `QuotaExceededError`, so the damage was every OTHER preference in
+ * the app silently ceasing to persist.
+ */
+describe('imageCollapse (#4864)', () => {
+  /** A pasted screenshot: a `data:` src of ~2 MB. */
+  const HUGE_DATA_SRC = `data:image/png;base64,${'A'.repeat(2_000_000)}`
+
+  it('keys an image by a bounded digest, however large its src', () => {
+    expect(imageCollapseKey(HUGE_DATA_SRC).length).toBeLessThan(20)
+  })
+
+  it('gives one src one stable key and two srcs two keys', () => {
+    expect(imageCollapseKey('/c.png')).toBe(imageCollapseKey('/c.png'))
+    expect(imageCollapseKey('/c.png')).not.toBe(imageCollapseKey('/d.png'))
+    // Two screenshots share a long `data:image/png;base64,` prefix and differ
+    // deep inside the payload; a truncating key would collide here.
+    expect(imageCollapseKey(`${HUGE_DATA_SRC}x`)).not.toBe(imageCollapseKey(`${HUGE_DATA_SRC}y`))
+  })
+
+  it('stores nothing longer than a digest when an image is folded', () => {
+    writePreference(PREFERENCES.imageCollapse, [imageCollapseKey(HUGE_DATA_SRC)])
+    expect(localStorage.getItem('image_collapsed')?.length).toBeLessThan(100)
+  })
+
+  it('drops v1 raw-src entries and keeps digest entries', () => {
+    localStorage.setItem(
+      'image_collapsed',
+      JSON.stringify([HUGE_DATA_SRC, '/c.png', imageCollapseKey('/d.png')]),
+    )
+    expect(readPreference(PREFERENCES.imageCollapse)).toEqual([imageCollapseKey('/d.png')])
+  })
+
+  // `migrate` runs on EVERY read, not only the first one after the bump, so a
+  // discard that cannot tell the two formats apart would erase each fold as
+  // soon as it was written.
+  it('reads back a value it just wrote', () => {
+    const keys = [imageCollapseKey('/c.png'), imageCollapseKey(HUGE_DATA_SRC)]
+    writePreference(PREFERENCES.imageCollapse, keys)
+    expect(readPreference(PREFERENCES.imageCollapse)).toEqual(keys)
   })
 })

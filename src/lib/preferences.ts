@@ -1281,8 +1281,48 @@ const EMBED_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
- * `image_collapsed` — the `src`s of the inline `![alt](url)` images the reader
- * has folded down to a chip (#4711, `src/components/rendering/CollapsibleImage.tsx`).
+ * Marks an entry of `image_collapsed` as a digest rather than a raw `src`.
+ * `migrate` below needs to tell the two apart, and it cannot do that by shape:
+ * a relative src like `logo` is indistinguishable from bare base36.
+ */
+const IMAGE_COLLAPSE_DIGEST_PREFIX = 'd:'
+
+/**
+ * 53-bit non-cryptographic string digest (cyrb53). Sync, because the collapse
+ * key is derived during render; `crypto.subtle.digest` is async and the
+ * platform offers no synchronous hash.
+ */
+function cyrb53(str: string): number {
+  let h1 = 0xdeadbeef
+  let h2 = 0x41c6ce57
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
+}
+
+/**
+ * The `image_collapsed` entry standing for one image `src`.
+ *
+ * A digest and not the `src` itself because `isValidImageSrc` accepts `data:`,
+ * so a pasted screenshot is a multi-megabyte src; storing it verbatim exhausted
+ * the ~5 MB origin quota and — because `writePreference` swallows
+ * `QuotaExceededError` — silently stopped EVERY preference in the app from
+ * persisting (#4864). Digesting unconditionally rather than only long srcs:
+ * one format is one code path, and no src is short enough to be worth a branch.
+ */
+export function imageCollapseKey(src: string): string {
+  return `${IMAGE_COLLAPSE_DIGEST_PREFIX}${cyrb53(src).toString(36)}`
+}
+
+/**
+ * `image_collapsed` — one `imageCollapseKey` per inline `![alt](url)` image the
+ * reader has folded down to a chip (#4711,
+ * `src/components/rendering/CollapsibleImage.tsx`).
  *
  * Keyed by `src` and NOT page-scoped, unlike `blockCollapse` / `embedCollapse`
  * above: the two surfaces that draw one image — the roving editor's node view on
@@ -1293,14 +1333,20 @@ const EMBED_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
  * The trade `embedCollapse` documents applies here too, and the same way round:
  * a list PERMITS pruning where a key-per-image would not, and no sweep exists
  * yet — a src that stops appearing in any block is left in the list.
+ *
+ * v1 (shipped in 0.10.0) stored raw srcs. They are dropped rather than
+ * digested: keeping them would carry the megabytes this key exists to stop
+ * storing, and the cost of dropping one is that an image renders expanded once.
  */
 const IMAGE_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
   key: 'image_collapsed',
   scope: 'device',
-  version: 1,
+  version: 2,
   defaultValue: [] as string[],
   parse: parseStringArray,
   serialize: jsonSerialize<string[]>,
+  migrate: (raw) =>
+    jsonSerialize(parseStringArray(raw).filter((s) => s.startsWith(IMAGE_COLLAPSE_DIGEST_PREFIX))),
 }
 
 /**
