@@ -1,0 +1,42 @@
+-- #4904: one-shot sweep of the `fts_blocks` rows whose block is no longer
+-- indexable — soft-deleted, purged, or content-NULL.
+--
+-- mock-unaffected: this migration adds no column and changes no table's
+-- schema; the JS Tauri mock has no `fts_blocks` table at all (it derives its
+-- search stand-in from the in-memory blocks store).
+--
+-- These are residue, not an ongoing leak. #4733 closed the leak: `DeleteBlock`
+-- soft-deletes a whole cohort but its dispatch arm emitted `RemoveFtsBlock`
+-- for the seed ALONE, so every DESCENDANT of a deleted subtree kept its row;
+-- the post-commit `remove_deleted_cohort_fts` / `reindex_restored_cohort_fts`
+-- fan-outs now take the cohort out and put it back. Nothing ever went back for
+-- the rows deletes left behind BEFORE that landed.
+--
+-- Why nothing else reaches them. `RebuildFtsIndex` clears the table and
+-- re-derives it, which would sweep these, but it is a member of neither
+-- `FULL_CACHE_REBUILD_TASKS` nor the boot path in any form a real vault hits:
+-- boot enqueues it only when `fts_blocks` is ENTIRELY empty (`lib.rs`), and a
+-- vault carrying residue is by definition not empty. The only other callers are
+-- an inbound sync large enough to trade per-block reindexes for one full pass
+-- (`materializer::dispatch`) and `reproject_blocks_from_engine`, the disaster
+-- recovery that rebuilds SQL from the Loro engine (`db/recovery.rs`). No
+-- user-facing "rebuild the search index" action exists.
+--
+-- Why sweep rather than tolerate. Keeping the row would make a restore cheaper
+-- — the block would not need reindexing — but that is not the trade this
+-- codebase made: #4733 chose to remove on delete and re-index on restore, and
+-- `reconciliation_oracle`'s Artefact 8 states the resulting rule without a
+-- carve-out ("a tombstoned block owes no row"). The rows are unreachable
+-- either way (every search read inner-joins `blocks` and filters
+-- `b.deleted_at IS NULL`), so what they actually cost is trigram index size,
+-- skewed bm25 corpus statistics, and a permanently noisy integrity report —
+-- and a check whose divergences nobody acts on is a check nobody reads.
+--
+-- The predicate is `rebuild_fts_index_from_base`'s membership rule
+-- transcribed: a block owes a row when it is live and its content is not NULL.
+-- `blocks.id` is a NOT NULL primary key, so `NOT IN` carries no three-valued
+-- surprise. Idempotent, and a no-op on a fresh vault.
+DELETE FROM fts_blocks
+WHERE block_id NOT IN (
+  SELECT id FROM blocks WHERE deleted_at IS NULL AND content IS NOT NULL
+);
