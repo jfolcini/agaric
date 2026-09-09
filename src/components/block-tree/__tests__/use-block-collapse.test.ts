@@ -1,10 +1,3 @@
-// @vitest-environment jsdom
-// happy-dom copies each Storage method onto the `localStorage` instance the
-// first time it is touched (ClassMethodBinder) and never rebinds it, so only
-// a `Storage.prototype` spy installed before that first touch intercepts.
-// The spy in "persists collapsed IDs to the page-scoped localStorage key"
-// is not the first, and under happy-dom it records nothing.
-
 /**
  * Tests for useBlockCollapse hook.
  *
@@ -127,7 +120,7 @@ describe('useBlockCollapse', () => {
   })
 
   it('keeps expandBlock stable and leaves an already-expanded block unchanged', () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
     const onBeforeCollapse = vi.fn()
     const { result } = renderHook(() =>
       useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1', onBeforeCollapse }),
@@ -201,7 +194,7 @@ describe('useBlockCollapse', () => {
   // #752 — persistence is scoped per page (`collapsed_ids:<pageKey>`), not
   // the old single global `collapsed_ids` key shared across all pages/spaces.
   it('persists collapsed IDs to the page-scoped localStorage key', () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
     const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
 
     act(() => {
@@ -275,7 +268,7 @@ describe('useBlockCollapse', () => {
   })
 
   it('does not persist when pageKey is absent (in-memory only)', () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
     act(() => {

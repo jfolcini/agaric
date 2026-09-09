@@ -1,11 +1,3 @@
-// @vitest-environment jsdom
-// happy-dom copies each Storage method onto the `localStorage` instance the
-// first time it is touched (ClassMethodBinder) and never rebinds it, so only
-// a `Storage.prototype` spy installed before that first touch intercepts.
-// The throwing getItem/setItem spies below are not the first, and under
-// happy-dom their implementations never reach the hook, so the fallback
-// and degrade-to-in-memory tests fail.
-
 /**
  * Tests for useLocalStoragePreference hook.
  *
@@ -150,7 +142,7 @@ describe('useLocalStoragePreference', () => {
   })
 
   it('logs and falls back to default when localStorage.getItem throws', () => {
-    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    const getItemSpy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('access denied')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
@@ -194,7 +186,7 @@ describe('useLocalStoragePreference', () => {
   })
 
   it('logs (and does not throw) when localStorage.setItem throws', () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
@@ -209,7 +201,7 @@ describe('useLocalStoragePreference', () => {
   })
 
   it('respects the source label in log messages', () => {
-    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    const getItemSpy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('boom')
     })
     const warnSpy = vi.spyOn(logger, 'warn')
@@ -568,7 +560,7 @@ describe('useLocalStoragePreference', () => {
         </>,
       )
       // Break writes AFTER mount (the mount write-back already ran).
-      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
         throw new Error('quota exceeded')
       })
       const warnSpy = vi.spyOn(logger, 'warn')
@@ -633,7 +625,7 @@ describe('useLocalStoragePreference', () => {
 
       // First setItem call (the first setPreference below) throws; every
       // call after that falls through to the real implementation.
-      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementationOnce(() => {
         throw new Error('quota exceeded')
       })
       try {
@@ -703,7 +695,7 @@ describe('useLocalStoragePreference', () => {
       expect(failedWriteSetterSpies.size, ONE_NULL_SLOT).toBe(1)
       const failedWriteSetterSpy = [...failedWriteSetterSpies.values()][0]
 
-      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementationOnce(() => {
         throw new Error('quota exceeded')
       })
       try {

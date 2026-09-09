@@ -1,10 +1,3 @@
-// @vitest-environment jsdom
-// Under happy-dom the `getItem` and `setItem` spies in "localStorage error
-// handling" record 0 calls: the seeding writes and hook reads above them bind both
-// methods onto the instance first, so neither throw reaches the hook and both
-// error-handling tests assert nothing.
-// Mechanism: src/__tests__/AGENTS.md.
-
 /**
  * Tests for src/hooks/useAgendaPreferences.ts — localStorage persistence
  * for agenda groupBy/sortBy preferences.
@@ -127,7 +120,7 @@ describe('useAgendaPreferences', () => {
 
   describe('localStorage error handling', () => {
     it('returns defaults when getItem throws', () => {
-      const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      const spy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
         throw new Error('access denied')
       })
 
@@ -139,7 +132,7 @@ describe('useAgendaPreferences', () => {
     })
 
     it('does not throw when setItem throws', () => {
-      const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
         throw new Error('quota exceeded')
       })
 

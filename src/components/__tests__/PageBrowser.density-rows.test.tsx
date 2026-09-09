@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 // Split from the PageBrowser.test.tsx monolith (#2929). Concern: density
 // rows.
+// The pin is also load-bearing for the `Storage.prototype` spy below, which
+// only intercepts under jsdom. Un-pinning on monolith grounds means rewriting
+// that spy first — src/__tests__/AGENTS.md says how.
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'

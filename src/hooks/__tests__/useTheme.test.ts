@@ -1,10 +1,3 @@
-// @vitest-environment jsdom
-// Under happy-dom both `Storage.prototype.setItem` spies below record 0 calls —
-// even a direct `localStorage.setItem` — because the `setTheme` tests above them
-// bind the method onto the instance first. That leaves the `not.toHaveBeenCalled()`
-// in "setting same theme is a no-op" asserting nothing.
-// Mechanism: src/__tests__/AGENTS.md.
-
 /**
  * Tests for useTheme hook.
  *
@@ -282,7 +275,7 @@ describe('useTheme', () => {
       const { result } = renderHook(() => useTheme())
       expect(result.current.theme).toBe('dracula')
 
-      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+      const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
       act(() => result.current.setTheme('dracula'))
       expect(setItemSpy).not.toHaveBeenCalled()
       setItemSpy.mockRestore()
@@ -451,7 +444,7 @@ describe('useTheme', () => {
       const shell = renderHook(() => useTheme())
       const settings = renderHook(() => useTheme())
 
-      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
         throw new Error('quota exceeded')
       })
       try {
