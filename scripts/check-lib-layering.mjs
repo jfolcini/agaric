@@ -58,6 +58,13 @@
 // add it via `--update-baseline` and justify it in the commit — this
 // guard has no per-edge allowlist, unlike `check-store-layering.mjs`.
 //
+// ─── Kill-date ───────────────────────────────────────────────────────
+//
+// REMOVE AFTER 0.12.0 (#4885). This baseline exists to reach `[]`, and
+// nothing but someone happening to notice has ever pressed it there. At
+// 0.12.0 `remove-after-markers` fails on this line: burn the baseline down
+// and delete this block, or bump the version and say in the diff why not.
+//
 // Import detection reuses `detectImports` from `check-import-cycles.mjs`
 // (comment- and string-literal-aware, so text that merely *looks* like an
 // import inside a string/template/comment is never counted). Only the

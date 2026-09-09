@@ -62,6 +62,13 @@
 // only wrapper dependency is a sanctioned submodule symbol needs no
 // baseline entry at all.
 //
+// ─── Kill-date ──────────────────────────────────────────────────────
+//
+// REMOVE AFTER 0.12.0 (#4885). This baseline exists to reach `[]`, and
+// nothing but someone happening to notice has ever pressed it there. At
+// 0.12.0 `remove-after-markers` fails on this line: finish the migration
+// and delete this block, or bump the version and say in the diff why not.
+//
 // ─── Detection ──────────────────────────────────────────────────────
 //
 // Flags a static `… from '@/lib/tauri'` / `… from '@/lib/tauri/<domain>'`
