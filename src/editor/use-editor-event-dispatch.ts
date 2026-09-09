@@ -82,7 +82,7 @@ export interface EditorEventDispatch {
    * Re-registering with a new identity each render is expected and cheap — the
    * latest registered handler wins, and the layout-effect sync tracks it.
    */
-  on<E extends EditorEventName>(event: E, handler: EditorEventHandlers[E]): void
+  on<E extends EditorEventName>(this: void, event: E, handler: EditorEventHandlers[E]): void
   /**
    * Stable thunks to wire into the consuming hooks. Each thunk reads the
    * current registered handler at call time, so it can be captured before the

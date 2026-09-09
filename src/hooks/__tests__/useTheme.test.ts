@@ -444,8 +444,7 @@ describe('useTheme', () => {
       const shell = renderHook(() => useTheme())
       const settings = renderHook(() => useTheme())
 
-      const original = Storage.prototype.setItem
-      Storage.prototype.setItem = vi.fn(() => {
+      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
         throw new Error('quota exceeded')
       })
       try {
@@ -453,7 +452,7 @@ describe('useTheme', () => {
         expect(shell.result.current.theme).toBe('one-dark-pro')
         expect(document.documentElement.classList.contains('theme-one-dark-pro')).toBe(true)
       } finally {
-        Storage.prototype.setItem = original
+        setItem.mockRestore()
       }
     })
   })

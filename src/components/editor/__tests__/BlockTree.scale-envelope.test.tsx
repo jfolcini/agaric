@@ -208,15 +208,12 @@ function time(fn: () => void): number {
  * machine-independent integer.
  */
 function countLayoutReads(): { stop: () => number } {
-  const original = Element.prototype.getBoundingClientRect
-  let reads = 0
-  Element.prototype.getBoundingClientRect = function patched(this: Element) {
-    reads++
-    return original.call(this)
-  }
+  // A bare spy counts calls and still runs the real implementation.
+  const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect')
   return {
     stop: () => {
-      Element.prototype.getBoundingClientRect = original
+      const reads = spy.mock.calls.length
+      spy.mockRestore()
       return reads
     },
   }

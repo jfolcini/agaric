@@ -86,8 +86,11 @@ const SearchInput = ({
     // pattern for programmatic input value changes (see facebook/react
     // #11488); the resulting React.ChangeEvent reaches `onChange` via
     // the normal pipeline.
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-    setter?.call(input, '')
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )
+    valueDescriptor?.set?.call(input, '')
     input.dispatchEvent(new Event('input', { bubbles: true }))
     onClear?.()
     input.focus()

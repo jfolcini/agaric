@@ -524,14 +524,8 @@ describe('useSlashCommandProperty — attach', () => {
   })
 
   it('surfaces toast + logger.warn when input.click() throws', async () => {
-    const originalClick = HTMLInputElement.prototype.click
-    const clickMock = vi.fn(() => {
+    const clickMock = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {
       throw new Error('mock click')
-    })
-    Object.defineProperty(HTMLInputElement.prototype, 'click', {
-      value: clickMock,
-      configurable: true,
-      writable: true,
     })
     try {
       const { result } = renderHook(() => useSlashCommandProperty())
@@ -546,11 +540,7 @@ describe('useSlashCommandProperty — attach', () => {
         expect.any(Error),
       )
     } finally {
-      Object.defineProperty(HTMLInputElement.prototype, 'click', {
-        value: originalClick,
-        configurable: true,
-        writable: true,
-      })
+      clickMock.mockRestore()
     }
   })
 })

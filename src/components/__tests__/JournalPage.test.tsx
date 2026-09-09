@@ -1269,8 +1269,7 @@ describe('JournalPage', () => {
       })
 
       // Mock getBoundingClientRect to simulate overflow: bottom > viewportHeight - 8
-      const originalGBCR = Element.prototype.getBoundingClientRect
-      Element.prototype.getBoundingClientRect = () => ({
+      const gbcr = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
         top: 500,
         bottom: 900,
         left: 100,
@@ -1280,7 +1279,7 @@ describe('JournalPage', () => {
         x: 100,
         y: 500,
         toJSON: () => {},
-      })
+      }))
 
       // Simulate small viewport. We only need `height` for the flip-detection
       // logic in JournalCalendarDropdown, but the mock MUST carry no-op
@@ -1311,7 +1310,7 @@ describe('JournalPage', () => {
         })
       } finally {
         // Cleanup — restore prototypes and remove the visualViewport mock.
-        Element.prototype.getBoundingClientRect = originalGBCR
+        gbcr.mockRestore()
         delete (window as { visualViewport?: unknown }).visualViewport
       }
     })
@@ -1327,8 +1326,7 @@ describe('JournalPage', () => {
       })
 
       // Mock getBoundingClientRect to simulate left overflow: left < 8
-      const originalGBCR = Element.prototype.getBoundingClientRect
-      Element.prototype.getBoundingClientRect = () => ({
+      const gbcr = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
         top: 50,
         bottom: 350,
         left: -20,
@@ -1338,7 +1336,7 @@ describe('JournalPage', () => {
         x: -20,
         y: 50,
         toJSON: () => {},
-      })
+      }))
 
       // Carries no-op add/removeEventListener (see the previous test): the
       // calendar trigger's IconButton Tooltip (#1089) mounts floating-ui on
@@ -1365,7 +1363,7 @@ describe('JournalPage', () => {
           expect(dropdown?.style.transform).toBe('translateX(28px)')
         })
       } finally {
-        Element.prototype.getBoundingClientRect = originalGBCR
+        gbcr.mockRestore()
         delete (window as { visualViewport?: unknown }).visualViewport
       }
     })

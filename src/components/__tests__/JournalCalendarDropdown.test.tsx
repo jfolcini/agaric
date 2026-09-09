@@ -284,8 +284,7 @@ describe('JournalCalendarDropdown', () => {
   })
 
   it('flips above when calendar overflows viewport bottom', () => {
-    const originalGBCR = Element.prototype.getBoundingClientRect
-    Element.prototype.getBoundingClientRect = () => ({
+    const gbcr = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
       top: 500,
       bottom: 900,
       left: 100,
@@ -295,7 +294,7 @@ describe('JournalCalendarDropdown', () => {
       x: 100,
       y: 500,
       toJSON: () => {},
-    })
+    }))
     // The mock object intentionally lacks `addEventListener`. If left in
     // place, floating-ui's `autoUpdate` will crash on the next Radix
     // Tooltip/Popover mount (see the matching test in JournalPage.test.tsx
@@ -312,14 +311,13 @@ describe('JournalCalendarDropdown', () => {
       const dropdown = screen.getByRole('dialog')
       expect(dropdown.className).toContain('bottom-full')
     } finally {
-      Element.prototype.getBoundingClientRect = originalGBCR
+      gbcr.mockRestore()
       delete (window as { visualViewport?: unknown }).visualViewport
     }
   })
 
   it('shifts right when calendar overflows left edge', () => {
-    const originalGBCR = Element.prototype.getBoundingClientRect
-    Element.prototype.getBoundingClientRect = () => ({
+    const gbcr = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
       top: 50,
       bottom: 350,
       left: -20,
@@ -329,7 +327,7 @@ describe('JournalCalendarDropdown', () => {
       x: -20,
       y: 50,
       toJSON: () => {},
-    })
+    }))
     Object.defineProperty(window, 'visualViewport', {
       value: { height: 800, width: 300 },
       writable: true,
@@ -342,7 +340,7 @@ describe('JournalCalendarDropdown', () => {
       const dropdown = screen.getByRole('dialog') as HTMLElement
       expect(dropdown.style.transform).toBe('translateX(28px)')
     } finally {
-      Element.prototype.getBoundingClientRect = originalGBCR
+      gbcr.mockRestore()
       delete (window as { visualViewport?: unknown }).visualViewport
     }
   })

@@ -701,10 +701,10 @@ describe('EditableBlock', () => {
     })
 
     it('does not call scrollIntoView when not focused', () => {
-      const scrollIntoViewMock = vi.fn()
       // Mock scrollIntoView on HTMLElement prototype for unfocused case
-      const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
-      HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+      const scrollIntoViewMock = vi
+        .spyOn(HTMLElement.prototype, 'scrollIntoView')
+        .mockImplementation(() => {})
 
       render(
         <EditableBlock
@@ -718,7 +718,7 @@ describe('EditableBlock', () => {
       // StaticBlock renders instead — no section wrapper, no scrollIntoView
       expect(scrollIntoViewMock).not.toHaveBeenCalled()
 
-      HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+      scrollIntoViewMock.mockRestore()
     })
   })
 

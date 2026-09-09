@@ -10,7 +10,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { GatedImage } from '@/components/rendering/GatedImage'
@@ -122,16 +122,19 @@ describe('GatedImage — a11y', () => {
 })
 
 describe('GatedImage — attachment ref resolution (#1434)', () => {
-  const ORIG_CREATE = URL.createObjectURL
-  const ORIG_REVOKE = URL.revokeObjectURL
+  let createObjectURL: MockInstance<typeof URL.createObjectURL>
+  let revokeObjectURL: MockInstance<typeof URL.revokeObjectURL>
+  beforeEach(() => {
+    createObjectURL = vi.spyOn(URL, 'createObjectURL')
+    revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  })
   afterEach(() => {
-    URL.createObjectURL = ORIG_CREATE
-    URL.revokeObjectURL = ORIG_REVOKE
+    createObjectURL.mockRestore()
+    revokeObjectURL.mockRestore()
   })
 
   it('resolves `attachment:<id>` to an object URL and renders the <img>', async () => {
-    URL.createObjectURL = vi.fn(() => 'blob:obj-1')
-    URL.revokeObjectURL = vi.fn()
+    createObjectURL.mockReturnValue('blob:obj-1')
     mockReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
 
     render(<GatedImage src="attachment:ATT_1" alt="pasted" />)
@@ -145,7 +148,7 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
   })
 
   it('shows the broken-image placeholder when the attachment fails to load', async () => {
-    URL.createObjectURL = vi.fn(() => 'blob:obj-2')
+    createObjectURL.mockReturnValue('blob:obj-2')
     mockReadAttachment.mockRejectedValue(new Error('gone'))
 
     render(<GatedImage src="attachment:MISSING" alt="pasted" />)
@@ -157,9 +160,7 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
   })
 
   it('revokes the object URL on unmount', async () => {
-    URL.createObjectURL = vi.fn(() => 'blob:obj-3')
-    const revoke = vi.fn()
-    URL.revokeObjectURL = revoke
+    createObjectURL.mockReturnValue('blob:obj-3')
     mockReadAttachment.mockResolvedValue(new Uint8Array([9]))
 
     const { unmount } = render(<GatedImage src="attachment:ATT_2" alt="x" />)
@@ -167,6 +168,6 @@ describe('GatedImage — attachment ref resolution (#1434)', () => {
       expect(screen.getByTestId('image-rendered')).toBeTruthy()
     })
     unmount()
-    expect(revoke).toHaveBeenCalledWith('blob:obj-3')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:obj-3')
   })
 })

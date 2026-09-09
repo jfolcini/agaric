@@ -311,9 +311,11 @@ describe('SuggestionList', () => {
 
     // Mock scrollIntoView on all option elements
     const options = screen.getAllByRole('option')
-    for (const option of options) {
-      option.scrollIntoView = vi.fn()
-    }
+    const scrollSpies = options.map((option) => {
+      const spy = vi.fn()
+      option.scrollIntoView = spy
+      return spy
+    })
 
     // ArrowDown → Beta becomes selected
     act(() => {
@@ -321,7 +323,7 @@ describe('SuggestionList', () => {
     })
 
     // The newly selected item (Beta) should have scrollIntoView called
-    expect(options[1]?.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(scrollSpies[1]).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   // -- ARIA label ---------------------------------------------------------------
@@ -411,9 +413,11 @@ describe('SuggestionList', () => {
     render(<SuggestionList ref={ref} items={sampleItems} command={command} />)
 
     const options = screen.getAllByRole('option')
-    for (const option of options) {
-      option.scrollIntoView = vi.fn()
-    }
+    const scrollSpies = options.map((option) => {
+      const spy = vi.fn()
+      option.scrollIntoView = spy
+      return spy
+    })
 
     act(() => {
       ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
@@ -422,7 +426,7 @@ describe('SuggestionList', () => {
     // scrollIntoView is called on the newly selected option. The browser
     // resolves the nearest scroll container — the ScrollArea viewport — on its
     // own; the component doesn't need to identify the scrolling ancestor.
-    expect(options[1]?.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(scrollSpies[1]).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   // -- "Create new" prominence ------------------------------------------

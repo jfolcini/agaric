@@ -80,8 +80,11 @@ function getInput(): HTMLInputElement {
  * lands at the end of the input.
  */
 function typeFull(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-  setter?.call(input, value)
+  const valueDescriptor = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    'value',
+  )
+  valueDescriptor?.set?.call(input, value)
   input.setSelectionRange(value.length, value.length)
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
