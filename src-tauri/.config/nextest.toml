@@ -165,6 +165,18 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 filter = 'test(/rebuild_block_links_unresolved_residency_at_.*_blocks_4242/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
+# `reconcile_all_scale_sweep_4901` (`reconciliation_oracle::tests`) is the same
+# shape: a measurement over a 100k-block vault whose figures are printed, not
+# bounded — 25s wall in debug on the dev box at load ~5, 2.4x under the kill
+# before any runner slowdown. Unleashed, the kill would catch the pre-#4901
+# counts shape (+66s at 100k) but only with the clean run inside the margin the
+# 4241 sweep's analysis calls flaky. Equivalence is gated per PR by
+# `reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901`; this
+# test is the number, so the kill can only lose it.
+[[profile.default.overrides]]
+filter = 'test(/reconcile_all_scale_sweep_4901/)'
+slow-timeout = { period = "30s", terminate-after = 4 }
+
 [profile.ci]
 fail-fast = false
 retries = 2
