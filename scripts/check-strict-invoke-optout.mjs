@@ -45,6 +45,14 @@
 // Shrink-only by construction: `--update-baseline` re-derives the set, so
 // the reviewer sees the count change in the diff.
 //
+// ─── Kill-date ────────────────────────────────────────────────────────
+//
+// REMOVE AFTER 0.12.0 (#4885). This baseline exists to reach `[]`, and
+// nothing but someone happening to notice has ever pressed it there. At
+// 0.12.0 `remove-after-markers` fails on this line: convert the remaining
+// opt-outs to `vi.fn(strictInvokeFallback)` and delete this block, or bump
+// the version and say in the diff why not.
+//
 // ─── Known second opt-out class (NOT mechanized here) ─────────────────
 //
 // A blanket `vi.mocked(invoke).mockResolvedValue(undefined)` opts a file

@@ -69,6 +69,14 @@
 // the commit — same discipline as the sibling ratchets, no separate
 // allowlist.
 //
+// ─── Kill-date ────────────────────────────────────────────────────────
+//
+// REMOVE AFTER 0.12.0 (#4885). This baseline exists to reach `{}`, and
+// nothing but someone happening to notice has ever pressed it there. At
+// 0.12.0 `remove-after-markers` fails on this line: give the remaining
+// sites a real validator and delete this block, or bump the version and
+// say in the diff why not.
+//
 // ─── Detection ────────────────────────────────────────────────────────
 //
 // Flags `JSON.parse(...)` immediately followed (module the standard
