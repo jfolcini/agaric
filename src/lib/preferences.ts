@@ -662,6 +662,28 @@ const LINK_PREVIEW_HOVER_FETCH_PREFERENCE: PreferenceDefinition<boolean> = {
 }
 
 /**
+ * `integrity-check-enabled` — the reconciliation oracle is reachable from
+ * Settings → Data, and its report joins the bug-report body (#4886).
+ *
+ * Default false. The sweep rebuilds every derived artefact from the base
+ * tables and diffs it, which is O(pages × blocks) on the largest vault in
+ * existence — a diagnostic a user turns on while chasing a bug, never
+ * something the app does on its own.
+ *
+ * `jsonSerialize` writes the bare `true` / `false` literal, so the raw
+ * comparison is the whole validation — anything else on disk reads as off
+ * (#3881: no unchecked `JSON.parse(...) as T`).
+ */
+const INTEGRITY_CHECK_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'integrity-check-enabled',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: (raw) => raw === 'true',
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
  * `sync-internet-facing-bind-ack` — the sync bind address the user has
  * acknowledged as expected (#3864). Empty string on disk = nothing
  * acknowledged.
@@ -1299,6 +1321,7 @@ export const PREFERENCES = {
   bookmarksCollapsed: BOOKMARKS_COLLAPSED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
   linkPreviewHoverFetch: LINK_PREVIEW_HOVER_FETCH_PREFERENCE,
+  integrityCheck: INTEGRITY_CHECK_PREFERENCE,
   internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,
   savedPagesViews: SAVED_PAGES_VIEWS_PREFERENCE,

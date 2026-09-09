@@ -43,6 +43,7 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { BugReport, LogFileEntry } from '@/lib/bindings'
@@ -59,6 +60,7 @@ import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
+import { PREFERENCES, usePreference } from '@/lib/preferences'
 
 interface BugReportDialogProps {
   open: boolean
@@ -102,6 +104,19 @@ export function BugReportDialog({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [showFullLog, setShowFullLog] = useState<boolean>(false)
 
+  // #4886 — the reconciliation oracle. Opt-in and off by default: the sweep
+  // rebuilds every derived table from the base tables, so it runs only for a
+  // user who turned the Data-tab setting on, and only once this dialog is
+  // open. `runningIntegrity` joins the metadata gate below so the issue
+  // cannot be filed with the section the user asked for still missing.
+  const [integrityEnabled] = usePreference(PREFERENCES.integrityCheck)
+  const {
+    report: integrityReport,
+    running: runningIntegrity,
+    run: runIntegrity,
+    clear: clearIntegrity,
+  } = useReconciliationReport(MODULE)
+
   // Collect metadata via the shared useIpcCommand hook. The
   // `setLoadingMetadata` flag stays external because it's tied to the
   // open/close lifecycle rather than the IPC itself.
@@ -139,6 +154,19 @@ export function BugReportDialog({
       setLoadingMetadata(false)
     })
   }, [open, initialTitle, initialDescription, executeCollectMetadata])
+
+  // #4886 — run (or drop) the integrity report. Deliberately its own effect
+  // rather than a branch of the reset above: `integrityEnabled` can flip in
+  // another window mid-dialog, and folding it into the reset would wipe what
+  // the user has typed.
+  useEffect(() => {
+    if (!open) return
+    if (!integrityEnabled) {
+      clearIntegrity()
+      return
+    }
+    void runIntegrity()
+  }, [open, integrityEnabled, runIntegrity, clearIntegrity])
 
   // Reload logs whenever the user toggles either switch while the dialog
   // is open. When the outer switch is off, we clear the list.
@@ -180,8 +208,9 @@ export function BugReportDialog({
       metadata,
       description,
       zipFileName: includeLogs ? zipFileName : undefined,
+      reconciliation: integrityReport ?? undefined,
     })
-  }, [metadata, description, includeLogs, zipFileName])
+  }, [metadata, description, includeLogs, zipFileName, integrityReport])
 
   // Map the report onto the bug_report.yml issue-form field ids. The repo
   // disables blank issues, so the URL must drive the form (not a `body=`
@@ -193,8 +222,9 @@ export function BugReportDialog({
       title,
       description,
       zipFileName: includeLogs ? zipFileName : undefined,
+      reconciliation: integrityReport ?? undefined,
     })
-  }, [metadata, title, description, includeLogs, zipFileName])
+  }, [metadata, title, description, includeLogs, zipFileName, integrityReport])
 
   const issueUrl = useMemo<string>(
     () =>
@@ -456,7 +486,7 @@ export function BugReportDialog({
             includeLogs={includeLogs}
             confirmed={confirmed}
             submitting={submitting}
-            loadingMetadata={loadingMetadata}
+            loadingMetadata={loadingMetadata || runningIntegrity}
             loadingLogs={loadingLogs}
             metadataReady={metadata != null}
             bodyLength={body.length}

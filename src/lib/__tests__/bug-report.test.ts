@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { BugReport } from '@/lib/bindings'
+import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 import {
   _internals,
   BUG_REPORT_TEMPLATE,
   buildGitHubIssueUrl,
+  formatIntegrityReport,
   formatReportBody,
   formatReportFields,
   formatRetryQueue,
@@ -338,5 +339,94 @@ describe('formatRetryQueue', () => {
     expect(age(7_200_000)).toContain('oldest 2h')
     expect(age(120_000)).toContain('oldest 2m')
     expect(age(59_999)).toContain('oldest <1m')
+  })
+})
+
+// --------------------------------------------------------------------------
+// formatIntegrityReport (#4886)
+// --------------------------------------------------------------------------
+
+const CLEAN_REPORT: ReconciliationReport = {
+  blocks_scanned: 1200,
+  today: '2026-09-09',
+  total_divergences: 0,
+  artefacts: [],
+}
+
+const DIVERGED_REPORT: ReconciliationReport = {
+  blocks_scanned: 1200,
+  today: '2026-09-09',
+  total_divergences: 13,
+  artefacts: [
+    { artefact: 'pages_cache.child_block_count', count: 12, sample_keys: ['01ARZ', '01BX5'] },
+    { artefact: 'block_tag_inherited', count: 1, sample_keys: [] },
+  ],
+}
+
+describe('formatIntegrityReport', () => {
+  it('leads a clean run with the block count, so zero-over-zero is not read as healthy', () => {
+    expect(formatIntegrityReport(CLEAN_REPORT)).toBe(
+      '## Integrity check\n\nNo divergences — 1200 blocks scanned, 2026-09-09.',
+    )
+  })
+
+  it('names each artefact, its row count and its sample keys (snapshot)', () => {
+    expect(formatIntegrityReport(DIVERGED_REPORT)).toMatchInlineSnapshot(`
+      "## Integrity check
+
+      13 divergences over 1200 blocks scanned, 2026-09-09.
+
+      - \`pages_cache.child_block_count\` — 12 rows: 01ARZ, 01BX5
+      - \`block_tag_inherited\` — 1 row"
+    `)
+  })
+
+  it('singularises a single block and a single divergence', () => {
+    const one = formatIntegrityReport({
+      blocks_scanned: 1,
+      today: '2026-09-09',
+      total_divergences: 1,
+      artefacts: [{ artefact: 'block_space_ids', count: 1, sample_keys: ['01ARZ'] }],
+    })
+    expect(one).toContain('1 divergence over 1 block scanned, 2026-09-09.')
+    expect(one).toContain('- `block_space_ids` — 1 row: 01ARZ')
+  })
+})
+
+// --------------------------------------------------------------------------
+// #4886 — the integrity section reaches both the copied body and the FILED
+// issue, and is absent when the user never turned the check on.
+// --------------------------------------------------------------------------
+
+describe('the integrity section in a bug report', () => {
+  it('is omitted from body and fields when no report is supplied', () => {
+    const body = formatReportBody({ metadata: SAMPLE_METADATA, description: 'x' })
+    const fields = formatReportFields({ metadata: SAMPLE_METADATA, title: 't', description: 'x' })
+    expect(body).not.toContain('## Integrity check')
+    expect(fields.notes).not.toContain('## Integrity check')
+  })
+
+  it('sits between the recent errors and the attachment reminder in the body', () => {
+    const body = formatReportBody({
+      metadata: SAMPLE_METADATA,
+      description: 'x',
+      zipFileName: 'agaric-bug-report-2026-09-09.zip',
+      reconciliation: DIVERGED_REPORT,
+    })
+    expect(body.indexOf('## Recent errors')).toBeLessThan(body.indexOf('## Integrity check'))
+    expect(body.indexOf('## Integrity check')).toBeLessThan(body.indexOf('## Attachments'))
+    expect(body).toContain('- `pages_cache.child_block_count` — 12 rows: 01ARZ, 01BX5')
+  })
+
+  it('reaches the `notes` form field, not only the clipboard copy', () => {
+    const fields = formatReportFields({
+      metadata: SAMPLE_METADATA,
+      title: 't',
+      description: 'x',
+      reconciliation: CLEAN_REPORT,
+    })
+    expect(fields.notes).toContain('No divergences — 1200 blocks scanned, 2026-09-09.')
+    // The other notes lines survive alongside it.
+    expect(fields.notes).toContain('Arch: x86_64')
   })
 })

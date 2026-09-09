@@ -7,7 +7,7 @@
  * result to `openUrl` / clipboard / preview.
  */
 
-import type { BugReport } from '@/lib/bindings'
+import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 
 /** Cap the URL-encoded body at this many characters. GitHub silently drops
  *  prefill bodies past ~8 KB in the wild; 7000 keeps us well below even the
@@ -132,10 +132,44 @@ export function formatRetryQueue(summary: BugReport['retry_queue']): string {
   return `${parts.join(', ')} (${summary.task_kinds.join(', ')})`
 }
 
+/** #4886: the `## Integrity check` section — the reconciliation oracle's
+ *  report, rendered for a human reading a GitHub issue.
+ *
+ *  English and deterministic for the same reason `formatRetryQueue` is: the
+ *  issue body must read the same whoever filed it. `blocks_scanned` leads the
+ *  clean line because zero divergences over zero blocks describes an empty
+ *  vault rather than a healthy one, and `today` is recorded because the
+ *  projected-agenda rebuild is the one artefact pinned to a calendar date.
+ *
+ *  Sample keys are the backend's — at most ten per artefact, ids and dates
+ *  only, never the diverging values (#609: this body is public). */
+export function formatIntegrityReport(report: ReconciliationReport): string {
+  const scanned = `${report.blocks_scanned} block${report.blocks_scanned === 1 ? '' : 's'} scanned`
+  if (report.total_divergences === 0) {
+    return `## Integrity check\n\nNo divergences — ${scanned}, ${report.today}.`
+  }
+  const lines = report.artefacts.map((a) => {
+    const rows = `${a.count} row${a.count === 1 ? '' : 's'}`
+    const keys = a.sample_keys.length > 0 ? `: ${a.sample_keys.join(', ')}` : ''
+    return `- \`${a.artefact}\` — ${rows}${keys}`
+  })
+  return [
+    '## Integrity check',
+    `${report.total_divergences} divergence${report.total_divergences === 1 ? '' : 's'} over ${scanned}, ${report.today}.`,
+    lines.join('\n'),
+  ].join('\n\n')
+}
+
 /** Input to [`formatReportBody`]. */
 export interface FormatReportBodyParams {
   metadata: BugReport
   description: string
+  /** #4886: the reconciliation-oracle report, when the user has the integrity
+   *  check turned on. Absent means the check is off — it is opt-in by
+   *  construction, so an absent section has exactly one meaning and needs no
+   *  "unavailable" placeholder the way the always-rendered retry-queue line
+   *  does. */
+  reconciliation?: ReconciliationReport | undefined
   /** Filename the user will attach to the issue after the dialog saves the
    *  ZIP to disk. When present, the body includes a one-line reminder to
    *  attach it. */
@@ -154,10 +188,11 @@ export interface FormatReportBodyParams {
  *    3. Recent errors list (if any) — already redacted by the backend
  *       (#609: `collect_bug_report_metadata` runs the tail through the
  *       same pipeline as the ZIP export before it ever reaches the UI).
- *    4. Attachment reminder (if `zipFileName` supplied).
+ *    4. Integrity check (#4886, only when `reconciliation` is supplied).
+ *    5. Attachment reminder (if `zipFileName` supplied).
  */
 export function formatReportBody(params: FormatReportBodyParams): string {
-  const { metadata, description, zipFileName } = params
+  const { metadata, description, zipFileName, reconciliation } = params
 
   const sections: string[] = []
 
@@ -185,6 +220,10 @@ export function formatReportBody(params: FormatReportBodyParams): string {
     sections.push(`\`\`\`\n${metadata.recent_errors.join('\n')}\n\`\`\``)
   }
 
+  if (reconciliation !== undefined) {
+    sections.push(formatIntegrityReport(reconciliation))
+  }
+
   if (zipFileName !== undefined && zipFileName.length > 0) {
     sections.push('## Attachments')
     sections.push(`Please attach the saved \`${zipFileName}\` to this issue before submitting.`)
@@ -205,6 +244,10 @@ export interface FormatReportFieldsParams {
   /** When the user opted to attach diagnostics, the ZIP filename to remind
    *  them to attach (surfaced in the `notes` field). */
   zipFileName?: string | undefined
+  /** #4886: see [`FormatReportBodyParams.reconciliation`]. Rendered into the
+   *  form's `notes` field so the FILED issue carries the section, not only
+   *  the clipboard copy. */
+  reconciliation?: ReconciliationReport | undefined
 }
 
 /** Map a bug report onto the `bug_report.yml` issue-form field ids.
@@ -222,7 +265,7 @@ export interface FormatReportFieldsParams {
  *  the one unbounded input, and the full log is available in the diagnostic
  *  ZIP. The device ID is truncated (#609) before it can reach a public issue. */
 export function formatReportFields(params: FormatReportFieldsParams) {
-  const { metadata, title, description, zipFileName } = params
+  const { metadata, title, description, zipFileName, reconciliation } = params
 
   const rawLogs = metadata.recent_errors.join('\n')
   const logs =
@@ -238,6 +281,9 @@ export function formatReportFields(params: FormatReportFieldsParams) {
   ]
   if (zipFileName !== undefined && zipFileName.length > 0) {
     notesLines.push(`Diagnostic ZIP to attach: ${zipFileName}`)
+  }
+  if (reconciliation !== undefined) {
+    notesLines.push(formatIntegrityReport(reconciliation))
   }
 
   return {
