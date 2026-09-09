@@ -119,10 +119,16 @@ if (mocked.size === 0) {
 }
 
 // ─── 3. Compute missing / extra ─────────────────────────────────────
-const missingAll = [...expected].filter((c) => !mocked.has(c)).toSorted()
+const missingAll = [...expected]
+  .filter((c) => !mocked.has(c))
+  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 const missingNew = missingAll.filter((c) => !KNOWN_UNMOCKED.has(c))
-const allowlistStale = [...KNOWN_UNMOCKED].filter((c) => !missingAll.includes(c)).toSorted()
-const extra = [...mocked].filter((c) => !expected.has(c)).toSorted()
+const allowlistStale = [...KNOWN_UNMOCKED]
+  .filter((c) => !missingAll.includes(c))
+  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+const extra = [...mocked]
+  .filter((c) => !expected.has(c))
+  .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
 let exitCode = 0
 

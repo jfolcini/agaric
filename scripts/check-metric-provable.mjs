@@ -1464,7 +1464,7 @@ export function scanRoots(root) {
   // A root nested inside another would walk the same files twice, and two
   // copies of one metric collide on their id — a hard error that would read as
   // a repo problem rather than a guard problem.
-  const sorted = [...new Set(roots)].toSorted()
+  const sorted = [...new Set(roots)].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   const kept = sorted.filter((r) => !sorted.some((o) => o !== r && r.startsWith(`${o}${path.sep}`)))
   return kept.map((r) => toPosix(path.relative(root, r)))
 }
@@ -1483,7 +1483,7 @@ export function listScannedFiles(root) {
     }
   }
   for (const r of roots) visit(r)
-  return out.toSorted()
+  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 /** Does `[profile.release]` set `panic = "abort"`? */
@@ -2429,7 +2429,9 @@ function runSelfTest() {
     'src-tauri/agaric-sync/src/sync_protocol/audit_ingest_metrics.rs',
     'src-tauri/agaric-sync/src/sync_protocol/snapshot_fallback_metrics.rs',
   ])
-  const liveFiles = [...new Set(live.metrics.map((m) => m.file))].toSorted()
+  const liveFiles = [...new Set(live.metrics.map((m) => m.file))].toSorted((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )
   expect(
     'the live scan still reaches every metric-declaring file',
     JSON.stringify(liveFiles) === JSON.stringify([...METRIC_FILES]),

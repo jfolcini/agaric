@@ -680,7 +680,7 @@ export function analyze({ root, srcDirs, baseline }) {
   return {
     live,
     missing: missing.toSorted((a, b) => a.fn.localeCompare(b.fn)),
-    stale: stale.toSorted(),
+    stale: stale.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
     kindDrift: kindDrift.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     deadTests: deadTests.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     undecided: undecided.toSorted((a, b) => a.fn.localeCompare(b.fn)),

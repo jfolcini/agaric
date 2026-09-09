@@ -301,10 +301,12 @@ function analyze({ root, srcDir, baseline, sanctioned = new Set() }) {
       importers.push(rel)
     }
   }
-  importers.sort()
+  importers.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   const importerSet = new Set(importers)
   const newImporters = importers.filter((f) => !baselineSet.has(f))
-  const staleBaseline = [...baselineSet].filter((f) => !importerSet.has(f)).toSorted()
+  const staleBaseline = [...baselineSet]
+    .filter((f) => !importerSet.has(f))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   return { importers, newImporters, staleBaseline, scanned, scanErrors }
 }
 

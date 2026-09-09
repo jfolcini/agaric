@@ -190,15 +190,20 @@ export function analyze({ root, srcDir, baseline }) {
       if (badTiers.size > 0) {
         const rel = toPosix(path.relative(root, file))
         violators.push(rel)
-        details.set(rel, [...badTiers].toSorted())
+        details.set(
+          rel,
+          [...badTiers].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
       }
     }
   }
 
-  violators.sort()
+  violators.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   const violatorSet = new Set(violators)
   const newViolators = violators.filter((f) => !baselineSet.has(f))
-  const staleBaseline = [...baselineSet].filter((f) => !violatorSet.has(f)).toSorted()
+  const staleBaseline = [...baselineSet]
+    .filter((f) => !violatorSet.has(f))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   return { violators, details, newViolators, staleBaseline, scanned }
 }
 

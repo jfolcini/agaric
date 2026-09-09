@@ -39,6 +39,10 @@ describe('relaunchApp', () => {
     mockRelaunch.mockRejectedValueOnce(new Error('IPC failure'))
     const reloadMock = vi.fn()
     Object.defineProperty(window, 'location', {
+      // A detached snapshot is the only stand-in jsdom accepts: its `Location`
+      // has non-configurable own properties and brand-checked accessors, so
+      // neither spying on `reload` nor an `Object.create` wrapper can carry it.
+      // oxlint-disable-next-line typescript/no-misused-spread -- losing the Location prototype is the point
       value: { ...window.location, reload: reloadMock },
       writable: true,
     })

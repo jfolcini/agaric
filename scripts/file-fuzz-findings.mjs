@@ -239,7 +239,7 @@ export function reproducersFor({ artifacts, log }, prefixes) {
     )
     if (m) fromLog.add(m[1])
   }
-  return [...fromLog].toSorted()
+  return [...fromLog].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 // ---------------------------------------------------------------------------
@@ -349,9 +349,18 @@ export function parseKnownFindings(body) {
 
 export function diffFindings(current, known) {
   const byId = new Map(current.map((f) => [f.id, f]))
-  const newOnes = [...byId.keys()].filter((id) => !known.has(id)).toSorted()
-  const resolvedOnes = [...known].filter((id) => !byId.has(id)).toSorted()
-  return { newOnes, resolvedOnes, all: [...byId.keys()].toSorted(), byId }
+  const newOnes = [...byId.keys()]
+    .filter((id) => !known.has(id))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  const resolvedOnes = [...known]
+    .filter((id) => !byId.has(id))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  return {
+    newOnes,
+    resolvedOnes,
+    all: [...byId.keys()].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    byId,
+  }
 }
 
 // ---------------------------------------------------------------------------

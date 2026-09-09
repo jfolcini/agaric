@@ -519,7 +519,7 @@ function listStoreFiles(dir) {
     }
   }
   visit(dir)
-  return out.toSorted()
+  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 /**

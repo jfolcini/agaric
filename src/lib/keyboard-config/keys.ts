@@ -93,6 +93,6 @@ export function isMatchableKeyToken(raw: string): boolean {
   if (canonical === '') return false
   if (NAMED_KEY_TOKENS.has(canonical)) return true
   if (FUNCTION_KEY.test(canonical)) return true
-  // Spread so astral-plane characters (emoji) count as one, not two.
-  return [...canonical].length === 1
+  // Counted in code points, so an astral-plane character (emoji) is one, not two.
+  return Array.from(canonical).length === 1
 }

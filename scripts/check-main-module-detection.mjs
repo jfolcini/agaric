@@ -405,7 +405,7 @@ export function listScannedFiles(root) {
       if (entry.isFile() && isScanned(entry.name)) out.push(path.join(root, entry.name))
     }
   }
-  return out.toSorted()
+  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 /**

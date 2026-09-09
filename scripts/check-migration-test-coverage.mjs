@@ -349,7 +349,9 @@ export function runCheck({
   // its baseline entry is not stale, it is simply not the thing keeping the
   // guard red.
   const notCovered = new Set([...uncovered, ...beyondCeiling])
-  const staleBaseline = [...baseline].filter((n) => !notCovered.has(n)).toSorted()
+  const staleBaseline = [...baseline]
+    .filter((n) => !notCovered.has(n))
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
   if (newUncovered.length === 0 && beyondCeiling.length === 0 && staleBaseline.length === 0) {
     return {

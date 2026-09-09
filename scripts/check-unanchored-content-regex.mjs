@@ -294,7 +294,7 @@ export function listSourceFiles(srcDir) {
     }
   }
   visit(srcDir)
-  return out.toSorted()
+  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 /**

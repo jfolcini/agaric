@@ -726,11 +726,13 @@ describe('writer enumeration — the denominator, checked', () => {
   })
 
   it('pins the number of writes per file, so a second write in an existing file is conspicuous', () => {
-    const actual = Object.fromEntries([...found.entries()].toSorted())
+    const actual = Object.fromEntries(
+      [...found.entries()].toSorted((a, b) => a[0].localeCompare(b[0])),
+    )
     const declared = Object.fromEntries(
       Object.entries(DECLARED_WRITERS)
         .map(([f, d]) => [f, d.writes] as const)
-        .toSorted(),
+        .toSorted((a, b) => a[0].localeCompare(b[0])),
     )
     expect(actual).toEqual(declared)
   })

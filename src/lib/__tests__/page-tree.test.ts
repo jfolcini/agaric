@@ -132,7 +132,10 @@ describe('buildPageTree', () => {
 
     // Two sibling nodes, one per page — not one node standing for both.
     expect(tree).toHaveLength(2)
-    expect(tree.map((n) => n.pageId).toSorted()).toEqual(['P1', 'P2'])
+    expect(tree.map((n) => n.pageId).toSorted((a, b) => (a ?? '').localeCompare(b ?? ''))).toEqual([
+      'P1',
+      'P2',
+    ])
     // Same displayed path on both (they really do have the same title).
     expect(tree.map((n) => n.fullPath)).toEqual(['Agaric', 'Agaric'])
   })
