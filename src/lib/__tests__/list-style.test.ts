@@ -4,21 +4,23 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri/properties', () => ({
-  deleteProperty: vi.fn().mockResolvedValue(undefined),
-}))
-
-const { mockSetProperty } = vi.hoisted(() => ({
+const { mockSetProperty, mockDeleteProperty } = vi.hoisted(() => ({
   mockSetProperty: vi.fn().mockResolvedValue({ status: 'ok', data: {} }),
+  mockDeleteProperty: vi.fn().mockResolvedValue({ status: 'ok', data: {} }),
 }))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    commands: { ...actual.commands, setProperty: (...args: unknown[]) => mockSetProperty(...args) },
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) => mockSetProperty(...args),
+      deleteProperty: (...args: unknown[]) => mockDeleteProperty(...args),
+    },
   }
 })
 
+import type { PropertyRow } from '@/lib/bindings'
 import {
   asListStyle,
   clearListStyle,
@@ -28,8 +30,6 @@ import {
   listStyleFromRows,
   setListStyle,
 } from '@/lib/list-style'
-import { deleteProperty } from '@/lib/tauri/properties'
-import type { PropertyRow } from '@/lib/tauri/properties'
 
 const row = (over: Partial<PropertyRow>): PropertyRow => ({
   key: LIST_STYLE_KEY,
@@ -76,12 +76,12 @@ describe('setListStyle', () => {
       value_ref: null,
       value_bool: null,
     })
-    expect(deleteProperty).not.toHaveBeenCalled()
+    expect(mockDeleteProperty).not.toHaveBeenCalled()
   })
 
   it('clears the property when set to none (never stores a sentinel)', async () => {
     await setListStyle('B1', 'none')
-    expect(deleteProperty).toHaveBeenCalledWith('B1', LIST_STYLE_KEY)
+    expect(mockDeleteProperty).toHaveBeenCalledWith('B1', LIST_STYLE_KEY)
     expect(mockSetProperty).not.toHaveBeenCalled()
   })
 })
@@ -89,7 +89,7 @@ describe('setListStyle', () => {
 describe('clearListStyle', () => {
   it('deletes the listStyle property row', async () => {
     await clearListStyle('B2')
-    expect(deleteProperty).toHaveBeenCalledWith('B2', LIST_STYLE_KEY)
+    expect(mockDeleteProperty).toHaveBeenCalledWith('B2', LIST_STYLE_KEY)
   })
 })
 

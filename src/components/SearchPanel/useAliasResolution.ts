@@ -15,11 +15,10 @@
 import { useEffect, useState } from 'react'
 
 import { isNotFound, unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { toSpaceScope } from '@/lib/space-scope'
-import type { BlockRow } from '@/lib/tauri'
-import { getBlock } from '@/lib/tauri'
 
 export interface AliasResolution {
   /**
@@ -81,7 +80,7 @@ export function useAliasResolution(
         }
         const [pageId] = result
         try {
-          const block = await getBlock(pageId)
+          const block = unwrap(await commands.getBlock(pageId))
           if (!cancelled) {
             setAliasMatch(block)
             setAliasQuery(trimmed)

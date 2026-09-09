@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { usePropertySave } from '@/hooks/usePropertySave'
-import type { PropertyRow } from '@/lib/tauri'
+import type { PropertyRow } from '@/lib/bindings'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 

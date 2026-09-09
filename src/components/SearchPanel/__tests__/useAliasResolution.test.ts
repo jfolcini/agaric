@@ -23,11 +23,10 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  getBlock: vi.fn(),
+const { mockResolvePageByAlias, mockGetBlock } = vi.hoisted(() => ({
+  mockResolvePageByAlias: vi.fn(),
+  mockGetBlock: vi.fn(),
 }))
-
-const mockResolvePageByAlias = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -36,6 +35,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       resolvePageByAlias: (...args: unknown[]) =>
         mockResolvePageByAlias(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getBlock: (...args: unknown[]) =>
+        mockGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -50,11 +51,11 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { useAliasResolution } from '@/components/SearchPanel/useAliasResolution'
+import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { type BlockRow, getBlock } from '@/lib/tauri'
 
 const mockedResolveAlias = mockResolvePageByAlias
-const mockedGetBlock = vi.mocked(getBlock)
+const mockedGetBlock = mockGetBlock
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {

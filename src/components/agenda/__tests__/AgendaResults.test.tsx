@@ -62,10 +62,7 @@ const mockGetBatchProperties = vi.fn().mockResolvedValue({})
 const mockBatchResolve = vi.fn().mockResolvedValue([])
 
 vi.mock('@/lib/tauri', () => ({
-  getProperties: (...args: unknown[]) => mockGetProperties(...args),
-  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
-  getBlock: vi.fn(),
 }))
 
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`)

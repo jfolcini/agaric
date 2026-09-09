@@ -39,7 +39,6 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { editBlock, getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
@@ -141,7 +140,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             notify(t(successKey), { duration: 1500 })
             await pageStore.getState().load()
             try {
-              const pageBlock = await getBlock(pageId)
+              const pageBlock = unwrap(await commands.getBlock(pageId))
               if (pageBlock?.content) {
                 // #3322 — one fan-out to every store that holds a title copy
                 // (tabs + recents + resolve); see `@/stores/page-rename`.
@@ -404,7 +403,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
-        const resp = await editBlock(pageId, newTitle)
+        const resp = unwrap(await commands.editBlock(pageId, newTitle))
         useUndoStore.getState().onNewAction(pageId, resp.op_refs)
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.

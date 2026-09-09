@@ -117,7 +117,7 @@ Two options were considered:
   values. **No `blocks` schema change**, no `BlockRow` change, no touching the
   ~20 `query_as!` sites. Reserved-key gate in `src-tauri/agaric-store/src/op.rs:489` is only for the five
   column-backed keys, so `listStyle` is unaffected. Reuses `set_property` /
-  `get_property` (`src/lib/tauri/properties.ts`, `src/components/block-tree/use-block-properties.ts:102`).
+  `get_property` (`src/lib/bindings.ts`, `src/components/block-tree/use-block-properties.ts:101`).
 - **Column-backed on `blocks` (not recommended for v1).** Only justified if
   ordered-number recomputation needs an indexed SQL query over siblings, which
   it does not (the sibling set is already materialised in the per-page store,

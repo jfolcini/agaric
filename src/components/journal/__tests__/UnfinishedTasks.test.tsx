@@ -892,6 +892,36 @@ describe('UnfinishedTasks', () => {
       warnSpy.mockRestore()
     })
 
+    // The panel is space-scoped, and nothing here asserted the scope actually
+    // reached the IPC — the tests below switch spaces to drive effect re-runs
+    // but only ever look at what rendered. Dropping the scope argument would
+    // have leaked another space's overdue tasks into this list without
+    // reddening anything (found while migrating this call site off the
+    // `@/lib/tauri` wrapper, which used to supply it; #4411).
+    it('sends the active space as the scope, and global when there is none', async () => {
+      mockInvokeForBlocks([])
+
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_SCOPED' })
+      const scoped = render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_unfinished_tasks',
+          expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_SCOPED' } }),
+        )
+      })
+      scoped.unmount()
+
+      mockedInvoke.mockClear()
+      useSpaceStore.setState({ currentSpaceId: null })
+      render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_unfinished_tasks',
+          expect.objectContaining({ scope: { kind: 'global' } }),
+        )
+      })
+    })
+
     // #826 — the fetch `.catch` previously called setBlocks([]) unconditionally.
     // A slow rejection from a superseded effect run must NOT clobber the newer
     // run's successfully-loaded data (same stale-guard contract as #757). The

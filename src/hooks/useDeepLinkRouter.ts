@@ -36,10 +36,11 @@
 import { useEffect } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/platform/deep-link'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
-import { getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -162,7 +163,7 @@ export async function handleNavigatePayload(
     return
   }
   try {
-    let block = await getBlock(payload.id)
+    let block = unwrap(await commands.getBlock(payload.id))
     if (kind === 'page' || block.block_type === 'page') {
       safeNavigateToPage(eventName, payload.id, block.content ?? '')
       return
@@ -172,7 +173,7 @@ export async function handleNavigatePayload(
     // parent walk, and immune to a soft-deleted intermediate ancestor
     // killing the chain mid-walk.
     if (block.page_id !== null && block.page_id !== payload.id) {
-      const page = await getBlock(block.page_id)
+      const page = unwrap(await commands.getBlock(block.page_id))
       safeNavigateToPage(eventName, page.id, page.content ?? '', payload.id)
       return
     }
@@ -181,7 +182,7 @@ export async function handleNavigatePayload(
     // ends without one, fall back to the topmost ancestor reached so the
     // user still lands as close to the block as possible.
     for (let hop = 0; block.parent_id !== null && hop < MAX_ANCESTOR_HOPS; hop++) {
-      block = await getBlock(block.parent_id)
+      block = unwrap(await commands.getBlock(block.parent_id))
       if (block.block_type === 'page') {
         safeNavigateToPage(eventName, block.id, block.content ?? '', payload.id)
         return

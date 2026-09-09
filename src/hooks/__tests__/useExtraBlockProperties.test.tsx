@@ -24,10 +24,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetBatchProperties = vi.fn()
 
-vi.mock('@/lib/tauri', () => ({
-  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
-}))
-
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) now
 // calls `commands.getBatchProperties` from `@/lib/bindings` directly. Route
 // the same spy through the bindings surface, wrapped in the envelope shape
@@ -50,9 +46,8 @@ vi.mock('@/lib/logger', () => ({
 
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
-import type { PropertyRow } from '@/lib/tauri'
-// Shared across the `@/lib/tauri` and `@/lib/bindings` surfaces (see the
-// `vi.mock` blocks above) — `mockGetBatchProperties` is the real vi.fn().
+import type { PropertyRow } from '@/lib/bindings'
+// The real vi.fn() behind the `@/lib/bindings` mock above.
 const mockedGetBatchProperties = mockGetBatchProperties
 
 function row(overrides: Partial<PropertyRow> & { key: string }): PropertyRow {

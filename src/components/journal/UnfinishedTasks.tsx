@@ -21,12 +21,13 @@ import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useToday } from '@/hooks/useToday'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { BlockRow, PageResponse } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import type { BlockRow, PageResponse } from '@/lib/tauri'
-import { listUnfinishedTasks, paginationLimit } from '@/lib/tauri'
+import { paginationLimit } from '@/lib/safe-limit'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -293,13 +294,15 @@ export function UnfinishedTasks({
         queryKey,
         queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
           try {
-            return await listUnfinishedTasks({
-              beforeDate: todayStr,
-              todoStates: ['TODO', 'DOING'],
-              ...(pageParam != null && { cursor: pageParam }),
-              limit: paginationLimit(200),
-              spaceId: currentSpaceId,
-            })
+            return unwrap(
+              await commands.listUnfinishedTasks(
+                todayStr,
+                ['TODO', 'DOING'],
+                pageParam ?? null,
+                paginationLimit(200),
+                toSpaceScope(currentSpaceId),
+              ),
+            )
           } catch (err) {
             logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
             throw err

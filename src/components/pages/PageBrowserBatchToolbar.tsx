@@ -49,13 +49,12 @@ import {
 } from '@/components/ui/select'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
+import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
-import type { TagCacheRow } from '@/lib/tauri'
-import { deleteBlocksByIds, moveBlocksToSpace, setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 export interface PageBrowserBatchToolbarProps {
@@ -245,8 +244,9 @@ export function PageBrowserBatchToolbar({
     // rendered at click time, and freezes it for the duration of the await.
     setBusy(true)
     try {
-      const { deleted_count: count, affected_page_ids: cascadedPageIds } =
-        await deleteBlocksByIds(ids)
+      const { deleted_count: count, affected_page_ids: cascadedPageIds } = unwrap(
+        await commands.deleteBlocksByIds(ids),
+      )
       // #4007 — drop every trashed page from the `[[` picker's name cache;
       // it is filled once per space and has no other delete signal.
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
@@ -335,7 +335,7 @@ export function PageBrowserBatchToolbar({
     const ids = [...selectedIds]
     setBusy(true)
     try {
-      const count = await moveBlocksToSpace(ids, selectedSpaceId)
+      const count = unwrap(await commands.moveBlocksToSpace(ids, selectedSpaceId))
       // #4450 — the moved pages must stop being offered by the ORIGIN
       // space's `[[` picker cache; `list_all_pages_in_space` is what fills
       // it, and a move publishes nothing to invalidate it otherwise, so a
@@ -409,7 +409,7 @@ export function PageBrowserBatchToolbar({
         : propertyValue
     setBusy(true)
     try {
-      const count = await setPropertyBatch(selectedIds, propertyKey, value)
+      const count = unwrap(await commands.setPropertyBatch(selectedIds, propertyKey, value))
       closePickers()
       onClearSelection()
       onMutated()

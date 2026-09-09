@@ -12,10 +12,9 @@
  */
 
 import { unwrap } from '@/lib/app-error'
+import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
-import type { PropertyRow } from '@/lib/tauri/properties'
-import { deleteProperty } from '@/lib/tauri/properties'
 
 /** The block-property key under which list-ness is stored. */
 export const LIST_STYLE_KEY = 'listStyle'
@@ -52,7 +51,7 @@ export function listStyleFromRows(rows: readonly PropertyRow[] | undefined): Lis
  */
 export async function setListStyle(blockId: string, style: ListStyle): Promise<void> {
   if (style === 'none') {
-    await deleteProperty(blockId, LIST_STYLE_KEY)
+    unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY))
     return
   }
   unwrap(
@@ -68,7 +67,7 @@ export async function setListStyle(blockId: string, style: ListStyle): Promise<v
 
 /** Clear a block's list style (equivalent to `setListStyle(id, 'none')`). */
 export async function clearListStyle(blockId: string): Promise<void> {
-  await deleteProperty(blockId, LIST_STYLE_KEY)
+  unwrap(await commands.deleteProperty(blockId, LIST_STYLE_KEY))
 }
 
 /**

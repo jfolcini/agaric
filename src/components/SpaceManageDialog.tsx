@@ -69,7 +69,6 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { listBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
-import { getBatchProperties } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -333,7 +332,7 @@ export function SpaceManageDialog({
       for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.add(id)
       void (async () => {
         try {
-          const result = await getBatchProperties(journalIdsToFetch)
+          const result = unwrap(await commands.getBatchProperties(journalIdsToFetch))
           if (!active) return
           setJournalTemplateBySpace((prev) => {
             const next = { ...prev }

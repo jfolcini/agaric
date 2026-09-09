@@ -27,10 +27,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetBatchProperties = vi.fn()
 
-vi.mock('@/lib/tauri', () => ({
-  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
-}))
-
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) now
 // calls `commands.getBatchProperties` from `@/lib/bindings` directly. Route
 // the same spy through the bindings surface, wrapped in the envelope shape

@@ -39,6 +39,7 @@ import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import { announce } from '@/lib/announcer'
 import { isInvalidOperation, unwrap } from '@/lib/app-error'
+import type { BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -51,8 +52,7 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import type { BlockRow, PageResponse } from '@/lib/tauri'
-import { listTrash, purgeBlock, restoreBlock } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -97,11 +97,13 @@ export function TrashView(): React.ReactElement {
         if (currentSpaceId == null) {
           return { items: [], next_cursor: null, has_more: false, total_count: null }
         }
-        return listTrash({
-          ...(pageParam != null && { cursor: pageParam }),
-          limit: PAGINATION_LIMIT,
-          spaceId: currentSpaceId,
-        })
+        return unwrap(
+          await commands.listTrash(
+            pageParam ?? null,
+            PAGINATION_LIMIT,
+            toSpaceScope(currentSpaceId),
+          ),
+        )
       },
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
@@ -227,7 +229,7 @@ export function TrashView(): React.ReactElement {
     async (block: BlockRow) => {
       if (!block.deleted_at) return
       try {
-        await restoreBlock(block.id, block.deleted_at)
+        unwrap(await commands.restoreBlock(block.id, block.deleted_at))
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
           // #4239 — the shared gate rather than a local `?? t('common.untitled')`.
@@ -258,7 +260,7 @@ export function TrashView(): React.ReactElement {
   const handlePurge = useCallback(
     async (blockId: string) => {
       try {
-        await purgeBlock(blockId)
+        unwrap(await commands.purgeBlock(blockId))
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
         setConfirmPurgeId(null)
         notify.success(t('trash.blockPurged'))

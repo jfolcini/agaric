@@ -37,8 +37,8 @@
 import { useMemo, useRef } from 'react'
 
 import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import type { PropertyRow } from '@/lib/bindings'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import type { PropertyRow } from '@/lib/tauri'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'todo_state',

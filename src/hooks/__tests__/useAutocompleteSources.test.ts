@@ -18,7 +18,6 @@ import type { PropertyDefinition, TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getPathHistory } from '@/lib/path-history'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
-import { getPropertyDef } from '@/lib/tauri'
 
 // The propKey source resolves through `propertyKeysQueryFn`
 // (`@/lib/property-keys-cache`), which calls `commands.listPropertyKeys` from
@@ -29,19 +28,16 @@ import { getPropertyDef } from '@/lib/tauri'
 // `listPropertyValues` no longer exist on `@/lib/tauri` (dead wrappers,
 // #4410) — the hoisted mocks below back the `commands.*` surface only, and
 // are used directly (not via `vi.mocked(...)` on a `@/lib/tauri` import) for
-// the assertions further down. `listTagsByPrefix` retired its `@/lib/tauri`
-// wrapper too (#4411) — its mock resolves the `{ status: 'ok', data }`
-// envelope the real `unwrap` at the call site expects.
-const { mockListPropertyKeys, mockListPropertyValues, mockListTagsByPrefix } = vi.hoisted(() => ({
-  mockListPropertyKeys: vi.fn(),
-  mockListPropertyValues: vi.fn(),
-  mockListTagsByPrefix: vi.fn(),
-}))
-
-vi.mock('@/lib/tauri', () => ({
-  getPropertyDef: vi.fn(),
-  paginationLimit: (n: number) => n,
-}))
+// the assertions further down. `listTagsByPrefix` and `getPropertyDef` retired
+// their `@/lib/tauri` wrappers too (#4411) — their mocks resolve the
+// `{ status: 'ok', data }` envelope the real `unwrap` at the call site expects.
+const { mockListPropertyKeys, mockListPropertyValues, mockListTagsByPrefix, mockGetPropertyDef } =
+  vi.hoisted(() => ({
+    mockListPropertyKeys: vi.fn(),
+    mockListPropertyValues: vi.fn(),
+    mockListTagsByPrefix: vi.fn(),
+    mockGetPropertyDef: vi.fn(),
+  }))
 
 vi.mock('@/lib/bindings', async () => {
   const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
@@ -53,6 +49,8 @@ vi.mock('@/lib/bindings', async () => {
       listPropertyValues: mockListPropertyValues,
       listTagsByPrefix: (...args: unknown[]) =>
         mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getPropertyDef: (...args: unknown[]) =>
+        mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -78,7 +76,7 @@ import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedListPropertyValues = mockListPropertyValues
-const mockedGetPropertyDef = vi.mocked(getPropertyDef)
+const mockedGetPropertyDef = mockGetPropertyDef
 const mockedGetPathHistory = vi.mocked(getPathHistory)
 
 function propDef(key: string, valueType: string, options?: string[]): PropertyDefinition {

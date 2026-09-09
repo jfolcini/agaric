@@ -30,7 +30,6 @@ import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import { toSpaceScope } from '@/lib/space-scope'
-import { deleteBlock, editBlock, getProperty } from '@/lib/tauri'
 import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 
 /** Marker property key + value identifying a saved query view. */
@@ -123,7 +122,7 @@ export function SavedViews({
     async (view: SavedViewItem): Promise<void> => {
       setBusyId(view.id)
       try {
-        const prop = await getProperty(view.id, QUERY_SPEC_KEY)
+        const prop = unwrap(await commands.getProperty(view.id, QUERY_SPEC_KEY))
         if (prop?.value_text == null) {
           throw new Error('saved view has no query_spec')
         }
@@ -145,7 +144,7 @@ export function SavedViews({
       const target = renameTarget
       setBusyId(target.id)
       try {
-        await editBlock(target.id, name)
+        unwrap(await commands.editBlock(target.id, name))
         setViews((prev) => prev.map((v) => (v.id === target.id ? { ...v, name } : v)))
         notify.success(t('advancedQuery.savedViews.renamed', { name }))
       } catch {
@@ -162,7 +161,7 @@ export function SavedViews({
     const target = deleteTarget
     setBusyId(target.id)
     try {
-      await deleteBlock(target.id)
+      unwrap(await commands.deleteBlock(target.id))
       setViews((prev) => prev.filter((v) => v.id !== target.id))
       notify.success(t('advancedQuery.savedViews.deleted', { name: target.name }))
     } catch {

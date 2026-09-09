@@ -2,12 +2,12 @@ import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
 import { unwrap } from '@/lib/app-error'
+import type { BlockRow, CreateBlockSpec } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
+import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
-import type { BlockRow, CreateBlockSpec } from '@/lib/tauri'
-import { createBlocksBatch, firstChildForBlocks, getProperty, paginationLimit } from '@/lib/tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
@@ -107,7 +107,7 @@ export async function loadTemplatePagesWithPreview(
 
   let firstChildren: Record<string, BlockRow> = {}
   try {
-    firstChildren = await firstChildForBlocks(pages.map((p) => p.id))
+    firstChildren = unwrap(await commands.firstChildForBlocks(pages.map((p) => p.id)))
   } catch (err) {
     // Preview is best-effort — log and fall through; every page surfaces
     // a `null` preview, matching the per-template per-error shape that
@@ -470,7 +470,7 @@ export async function insertTemplateBlocks(
     }
     if (specsAtLevel.length === 0) continue
     try {
-      const created = await createBlocksBatch(specsAtLevel)
+      const created = unwrap(await commands.createBlocksBatch(specsAtLevel))
       for (let k = 0; k < indicesAtLevel.length; k += 1) {
         const idx = indicesAtLevel[k]
         if (idx == null) continue
@@ -517,7 +517,7 @@ export async function insertTemplateBlocks(
 export async function loadJournalTemplateForSpace(spaceId: string): Promise<string | null> {
   // Single-key PK lookup against `block_properties`
   // instead of fetching the whole vocabulary just to read one row.
-  const row = await getProperty(spaceId, 'journal_template')
+  const row = unwrap(await commands.getProperty(spaceId, 'journal_template'))
   return row?.value_text ?? null
 }
 
@@ -564,7 +564,7 @@ export async function insertTemplateBlocksFromString(
   }
   if (specs.length === 0) return []
   try {
-    const created = await createBlocksBatch(specs)
+    const created = unwrap(await commands.createBlocksBatch(specs))
     return created.map((b) => b.id)
   } catch (err) {
     logger.warn(

@@ -41,10 +41,10 @@ import {
   useTagClickHandler,
 } from '@/hooks/useRichContentCallbacks'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
+import type { ActiveProjectedAgendaEntry } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { priorityRank } from '@/lib/priority-levels'
 import { TASK_STATE_SORT_ORDER } from '@/lib/task-states'
-import type { ProjectedAgendaEntry } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
@@ -128,7 +128,7 @@ const ProjectedEntryContent = memo(ProjectedEntryContentInner)
 ProjectedEntryContent.displayName = 'ProjectedEntryContent'
 
 interface ProjectedEntryRowProps {
-  entry: ProjectedAgendaEntry
+  entry: ActiveProjectedAgendaEntry
   /**
    * Parent page title resolved by the caller from `pageTitles`. Passing the
    * resolved string (not the whole map) keeps the memo shallow-compare precise:

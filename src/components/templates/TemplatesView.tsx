@@ -29,8 +29,8 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
+import { paginationLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/space-scope'
-import { deleteProperty, paginationLimit } from '@/lib/tauri'
 import { loadTemplatePagesWithPreview } from '@/lib/template-utils'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -188,7 +188,7 @@ export function TemplatesView(): React.ReactElement {
   const handleRemoveTemplate = useCallback(
     async (id: string, name: string) => {
       try {
-        await deleteProperty(id, 'template')
+        unwrap(await commands.deleteProperty(id, 'template'))
         setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
         notify.success(t('templates.templateRemoved', { name }))
       } catch (err) {

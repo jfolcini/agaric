@@ -71,26 +71,18 @@ vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
   return { ...mod, parse: vi.fn(mod.parse) }
 })
 
-// #2927 phase 4 — the real (unmocked) `ImageResizeToolbar` rendered inside
-// `AttachmentRenderer`/`StaticBlockAttachments` now calls `commands.setProperty`
-// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper. Share
-// one spy across both surfaces so `mockedSetProperty` sees every call
-// regardless of which surface the caller uses.
-const { mockSharedSetProperty } = vi.hoisted(() => ({
+// #2927 phase 4 / #4411 — the real (unmocked) `ImageResizeToolbar` rendered
+// inside `AttachmentRenderer`/`StaticBlockAttachments` calls
+// `commands.setProperty`, and `useImageProperties` calls
+// `commands.getBatchProperties`; both go through `@/lib/bindings` and unwrap
+// the `Result` envelope, so the spies resolve raw data and the mock wraps it.
+const { mockSharedSetProperty, mockGetBatchProperties } = vi.hoisted(() => ({
   mockSharedSetProperty: vi.fn().mockResolvedValue({}),
+  // #543 — `StaticBlock` reads image_width/alignment/caption via a single
+  // `getBatchProperties([blockId])` call; default mock returns no rows so
+  // tests that don't seed properties fall through to the defaults.
+  mockGetBatchProperties: vi.fn((..._blockIds: unknown[]) => Promise.resolve({})),
 }))
-
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@/lib/tauri')>()
-  return {
-    ...mod,
-    // #543 — `StaticBlock` reads image_width/alignment/caption via a single
-    // `getBatchProperties([blockId])` call; default mock returns no rows so
-    // tests that don't seed properties fall through to the defaults.
-    getBatchProperties: vi.fn(() => Promise.resolve({})),
-    setProperty: (...args: unknown[]) => mockSharedSetProperty(...args),
-  }
-})
 
 // `readAttachment` moved to `@/lib/ipc-helpers` (#4413, the migration floor).
 // Image attachments are rendered from raw bytes read over IPC and wrapped in
@@ -112,6 +104,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       setProperty: (...args: unknown[]) =>
         mockSharedSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getBatchProperties: (...args: unknown[]) =>
+        mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -178,11 +172,8 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 
-const { getBatchProperties } = await import('@/lib/tauri')
 const { readAttachment } = await import('@/lib/ipc-helpers')
-const mockedGetBatchProperties = vi.mocked(getBatchProperties)
-// Shared across the `@/lib/tauri` and `@/lib/bindings` surfaces (see the
-// `vi.hoisted` block above) — `mockSharedSetProperty` is the real vi.fn().
+const mockedGetBatchProperties = mockGetBatchProperties
 const mockedSetProperty = mockSharedSetProperty
 const mockedReadAttachment = vi.mocked(readAttachment)
 

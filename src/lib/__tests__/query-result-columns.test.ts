@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import type { PropertyRow } from '@/lib/bindings'
 import {
   buildCustomPropsMap,
   columnValue,
   deriveCustomColumns,
   propertyRowDisplay,
 } from '@/lib/query-result-columns'
-import type { PropertyRow } from '@/lib/tauri'
 
 function row(overrides: Partial<PropertyRow> & { key: string }): PropertyRow {
   return {

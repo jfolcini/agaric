@@ -10,13 +10,13 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  runAdvancedQuery: vi.fn(),
+// #4411 / #4412 — `runAdvancedQuery` and `batchResolve` retired their
+// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// envelope, so the spies resolve raw data and the mock wraps it.
+const { mockedResolve, mockedRun } = vi.hoisted(() => ({
+  mockedResolve: vi.fn(),
+  mockedRun: vi.fn(),
 }))
-
-// #4412 — `batchResolve` retired its `@/lib/tauri` wrapper; the hook calls
-// `commands.batchResolve` and unwraps the `Result` envelope.
-const mockedResolve = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -25,12 +25,13 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       batchResolve: (...args: unknown[]) =>
         mockedResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      runAdvancedQuery: (...args: unknown[]) =>
+        mockedRun(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
 
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
-import { queryClient } from '@/lib/query-client'
 import type {
   AdvancedQueryResponse,
   AggregateSpec,
@@ -38,11 +39,9 @@ import type {
   GroupSpec,
   QueryGroup,
   SortKey,
-} from '@/lib/tauri'
-import { runAdvancedQuery } from '@/lib/tauri'
+} from '@/lib/bindings'
+import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
-
-const mockedRun = vi.mocked(runAdvancedQuery)
 
 const SPACE = 'SPACE_A'
 

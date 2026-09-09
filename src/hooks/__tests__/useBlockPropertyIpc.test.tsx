@@ -17,9 +17,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
-import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { unwrap } from '@/lib/app-error'
+import type { PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { paginationLimit } from '@/lib/safe-limit'
-import { listPropertyDefs as listPropertyDefsIpc } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -186,7 +187,9 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
     const collected: unknown[] = []
     let cursor: string | null = null
     do {
-      const resp = await listPropertyDefsIpc({ cursor, limit })
+      const resp: PageResponse<PropertyDefinition> = unwrap(
+        await commands.listPropertyDefs(cursor, limit),
+      )
       collected.push(...resp.items)
       cursor = resp.has_more ? resp.next_cursor : null
     } while (cursor !== null)
