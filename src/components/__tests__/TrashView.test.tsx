@@ -29,6 +29,7 @@ import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
+import type { AppError } from '@/lib/app-error'
 import { MAX_TRASH_BATCH_IDS } from '@/lib/ipc-helpers'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -2425,9 +2426,12 @@ describe('TrashView screen reader announcements', () => {
       },
       batch_resolve: () => [],
       purge_blocks_by_ids: () => {
-        // Raw AppError wire shape (unwrap() throws it verbatim) — B2 was
-        // restored elsewhere between the listing render and this purge.
-        throw { kind: 'invalid_operation', message: 'batch contains a live block' }
+        // B2 was restored elsewhere between the listing render and this purge.
+        const rejection: AppError = {
+          kind: 'invalid_operation',
+          message: 'batch contains a live block',
+        }
+        throw rejection
       },
       trash_descendant_counts: () => ({}),
     })

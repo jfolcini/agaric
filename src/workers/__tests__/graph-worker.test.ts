@@ -618,7 +618,7 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
 
   it('stringifies a non-Error throw value in the single structured error message', () => {
     forceSimulation.mockImplementationOnce(() => {
-      // biome-ignore lint/style/useThrowOnlyError: exercising the non-Error branch
+      // oxlint-disable-next-line typescript/only-throw-error -- exercising the non-Error branch (was a dead biome-ignore; OXC only, invariant 5)
       throw 'plain string failure'
     })
 

@@ -13,7 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { isCancellation } from '@/lib/app-error'
+import { type AppError, isCancellation } from '@/lib/app-error'
 import {
   cancelledError,
   importMarkdown,
@@ -437,7 +437,11 @@ describe('purgeAllDeletedInSpace', () => {
         purgeCalls += 1
         if (purgeCalls === 1) return { affected_count: 1000 }
         // What the backend actually sends: a plain object, not an Error.
-        throw { kind: 'invalid_operation', message: "block 'B1200' is not deleted" }
+        const rejection: AppError = {
+          kind: 'invalid_operation',
+          message: "block 'B1200' is not deleted",
+        }
+        throw rejection
       }
       throw new Error(`unexpected invoke: ${cmd}`)
     })

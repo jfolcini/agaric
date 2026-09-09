@@ -68,16 +68,23 @@ name: Scheduled deep checks
 #                    `CRON_EQUIVALENT` (below) holds; needs `issues: write`.
 #   type-aware-lint — #4408: `oxlint --type-aware`, the type-aware half of
 #                    the linter, which needs the separately-published
-#                    `oxlint-tsgolint` (typescript-go) binary and so had never
-#                    run against this repo at all. REPORTING-ONLY: it reports
-#                    hundreds of pre-existing findings and failing on them
-#                    would make the lane permanently red and therefore
-#                    ignored. What it CAN fail on is liveness
+#                    `oxlint-tsgolint` (typescript-go) binary. REPORTING-ONLY:
+#                    what it CAN fail on is liveness
 #                    (`scripts/check-type-aware-liveness.mjs`), because a step
 #                    that cannot fail is a step that can silently stop running
-#                    — see #3330 and `mutants-frontend` above. Findings feed
-#                    the per-rule burn-down; promote a rule to `error` in
-#                    `.oxlintrc.json` once its count reaches zero.
+#                    — see #3330 and `mutants-frontend` above.
+#
+#                    The burn-down this lane existed to drive is done: the flag
+#                    is now passed by `npm run lint` and by the `oxlint` prek
+#                    hook, so every rule blocks per-PR. This lane STAYS anyway,
+#                    and the liveness guard is why. The blocking gate cannot
+#                    tell "clean" from "not scanned": a tsgolint that stops
+#                    resolving types reports zero findings and the hook passes,
+#                    which is the same failure #4493 argues about one level up
+#                    in `.oxlintrc.json`. The guard here is the only thing that
+#                    reds when the type-aware machinery goes quiet, and its
+#                    30-day report artifact is the trail for reading a
+#                    regression back. Maintainer decision, 2026-09-09.
 #   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened

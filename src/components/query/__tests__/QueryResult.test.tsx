@@ -1413,7 +1413,9 @@ describe('QueryResult – error paths', () => {
 
   it('shows generic fallback for non-Error rejection', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      // oxlint-disable-next-line typescript/only-throw-error -- the non-Error rejection this test exists to exercise
       if (cmd === 'list_tags_by_prefix') throw 'string error without Error wrapper'
+      // oxlint-disable-next-line typescript/only-throw-error -- same, on the query call
       if (cmd === 'run_advanced_query') throw 'string error without Error wrapper'
       return null
     })
