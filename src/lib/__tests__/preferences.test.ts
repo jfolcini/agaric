@@ -14,6 +14,7 @@ import {
   effectiveKey,
   hasPreference,
   imageCollapseKey,
+  pruneImageCollapse,
   PREFERENCES,
   readPreference,
   removePreference,
@@ -484,6 +485,27 @@ describe('imageCollapse (#4864)', () => {
       JSON.stringify([HUGE_DATA_SRC, '/c.png', imageCollapseKey('/d.png')]),
     )
     expect(readPreference(PREFERENCES.imageCollapse)).toEqual([imageCollapseKey('/d.png')])
+  })
+
+  // The v1 megabytes stay in storage — still filling the quota, still
+  // stopping every other preference from persisting — until something writes
+  // the key back. `migrate` alone only prunes the value in memory.
+  it('pruneImageCollapse frees the quota the v1 entries hold', () => {
+    localStorage.setItem('image_collapsed', JSON.stringify([HUGE_DATA_SRC]))
+    pruneImageCollapse()
+    expect(localStorage.getItem('image_collapsed')).toBe('[]')
+  })
+
+  it('pruneImageCollapse leaves a vault that never folded an image alone', () => {
+    pruneImageCollapse()
+    expect(localStorage.getItem('image_collapsed')).toBeNull()
+  })
+
+  it('pruneImageCollapse keeps the digests it finds', () => {
+    const keys = [imageCollapseKey('/c.png')]
+    localStorage.setItem('image_collapsed', JSON.stringify(keys))
+    pruneImageCollapse()
+    expect(localStorage.getItem('image_collapsed')).toBe(JSON.stringify(keys))
   })
 
   // `migrate` runs on EVERY read, not only the first one after the bump, so a

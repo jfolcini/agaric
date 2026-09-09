@@ -16,7 +16,7 @@ import { resolveLocale } from '@/lib/i18n/locales'
 import { setLocale } from '@/lib/i18n/set-locale'
 import { logger } from '@/lib/logger'
 import { initFrontendObservability } from '@/lib/observability'
-import { PREFERENCES, readPreference } from '@/lib/preferences'
+import { PREFERENCES, pruneImageCollapse, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
 
 /**
@@ -158,6 +158,11 @@ async function main() {
   // `@/lib/preferences` puts `useLocalStoragePreference` (and React) in
   // every consumer's graph, including the vitest setup's.
   await setLocale(resolveLocale(readPreference(PREFERENCES.language)))
+
+  // Free the quota a v1 `image_collapsed` could have exhausted, before the
+  // first preference write of the session rather than whenever a page happens
+  // to render an image (#4864).
+  pruneImageCollapse()
 
   const rootEl = document.getElementById('root')
   if (!rootEl) throw new Error('Root element not found')

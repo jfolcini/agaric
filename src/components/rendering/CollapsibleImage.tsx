@@ -16,7 +16,7 @@
  * every mounted copy of one image folds together instead of drifting apart.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GatedImage } from '@/components/rendering/GatedImage'
@@ -58,7 +58,12 @@ export function CollapsibleImage({
   const [collapsedKeys, setCollapsedKeys] = usePreference(PREFERENCES.imageCollapse)
   // A digest, never the src: a pasted screenshot's `data:` src is megabytes,
   // and the stored list has to stay inside the origin's quota (#4864).
-  const key = imageCollapseKey(src)
+  //
+  // Memoised because the digest walks the whole src, and `usePreference`
+  // subscribes every mounted copy to the `image_collapsed` broadcast: folding
+  // one image re-renders all of them, so an unmemoised call would re-hash
+  // every megabyte-sized src on the page for one toggle.
+  const key = useMemo(() => imageCollapseKey(src), [src])
   const collapsed = collapsedKeys.includes(key)
   const label = collapsedLabel(alt, src)
 

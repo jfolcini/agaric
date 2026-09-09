@@ -1350,6 +1350,24 @@ const IMAGE_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
+ * Drop the v1 raw-src entries of `image_collapsed` from storage.
+ *
+ * `migrate` prunes them on READ, but nothing persists that until something
+ * writes the key back, and the only writer is a mounted `CollapsibleImage`
+ * (#4864). Until then the megabytes are still occupying the origin's quota,
+ * which is the state where every OTHER preference in the app silently fails
+ * to persist — so an upgraded user keeps that failure until they happen to
+ * open a page that renders an image. Called once from `main.tsx`.
+ *
+ * Only touches a key that already exists: a vault that never folded an image
+ * owes no `image_collapsed` row and should not be given an empty one.
+ */
+export function pruneImageCollapse(): void {
+  if (!hasPreference(IMAGE_COLLAPSE_PREFERENCE)) return
+  writePreference(IMAGE_COLLAPSE_PREFERENCE, readPreference(IMAGE_COLLAPSE_PREFERENCE))
+}
+
+/**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
  */
