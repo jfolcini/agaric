@@ -404,7 +404,7 @@ describe('useRecentPagesStore', () => {
       expect(useRecentPagesStore.getState().recentPages[0]?.title).toBe('Alpha (revisited)')
     })
 
-    it('caps unpinned entries at 10, evicting the oldest', () => {
+    it('caps the list at 10, evicting the oldest', () => {
       const { addRecentPage } = useRecentPagesStore.getState()
       for (let i = 0; i < 13; i++) addRecentPage(`P${i}`, `Page ${i}`)
 
@@ -416,73 +416,15 @@ describe('useRecentPagesStore', () => {
       expect(ids[9]).toBe('P3')
     })
 
-    it('preserves the pinned flag when re-adding a pinned page', () => {
-      const { addRecentPage, togglePinRecentPage } = useRecentPagesStore.getState()
+    it('re-adding an existing page moves it to the front with the new title', () => {
+      const { addRecentPage } = useRecentPagesStore.getState()
       addRecentPage('A', 'Alpha')
-      togglePinRecentPage('A')
+      addRecentPage('B', 'Bravo')
       addRecentPage('A', 'Alpha (updated)')
 
-      const [first] = useRecentPagesStore.getState().recentPages
-      expect(first?.pageId).toBe('A')
-      expect(first?.pinned).toBe(true)
-      expect(first?.title).toBe('Alpha (updated)')
-    })
-  })
-
-  describe('#1149 togglePinRecentPage', () => {
-    beforeEach(() => {
-      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
-    })
-
-    it('flips an existing entry to pinned and returns true', () => {
-      const { addRecentPage, togglePinRecentPage } = useRecentPagesStore.getState()
-      addRecentPage('A', 'Alpha')
-      expect(togglePinRecentPage('A')).toBe(true)
-      expect(useRecentPagesStore.getState().recentPages[0]?.pinned).toBe(true)
-    })
-
-    it('returns null for an unknown id', () => {
-      expect(useRecentPagesStore.getState().togglePinRecentPage('GHOST')).toBeNull()
-    })
-
-    it('sorts pinned entries before unpinned (pin-first ordering)', () => {
-      const { addRecentPage, togglePinRecentPage } = useRecentPagesStore.getState()
-      addRecentPage('A', 'Alpha')
-      addRecentPage('B', 'Bravo')
-      addRecentPage('C', 'Charlie')
-      // Pin the OLDEST entry — it must jump to position 0.
-      togglePinRecentPage('A')
-      expect(useRecentPagesStore.getState().recentPages.map((p) => p.pageId)).toEqual([
-        'A',
-        'C',
-        'B',
-      ])
-    })
-
-    it('does not count pinned entries against the MAX_RETAINED cap', () => {
-      const { addRecentPage, togglePinRecentPage } = useRecentPagesStore.getState()
-      for (let i = 0; i < 3; i++) {
-        addRecentPage(`PIN${i}`, `Pinned ${i}`)
-        togglePinRecentPage(`PIN${i}`)
-      }
-      for (let i = 0; i < 15; i++) addRecentPage(`U${i}`, `Unpinned ${i}`)
-
-      const { recentPages } = useRecentPagesStore.getState()
-      expect(recentPages.filter((p) => p.pinned === true)).toHaveLength(3)
-      expect(recentPages.filter((p) => p.pinned !== true)).toHaveLength(10)
-    })
-
-    it('unpinning re-stamps visitedAt to now (entry lands atop the unpinned partition)', () => {
-      const { addRecentPage, togglePinRecentPage } = useRecentPagesStore.getState()
-      addRecentPage('A', 'Alpha')
-      togglePinRecentPage('A')
-      addRecentPage('B', 'Bravo')
-      expect(useRecentPagesStore.getState().recentPages.map((p) => p.pageId)).toEqual(['A', 'B'])
-
-      togglePinRecentPage('A')
-      const result = useRecentPagesStore.getState().recentPages
-      expect(result[0]?.pinned).toBeUndefined()
-      expect(result.map((p) => p.pageId)).toEqual(['A', 'B'])
+      const pages = useRecentPagesStore.getState().recentPages
+      expect(pages.map((p) => p.pageId)).toEqual(['A', 'B'])
+      expect(pages[0]?.title).toBe('Alpha (updated)')
     })
   })
 
@@ -505,15 +447,6 @@ describe('useRecentPagesStore', () => {
       expect(removeRecentPage('GHOST')).toBe(false)
       expect(useRecentPagesStore.getState().recentPages.map((p) => p.pageId)).toEqual(['A'])
     })
-
-    it('removes a pinned entry too (pin status does not block removal)', () => {
-      const { addRecentPage, togglePinRecentPage, removeRecentPage } =
-        useRecentPagesStore.getState()
-      addRecentPage('A', 'Alpha')
-      togglePinRecentPage('A')
-      expect(removeRecentPage('A')).toBe(true)
-      expect(useRecentPagesStore.getState().recentPages).toEqual([])
-    })
   })
 
   describe('#3322 renamePage', () => {
@@ -521,10 +454,9 @@ describe('useRecentPagesStore', () => {
       useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
     })
 
-    it('retitles the entry in place, keeping MRU position, visitedAt and pin', () => {
-      const { addRecentPage, togglePinRecentPage, renamePage } = useRecentPagesStore.getState()
+    it('retitles the entry in place, keeping MRU position and visitedAt', () => {
+      const { addRecentPage, renamePage } = useRecentPagesStore.getState()
       addRecentPage('A', 'Old')
-      togglePinRecentPage('A')
       addRecentPage('B', 'Bravo')
       const before = useRecentPagesStore.getState().recentPages
       const beforeA = before.find((p) => p.pageId === 'A')
@@ -535,7 +467,6 @@ describe('useRecentPagesStore', () => {
       expect(after.map((p) => p.pageId)).toEqual(before.map((p) => p.pageId))
       const afterA = after.find((p) => p.pageId === 'A')
       expect(afterA?.title).toBe('New')
-      expect(afterA?.pinned).toBe(true)
       expect(afterA?.visitedAt).toBe(beforeA?.visitedAt)
     })
 
@@ -575,24 +506,23 @@ describe('useRecentPagesStore', () => {
   })
 
   describe('#1149 getRecentPagesForSpace (RecentPage-shaped snapshot read)', () => {
-    it('maps the active-space slice to id-keyed RecentPage entries, pin-first', () => {
+    it('maps the active-space slice to id-keyed RecentPage entries', () => {
       useSpaceStore.setState({ currentSpaceId: 'space-1' })
       useRecentPagesStore.setState({
         recentPagesBySpace: {
           'space-1': [
             { pageId: 'A', title: 'Alpha', visitedAt: '2026-01-01T00:00:00.000Z' },
-            { pageId: 'B', title: 'Bravo', visitedAt: '2026-01-02T00:00:00.000Z', pinned: true },
+            { pageId: 'B', title: 'Bravo', visitedAt: '2026-01-02T00:00:00.000Z' },
           ],
         },
       })
       const result = getRecentPagesForSpace('space-1')
-      // Pinned B sorts first; entries are `{ id, title, visitedAt }`-shaped.
-      expect(result.map((r) => r.id)).toEqual(['B', 'A'])
+      // Stored order is preserved; entries are `{ id, title, visitedAt }`-shaped.
+      expect(result.map((r) => r.id)).toEqual(['A', 'B'])
       expect(result[0]).toEqual({
-        id: 'B',
-        title: 'Bravo',
-        visitedAt: '2026-01-02T00:00:00.000Z',
-        pinned: true,
+        id: 'A',
+        title: 'Alpha',
+        visitedAt: '2026-01-01T00:00:00.000Z',
       })
     })
   })
@@ -607,15 +537,13 @@ describe('useRecentPagesStore', () => {
         'recent_pages:space-1',
         JSON.stringify([
           { id: 'R1', title: 'Raw One', visitedAt: '2026-01-01T00:00:00.000Z' },
-          { id: 'R2', title: 'Raw Two', visitedAt: '2026-01-02T00:00:00.000Z', pinned: true },
+          { id: 'R2', title: 'Raw Two', visitedAt: '2026-01-02T00:00:00.000Z' },
         ]),
       )
 
       const { bySpace, changed } = migrateRawRecentPagesKeys({})
       expect(changed).toBe(true)
-      // Pinned R2 sorts first after the merge.
-      expect(bySpace['space-1']?.map((p) => p.pageId)).toEqual(['R2', 'R1'])
-      expect(bySpace['space-1']?.find((p) => p.pageId === 'R2')?.pinned).toBe(true)
+      expect(bySpace['space-1']?.map((p) => p.pageId)).toEqual(['R1', 'R2'])
       // Raw key cleared so a later hydrate cannot re-merge.
       expect(localStorage.getItem('recent_pages:space-1')).toBeNull()
     })
@@ -641,22 +569,15 @@ describe('useRecentPagesStore', () => {
       localStorage.setItem(
         'recent_pages:space-1',
         JSON.stringify([
-          {
-            id: 'SHARED',
-            title: 'Raw shared',
-            visitedAt: '2026-05-01T00:00:00.000Z',
-            pinned: true,
-          },
+          { id: 'SHARED', title: 'Raw shared', visitedAt: '2026-05-01T00:00:00.000Z' },
           { id: 'R1', title: 'Raw only', visitedAt: '2026-04-01T00:00:00.000Z' },
         ]),
       )
 
       const { bySpace } = migrateRawRecentPagesKeys(existing)
       const slice = bySpace['space-1'] ?? []
-      // SHARED was pinned in the raw set → pin union makes it pinned, so it
-      // sorts first; store-only S1 then raw-only R1 follow (both unpinned).
-      expect(slice.map((p) => p.pageId)).toEqual(['SHARED', 'S1', 'R1'])
-      expect(slice.find((p) => p.pageId === 'SHARED')?.pinned).toBe(true)
+      // The store's own order wins for shared ids; raw-only entries append.
+      expect(slice.map((p) => p.pageId)).toEqual(['S1', 'SHARED', 'R1'])
       // No entry lost from either source.
       expect(slice.map((p) => p.pageId).toSorted()).toEqual(['R1', 'S1', 'SHARED'])
     })
@@ -716,7 +637,7 @@ describe('useRecentPagesStore', () => {
               { title: 'No id' }, // missing pageId
               null,
               42,
-              { pageId: 'C', title: 'Charlie', visitedAt: 123, pinned: 'yes' }, // bad optionals
+              { pageId: 'C', title: 'Charlie', visitedAt: 123 }, // bad optional
             ],
             recentPagesBySpace: {
               'space-1': [
@@ -785,7 +706,7 @@ describe('useRecentPagesStore', () => {
 
     it('leaves a valid blob unchanged round-tripping through merge', async () => {
       const validPages = [
-        { pageId: 'A', title: 'Alpha', visitedAt: '2026-01-01T00:00:00.000Z', pinned: true },
+        { pageId: 'A', title: 'Alpha', visitedAt: '2026-01-01T00:00:00.000Z' },
         { pageId: 'B', title: 'Bravo' },
       ]
       localStorage.setItem(

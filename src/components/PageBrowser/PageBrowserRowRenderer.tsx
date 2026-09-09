@@ -8,7 +8,7 @@
  */
 
 import type { VirtualItem } from '@tanstack/react-virtual'
-import { FileText, Star } from 'lucide-react'
+import { Bookmark, FileText } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -94,10 +94,10 @@ function HeaderRow({
   const { t } = useTranslation()
   const isStarredHeader = row.section === 'starred'
   const visibleLabel = isStarredHeader
-    ? t('pageBrowser.starredSection')
+    ? t('pageBrowser.bookmarksSection')
     : t('pageBrowser.pagesSection')
   const accessibleLabel = isStarredHeader
-    ? t('pageBrowser.starredSectionLabel', { count: row.count })
+    ? t('pageBrowser.bookmarksSectionLabel', { count: row.count })
     : t('pageBrowser.pagesSectionLabel', { count: row.count })
   const labelId = `${sectionLabelId}-${row.section}`
   // The `Pages` header gets a thin top divider when it follows the
@@ -122,7 +122,7 @@ function HeaderRow({
         className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
       >
         {isStarredHeader ? (
-          <Star className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />
+          <Bookmark className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />
         ) : (
           <FileText className="h-3.5 w-3.5" aria-hidden="true" />
         )}

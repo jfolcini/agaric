@@ -38,7 +38,7 @@ describe('PageQuickActions', () => {
         />,
       )
 
-      expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
     })
   }
@@ -71,14 +71,14 @@ describe('PageQuickActions', () => {
     )
 
     // Initially unstarred — aria-pressed="false" and label says "Star".
-    const star = screen.getByRole('button', { name: /star this page/i })
+    const star = screen.getByRole('button', { name: /bookmark this page/i })
     expect(star).toHaveAttribute('aria-pressed', 'false')
 
     await user.click(star)
 
     // After toggling, aria-pressed flips to "true" and the label updates.
     await waitFor(() => {
-      const next = screen.getByRole('button', { name: /unstar this page/i })
+      const next = screen.getByRole('button', { name: /remove this page from bookmarks/i })
       expect(next).toHaveAttribute('aria-pressed', 'true')
     })
 
@@ -86,9 +86,9 @@ describe('PageQuickActions', () => {
     expect(JSON.parse(localStorage.getItem('starred-pages') ?? '[]')).toContain('PAGE_1')
 
     // Toggle back — should clear from localStorage.
-    await user.click(screen.getByRole('button', { name: /unstar this page/i }))
+    await user.click(screen.getByRole('button', { name: /remove this page from bookmarks/i }))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /star this page/i })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: /bookmark this page/i })).toHaveAttribute(
         'aria-pressed',
         'false',
       )
@@ -128,7 +128,7 @@ describe('PageQuickActions', () => {
 
     expect(screen.queryByRole('button', { name: /delete page/i })).not.toBeInTheDocument()
     // Star button is still rendered.
-    expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
   })
 
   it('disables the delete button when deleting={true}', async () => {

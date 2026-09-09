@@ -5,10 +5,9 @@
  * passed in; this component is purely presentational (rows + the inline
  * bookmark toggle, Phase 4).
  *
- * A bookmark IS a pinned recent page — the sidebar's Bookmarks section is a
- * view over the same `recent-pages` state. The store still spells the flag
- * `pinned` (it is persisted under that name), so `onToggleBookmark` is wired
- * to `togglePinRecentPage` at the one seam, in `CommandPalette.tsx`.
+ * Bookmarked state is NOT part of a recent entry: it comes from the one
+ * bookmark list (`starred-pages`), passed down as `bookmarkedIds`, so the
+ * glyph here and the star in the page header always agree.
  */
 
 import { Bookmark, Clock } from 'lucide-react'
@@ -22,18 +21,20 @@ import type { RecentPage } from '@/stores/recent-pages'
 export function RecentPagesGroup({
   recents,
   onSelect,
+  bookmarkedIds,
   onToggleBookmark,
   t,
 }: {
   recents: RecentPage[]
   onSelect: (page: RecentPage) => void
+  bookmarkedIds: ReadonlySet<string>
   onToggleBookmark: (pageId: string) => void
   t: ReturnType<typeof useTranslation>['t']
 }): React.ReactElement {
   return (
     <CommandGroup heading={t('palette.recentTitle')} data-testid="palette-recents-group">
       {recents.map((page) => {
-        const isBookmarked = page.pinned === true
+        const isBookmarked = bookmarkedIds.has(page.id)
         return (
           <CommandItem
             key={page.id}

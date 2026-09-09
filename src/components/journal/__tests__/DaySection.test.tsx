@@ -733,7 +733,7 @@ describe('DaySection', () => {
         <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={() => {}} />,
       )
 
-      expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
     })
 
@@ -750,7 +750,7 @@ describe('DaySection', () => {
         />,
       )
 
-      expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
     })
 
@@ -762,7 +762,7 @@ describe('DaySection', () => {
       )
 
       // No star, no delete — only the empty-state CTA is visible.
-      expect(screen.queryByRole('button', { name: /star this page/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /bookmark this page/i })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /delete page/i })).not.toBeInTheDocument()
     })
 

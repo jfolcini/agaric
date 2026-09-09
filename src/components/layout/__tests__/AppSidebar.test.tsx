@@ -18,6 +18,7 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
 import { NAV_GROUPS, NAV_ITEMS } from '@/lib/nav-items'
 import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -361,10 +362,9 @@ describe('AppSidebar', () => {
   // #4713 — the Bookmarks section is mounted in the sidebar's content, below
   // the nav groups. Its own behaviour is covered by BookmarksSection.test.tsx;
   // this pins the wiring, which nothing else would catch.
-  it('mounts the Bookmarks section listing the pinned pages (#4713)', () => {
-    const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-    recordVisit({ pageId: 'A', title: 'Alpha' })
-    togglePinRecentPage('A')
+  it('mounts the Bookmarks section listing the bookmarked pages (#4713)', () => {
+    localStorage.setItem('starred-pages', JSON.stringify(['A']))
+    useResolveStore.getState().batchSet([{ id: 'A', title: 'Alpha', deleted: false }])
 
     renderSidebar()
 

@@ -104,6 +104,7 @@ vi.mock('lucide-react', () => ({
   Repeat: () => <svg data-testid="repeat-icon" />,
   Settings2: () => <svg data-testid="settings2-icon" />,
   Smile: (props: Record<string, unknown>) => <svg data-testid="smile-icon" {...props} />,
+  Bookmark: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
   Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
   StickyNote: () => <svg data-testid="sticky-note-icon" />,
   Tag: () => <svg data-testid="tag-icon" />,
@@ -1896,7 +1897,7 @@ describe('PageHeader star button', () => {
   it('renders star button', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const starBtn = screen.getByRole('button', { name: /star this page/i })
+    const starBtn = screen.getByRole('button', { name: /bookmark this page/i })
     expect(starBtn).toBeInTheDocument()
   })
 
@@ -1905,7 +1906,7 @@ describe('PageHeader star button', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const starBtn = screen.getByRole('button', { name: /star this page/i })
+    const starBtn = screen.getByRole('button', { name: /bookmark this page/i })
     await user.click(starBtn)
 
     // `useStarredPages` writes the canonical JSON-array shape under
@@ -1920,7 +1921,7 @@ describe('PageHeader star button', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const starBtn = screen.getByRole('button', { name: /unstar this page/i })
+    const starBtn = screen.getByRole('button', { name: /remove this page from bookmarks/i })
     expect(starBtn).toBeInTheDocument()
 
     const starIcon = screen.getByTestId('star-icon')
@@ -2369,7 +2370,7 @@ describe('PageHeader dedicated delete button (Part A)', () => {
     // Exactly one star + one trash button live in the inline quick-actions
     // cluster (the kebab "Delete page" item is inside a popup, not a button
     // in the title row).
-    expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^delete page$/i })).toBeInTheDocument()
   })
 

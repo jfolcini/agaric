@@ -7,10 +7,10 @@
  * count plus bulk actions when ≥1 page is selected:
  *
  *  - **Trash** — bulk soft-delete via `deleteBlocksByIds`.
- *  - **Star / Unstar** — toggle the whole selection's starred state (a pure
+ *  - **Bookmark** — toggle the whole selection's bookmarked state (a pure
  *    localStorage feature via `useStarredPages().setMany`; no backend call).
  *    Mixed selections (some starred, some not) are treated as "not fully
- *    starred": the control shows Star (not Unstar) and stars the whole
+ *    bookmarked": the control shows Bookmark (not Remove) and bookmarks the whole
  *    selection — the least-surprising reading of a toggle, and idempotent
  *    for the pages already starred.
  *  - **Add tag** — pick a tag from the active space, then `addTagsByIds`.
@@ -32,7 +32,7 @@
  * not in this toolbar.
  */
 
-import { SlidersHorizontal, Star, StarOff, Tag, Trash2 } from 'lucide-react'
+import { Bookmark, BookmarkX, SlidersHorizontal, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -477,26 +477,30 @@ export function PageBrowserBatchToolbar({
         className="page-batch-trash-confirm"
       />
 
-      {/* Star / unstar the whole selection (pure localStorage). One toggle:
+      {/* Bookmark / unbookmark the whole selection (pure localStorage). One toggle:
           unstars when every selected page is already starred, else stars. */}
       <Button
         variant="outline"
         size="sm"
         onClick={handleToggleStar}
         aria-label={
-          allStarred ? t('pageBrowser.batch.unstarSelected') : t('pageBrowser.batch.starSelected')
+          allStarred
+            ? t('pageBrowser.batch.removeBookmarkSelected')
+            : t('pageBrowser.batch.bookmarkSelected')
         }
         title={
-          allStarred ? t('pageBrowser.batch.unstarSelected') : t('pageBrowser.batch.starSelected')
+          allStarred
+            ? t('pageBrowser.batch.removeBookmarkSelected')
+            : t('pageBrowser.batch.bookmarkSelected')
         }
-        data-testid={allStarred ? 'page-batch-unstar-btn' : 'page-batch-star-btn'}
+        data-testid={allStarred ? 'page-batch-remove-bookmark-btn' : 'page-batch-bookmark-btn'}
       >
         {allStarred ? (
-          <StarOff className="h-3.5 w-3.5" />
+          <BookmarkX className="h-3.5 w-3.5" />
         ) : (
-          <Star className="h-3.5 w-3.5" fill="none" />
+          <Bookmark className="h-3.5 w-3.5" fill="none" />
         )}
-        {allStarred ? t('pageBrowser.batch.unstar') : t('pageBrowser.batch.star')}
+        {allStarred ? t('pageBrowser.batch.removeBookmark') : t('pageBrowser.batch.bookmark')}
       </Button>
 
       {/* Add-tag action: reveals the tag picker, then confirms. */}

@@ -1,8 +1,16 @@
 /**
- * Starred pages — localStorage-backed list of user-starred (favorited) pages.
+ * The bookmark list — a localStorage-backed array of page ids.
  *
- * Stores a JSON array of page IDs under the `starred-pages` key.
- * Used by PageBrowser to let users pin frequently-used pages and filter to show only starred ones.
+ * This is the ONE list behind every bookmark affordance: the page header's
+ * button, the Pages browser's row toggles and batch action, the command
+ * palette's recents rows, and the sidebar's Bookmarks section. There is no
+ * second list; the `pinned` flag on recent pages that used to back the
+ * sidebar is gone.
+ *
+ * The stored key is still `starred-pages`, and so are the identifiers in this
+ * module. Renaming the key means migrating everyone's bookmarks for a string
+ * no user ever sees, so the seam stops here: everything above this file says
+ * bookmark.
  */
 
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'

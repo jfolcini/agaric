@@ -265,13 +265,21 @@ function seedRecentPagesStore(entries: PageRef[]): void {
   }))
 }
 
-function readRecentPagesStore(): Array<{ id: string; pinned?: boolean }> {
+function readRecentPagesStore(): Array<{ id: string }> {
   const slice = useRecentPagesStore.getState().recentPagesBySpace['SPACE_TEST'] ?? []
-  return slice.map((p) => {
-    const entry: { id: string; pinned?: boolean } = { id: p.pageId }
-    if (p.pinned === true) entry.pinned = true
-    return entry
-  })
+  return slice.map((p) => ({ id: p.pageId }))
+}
+
+/**
+ * The one bookmark list. The palette writes it through `useStarredPages`, the
+ * same preference the page header's button and the sidebar section use, so
+ * this is what "bookmarked" means here — not a field on the recent entry.
+ */
+function readBookmarkIds(): string[] {
+  const raw = localStorage.getItem('starred-pages')
+  if (raw == null) return []
+  const parsed: unknown = JSON.parse(raw)
+  return Array.isArray(parsed) ? (parsed as string[]) : []
 }
 
 describe('CommandPalette — empty state', () => {
@@ -294,23 +302,23 @@ describe('CommandPalette — recents bookmarking (Phase 4)', () => {
     openPalette()
     const bookmark = await screen.findByTestId('palette-recent-bookmark-PAGE_A')
     fireEvent.click(bookmark)
-    // Persisted (the store still spells the flag `pinned`).
-    expect(readRecentPagesStore()[0]?.pinned).toBe(true)
+    // Persisted to the shared bookmark list, not to the recent entry.
+    expect(readBookmarkIds()).toEqual(['PAGE_A'])
     // The palette did NOT navigate away on the bookmark click.
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('bookmarked recents sort above the rest', async () => {
+  it('marks the bookmarked recent without reordering the list', async () => {
     seedRecentPagesStore([
-      { pageId: 'PAGE_OLD', title: 'OldPinned', visitedAt: '2026-01-01T00:00:00Z', pinned: true },
-      { pageId: 'PAGE_NEW', title: 'NewUnpinned', visitedAt: '2026-05-19T00:00:00Z' },
+      { pageId: 'PAGE_OLD', title: 'Older', visitedAt: '2026-01-01T00:00:00Z' },
+      { pageId: 'PAGE_NEW', title: 'Newer', visitedAt: '2026-05-19T00:00:00Z' },
     ])
+    localStorage.setItem('starred-pages', JSON.stringify(['PAGE_OLD']))
     render(<CommandPalette />)
     openPalette()
-    // Find both recent rows by data-testid.
     const old = await screen.findByTestId('palette-recent-PAGE_OLD')
     const fresh = await screen.findByTestId('palette-recent-PAGE_NEW')
-    // The bookmarked row's DOM ordering comes before the plain one
+    // Recents stay in MRU order — bookmarking no longer promotes a row
     // (compareDocumentPosition: 4 == DOCUMENT_POSITION_FOLLOWING).
     expect(old.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(old.getAttribute('data-bookmarked')).toBe('true')
@@ -378,7 +386,7 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
     fireEvent.click(await screen.findByTestId('palette-action-bookmark'))
-    expect(readRecentPagesStore()[0]?.pinned).toBe(true)
+    expect(readBookmarkIds()).toEqual(['PAGE_R'])
     // Action ran, menu closed; the palette stays open — bookmarking is not a nav action.
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
     expect(useCommandPaletteStore.getState().open).toBe(true)

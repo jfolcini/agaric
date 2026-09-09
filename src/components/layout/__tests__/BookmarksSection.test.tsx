@@ -1,17 +1,14 @@
 /**
- * Tests for BookmarksSection (#4713) — the sidebar view over the pinned
- * entries of `recent-pages`.
+ * Tests for BookmarksSection (#4713) — the sidebar view over the one bookmark
+ * list, the `starred-pages` preference that the page header and the Pages
+ * browser also write.
  *
- * The section adds no state of its own beyond the disclosure preference, so
- * the tests that matter are the ones pinning the two store behaviours it is
- * built on:
- *   - pin-first ordering — a bookmark pinned earlier lists ahead of one
- *     visited more recently ("lists bookmarks pin-first …"),
- *   - the `MAX_RETAINED` pin exemption — a bookmark survives twelve later
- *     visits ("keeps a bookmark …").
- * Both are asserted from the rendered list, and both go red when
- * `applyPinFirstCap` is weakened (see the session notes for the two
- * falsifying mutations).
+ * Two properties of that arrangement are what these tests exist for, and both
+ * were false while bookmarks were a `pinned` flag on recent pages:
+ *   - a bookmark outlives the recents cap, because it is not a recent entry
+ *     ("keeps a bookmark that twelve later visits evict from recents"),
+ *   - titles come from the resolve cache, which is keyed by space, so another
+ *     space's bookmarks are left out ("shows only the active space").
  *
  * Everything else is durable, re-queried effect: unmount + re-render after
  * each interaction, so a state change that only lived in a React closure
@@ -26,12 +23,42 @@ import { axe } from '@/__tests__/helpers/axe'
 import { BookmarksSection } from '@/components/layout/BookmarksSection'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 const SPACE_A = 'SPACE_A'
 const SPACE_B = 'SPACE_B'
+
+/**
+ * Seed the bookmark list, and the titles the section renders it with.
+ *
+ * The two halves are deliberately separate: `starred-pages` holds ids only,
+ * and the resolve cache — written here under whatever space is active — is
+ * where the titles come from. A test that seeds an id without a title is
+ * seeding a bookmark from another space.
+ */
+function bookmark(entries: Array<{ id: string; title: string }>): void {
+  writePreference(PREFERENCES.starredPages, [
+    ...new Set([...readBookmarkIds(), ...entries.map((e) => e.id)]),
+  ])
+  useResolveStore
+    .getState()
+    .batchSet(entries.map((e) => ({ id: e.id, title: e.title, deleted: false })))
+}
+
+function readBookmarkIds(): string[] {
+  const raw = localStorage.getItem('starred-pages')
+  if (raw == null) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as string[]) : []
+  } catch {
+    return []
+  }
+}
 
 function renderSection() {
   return render(
@@ -55,9 +82,11 @@ function bookmarkLabels(): string[] {
     .map((b) => b.textContent ?? '')
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
+  await new Promise<void>((r) => queueMicrotask(r))
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {}, rawKeysMerged: true })
   useSpaceStore.setState({
     currentSpaceId: SPACE_A,
@@ -73,11 +102,11 @@ afterEach(() => {
 
 describe('BookmarksSection', () => {
   describe('listing', () => {
-    it('renders an expanded section listing the pinned pages', () => {
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      recordVisit({ pageId: 'B', title: 'Bravo' })
-      togglePinRecentPage('A')
+    it('renders an expanded section listing the bookmarked pages', () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      // Resolvable, visited, but not bookmarked.
+      useResolveStore.getState().batchSet([{ id: 'B', title: 'Bravo', deleted: false }])
+      useRecentPagesStore.getState().recordVisit({ pageId: 'B', title: 'Bravo' })
 
       renderSection()
 
@@ -86,23 +115,15 @@ describe('BookmarksSection', () => {
         'true',
       )
       expect(bookmarkLabels()).toEqual(['Alpha'])
-      // Unpinned recents are NOT bookmarks.
       expect(within(bookmarkList() as HTMLElement).queryByText('Bravo')).toBeNull()
     })
 
-    /**
-     * Pin-first ordering, observed from the list: Alpha is pinned first,
-     * Bravo is visited AFTER that and pinned second. Recency alone would put
-     * Bravo first; the store's pin partition keeps Alpha ahead.
-     */
-    it('lists bookmarks pin-first, ahead of a page visited more recently', () => {
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      recordVisit({ pageId: 'B', title: 'Bravo' })
-      recordVisit({ pageId: 'C', title: 'Charlie' })
-      togglePinRecentPage('A')
-      recordVisit({ pageId: 'B', title: 'Bravo' })
-      togglePinRecentPage('B')
+    it('lists bookmarks in the order they were added', () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      bookmark([{ id: 'B', title: 'Bravo' }])
+      // Visiting Bravo again does not reorder the bookmark list — bookmarks
+      // are not recents.
+      useRecentPagesStore.getState().recordVisit({ pageId: 'B', title: 'Bravo' })
 
       renderSection()
 
@@ -110,24 +131,26 @@ describe('BookmarksSection', () => {
     })
 
     /**
-     * The `MAX_RETAINED = 10` pin exemption. Twelve visits after the pin is
-     * two more than the cap, so an unpinned Alpha would have been evicted.
+     * A bookmark is not a recent entry, so the `MAX_RETAINED = 10` cap cannot
+     * reach it. Twelve visits after bookmarking is two past the cap, and the
+     * title still comes from the resolve cache rather than the evicted row.
      */
-    it('keeps a bookmark that twelve later visits would otherwise have evicted', () => {
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
+    it('keeps a bookmark that twelve later visits evict from recents', () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      const { recordVisit } = useRecentPagesStore.getState()
       recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
       for (let i = 0; i < 12; i++) recordVisit({ pageId: `P${i}`, title: `Page ${i}` })
 
       renderSection()
 
       expect(bookmarkLabels()).toEqual(['Alpha'])
-      // The cap did apply — to the unpinned partition only.
+      // Alpha really is gone from recents — the cap did apply.
       const slice = useRecentPagesStore.getState().recentPagesBySpace[SPACE_A] ?? []
-      expect(slice.filter((p) => p.pinned !== true)).toHaveLength(10)
+      expect(slice).toHaveLength(10)
+      expect(slice.map((p) => p.pageId)).not.toContain('A')
     })
 
-    it('renders the empty state when nothing is pinned', () => {
+    it('renders the empty state when nothing is bookmarked', () => {
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
 
       renderSection()
@@ -138,17 +161,14 @@ describe('BookmarksSection', () => {
     })
 
     it('shows only the active space bookmarks', () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
       useSpaceStore.setState({ currentSpaceId: SPACE_B })
-      useRecentPagesStore.setState({
-        recentPages: [],
-        recentPagesBySpace: {
-          [SPACE_A]: [{ pageId: 'A', title: 'Alpha', pinned: true }],
-          [SPACE_B]: [{ pageId: 'B', title: 'Bravo', pinned: true }],
-        },
-      })
+      bookmark([{ id: 'B', title: 'Bravo' }])
 
       renderSection()
 
+      // Both ids are in the one list; only Bravo resolves under SPACE_B.
+      expect(readBookmarkIds()).toEqual(['A', 'B'])
       expect(bookmarkLabels()).toEqual(['Bravo'])
     })
   })
@@ -156,9 +176,7 @@ describe('BookmarksSection', () => {
   describe('interaction', () => {
     it('opens the page in the active tab', async () => {
       const user = userEvent.setup()
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'ns/Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'ns/Alpha' }])
 
       renderSection()
       // Namespaced titles render as the leaf; the full path stays as `title`.
@@ -170,9 +188,8 @@ describe('BookmarksSection', () => {
 
     it('removes a bookmark and leaves the page in recents, durably', async () => {
       const user = userEvent.setup()
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
 
       const { unmount } = renderSection()
       await user.click(screen.getByRole('button', { name: 'Remove Alpha from bookmarks' }))
@@ -181,17 +198,15 @@ describe('BookmarksSection', () => {
 
       expect(bookmarkList()).toBeNull()
       expect(screen.getByText(t('bookmarks.empty'))).toBeInTheDocument()
-      // Unpinned, not deleted — it is still a recent page.
+      expect(readBookmarkIds()).toEqual([])
+      // Unbookmarked, not deleted — it is still a recent page.
       const slice = useRecentPagesStore.getState().recentPagesBySpace[SPACE_A] ?? []
       expect(slice.map((p) => p.pageId)).toEqual(['A'])
-      expect(slice[0]?.pinned).toBeUndefined()
     })
 
     it('collapses and stays collapsed across a remount', async () => {
       const user = userEvent.setup()
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'Alpha' }])
 
       const { unmount } = renderSection()
       await user.click(screen.getByRole('button', { name: 'Collapse Bookmarks' }))
@@ -215,9 +230,7 @@ describe('BookmarksSection', () => {
      */
     it('still toggles when persisting the preference throws', async () => {
       const user = userEvent.setup()
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'Alpha' }])
       vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
         throw new Error('QuotaExceededError')
       })
@@ -235,9 +248,7 @@ describe('BookmarksSection', () => {
 
   describe('accessibility', () => {
     it('has no a11y violations with bookmarks listed', async () => {
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'Alpha' }])
 
       const { container } = renderSection()
       await waitFor(async () => {
@@ -254,9 +265,7 @@ describe('BookmarksSection', () => {
 
     it('has no a11y violations when collapsed', async () => {
       const user = userEvent.setup()
-      const { recordVisit, togglePinRecentPage } = useRecentPagesStore.getState()
-      recordVisit({ pageId: 'A', title: 'Alpha' })
-      togglePinRecentPage('A')
+      bookmark([{ id: 'A', title: 'Alpha' }])
 
       const { container } = renderSection()
       await act(async () => {

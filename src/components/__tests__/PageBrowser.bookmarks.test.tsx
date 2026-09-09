@@ -114,8 +114,8 @@ beforeEach(() => {
 })
 
 describe('PageBrowser', () => {
-  describe('starred pages', () => {
-    it('renders star icon on each page', async () => {
+  describe('bookmarks', () => {
+    it('renders a bookmark toggle on each page', async () => {
       stubPageList([
         makePage({ id: 'P1', content: 'Page One' }),
         makePage({ id: 'P2', content: 'Page Two' }),
@@ -125,14 +125,14 @@ describe('PageBrowser', () => {
 
       await screen.findByText('Page One')
 
-      const starButtons = screen.getAllByRole('button', { name: /star page/i })
+      const starButtons = screen.getAllByRole('button', { name: /bookmark page/i })
       expect(starButtons).toHaveLength(2)
     })
 
     // Clicking the star toggle moves the page between groups.
     // With a 1-page vault we render flat (no headers) — so this test
     // pairs with the multi-page case below which asserts the row jump.
-    it('clicking star toggles starred state and persists to localStorage', async () => {
+    it('clicking the toggle bookmarks the page and persists to localStorage', async () => {
       const user = userEvent.setup()
       stubPageList([makePage({ id: 'P1', content: 'Starrable Page' })])
 
@@ -141,27 +141,29 @@ describe('PageBrowser', () => {
       await screen.findByText('Starrable Page')
 
       // Initially unstarred
-      const starBtn = screen.getByRole('button', { name: /star page/i })
+      const starBtn = screen.getByRole('button', { name: /bookmark page/i })
       expect(starBtn).toBeInTheDocument()
 
       // Click to star
       await user.click(starBtn)
 
       // Should now show "Unstar page" aria-label
-      expect(screen.getByRole('button', { name: /unstar page/i })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /remove page from bookmarks/i }),
+      ).toBeInTheDocument()
       expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify(['P1']))
 
       // Click to unstar
-      await user.click(screen.getByRole('button', { name: /unstar page/i }))
+      await user.click(screen.getByRole('button', { name: /remove page from bookmarks/i }))
 
       // Should be back to "Star page"
-      expect(screen.getByRole('button', { name: /star page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /bookmark page/i })).toBeInTheDocument()
       expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([]))
     })
 
     // Starring a page in a multi-page vault moves it to the top
     // of the list under the "Starred" group header.
-    it('clicking star moves the page to the top under the Starred header', async () => {
+    it('bookmarking moves the page to the top under the Bookmarks header', async () => {
       const user = userEvent.setup()
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
@@ -173,7 +175,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       // Initially flat — no Starred header.
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       let titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
@@ -183,11 +185,11 @@ describe('PageBrowser', () => {
       // Star "Cherry" — its row should jump to the top, into the
       // newly-rendered Starred group.
       const cherryRow = screen.getByText('Cherry').closest('.group') as HTMLElement
-      const starBtn = within(cherryRow).getByRole('button', { name: /star page/i })
+      const starBtn = within(cherryRow).getByRole('button', { name: /bookmark page/i })
       await user.click(starBtn)
 
       // Starred header now visible.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // Cherry is now first in the page-only grid.
@@ -279,7 +281,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry', 'Durian'])
     })
 
-    it('toggling star round-trips a page between groups', async () => {
+    it('toggling round-trips a page between groups', async () => {
       const user = userEvent.setup()
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
@@ -292,9 +294,9 @@ describe('PageBrowser', () => {
 
       // Star Banana → moves to top under Starred.
       const bananaRow = screen.getByText('Banana').closest('.group') as HTMLElement
-      await user.click(within(bananaRow).getByRole('button', { name: /star page/i }))
+      await user.click(within(bananaRow).getByRole('button', { name: /bookmark page/i }))
 
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       let titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
@@ -304,9 +306,11 @@ describe('PageBrowser', () => {
       // Unstar Banana → falls back into Pages, the Starred header
       // disappears (no starred pages remain).
       const bananaRowAgain = screen.getByText('Banana').closest('.group') as HTMLElement
-      await user.click(within(bananaRowAgain).getByRole('button', { name: /unstar page/i }))
+      await user.click(
+        within(bananaRowAgain).getByRole('button', { name: /remove page from bookmarks/i }),
+      )
 
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
@@ -314,7 +318,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
     })
 
-    it('namespaced pages render under the unified Pages section alongside Starred', async () => {
+    it('namespaced pages render under the unified Pages section alongside Bookmarks', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       stubPageList([
         makePage({ id: 'P1', content: 'work/project-a' }),
@@ -327,7 +331,7 @@ describe('PageBrowser', () => {
       // Under the unified model NO LONGER bypasses Starred when
       // namespaced pages are present. Starred renders the starred-and-
       // namespaced page (full title); Pages renders the namespace tree.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
       // Namespace tree shape intact under Pages.
       expect(screen.getByText('work')).toBeInTheDocument()
@@ -351,7 +355,7 @@ describe('PageBrowser', () => {
       expect(container.querySelector('[data-page-section="pages"]')).not.toBeNull()
     })
 
-    it('all-starred hides the Pages header', async () => {
+    it('all-bookmarked hides the Pages header', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
@@ -361,7 +365,7 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Apple')
 
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
@@ -372,7 +376,7 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Solo')
 
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
@@ -389,7 +393,7 @@ describe('PageBrowser', () => {
       await screen.findByText('StarredApple')
 
       // Both headers visible at start.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // Search for "Other" → starred group becomes empty, only the
@@ -397,12 +401,12 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'Other')
 
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
       expect(screen.queryByText('StarredApple')).not.toBeInTheDocument()
     })
 
-    it('Starred header carries count in its accessible name', async () => {
+    it('Bookmarks header carries count in its accessible name', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
@@ -421,8 +425,8 @@ describe('PageBrowser', () => {
       // the page-list grid (its single gridcell child carries the
       // visible label and the icon).
       expect(starredGroup).toHaveAttribute('role', 'row')
-      // Accessible name is "Starred, 2 pages" (sr-only span).
-      expect(starredGroup).toHaveAccessibleName('Starred, 2 pages')
+      // Accessible name is "Bookmarks, 2 pages" (sr-only span).
+      expect(starredGroup).toHaveAccessibleName('Bookmarks, 2 pages')
 
       const pagesGroup = container.querySelector(
         '[data-page-section="pages"]',
@@ -431,7 +435,7 @@ describe('PageBrowser', () => {
       expect(pagesGroup).toHaveAccessibleName('Pages, 1 page')
     })
 
-    it('viewport aria-label switches to grouped variant when starred exist', async () => {
+    it('viewport aria-label switches to grouped variant when bookmarks exist', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       stubPageList([
         makePage({ id: 'P1', content: 'Apple' }),
@@ -442,7 +446,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       const grid = screen.getByRole('grid')
-      expect(grid).toHaveAttribute('aria-label', 'Page list, grouped by starred')
+      expect(grid).toHaveAttribute('aria-label', 'Page list, grouped by bookmarked')
     })
 
     it('viewport aria-label stays plain when no starred pages', async () => {
@@ -511,7 +515,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Starred Page')
 
       // Both group headers must render.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       const results = await axe(container)
@@ -556,7 +560,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       // Starred section renders the starred flat page.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       // Pages section renders the namespace tree.
       expect(screen.getByText('Pages')).toBeInTheDocument()
       expect(screen.getByText('work')).toBeInTheDocument()
@@ -593,7 +597,7 @@ describe('PageBrowser', () => {
       expect(pageRows[1]?.textContent).toMatch(/work/)
     })
 
-    it('a starred-and-namespaced page renders TWICE — once in Starred, once nested in Pages', async () => {
+    it('a starred-and-namespaced page renders TWICE — once in Bookmarks, once nested in Pages', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       stubPageList([
         makePage({ id: 'P1', content: 'work/foo' }),
@@ -603,7 +607,7 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Inbox')
 
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // The starred copy renders the FULL title `work/foo`.
@@ -616,7 +620,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('work')).toBeInTheDocument()
     })
 
-    it('star toggle from either copy of a duplicated row updates BOTH copies', async () => {
+    it('bookmark toggle from either copy of a duplicated row updates BOTH copies', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       stubPageList([makePage({ id: 'P1', content: 'work/foo' })])
@@ -630,12 +634,14 @@ describe('PageBrowser', () => {
       //   2. Mark the leaf inside `work` as unstarred too — only the
       //      `Pages` section remains.
       const starredCopy = screen.getByText('work/foo').closest('[data-page-item]') as HTMLElement
-      const unstarBtn = within(starredCopy).getByRole('button', { name: /unstar page/i })
+      const unstarBtn = within(starredCopy).getByRole('button', {
+        name: /remove page from bookmarks/i,
+      })
       await user.click(unstarBtn)
 
       // Starred section gone — both copies refreshed via the
       // `useStarredPages` hook subscription.
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
       // The tree-leaf copy is still visible.
       expect(screen.getByText('foo')).toBeInTheDocument()
@@ -653,14 +659,14 @@ describe('PageBrowser', () => {
       await screen.findByText('StarredApple')
 
       // Both sections render initially.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       const search = screen.getByPlaceholderText('Search pages...')
       await user.type(search, 'StarredApple')
 
       // Starred-only — Pages header hidden.
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
@@ -679,7 +685,7 @@ describe('PageBrowser', () => {
       await user.type(search, 'work')
 
       // Pages-only — Starred header hidden.
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
       expect(screen.getByText('work')).toBeInTheDocument()
     })
@@ -750,7 +756,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/i)).toBeInTheDocument()
       })
 
-      expect(screen.queryByText('Starred')).not.toBeInTheDocument()
+      expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
       // The viewport's section presence flags reflect "neither".
       const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')
@@ -770,7 +776,7 @@ describe('PageBrowser', () => {
 
       // Both sections render under Starred (the starred-and-
       // namespaced page) and Pages (the namespace tree).
-      expect(screen.getByText('Starred')).toBeInTheDocument()
+      expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
 
       // DOM is settled by the synchronous getByText assertions above;

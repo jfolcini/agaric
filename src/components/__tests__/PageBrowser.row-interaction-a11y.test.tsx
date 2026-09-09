@@ -172,7 +172,7 @@ describe('PageBrowser', () => {
     await screen.findByText('Inset Buttons Page')
 
     const pageRow = screen.getByText('Inset Buttons Page').closest('.group') as HTMLElement
-    const starBtn = within(pageRow).getByRole('button', { name: /star page/i })
+    const starBtn = within(pageRow).getByRole('button', { name: /bookmark page/i })
     const deleteBtn = findTrashButton(pageRow)
     expect(starBtn).toHaveClass('focus-visible:ring-inset')
     expect(deleteBtn).toHaveClass('focus-visible:ring-inset')

@@ -1,19 +1,20 @@
 /**
  * BookmarksSection — the sidebar's collapsible Bookmarks list (#4713).
  *
- * A bookmark IS a pinned recent page: `recent-pages` already owns the whole
- * model — `togglePinRecentPage`, pin-first ordering, and the exemption that
- * keeps pinned entries out of the `MAX_RETAINED` eviction. This section is the
- * sidebar view over that state; it adds no store and no second list.
+ * There is ONE bookmark list, the `starred-pages` preference, and this is the
+ * sidebar view over it. The page header, the Pages browser rows and its batch
+ * toolbar write the same list, so a page bookmarked anywhere appears here.
+ * (It used to be a second list — a `pinned` flag on recent pages, writable
+ * only from the command palette — which meant the star and this section were
+ * different features with the same name.)
  *
- * The command palette's inline Pin button is the only place a page can be
- * pinned; SearchPanel renders the same recents read-only, and the PageBrowser
- * never reads the flag. So `bookmarks.emptyHint` names the palette alone.
+ * Titles come from the app-wide resolve cache rather than from the bookmark
+ * entry, so a rename is reflected without rewriting storage. That cache is
+ * keyed by `(space, id)`, which is also the space filter: a bookmark from
+ * another space does not resolve under the active one and is left out.
  *
- * Consequences the section inherits, deliberately: bookmarks are per-space
- * (the store partitions by space id) and device-local (the store persists to
- * `localStorage`, so they do not sync). Moving bookmarks into the DB is the
- * follow-up #4713 defers.
+ * Bookmarks are device-local (`localStorage`), so they do not sync. Moving
+ * them into the DB is the follow-up #4713 defers.
  *
  * The disclosure state is a per-client view preference, so it lives in the
  * preferences registry (`PREFERENCES.bookmarksCollapsed`) rather than with
@@ -21,7 +22,7 @@
  */
 
 import { Bookmark, BookmarkX } from 'lucide-react'
-import type { ReactElement } from 'react'
+import { type ReactElement, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -35,22 +36,29 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useStarredPages } from '@/hooks/useStarredPages'
 import { getPageDisplayName } from '@/lib/page-display'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
-import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
-import { useSpaceStore } from '@/stores/space'
+import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
 export function BookmarksSection(): ReactElement {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = usePreference(PREFERENCES.bookmarksCollapsed)
 
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const spacePages = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
-  const bookmarks = spacePages.filter((p) => p.pinned === true)
+  const { starredIds, toggle } = useStarredPages()
+  // Re-resolve when the cache lands new titles, a rename edits one, or a
+  // space switch flushes the previous space's entries.
+  const resolveVersion = useResolveStore((s) => s.version)
+  const bookmarks = useMemo(() => {
+    const resolve = useResolveStore.getState()
+    return [...starredIds]
+      .filter((id) => resolve.isResolved(id))
+      .map((id) => ({ pageId: id, title: resolve.resolveTitle(id) }))
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the store is read imperatively so the memo does not re-run per unrelated cache write
+  }, [starredIds, resolveVersion])
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const togglePinRecentPage = useRecentPagesStore((s) => s.togglePinRecentPage)
   const { isMobile, setOpenMobile } = useSidebar()
 
   return (
@@ -110,7 +118,7 @@ export function BookmarksSection(): ReactElement {
                       // `after:-inset-2` (36px) on the mobile breakpoint; -inset-3
                       // around the 20px button is the 44px touch target.
                       className="[@media(pointer:coarse)]:after:-inset-3"
-                      onClick={() => togglePinRecentPage(page.pageId)}
+                      onClick={() => toggle(page.pageId)}
                     >
                       <BookmarkX />
                     </SidebarMenuAction>

@@ -22,7 +22,7 @@
  * computed style.
  */
 
-import { FileText, Star, Trash2 } from 'lucide-react'
+import { Bookmark, FileText, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -381,7 +381,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label={starred ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')}
+          aria-label={starred ? t('pageBrowser.removeBookmark') : t('pageBrowser.addBookmark')}
           className="star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
           data-starred={starred}
           onClick={(e) => {
@@ -389,7 +389,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
             onToggleStar(pageId)
           }}
         >
-          <Star className="h-3.5 w-3.5" fill={starred ? 'currentColor' : 'none'} />
+          <Bookmark className="h-3.5 w-3.5" fill={starred ? 'currentColor' : 'none'} />
         </Button>
         <button
           type="button"
