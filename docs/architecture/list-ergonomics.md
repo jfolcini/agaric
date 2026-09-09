@@ -170,10 +170,14 @@ Three requirements to actually get idempotence:
    paragraph line whose leading whitespace would not survive the reparse — when
    the paragraph follows a list sibling and its indent reaches a whole
    `LIST_NEST_INDENT` (the item would swallow it, fusing two lists or
-   re-dispatching the dedented text as some other block), and whenever the
+   re-dispatching the dedented text as some other block), whenever the
    leading whitespace run contains a **tab** (the importer rewrites such a run
    as the columns it occupies, so the bytes never come back — this arm applies
-   to every line of a multi-line paragraph, and at any position). `\<space>` and
+   to every line of a multi-line paragraph, and at any position), and on every
+   line of a paragraph that is a list item's **non-leading child** (#4050),
+   where import drops whatever indentation the item dedent leaves rather than
+   storing it as text — so there the escape is the only way a leading space is
+   text, and one space is already enough to need it. `\<space>` and
    `\<tab>` are escapable on import (`isEscapableChar`) and decode to the bare
    character, so the escape is invisible in the document and stable under
    re-export. It is a *visible* character in the exported file, which is the
@@ -206,7 +210,11 @@ Three requirements to actually get idempotence:
    (`\-` at that same indent). By the same arithmetic a single nesting step of
    six spaces or more (from a marker at column 0) also lands outside the
    tolerance and imports as paragraph text rather than as a sub-list — our own
-   export never emits that, but a foreign document can.
+   export never emits that, but a foreign document can. What the dedent leaves
+   on such a line is indentation, not text, so it is dropped: `- parent` +
+   six-space `- child` stores the paragraph `- child` and re-exports it as
+   `\- child` at the one-level nest indent, where before #4050 the four residual
+   spaces stayed in the text.
 4. **Indentation is counted in COLUMNS, and a tab is a column count** — a tab
    advances to the next 4-column stop (CommonMark §2.2), not to a fixed number
    of spaces (`leadingIndent`, `markdown-common.ts`, shared by both halves
@@ -220,7 +228,8 @@ Three requirements to actually get idempotence:
    text, or inside fenced code content) is stored byte for byte; a paragraph's
    *unescaped* leading whitespace is indentation and is stored as the columns
    it occupies, which is what gives a tab-indented foreign paragraph a fixed
-   point at all. An **escaped** leading tab (`\<tab>`, item 2 above) is content
+   point at all — except on a list item's nested lines, where the item dedent
+   has already spent the indentation and the rest is dropped (#4050). An **escaped** leading tab (`\<tab>`, item 2 above) is content
    and is stored as the tab — which is why export has to re-escape it, or the
    next import would measure it as columns and the pair would converge only on
    the second pass.
@@ -255,8 +264,7 @@ The two agree on the common case — a single leading tab is one level under bot
 the importer (two tabs → four spaces → depth 2) and a **continuation paragraph
 inside `- p`** to the parser (two tabs → column 8, dedented by one content
 column, still far past the three-space marker tolerance, so it is text: the
-serializer re-emits it escaped, as six spaces followed by an escaped dash and
-the word). A mixed space-then-tab indent diverges the same way. So the same file can nest differently depending on whether it was
+serializer re-emits it as `\- deep` at the one-level nest indent). A mixed space-then-tab indent diverges the same way. So the same file can nest differently depending on whether it was
 imported or pasted.
 
 Nothing pins this today — no conformance vector covers markdown tab or CR
@@ -274,11 +282,14 @@ item's *content column* is a lazy continuation / soft break (same block); a line
 that is itself a deeper marker is a child block. `collectListItem`
 (`markdown-parse/parser.ts`) now implements the "content column = marker width"
 half of that convention (#4019): it measures the column from the item's **own**
-marker and dedents nested lines by exactly one content column, so indentation
-beyond that column belongs to the content rather than to the structure. The
-remaining half — lazy continuation of a paragraph across an unindented line —
-is still unimplemented and must be pinned down before building the coarse
-option; the single-line model needs no such rule and should ship first.
+marker and dedents nested lines by exactly one content column. Indentation
+beyond that column is still indentation, not content: it is dropped rather than
+stored, so a four-space continuation line imports as `continued` rather than
+keeping the dedent's two residual spaces in the text (#4050). The remaining half — a continuation line JOINING the
+item's paragraph instead of becoming a second one, and lazy continuation across
+an unindented line — is still unimplemented and must be pinned down before
+building the coarse option; the single-line model needs no such rule and should
+ship first.
 
 ## Compatibility with existing content
 

@@ -1053,11 +1053,15 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
    * defused — the exemption is "sits on the marker line", not "is inside a
    * list". Without it this emitted `- p\n  * y*`, whose reparse read the
    * second line as a NESTED bullet list.
+   *
+   * The space the italic defuse moves out of the mark then starts an indented
+   * line, so the whitespace defuse (#4050) escapes it — that escape is now the
+   * only thing carrying it back, since indentation on such a line is dropped.
    */
   it("a list item's later paragraph is defused, unlike its marker-line one", () => {
     const d = doc(bulletList(listItem(paragraph(text('p')), paragraph(italic(' y')))))
     const md = serialize(d)
-    expect(md).toBe('- p\n   *y*')
+    expect(md).toBe('- p\n  \\ *y*')
     expect(serialize(parse(md))).toBe(md)
     expect(parse(md)).toEqual(
       doc(bulletList(listItem(paragraph(text('p')), paragraph(text(' '), it_('y'))))),

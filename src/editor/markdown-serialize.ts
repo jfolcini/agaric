@@ -1308,8 +1308,8 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  * decode back to the bare character (`isEscapableChar`), so the text is
  * unchanged and the escape is stable under re-serialization.
  *
- * There are two ways the leading whitespace fails to come back, and the escape
- * has to cover BOTH — accepting `\<tab>` in `isEscapableChar` without emitting
+ * There are three ways the leading whitespace fails to come back, and the
+ * escape has to cover ALL — accepting `\<tab>` in `isEscapableChar` without emitting
  * it for the second would simply move the non-convergence rather than remove
  * it (a foreign `\<tab>x` would decode to a tab-leading paragraph the
  * serializer then emitted raw, which pass two expands to spaces):
@@ -1325,6 +1325,11 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  *     (`dedentColumns`, #4052), so a run containing a tab NEVER survives
  *     verbatim — with or without a list in front of it. This one needs no
  *     predecessor and no threshold.
+ *  3. THE ITEM DEDENT, for a list item's non-leading child. Such a child is
+ *     emitted indented (`serializeListItem`) and dedented back out by
+ *     `collectListItem`, which leaves any excess as indentation the parser
+ *     drops rather than stores (#4050). Per line like hazard 2, and with no
+ *     threshold at all: one space is already lost.
  *
  * Hazard 2 is per LINE, not per block: a paragraph holding a `hardBreak` emits
  * more than one line, and every one of them starts a line the parser measures.
@@ -1333,7 +1338,7 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  * continuations no list can claim.
  *
  * `skipFirst` is for a list item's children: its first child's FIRST line is
- * emitted on the MARKER line, where neither hazard exists — the marker consumes
+ * emitted on the MARKER line, where no hazard exists — the marker consumes
  * the line start, so that text's own leading whitespace is not a line's leading
  * whitespace at all (`- <tab>x` round-trips as-is) and there is no preceding
  * sibling to absorb it. Its later lines are ordinary lines again. The same
@@ -1356,9 +1361,17 @@ function serializeBlockSequence(
         : serializeBlockNode(node, onUnknownNode)
     if (node.type !== 'paragraph') return serialized
     const prev = nodes[idx - 1]
+    // Hazard 3, DEDENT (#4050): a list item's non-leading child is emitted
+    // indented (`serializeListItem`), and the parser drops whatever indentation
+    // such a paragraph line still carries once the item dedent has run — so
+    // EVERY line of it, not just the first, has to say that its own leading
+    // whitespace is text. Like hazard 2 this is per line and needs no
+    // threshold; unlike it, one space is already enough.
+    const dedentedOnTheWayBack = skipFirst && idx > 0
     return serialized
       .split('\n')
       .map((line, lineIdx) => {
+        if (dedentedOnTheWayBack) return leadingIndent(line) > 0 ? `\\${line}` : line
         if (lineIdx === 0) {
           return onMarkerLine || !needsWhitespaceDefuse(line, prev) ? line : `\\${line}`
         }

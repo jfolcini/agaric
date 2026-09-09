@@ -756,13 +756,11 @@ describe('parse — tab-indented lists (#4052)', () => {
   // of a code block nested in a list item, which #4052 explicitly forbids.
   // Every PURE-tab indent (the shape foreign outliners actually emit) is exact.
   it('a leading run mixing spaces and tabs stays continuation content', () => {
-    // (The residue is stored as columns, not as the raw tab — see the
-    // leading-indent normalization pinned at the end of this block.)
-    const withResidue = doc(
-      bulletList(listItem(paragraph(text('parent')), paragraph(text('    - child')))),
-    )
-    expect(parse('- parent\n  \t- child')).toEqual(withResidue)
-    expect(parse('- parent\n   \t- child')).toEqual(withResidue)
+    // (What survives the dedent is indentation, so it is dropped rather than
+    // stored — #4050. The marker itself stays text, which is the claim here.)
+    const asText = doc(bulletList(listItem(paragraph(text('parent')), paragraph(text('- child')))))
+    expect(parse('- parent\n  \t- child')).toEqual(asText)
+    expect(parse('- parent\n   \t- child')).toEqual(asText)
   })
 
   it('a tab-indented sub-list is a fixpoint after import', () => {
@@ -806,9 +804,10 @@ describe('parse — tab-indented lists (#4052)', () => {
   })
 
   it('a doubly-tab-indented line stays continuation content, not a sub-list', () => {
-    // 8 columns; one content column of dedent leaves ≥ 4, past the tolerance.
+    // 8 columns; one content column of dedent leaves ≥ 4, past the tolerance —
+    // and what it leaves is indentation, dropped rather than stored (#4050).
     expect(parse('- p\n\t\t- deep')).toEqual(
-      doc(bulletList(listItem(paragraph(text('p')), paragraph(text('    - deep'))))),
+      doc(bulletList(listItem(paragraph(text('p')), paragraph(text('- deep'))))),
     )
   })
 
