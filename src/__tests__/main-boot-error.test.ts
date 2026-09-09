@@ -30,22 +30,34 @@ const loggerMock = {
   error: vi.fn(),
 }
 
-// `main()` is invoked as an import side effect and its promise is not exported,
-// so these three cases can only wait for it. The default `vi.waitFor` budget of
-// 1000 ms is not enough. The cost is not a dynamic import: `beforeEach` sets
-// `__TAURI_INTERNALS__`, so the one `await import()` in `main.tsx` is gated off,
-// and `@/lib/tauri-mock` is `vi.doMock`ed besides; `setLocale` is a static
-// import that loads no chunk for `en`. What has to happen inside the window is
-// evaluating this file's module graph and rendering, and that is enough under
-// shard load: measured at 20-238 ms per case locally and 1029 ms on a loaded CI
-// shard, which is where it timed out and reported the fallback screen as
-// missing rather than late.
-const BOOT_WAIT = { timeout: 15_000 } as const
+/**
+ * `main()` runs as an import side effect, so these three cases used to poll the
+ * DOM for its result under a 15 s `vi.waitFor` budget. That poll flaked on
+ * loaded CI shards and reported `expected null not to be null` — the shape of a
+ * timeout that names nothing. `main.tsx` now exports the promise it already
+ * built, so a case awaits the boot rather than guessing how long it takes, and
+ * a boot that genuinely hangs fails on the hang instead of on an empty DOM.
+ */
+async function bootAndSettle(): Promise<void> {
+  await (
+    await import('@/main')
+  ).bootstrap
+}
 
 const renderMock = vi.fn()
 const createRootMock = vi.fn(() => ({ render: renderMock, unmount: vi.fn() }))
 
-function mockCommonDeps() {
+/**
+ * `setupMock` is a PARAMETER rather than a second `vi.doMock` at the call site,
+ * because two registrations for one module id do not reliably resolve to the
+ * later one: the throwing case used to call this and then re-mock
+ * `@/lib/tauri-mock`, and roughly one run in five got the benign `vi.fn()`
+ * instead — `main()` then completed and mounted, and the case failed on
+ * `createRoot` having been called. `afterEach` unmocks only
+ * `@/lib/observability`, so the registration also outlives the test that made
+ * it. One registration per test removes both.
+ */
+function mockCommonDeps(setupMock: () => void = vi.fn()) {
   vi.doMock('@/lib/logger', () => ({
     logger: loggerMock,
     setLogLevel: vi.fn(),
@@ -67,7 +79,7 @@ function mockCommonDeps() {
     usePrimaryFocus: () => ({ register: vi.fn(), focus: vi.fn() }),
   }))
 
-  vi.doMock('@/lib/tauri-mock', () => ({ setupMock: vi.fn() }))
+  vi.doMock('@/lib/tauri-mock', () => ({ setupMock }))
 }
 
 beforeEach(() => {
@@ -97,12 +109,9 @@ describe('main.tsx — observability init failure does not block render', () => 
       initFrontendObservability: vi.fn().mockRejectedValue(new Error('chunk load failed')),
     }))
 
-    await import('@/main')
+    await bootAndSettle()
 
-    await vi.waitFor(() => {
-      expect(renderMock).toHaveBeenCalledTimes(1)
-    }, BOOT_WAIT)
-
+    expect(renderMock).toHaveBeenCalledTimes(1)
     expect(createRootMock).toHaveBeenCalledTimes(1)
     expect(loggerMock.warn).toHaveBeenCalledWith(
       'main',
@@ -125,11 +134,7 @@ describe('main.tsx — pre-mount failure renders a static fallback screen', () =
       initFrontendObservability: vi.fn().mockResolvedValue(undefined),
     }))
 
-    await import('@/main')
-
-    await vi.waitFor(() => {
-      expect(document.querySelector('[role="alert"]')).not.toBeNull()
-    }, BOOT_WAIT)
+    await bootAndSettle()
 
     expect(createRootMock).not.toHaveBeenCalled()
     const alert = document.querySelector('[role="alert"]')
@@ -154,22 +159,15 @@ describe('main.tsx — pre-mount failure renders a static fallback screen', () =
     // boot screen has to agree with it.
     document.body.innerHTML = '<div id="root"></div>'
     delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-    mockCommonDeps()
     const appError: unknown = { kind: 'Internal', message: 'boot ipc failed' }
-    vi.doMock('@/lib/tauri-mock', () => ({
-      setupMock: () => {
-        throw appError
-      },
-    }))
+    mockCommonDeps(() => {
+      throw appError
+    })
     vi.doMock('@/lib/observability', () => ({
       initFrontendObservability: vi.fn().mockResolvedValue(undefined),
     }))
 
-    await import('@/main')
-
-    await vi.waitFor(() => {
-      expect(document.querySelector('[role="alert"]')).not.toBeNull()
-    }, BOOT_WAIT)
+    await bootAndSettle()
 
     expect(createRootMock).not.toHaveBeenCalled()
     const alert = document.querySelector('[role="alert"]')

@@ -250,4 +250,14 @@ function renderFatalBootError(error: unknown): void {
   container.append(wrapper)
 }
 
-main().catch(renderFatalBootError)
+/**
+ * The bootstrap, already running and already handling its own failure.
+ *
+ * Exported for the tests alone, which import this module for its side effect
+ * and otherwise have nothing to await: they polled the DOM for the fallback
+ * screen instead, and that poll is a timeout waiting to happen on a loaded CI
+ * shard — it reported "expected null not to be null", which says nothing about
+ * what actually stalled. Awaiting this settles when the boot does, whatever it
+ * did. Inert in the app: the promise is created and `.catch`ed either way.
+ */
+export const bootstrap: Promise<void> = main().catch(renderFatalBootError)
