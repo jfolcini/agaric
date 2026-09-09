@@ -1230,13 +1230,23 @@ describe('list nesting indent (#4019): a sub-level indent is not nested content'
     }
   })
 
-  it('dedents by exactly one level, so a 3-space paragraph keeps its own space', () => {
-    // One level (2) is structure; the third space is the nested paragraph's own
-    // leading whitespace, so the round trip preserves the 3-space line.
+  it('dedents by one level and drops what is left, so a 3-space line loses it', () => {
+    // One level (2) is structure and the third space is indentation too: a
+    // nested paragraph carries its OWN leading whitespace escaped (below), so
+    // whitespace that arrives raw here can only be the document's (#4050).
     expect(parse('- x\n   a')).toEqual(
-      doc(bulletList(listItem(paragraph(text('x')), paragraph(text(' a'))))),
+      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('a'))))),
     )
-    expect(serialize(parse('- x\n   a'))).toBe('- x\n   a')
+    expect(serialize(parse('- x\n   a'))).toBe('- x\n  a')
+  })
+
+  it('round-trips a nested paragraph that really does start with a space', () => {
+    // The other arm of the pair: the space is TEXT, and the escape is what says
+    // so. Reddens if the item-child whitespace defuse goes.
+    const withSpace = doc(bulletList(listItem(paragraph(text('x')), paragraph(text(' a')))))
+    expect(serialize(withSpace)).toBe('- x\n  \\ a')
+    expect(parse('- x\n  \\ a')).toEqual(withSpace)
+    expect(serialize(parse('- x\n  \\ a'))).toBe('- x\n  \\ a')
   })
 
   // -- the neighbouring cases that must NOT change ----------------------------
@@ -1274,20 +1284,90 @@ describe('list nesting indent (#4019): a sub-level indent is not nested content'
     )
   })
 
-  it('treats over-indentation of PLAIN content as content, not as a deeper dedent', () => {
-    // Only ONE level is structure (the content column), so the remainder stays
-    // in the text. The alternative — dedenting by the block minimum — is what
-    // let a doc's own 4-space paragraph (`- x` + a paragraph whose text starts
-    // with four spaces) come back as `a` and drift on every pass (#4019).
+  it('treats over-indentation of PLAIN content as indentation, at any depth', () => {
+    // Only ONE level is structure for the DEDENT — deeper levels are stripped
+    // one recursion at a time, not by the block minimum, which is what let a
+    // doc's own 4-space paragraph drift on every pass (#4019). What the dedent
+    // leaves on a paragraph line is indentation all the same, and is dropped
+    // (#4050): the escaped form above is how such a paragraph says "space".
     expect(parse('- x\n    a')).toEqual(
-      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('  a'))))),
+      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('a'))))),
     )
-    expect(serialize(parse('- x\n    a'))).toBe('- x\n    a')
+    expect(serialize(parse('- x\n    a'))).toBe('- x\n  a')
     // …and one level deeper again.
     expect(parse('- x\n      a')).toEqual(
-      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('    a'))))),
+      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('a'))))),
     )
-    expect(serialize(parse('- x\n      a'))).toBe('- x\n      a')
+    expect(serialize(parse('- x\n      a'))).toBe('- x\n  a')
+  })
+})
+
+// -- #4050: a continuation line's indentation is indentation ------------------
+// The four-space continuation line that foreign markdown writes under a list
+// item used to import with the two-space residue of the item dedent baked into
+// the STORED TEXT (`- item` + `    continued` → `p('  continued')`), so the
+// block rendered with two stray leading spaces forever after.
+//
+// A nested paragraph line therefore keeps NO leading whitespace of its own: the
+// serializer escapes the whitespace that is text (`\ `, the same defuse that
+// already covered a tab and a paragraph following a list) and the parser drops
+// whatever else survives the dedent. The pair only works both ways together —
+// without the escape the item's own content loses its leading spaces on the way
+// back in, which is the drift #4019 closed.
+describe('list continuation indent (#4050): the residue is indentation, not text', () => {
+  it('imports a 4-space continuation line with no leading spaces', () => {
+    expect(parse('- item\n    continued')).toEqual(
+      doc(bulletList(listItem(paragraph(text('item')), paragraph(text('continued'))))),
+    )
+  })
+
+  // Both arms of the boundary. One space is BELOW the content column, so the
+  // line is not the item's content at all: it stays a sibling paragraph and its
+  // space is its own text (#4019). From two columns up it is nested content,
+  // and every extra column is indentation whatever its width.
+  it('keeps a 1-space line a sibling paragraph, space intact', () => {
+    expect(parse('- item\n continued')).toEqual(
+      doc(bulletList(listItem(paragraph(text('item')))), paragraph(text(' continued'))),
+    )
+  })
+
+  it.each([['  '], ['   '], ['    '], ['      '], ['\t'], ['  \t']])(
+    'strips a %j indent from the nested paragraph',
+    (indent) => {
+      expect(parse(`- item\n${indent}continued`)).toEqual(
+        doc(bulletList(listItem(paragraph(text('item')), paragraph(text('continued'))))),
+      )
+    },
+  )
+
+  it('normalizes the foreign form once and is a fixpoint after', () => {
+    const once = serialize(parse('- item\n    continued'))
+    expect(once).toBe('- item\n  continued')
+    expect(serialize(parse(once))).toBe(once)
+  })
+
+  // Every line of the nested paragraph, not just its first: a hard break makes
+  // one paragraph span several lines and the parser measures each of them.
+  it('applies to a hard-break continuation line of a nested paragraph', () => {
+    const withSpace = doc(
+      bulletList(listItem(paragraph(text('x')), paragraph(text('a'), hardBreak(), text(' b')))),
+    )
+    expect(serialize(withSpace)).toBe('- x\n  a\\\n  \\ b')
+    expect(parse('- x\n  a\\\n  \\ b')).toEqual(withSpace)
+    expect(parse('- x\n  a\\\n     b')).toEqual(
+      doc(bulletList(listItem(paragraph(text('x')), paragraph(text('a'), hardBreak(), text('b'))))),
+    )
+  })
+
+  // The rule is the PARAGRAPH production's, so a nested fence's content — which
+  // is content, not indentation, and cannot carry an escape — is untouched.
+  it('leaves the indentation inside an item-nested code block alone', () => {
+    const input = doc(
+      bulletList(listItem(paragraph(text('item')), codeBlock('if x:\n    return 1', 'py'))),
+    )
+    const md = serialize(input)
+    expect(md).toBe('- item\n  ```py\n  if x:\n      return 1\n  ```')
+    expect(parse(md)).toEqual(input)
   })
 })
 
@@ -1466,7 +1546,8 @@ describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
   // back to column 0 and made every over-indented line a marker again. That is
   // the same rule whose whitespace-eating half caused #4019, so it went; with
   // the content-column dedent, six spaces leaves a four-space residue, and four
-  // spaces is past `MAX_MARKER_INDENT`.
+  // spaces is past `MAX_MARKER_INDENT`. The residue itself is then dropped as
+  // the indentation it is, rather than kept as text (#4050).
   //
   // CommonMark agrees with the new reading, which is why the change is kept
   // rather than papered over by widening the tolerance: `- parent` puts its
@@ -1487,16 +1568,14 @@ describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
     (n) => {
       const md = `- parent\n${' '.repeat(n)}- child`
       // The residue after one content column (2) is `n - 2` spaces, which is
-      // past the tolerance — so it is the paragraph's own leading whitespace.
+      // past the tolerance — so the line is nested content, not a marker, and
+      // the residue is the foreign document's indentation: dropped, not stored
+      // as text (#4050).
       expect(parse(md)).toEqual(
-        doc(
-          bulletList(
-            listItem(paragraph(text('parent')), paragraph(text(`${' '.repeat(n - 2)}- child`))),
-          ),
-        ),
+        doc(bulletList(listItem(paragraph(text('parent')), paragraph(text('- child'))))),
       )
-      // Exported with the marker escaped at its own indent, and stable after.
-      const out = `- parent\n${' '.repeat(n)}\\- child`
+      // Exported with the marker escaped at the nest indent, and stable after.
+      const out = '- parent\n  \\- child'
       expect(serialize(parse(md))).toBe(out)
       expect(serialize(parse(out))).toBe(out)
     },
@@ -1504,16 +1583,14 @@ describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
 
   it('applies the same 6-space cutoff to the ordered and task markers', () => {
     expect(parse('1. parent\n      1. child')).toEqual(
-      doc(orderedList(listItem(paragraph(text('parent')), paragraph(text('    1. child'))))),
+      doc(orderedList(listItem(paragraph(text('parent')), paragraph(text('1. child'))))),
     )
-    expect(serialize(parse('1. parent\n      1. child'))).toBe('1. parent\n      1\\. child')
+    expect(serialize(parse('1. parent\n      1. child'))).toBe('1. parent\n  1\\. child')
 
     expect(parse('- parent\n      - [ ] child')).toEqual(
-      doc(bulletList(listItem(paragraph(text('parent')), paragraph(text('    - [ ] child'))))),
+      doc(bulletList(listItem(paragraph(text('parent')), paragraph(text('- [ ] child'))))),
     )
-    expect(serialize(parse('- parent\n      - [ ] child'))).toBe(
-      '- parent\n      \\- \\[ \\] child',
-    )
+    expect(serialize(parse('- parent\n      - [ ] child'))).toBe('- parent\n  \\- \\[ \\] child')
   })
 
   it('keeps FIVE spaces — the last indent inside the tolerance — a real sub-list', () => {

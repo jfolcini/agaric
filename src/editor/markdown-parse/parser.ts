@@ -681,9 +681,22 @@ const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. ([^\\n]*)$`)
  * still round-trips verbatim.
  */
 function expandLeadingIndent(line: string): string {
-  const rest = line.replace(/^[ \t]+/, '')
+  const rest = stripLeadingIndent(line)
   if (rest.length === line.length) return line
   return ' '.repeat(leadingIndent(line)) + rest
+}
+
+/**
+ * Drop a line's leading whitespace run entirely — the rule for a paragraph line
+ * that is a list item's NESTED content, where indentation is structure the item
+ * dedent has already spent and any residue is the foreign document's, not the
+ * text's (#4050: `- item` + `    continued` used to store `  continued`). The
+ * serializer defuses a nested paragraph's own leading whitespace with a `\`
+ * escape (`serializeBlockSequence`), so whitespace that survives to here can
+ * only be indentation.
+ */
+function stripLeadingIndent(line: string): string {
+  return line.replace(/^[ \t]+/, '')
 }
 
 /**
@@ -827,6 +840,9 @@ function collectListItem(
   // beyond one content column belongs to the content, not to the structure —
   // and where that residue is itself a marker (a 4-space-nested import leaves
   // `  - child`), the marker-indent tolerance still reads it as a sub-list.
+  // On a PARAGRAPH line the residue is the foreign document's indentation and
+  // is dropped rather than stored as text (#4050) — see `parseParagraph`'s
+  // `indentIsStructure`.
   const nested = nestedRaw.map((line) => dedentColumns(line, contentColumn))
   return { textLines, nested, next: j }
 }
@@ -947,7 +963,7 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
   if (nested.length === 0) {
     return { type: 'listItem', content: [paragraph] }
   }
-  const nestedDoc = parse(nested.join('\n'), depth + 1)
+  const nestedDoc = parseDocument(nested.join('\n'), depth + 1, true)
   const nestedBlocks = nestedDoc.content ?? []
   return { type: 'listItem', content: [paragraph, ...nestedBlocks] }
 }
@@ -962,19 +978,27 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
  * a backslash at end of input is not a hard break) — the serializer always
  * emits a newline after the marker, so this case never comes from our own
  * output.
+ *
+ * `indentIsStructure` marks the lines of a list item's nested content, which
+ * `collectListItem` has already dedented by the item's content column: there,
+ * leftover indentation is the foreign document's and is dropped rather than
+ * stored (#4050). See {@link stripLeadingIndent}.
  */
 export function parseParagraph(
   lines: readonly string[],
   i: number,
   depth: number,
+  indentIsStructure = false,
 ): BlockParseResult {
   const inlineNodes: InlineNode[] = []
   let j = i
   for (;;) {
-    // A paragraph is the only production that stores a line's indentation as
-    // text, so it is the one place that indentation has to be normalized to
-    // columns — see `expandLeadingIndent`.
-    const line = expandLeadingIndent(lines[j] as string)
+    // A paragraph is the only production that would store a line's indentation
+    // as text, so it is the one place that indentation has to be dealt with:
+    // dropped where the item dedent already spent it (`stripLeadingIndent`),
+    // normalized to columns everywhere else (`expandLeadingIndent`).
+    const raw = lines[j] as string
+    const line = indentIsStructure ? stripLeadingIndent(raw) : expandLeadingIndent(raw)
     if (j + 1 >= lines.length || trailingBackslashRun(line) % 2 === 0) {
       inlineNodes.push(...parseLine(line, depth))
       break
@@ -995,6 +1019,7 @@ function dispatchBlockProduction(
   lines: readonly string[],
   i: number,
   depth: number,
+  indentIsStructure: boolean,
 ): BlockParseResult {
   return (
     parseCodeBlock(lines, i) ??
@@ -1006,7 +1031,7 @@ function dispatchBlockProduction(
     parseOrderedList(lines, i, depth) ??
     parseTask(lines, i, depth) ??
     parseBulletList(lines, i, depth) ??
-    parseParagraph(lines, i, depth)
+    parseParagraph(lines, i, depth, indentIsStructure)
   )
 }
 
@@ -1055,6 +1080,17 @@ function splitLines(markdown: string): string[] {
 }
 
 export function parse(markdown: string, depth = 0): DocNode {
+  return parseDocument(markdown, depth, false)
+}
+
+/**
+ * The parse proper. `indentIsStructure` is true only for the recursive parse of
+ * a list item's nested lines, which `collectListItem` has already dedented —
+ * see {@link parseParagraph}. It applies to THAT level alone: a blockquote
+ * nested there re-enters through {@link parse}, where its own content's leading
+ * whitespace is text again.
+ */
+function parseDocument(markdown: string, depth: number, indentIsStructure: boolean): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
   const lines = splitLines(markdown)
   // Depth guard: cap recursion to prevent stack overflow on pathological input
@@ -1079,7 +1115,7 @@ export function parse(markdown: string, depth = 0): DocNode {
   const blocks: BlockLevelNode[] = []
   let i = 0
   while (i < lines.length) {
-    const result = dispatchBlockProduction(lines, i, depth)
+    const result = dispatchBlockProduction(lines, i, depth, indentIsStructure)
     blocks.push(...result.blocks)
     i += result.consumed
   }
