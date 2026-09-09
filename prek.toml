@@ -146,6 +146,17 @@ rev = "914e7df21a07ef503a81201c76d2b11c789d3fca"         # v1.7.12
 hooks = [{ id = "actionlint", stages = ["pre-commit"] }]
 
 # OXC: lint (oxlint) + format check (oxfmt) for JS/TS
+# `--type-aware` makes this a type checker, so it gets `pass_filenames =
+# false` for the same reason `tsc` above does: its answer for one file depends
+# on the whole program. prek splits a passed file list into ~121-file chunks
+# run as separate processes, and each chunk resolves types from only its own
+# members — so `prek run --all-files` disagreed with the whole-tree walk that
+# `npm run lint` does, in both directions, per site (#4894). #4892 spent a
+# review round on three `require-array-sort-compare` "findings" that only a
+# chunk saw. Letting oxlint walk the tree itself is also the cheaper half:
+# 3.1 s wall / 16 s CPU against the chunked list's 9.4 s / 99 s.
+# `types_or`/`exclude` still gate WHEN the hook runs, not what it reads;
+# oxlint's own `ignorePatterns` already skips `bindings.ts` and `.sqlx/`.
 # WHY: JS/TS lint regressions reaching CI — standard toolchain lane
 [[repos]]
 repo = "local"
@@ -156,7 +167,7 @@ entry = "npx oxlint --type-aware --report-unused-disable-directives-severity=err
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx"]
 exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
-pass_filenames = true
+pass_filenames = false
 stages = ["pre-commit"]
 # Auto-fix formatter (#817): `oxfmt` writes in place (its default mode) so a
 # formatting miss is mechanically corrected + re-staged instead of aborting
