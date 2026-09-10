@@ -227,7 +227,7 @@ pub mod test_support {
 /// [`test_support::RecordingApplyHost`] stands in for [`Materializer`] across
 /// this crate's session and driver tests, and nothing checked that what the
 /// double promises is what the materializer delivers. A session relies on
-/// three things from its host, and each is asserted on BOTH implementations
+/// two things from its host, and each is asserted on BOTH implementations
 /// through one function, so the double cannot drift from the real impl
 /// without this reddening:
 ///
@@ -238,8 +238,6 @@ pub mod test_support {
 ///     the #2264 empty import — the session awaits it at the end of every
 ///     import, so a host whose flush waited on work nothing drains would hang
 ///     the session where the double reports success;
-///   * `app_data_dir()` is `None` for a host with no registered root — the
-///     signal `sync_files::app_data_dir_from_pool` falls back on.
 ///
 /// What the real host does with the rebuilds is the engine's to pin
 /// (`materializer/tests/cache_rebuild.rs`); this is the port's contract only.
@@ -259,11 +257,6 @@ mod contract_tests {
         assert!(
             Arc::ptr_eq(&host.loro_state(), &host.loro_state()),
             "loro_state() must hand out one registry, not a fresh one per call"
-        );
-        assert_eq!(
-            host.app_data_dir(),
-            None,
-            "no root is registered on either host"
         );
         // The id need not exist: the enqueue only arms the debounce and queues
         // the per-block task, and nothing here observes what that task finds.

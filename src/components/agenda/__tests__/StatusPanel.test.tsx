@@ -472,11 +472,14 @@ describe('StatusPanel', () => {
       expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
     })
 
-    // The base fixture drops nothing (`bg_dropped: 0`) and reports a null
-    // `retry_queue_pending` — the one nullable field of the pair, so this
-    // still covers `BoundedStalenessNotice`'s `?? 0` on a real backend shape.
-    it('is hidden when nothing dropped and the pending count is null', async () => {
-      stubInvoke({ get_status: () => mockStatus })
+    // `retry_queue_pending` is the nullable half of the pair: with rows
+    // dropped, a null pending count coalesces to 0 and the notice stays
+    // hidden. Rows dropped is what makes this pin the coalesce — with
+    // `bg_dropped: 0` the notice short-circuits before reading it.
+    it('is hidden when rows dropped but the pending count is null', async () => {
+      stubInvoke({
+        get_status: () => ({ ...mockStatus, bg_dropped: 4, retry_queue_pending: null }),
+      })
 
       render(<StatusPanel />)
 

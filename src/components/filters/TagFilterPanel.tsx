@@ -70,6 +70,7 @@ function FilterFeedback({
   selectedCount,
   mode,
   includeInherited,
+  stale,
 }: {
   hasQuery: boolean
   loading: boolean
@@ -80,6 +81,8 @@ function FilterFeedback({
   mode: 'and' | 'or' | 'not'
   /** #4548 — say so when the count includes blocks matched through an ancestor's tag. */
   includeInherited: boolean
+  /** The count on screen is the PREVIOUS key's (`keepPreviousData` across a switch flip). */
+  stale: boolean
 }): React.ReactElement | null {
   const { t } = useTranslation()
   if (!hasQuery) {
@@ -120,7 +123,7 @@ function FilterFeedback({
               {mode.toUpperCase()})
             </>
           )}
-          {includeInherited && !loading && <> {t('tagFilter.includingInherited')}</>}
+          {includeInherited && !stale && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}
     </p>
@@ -209,12 +212,7 @@ function InheritedToggle({
   const id = useId()
   return (
     <div className="flex items-center gap-2">
-      <Switch
-        id={id}
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        data-testid="tag-filter-include-inherited"
-      />
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
       {/* The tooltip hangs off the LABEL: a `TooltipTrigger asChild` around the
           switch hands it the trigger's own `data-state` ("closed"), which the
           switch spreads over its "checked"/"unchecked" — and the track's fill
@@ -687,6 +685,7 @@ export function TagFilterPanel(): React.ReactElement {
         selectedCount={selectedTags.length}
         mode={mode}
         includeInherited={includeInherited}
+        stale={isPlaceholderData}
       />
 
       {/* Matching tags from prefix search */}

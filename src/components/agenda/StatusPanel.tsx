@@ -227,7 +227,7 @@ function SyncRetryButton({ state }: { state: SyncState }): React.ReactElement | 
  */
 function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.ReactElement | null {
   const { t } = useTranslation()
-  const bgDropped = status.bg_dropped ?? 0
+  const bgDropped = status.bg_dropped
   const retryPending = status.retry_queue_pending ?? 0
   if (bgDropped <= 0 || retryPending <= 0) return null
 
@@ -313,7 +313,7 @@ export function StatusPanel(): React.ReactElement {
                   }
                   footer={
                     <>
-                      {t('status.peakLabel')} {status.fg_high_water ?? 0}
+                      {t('status.peakLabel')} {status.fg_high_water}
                     </>
                   }
                 />
@@ -331,7 +331,7 @@ export function StatusPanel(): React.ReactElement {
                   }
                   footer={
                     <>
-                      {t('status.peakLabel')} {status.bg_high_water ?? 0}
+                      {t('status.peakLabel')} {status.bg_high_water}
                     </>
                   }
                 />

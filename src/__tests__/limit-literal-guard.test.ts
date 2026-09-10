@@ -68,13 +68,12 @@ describe('#4918 limit-literal guard', () => {
     // tree. (The raw bindings are the source of truth for "names a limit".)
     const raw = readFileSync('src/lib/bindings.ts', 'utf8')
     const namesALimit = [...raw.matchAll(/^\t(\w+): \(/gm)]
-      .map((m) => m[1] as string)
-      .filter((name) => {
-        const start = raw.indexOf(`\t${name}: (`)
-        const open = raw.indexOf('(', start)
+      .filter((m) => {
+        const open = m.index + m[0].length - 1
         const close = scanner.findMatchingBracket(raw, open) as number
         return /\blimit\b/.test(scanner.stripComments(raw.slice(open, close)) as string)
       })
+      .map((m) => m[1] as string)
     expect([...limitIndex.keys()].toSorted()).toEqual(namesALimit.toSorted())
 
     const offenders: string[] = []
@@ -84,8 +83,14 @@ describe('#4918 limit-literal guard', () => {
     )) {
       // Tests may pass a raw limit on purpose — they are asserting what the
       // backend does with one.
-      if (/__tests__|\.test\.tsx?$/.test(file)) continue
-      const source = scanner.stripComments(readFileSync(file, 'utf8')) as string
+      if (file.includes('/__tests__/') || /\.test\.tsx?$/.test(file)) continue
+      const text = readFileSync(file, 'utf8')
+      // Tokenising every file under `src` is the cost; a file with no
+      // `commands.` member access has no call site to find. The same
+      // whitespace the call regex below allows, so a line-broken chain is
+      // not skipped.
+      if (!/commands\s*\./.test(text)) continue
+      const source = scanner.stripComments(text) as string
       for (const [command, index] of limitIndex) {
         const call = new RegExp(`commands\\s*\\.\\s*${command}\\s*\\(`, 'g')
         for (const m of source.matchAll(call)) {
