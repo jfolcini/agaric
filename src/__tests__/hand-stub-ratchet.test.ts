@@ -44,13 +44,14 @@ import { stripComments } from '../../scripts/lib/js-scanner.mjs'
  * An IPC REJECTION is not in this class: `mockInvokeCommands` takes a handler
  * that rejects or throws, so those migrate like any other stub.
  */
-const DELIBERATE_EXCEPTIONS: Readonly<Record<string, string>> = {
-  'src/__tests__/strict-invoke.test.ts':
-    'the seam under test. Its counted stub is a catch-all resolving `undefined`, ' +
-    'installed to prove that an explicit stub overrides `strictInvokeFallback` — ' +
-    'the case the whole design turns on. Expressing it through `mockInvokeCommands` ' +
-    'would test that helper instead of the fallback it is asserting about.',
-}
+const DELIBERATE_EXCEPTIONS: readonly string[] = [
+  // The seam under test. Its counted stub is a catch-all resolving `undefined`,
+  // installed to prove that an explicit stub overrides `strictInvokeFallback` —
+  // the case the whole design turns on. Expressing it through
+  // `mockInvokeCommands` would test that helper instead of the fallback it is
+  // asserting about.
+  'src/__tests__/strict-invoke.test.ts',
+]
 
 /**
  * Files still to migrate onto `mockInvokeCommands`. Not exceptions — just not
@@ -162,7 +163,7 @@ describe('#4668 hand-stubbed invoke ratchet', () => {
     const live = new Set(
       walk('src').filter((f) => handStubsInvoke(stripComments(readFileSync(f, 'utf8')))),
     )
-    const baseline = new Set([...Object.keys(DELIBERATE_EXCEPTIONS), ...MIGRATION_BACKLOG])
+    const baseline = new Set([...DELIBERATE_EXCEPTIONS, ...MIGRATION_BACKLOG])
 
     const added = [...live].filter((f) => !baseline.has(f)).toSorted()
     const stale = [...baseline].filter((f) => !live.has(f)).toSorted()

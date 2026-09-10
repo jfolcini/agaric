@@ -43,22 +43,28 @@ PR drifts both ways at once, and a second `expect` would never run to report
 the half that motivates listing the files at all. That is the half-covered pair
 AGENTS.md warns about, in the guard rather than in a test.
 
-## Exceptions claimed only where provable
+## One exception, and one that only looked like one
 
-Two, each reasoned in place:
+`DELIBERATE_EXCEPTIONS` holds a single file: `strict-invoke.test.ts`, the seam's
+own test. Its counted stub is the catch-all resolving `undefined` that proves an
+explicit stub overrides `strictInvokeFallback`. Routing it through
+`mockInvokeCommands` would test that helper instead of the fallback it asserts
+about.
 
-- `strict-invoke.test.ts` — the seam's own test. Its counted stub is the
-  catch-all resolving `undefined` that proves an explicit stub overrides
-  `strictInvokeFallback`. Routing it through `mockInvokeCommands` would test
-  that helper instead of the fallback it asserts about.
-- `ipc-helpers.test.ts` — `read_attachment` returns a raw-byte
-  `tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has no
-  generated binding at all and is not a key of `CommandReturns`. The typed seam
-  cannot name it.
+`ipc-helpers.test.ts` started in that list and does not belong there. Review
+caught it twice, each time one level deeper. `read_attachment` genuinely cannot
+migrate — it returns a raw-byte `tauri::ipc::Response`, which cannot carry a
+`specta::Type`, so it has no generated binding and is not a key of
+`CommandReturns`. But exempting the file for that one stub would hide the
+~19 others in it (`startSync`, `importMarkdown`, the trash drains), all of which
+ARE bound — and any new hand-stub added there later, forever. It sits in
+`MIGRATION_BACKLOG` with that caveat as a comment: it will not leave the list
+even when the rest migrate, and it becomes a real exception at that point.
 
-The other 54 are `MIGRATION_BACKLOG`: not exceptions, just undone. Keeping the
-two lists apart is the point — a speculative exception launders backlog as
-permanent, which is the failure the clause exists to prevent.
+So the split is one exception and **55** backlog entries. Keeping the two lists
+apart is the point — a speculative exception launders backlog as permanent,
+which is the failure the clause exists to prevent, and this session managed to
+do it twice before the distinction held.
 
 The old docstring also claimed an **IPC rejection** is an exception class. It
 is not: `mockInvokeCommands` takes a handler that rejects or throws, so those
