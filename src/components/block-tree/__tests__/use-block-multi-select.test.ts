@@ -1275,11 +1275,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       // The backend still knows the page: the undo restored the row, which is
       // exactly why this path cannot see the cache bug.
       search_blocks: () => ({
-        items: [
-          {
-            ...makeBlockRow({ id: 'P_ROOT', block_type: 'page', content: 'Root Page' }),
-          },
-        ],
+        items: [makeBlockRow({ id: 'P_ROOT', block_type: 'page', content: 'Root Page' })],
         next_cursor: null,
         has_more: false,
         total_count: null,

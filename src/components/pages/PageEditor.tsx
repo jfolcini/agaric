@@ -54,11 +54,6 @@ export function PageEditor({
   return (
     <PageBlockStoreProvider pageId={pageId}>
       <PageEditorInner
-        // #4945 review note — remounting on `pageId` is what orders the zoom
-        // reset against the navigation: `zoomedBlockId` is local state, and
-        // without this the references panel stays pointed at the block you
-        // zoomed into on the page you just left.
-        key={pageId}
         pageId={pageId}
         title={title}
         onBack={onBack}
@@ -108,7 +103,18 @@ function PageEditorInner({
   // `useBlockZoom` by BlockTree's `onZoomChange` callback so the
   // linked-references panel below can target it. Local state, not a store
   // field: nothing outside this page needs the value.
-  const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+  // The zoom mirror is tagged with its page, the way `pageBlockType` is below:
+  // navigating away while zoomed changes `pageId` in place, and until
+  // `BlockTree`'s mount effect reports `null` the references panel must not
+  // stay pointed at the block zoomed on the page just left. (A `key={pageId}`
+  // remount would order it too, but its unmount cleanup races the new page's
+  // in-page-find container registration and leaves it null.)
+  const [zoom, setZoom] = useState<{ pageId: string; blockId: string | null } | null>(null)
+  const zoomedBlockId = zoom?.pageId === pageId ? zoom.blockId : null
+  const handleZoomChange = useCallback(
+    (blockId: string | null) => setZoom({ pageId, blockId }),
+    [pageId],
+  )
 
   // BlockTree reports the two DECIDABLE end states of a reveal it just ran
   // for `blockId`: `found: true` once the row is actually mounted, `found:
@@ -335,7 +341,7 @@ function PageEditorInner({
           onNavigateToPage={onNavigateToPage}
           onRevealSettled={handleRevealSettled}
           revealNonce={revealNonce}
-          onZoomChange={setZoomedBlockId}
+          onZoomChange={handleZoomChange}
         />
       )}
 

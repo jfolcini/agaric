@@ -159,6 +159,7 @@ import { getPageStore } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 const TEST_SPACE_ID = '01TESTSPACE0000000000000XX'
 
@@ -286,6 +287,18 @@ describe('PageEditor', () => {
 
     expect(capturedLinkedRefsPageId).toBe('PAGE_B')
     expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'PAGE_B')
+  })
+
+  // A `key={pageId}` remount would also reset the zoom, but its unmount cleanup
+  // runs in the passive flush AFTER the new page's ref has registered, and
+  // last write wins: Ctrl+F on the new page would walk nothing.
+  it('keeps the in-page-find container registered across a pageId change', () => {
+    const { rerender } = render(<PageEditor pageId="PAGE_A" title="Page A" />)
+    expect(useInPageFindStore.getState().container).not.toBeNull()
+
+    rerender(<PageEditor pageId="PAGE_B" title="Page B" />)
+
+    expect(useInPageFindStore.getState().container).not.toBeNull()
   })
 
   it('renders UnlinkedReferences with correct pageId and pageTitle', () => {
