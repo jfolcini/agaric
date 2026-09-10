@@ -1111,6 +1111,31 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             seed_block_into_engine(state, b);
         }
     }
+    // Seed the property-definition registry (#3830). A fixture that declares
+    // this section declares the WHOLE registry: migrations 0011/0014/0016/0035/
+    // 0103 pre-seed the backend's `property_definitions` with ~20 builtin
+    // declarations, while the mock's map starts empty (`clearMock`), so the
+    // builtins are cleared to put both stacks in the state the fixture spells
+    // out. A fixture WITHOUT the section keeps them, untouched.
+    if let Some(defs) = seed["property_defs"].as_array() {
+        sqlx::query("DELETE FROM property_definitions")
+            .execute(&pool)
+            .await
+            .expect("clear seeded property definitions");
+        for d in defs {
+            create_property_def_inner(
+                &pool,
+                d["key"].as_str().expect("seed def key").to_owned(),
+                d["value_type"]
+                    .as_str()
+                    .expect("seed def value_type")
+                    .to_owned(),
+                d["options"].as_str().map(str::to_owned),
+            )
+            .await
+            .expect("seed create_property_def");
+        }
+    }
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {

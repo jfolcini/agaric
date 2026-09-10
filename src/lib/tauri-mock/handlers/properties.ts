@@ -557,7 +557,12 @@ export const propertiesHandlers = {
   list_property_defs: () => ({
     // Paginated; the mock returns every def in one page (the
     // mock fixtures stay small enough that pagination is irrelevant).
-    items: [...propertyDefs.values()],
+    // `key ASC` is the backend's ORDER BY (#3830); insertion order was the
+    // mock's own, and the two differ as soon as defs are declared out of
+    // alphabetical order.
+    items: [...propertyDefs.values()].toSorted((a, b) =>
+      compareBinary(a['key'] as string, b['key'] as string),
+    ),
     next_cursor: null,
     has_more: false,
     total_count: null,

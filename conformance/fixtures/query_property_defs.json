@@ -1,0 +1,151 @@
+{
+  "description": "#3830 — READ-command differential over the property-definition registry: `list_property_defs` and `get_property_def`. Both were waived as \"registry, not projected block state\" until a fixture could put the same registry on both stacks; `seed.property_defs` is that, and a fixture declaring it declares the WHOLE registry (the Rust seed clears migrations 0011/0014/0016/0035/0103's builtin declarations first, because the mock's map starts empty). The defs are seeded in NON-alphabetical order on purpose: `list_property_defs_inner` is `ORDER BY key ASC`, so the ordered comparison pins the sort rather than insertion order — the divergence this fixture found and fixed in the mock. Every token carries `value_type` and `options`, the whole of what a declaration says; `created_at` is a wall clock and is not comparable. The one op writes `status = todo` through `set_property`, which both stacks gate on the seeded select's `options`, so the declaration is load-bearing rather than decorative — and it is an OP rather than a `seed.properties` entry because the Rust seed writes those through `set_property_inner`, which appends an op_log entry the mock's direct seed write does not (no other fixture uses that section). NOT pinned: pagination (the mock serves every def in one page and ignores `cursor` / `limit`) and the builtin declarations themselves, which the mock has no copy of.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Defs",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "key": "status",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "todo",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "property_defs_sorted_by_key",
+      "rows": [
+        "estimate#value_type=number#options=null",
+        "status#value_type=select#options=[\"todo\",\"done\"]"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_property_def_hit",
+      "rows": ["status#value_type=select#options=[\"todo\",\"done\"]"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_property_def_miss",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_property_defs",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "todo"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_property_defs",
+      "comment": "`estimate` before `status`, though the seed declares `status` first: the listing is `ORDER BY key ASC`. The attributes pin the declaration itself — a select's `options` array and the `null` a non-select carries.",
+      "name": "property_defs_sorted_by_key"
+    },
+    {
+      "args": {
+        "key": "status"
+      },
+      "command": "get_property_def",
+      "comment": "The PK lookup serves the same row the listing does, options and all. Paired with the next step, this is the present-vs-absent distinction.",
+      "name": "get_property_def_hit"
+    },
+    {
+      "args": {
+        "key": "colour"
+      },
+      "command": "get_property_def",
+      "comment": "The other half of the pair: `colour` was never declared, so the lookup misses and the command answers `None` rather than refusing or inventing an undeclared row. Empty on purpose — the previous step's hit is what makes the absence a real distinction instead of a vacuous one.",
+      "expect_empty": true,
+      "name": "get_property_def_miss"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Defs",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "status",
+        "options": "[\"todo\",\"done\"]",
+        "value_type": "select"
+      },
+      {
+        "key": "estimate",
+        "options": null,
+        "value_type": "number"
+      }
+    ],
+    "tags": []
+  }
+}

@@ -215,6 +215,12 @@ const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"]
 /// clock and stays off the token.
 const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 
+/// A `PropertyDefinition` (#3830), whose token head is the registry `key`.
+/// `created_at` is a wall clock and stays off the token; `value_type` and
+/// `options` are the whole of what the declaration says. MUST match
+/// `PROPERTY_DEF_TOKEN` in the TS twin.
+const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options"];
+
 /// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
 /// id. MUST match `HISTORY_TOKEN` in the TS twin.
 ///
@@ -1080,6 +1086,24 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 &|row| row_token(row, "id", BLOCK_ATTRS),
             )
         }
+        "count_trash" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?;
+            let count = count_trash_inner(pool, space_id.as_str()).await?;
+            // A bare `i64`: no row identity to hang a token on, so the whole
+            // answer IS the token. Rendered through [`attr_value`] rather than
+            // `format!`, so the count crosses the same Rust/JS number-rendering
+            // guard every other numeric attribute does.
+            RawResult {
+                rows: vec![format!(
+                    "count_trash#value={}",
+                    attr_value("value", Some(&json!(count)))
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         "list_all_pages_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
             let space_id = scope.require_active()?;
@@ -1116,6 +1140,40 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         "list_property_values" => {
             let key: String = arg_req(args, "key");
             bare_scalars(&list_property_values_inner(pool, &key).await?)
+        }
+        // ── The property-definition registry (#3830) ──
+        //
+        // The registry is not projected block state, which is why these two
+        // were waived — but the fixture `seed.property_defs` section declares
+        // it on both stacks (see `replay_fixture`), so a definition is as
+        // seedable as a block and the two readers diff like any other pair.
+        "list_property_defs" => {
+            let resp = list_property_defs_inner(
+                pool,
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+            )
+            .await?;
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "key", PROPERTY_DEF_ATTRS),
+            )
+        }
+        "get_property_def" => {
+            let row = get_property_def_inner(pool, &arg_req::<String>(args, "key")).await?;
+            // `Option<PropertyDefinition>`: a hit projects to one token, a miss
+            // to none — the present-vs-absent distinction the step pins.
+            let v = serde_json::to_value(&row).expect("serialize Option<PropertyDefinition>");
+            RawResult {
+                rows: if v.is_null() {
+                    Vec::new()
+                } else {
+                    vec![row_token(&v, "key", PROPERTY_DEF_ATTRS)]
+                },
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
         }
         // ── Point reads over blocks / properties / tags (#3826) ──
         //
@@ -2133,7 +2191,14 @@ pub(super) mod reader_delegation_tests {
     // round-trips over `block_links`, `blocks` and `fts_blocks` — the
     // unlinked scan reads the FTS index, it never rebuilds it. Writer set
     // unchanged.
-    const SWEPT_ARM_COUNT: usize = 35;
+    // #3830 wired `count_trash`, `list_property_defs` and `get_property_def`:
+    // one `query_scalar!` COUNT over `blocks` (`commands/blocks/queries.rs`)
+    // and two `query_as!` SELECTs over `property_definitions`
+    // (`commands/properties.rs`), the paginated one behind `PageRequest::new`
+    // plus `build_page_response`. Neither def reader declares a missing key on
+    // a miss — the writing twin is `create_property_def_inner`, which is not a
+    // read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 38;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

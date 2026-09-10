@@ -205,6 +205,14 @@
       "cursor": null,
       "error": null,
       "has_more": null,
+      "name": "trash_count_is_every_tombstone",
+      "rows": ["count_trash#value=5"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
       "name": "pages_all_in_space",
       "rows": ["B1", "B8", "B2"],
       "total_count": null
@@ -337,6 +345,17 @@
       "comment": "Trash is per-space (#2248): `Global` is refused by `require_active`, never widened into a cross-space listing.",
       "expect_error": "validation",
       "name": "trash_rejects_global_scope"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_trash",
+      "comment": "Five, not the four ROOTS the listing above returns: `count_trash_inner` counts every soft-deleted ROW in the space. S3, S4, S5, S6 and S7 are all tombstoned (S7 through S6's cascade); S1, S2 and S8 are live. A mock that counted roots instead of rows, or that lost the cascade child, differs here.",
+      "name": "trash_count_is_every_tombstone"
     },
     {
       "args": {

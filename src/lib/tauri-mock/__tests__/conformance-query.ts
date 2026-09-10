@@ -201,6 +201,13 @@ type RowsLocation =
   /** The response IS one row, or null/undefined for a miss (`Option<T>`). */
   | { readonly kind: 'bare-row' }
   /**
+   * #3830 — the response IS one bare scalar (`count_trash`'s `i64`), with no
+   * row identity to hang a token on, so the whole answer becomes the single
+   * token `<head>#value=<n>`. `token` is inert for this shape: there is no row
+   * to build one from.
+   */
+  | { readonly kind: 'value'; readonly head: string }
+  /**
    * The response holds several `PageResponse` partitions under `keys` (#3823 —
    * `search_blocks_partitioned`'s `{ pages, blocks }`). Every row carries its
    * partition as an attribute and each partition closes with its own
@@ -303,6 +310,14 @@ const TAG_TOKEN = { kind: 'id', idKey: 'tag_id', attrKeys: ['name', 'usage_count
 /** A `HistoryEntry` (#3824). Its head is the `op_type`, not an id — see the
  *  `list_page_history` entry below for why that is the whole vocabulary. */
 const HISTORY_TOKEN = { kind: 'id', idKey: 'op_type', attrKeys: ['is_replicated'] } as const
+/** A `PropertyDefinition` (#3830): the registry `key` plus what the
+ *  declaration says. `created_at` is a wall clock and stays off the token.
+ *  MUST match `PROPERTY_DEF_ATTRS` in the Rust twin. */
+const PROPERTY_DEF_TOKEN = {
+  kind: 'id',
+  idKey: 'key',
+  attrKeys: ['value_type', 'options'],
+} as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -445,6 +460,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // The trash BADGE's count, beside the listing it counts: a bare `i64`, so
+  // the token is the value itself and both scalars stay `null` (#3830).
+  count_trash: {
+    rows: { kind: 'value', head: 'count_trash' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
   list_all_pages_in_space: {
     rows: { kind: 'bare-array' },
     token: ID_TOKEN,
@@ -478,6 +501,25 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   list_property_values: {
     rows: { kind: 'bare-array' },
     token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
+  // ── The property-definition registry (#3830) ──
+  //
+  // Seeded on both stacks by a fixture's `seed.property_defs` section, which
+  // is what lifted the "registry, not projected block state" waiver on these
+  // two. `list_property_defs` is `ORDER BY key ASC` on the backend, so the
+  // ordered comparison pins the mock's sort rather than its insertion order.
+  list_property_defs: {
+    rows: PAGED,
+    token: PROPERTY_DEF_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  get_property_def: {
+    rows: { kind: 'bare-row' },
+    token: PROPERTY_DEF_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
@@ -987,6 +1029,7 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
       // A miss (`null` / `undefined`) is zero rows, a hit is exactly one.
       return response == null ? [] : [response]
     }
+    case 'value':
     case 'map-of-row':
     case 'map-of-rows':
     case 'partitions':
@@ -1101,6 +1144,9 @@ export function backlinkGroupTokens(response: unknown, token: TokenSpec): string
 }
 
 function rawRows(response: unknown, shape: WireShape): string[] {
+  if (shape.rows.kind === 'value') {
+    return [`${shape.rows.head}#value=${attrValue('value', response)}`]
+  }
   if (shape.rows.kind === 'partitions') {
     return partitionRows(response, shape.rows.keys, shape.token)
   }

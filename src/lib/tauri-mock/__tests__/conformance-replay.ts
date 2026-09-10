@@ -51,6 +51,13 @@ export interface Fixture {
     blocks: Array<Record<string, unknown>>
     properties: Array<Record<string, unknown>>
     tags: Array<Record<string, unknown>>
+    /**
+     * #3830 — the property-definition registry, when the fixture pins it. A
+     * fixture that declares it declares the WHOLE registry: the Rust twin
+     * clears the migration-seeded builtins first, because this map starts
+     * empty (`clearMock`) and the two stacks must begin in the same state.
+     */
+    property_defs?: Array<Record<string, unknown>>
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -167,6 +174,16 @@ export function loadSeed(fixture: Fixture): void {
     const row = blocks.get(id)
     if (!row) continue
     row['page_id'] = row['block_type'] === 'page' ? id : resolveRootPageId(row)
+  }
+  for (const d of fixture.seed.property_defs ?? []) {
+    propertyDefs.set(d['key'] as string, {
+      key: d['key'],
+      value_type: d['value_type'],
+      options: d['options'] ?? null,
+      // The backend stamps `now_rfc3339()`; a wall clock is never comparable,
+      // so no token carries it (`PROPERTY_DEF_TOKEN`).
+      created_at: new Date().toISOString(),
+    })
   }
   for (const p of fixture.seed.properties) {
     loadSeedProperty(p)
