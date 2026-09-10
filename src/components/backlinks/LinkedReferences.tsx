@@ -24,6 +24,7 @@ import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { unwrap } from '@/lib/app-error'
@@ -32,6 +33,7 @@ import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50', 'bg-accent/30'] as const
@@ -117,6 +119,21 @@ export function LinkedReferences({
       notify.error(t('references.loadFailed'), { id: 'references-load-failed' })
     }
   }, [isError, t])
+
+  // A `[[link]]` typed, pasted or synced fires no property event, so the
+  // graph-structure counter (bumped by the page-block store on every local op
+  // and by `sync:complete`) is what notices a new backlink while this panel is
+  // mounted. It INVALIDATES rather than joining the key: the counter moves at
+  // every typing pause, and a new key would drop the loaded pages, the expanded
+  // groups and the header count to a skeleton each time. Invalidation refetches
+  // the loaded pages in place; the first value is the mount, not a change.
+  const { structureKey } = useGraphStructureEvents()
+  const seenStructureKeyRef = useRef(structureKey)
+  useEffect(() => {
+    if (seenStructureKeyRef.current === structureKey) return
+    seenStructureKeyRef.current = structureKey
+    void queryClient.invalidateQueries({ queryKey: ['backlinkGroups', currentSpaceId, targetId] })
+  }, [structureKey, currentSpaceId, targetId])
 
   // Expand-state seeding parity. The old first-page branch REPLACED
   // `groupExpanded` with `page_id => groups.length <= 5 || i < 3` (first 3 groups

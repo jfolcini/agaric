@@ -18,6 +18,7 @@ vi.mock('@/lib/bindings', () => ({
 import { toast } from 'sonner'
 
 import { useBatchCounts } from '@/hooks/useBatchCounts'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
@@ -101,6 +102,27 @@ describe('useBatchCounts', () => {
     // SpaceId must be forwarded so badge counts
     // exclude source blocks the user can't see (cross-space).
     expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1', 'page-2'], toSpaceScope(null))
+  })
+
+  // A `[[link]]` typed, pasted or synced moves the badge counts without any
+  // property event; the graph-structure counter is what re-runs the fetch.
+  it('refetches the counts when the graph structure changes', async () => {
+    const entries: DayEntry[] = [{ dateStr: '2025-01-06', pageId: 'page-1' } as DayEntry]
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({ '2025-01-06': {} }))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 1 }))
+    const { result } = renderHook(() => useBatchCounts(entries))
+    await waitFor(() => {
+      expect(result.current.backlinkCounts).toEqual({ 'page-1': 1 })
+    })
+
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 2 }))
+    act(() => {
+      recordGraphStructureChange()
+    })
+    await waitFor(() => {
+      expect(result.current.backlinkCounts).toEqual({ 'page-1': 2 })
+    })
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledTimes(2)
   })
 
   it('handles empty entries array', async () => {
