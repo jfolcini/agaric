@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedInvoke = vi.mocked(invoke)
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { PropertyRow } from '@/lib/bindings'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
@@ -180,13 +182,21 @@ describe('buildInitParams', () => {
 describe('handleSaveProperty', () => {
   it('saves text property and refreshes', async () => {
     const refreshedProps = [
-      { key: 'author', value_text: 'Bob', value_num: null, value_date: null, value_ref: null },
+      {
+        key: 'author',
+        value_text: 'Bob',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
     ]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return refreshedProps
-      return null
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        set_property: () => withOps(makeBlockRow({ id: 'B1' })),
+        get_properties: () => refreshedProps,
+      }),
+    )
 
     const onRefresh = vi.fn()
     const ok = await handleSaveProperty('B1', 'author', 'Bob', 'text', onRefresh)
@@ -217,11 +227,12 @@ describe('handleSaveProperty', () => {
   })
 
   it('saves number property correctly', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return []
-      return null
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        set_property: () => withOps(makeBlockRow({ id: 'B1' })),
+        get_properties: () => [],
+      }),
+    )
 
     const onRefresh = vi.fn()
     const ok = await handleSaveProperty('B1', 'count', '99', 'number', onRefresh)
@@ -241,11 +252,12 @@ describe('handleSaveProperty', () => {
   })
 
   it('saves date property correctly', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'get_properties') return []
-      return null
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        set_property: () => withOps(makeBlockRow({ id: 'B1' })),
+        get_properties: () => [],
+      }),
+    )
 
     const onRefresh = vi.fn()
     const ok = await handleSaveProperty('B1', 'due', '2026-06-15', 'date', onRefresh)
@@ -265,7 +277,9 @@ describe('handleSaveProperty', () => {
   })
 
   it('propagates errors from setProperty', async () => {
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ set_property: () => Promise.reject(new Error('backend error')) }),
+    )
 
     const onRefresh = vi.fn()
     await expect(handleSaveProperty('B1', 'key', 'val', 'text', onRefresh)).rejects.toThrow(
@@ -277,7 +291,9 @@ describe('handleSaveProperty', () => {
 
 describe('handleDeleteProperty', () => {
   it('calls deleteProperty and invokes onRefresh', async () => {
-    mockedInvoke.mockResolvedValue(undefined)
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ delete_property: () => withOps({ block_id: 'B1', key: 'author' }) }),
+    )
     const onRefresh = vi.fn()
 
     await handleDeleteProperty('B1', 'author', onRefresh)
@@ -290,7 +306,9 @@ describe('handleDeleteProperty', () => {
   })
 
   it('propagates errors from deleteProperty', async () => {
-    mockedInvoke.mockRejectedValue(new Error('delete failed'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ delete_property: () => Promise.reject(new Error('delete failed')) }),
+    )
     const onRefresh = vi.fn()
 
     await expect(handleDeleteProperty('B1', 'key', onRefresh)).rejects.toThrow('delete failed')
@@ -426,12 +444,13 @@ describe('carriedRenameDefinition', () => {
 // a builtin key or for one any `block_properties` row references.
 describe('renameMayDeclareKey', () => {
   /** Backend stand-in: `get_property_def` + `list_property_keys`. */
-  function installBackend(defs: Record<string, unknown>, keysInUse: string[]) {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'get_property_def') return defs[(args as { key: string }).key] ?? null
-      if (cmd === 'list_property_keys') return keysInUse
-      return null
-    })
+  function installBackend(defs: Record<string, PropertyDefinition>, keysInUse: string[]) {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        get_property_def: (args) => defs[String(args['key'])] ?? null,
+        list_property_keys: () => keysInUse,
+      }),
+    )
   }
 
   it('allows a fresh, unused, non-builtin key', async () => {

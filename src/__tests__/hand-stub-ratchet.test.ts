@@ -51,6 +51,12 @@ const DELIBERATE_EXCEPTIONS: readonly string[] = [
   // `mockInvokeCommands` would test that helper instead of the fallback it is
   // asserting about.
   'src/__tests__/strict-invoke.test.ts',
+  // Every bound command in this file now goes through `mockInvokeCommands`.
+  // The two stubs left are `read_attachment`, which returns a raw-byte
+  // `tauri::ipc::Response`: that cannot carry a `specta::Type`, so the command
+  // has no generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key
+  // of `CommandReturns`. There is nothing for the typed seam to check.
+  'src/lib/__tests__/ipc-helpers.test.ts',
 ]
 
 /**
@@ -59,15 +65,6 @@ const DELIBERATE_EXCEPTIONS: readonly string[] = [
  * directions, so a stale entry cannot hide a win and a new one cannot slip in.
  */
 const MIGRATION_BACKLOG: readonly string[] = [
-  // Most of this file's stubs — `startSync`, `importMarkdown`, the trash
-  // drains — have generated bindings and should migrate. It will not leave
-  // this list even so: `read_attachment` returns a raw-byte
-  // `tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has no
-  // generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key of
-  // `CommandReturns`. Move it to DELIBERATE_EXCEPTIONS once the others are
-  // done — until then, exempting it would hide every new hand-stub added here
-  // for a command that IS bound.
-  'src/lib/__tests__/ipc-helpers.test.ts',
   'src/__tests__/viewTransition.test.tsx',
   'src/components/PageBrowser/__tests__/editors.test.tsx',
   'src/components/attachments/__tests__/AttachmentList.test.tsx',
@@ -95,13 +92,6 @@ const MIGRATION_BACKLOG: readonly string[] = [
   'src/components/query/__tests__/QueryResult.test.tsx',
   'src/components/templates/__tests__/CompactionCard.test.tsx',
   'src/components/templates/__tests__/TemplatesView.test.tsx',
-  'src/lib/__tests__/agenda-filters.test.ts',
-  'src/lib/__tests__/export-graph.test.ts',
-  'src/lib/__tests__/property-keys-cache.test.ts',
-  'src/lib/__tests__/property-save-utils.test.ts',
-  'src/lib/__tests__/property-values-cache.test.ts',
-  'src/lib/__tests__/slash-commands.test.ts',
-  'src/lib/__tests__/template-utils.test.ts',
   'src/stores/__tests__/page-blocks.crud.test.ts',
   'src/stores/__tests__/page-blocks.load-reconcile.test.ts',
   'src/stores/__tests__/page-blocks.move-reparent.test.ts',

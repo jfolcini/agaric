@@ -17,6 +17,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { type CommandReturns, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { type AppError, isCancellation } from '@/lib/app-error'
 import {
   cancelledError,
@@ -39,6 +41,19 @@ const mockedInvoke = vi.mocked(invoke)
 beforeEach(() => {
   vi.clearAllMocks()
 })
+
+/**
+ * One `list_trash` page. The command answers `PageResponse<BlockRow>` — full
+ * rows and a `total_count` — even though the drain below only reads `id`.
+ */
+function trashPage(ids: string[], nextCursor: string | null = null): CommandReturns['list_trash'] {
+  return {
+    items: ids.map((id) => makeBlockRow({ id })),
+    next_cursor: nextCursor,
+    has_more: nextCursor !== null,
+    total_count: null,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Client-side abort plumbing (no IPC)
@@ -120,7 +135,7 @@ describe('startSync', () => {
       ops_received: 0,
       ops_sent: 0,
     }
-    mockedInvoke.mockResolvedValueOnce(expected)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ start_sync: () => expected }))
     const result = await startSync('peer-1')
     expect(result).toEqual(expected)
     expect(mockedInvoke).toHaveBeenCalledWith(
@@ -130,7 +145,9 @@ describe('startSync', () => {
   })
 
   it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('peer unreachable'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ start_sync: () => Promise.reject(new Error('peer unreachable')) }),
+    )
     await expect(startSync('peer-1')).rejects.toThrow('peer unreachable')
   })
 })
@@ -139,6 +156,11 @@ describe('startSync', () => {
 // readAttachment
 // ---------------------------------------------------------------------------
 
+// The one hand-stubbed pair left in this file, and the reason the ratchet
+// (`src/__tests__/hand-stub-ratchet.test.ts`) lists it as a deliberate
+// exception: `read_attachment` answers a raw-byte `tauri::ipc::Response`,
+// which carries no `specta::Type`, so it has no generated binding and is not
+// a key of `CommandReturns` — there is nothing for the typed seam to check.
 describe('readAttachment', () => {
   it('invokes read_attachment and decodes the ArrayBuffer response to a Uint8Array', async () => {
     // #2654: read_attachment returns a raw-byte tauri::ipc::Response, so
@@ -177,7 +199,7 @@ describe('importMarkdown', () => {
       properties_set: 2,
       warnings: [],
     }
-    mockedInvoke.mockResolvedValueOnce(expected)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ import_markdown: () => expected }))
 
     const result = await importMarkdown('# Title\n\nBody', 'my-page.md', 'SPACE_A')
 
@@ -200,12 +222,16 @@ describe('importMarkdown', () => {
   })
 
   it('defaults optional filename to null', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      page_title: 'Untitled',
-      blocks_created: 1,
-      properties_set: 0,
-      warnings: [],
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        import_markdown: () => ({
+          page_title: 'Untitled',
+          blocks_created: 1,
+          properties_set: 0,
+          warnings: [],
+        }),
+      }),
+    )
 
     await importMarkdown('hello', undefined, 'SPACE_A')
 
@@ -224,12 +250,14 @@ describe('importMarkdown', () => {
     // helper hands to `invoke`, push a `started` event through it, and
     // assert the callback fires.
     let capturedChannel: { onmessage?: (u: unknown) => void } | undefined
-    mockedInvoke.mockImplementationOnce(async (_cmd, args) => {
-      capturedChannel = (args as Record<string, unknown>)['progress'] as {
-        onmessage?: (u: unknown) => void
-      }
-      return { page_title: 'X', blocks_created: 0, properties_set: 0, warnings: [] }
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        import_markdown: (args) => {
+          capturedChannel = args['progress'] as { onmessage?: (u: unknown) => void }
+          return { page_title: 'X', blocks_created: 0, properties_set: 0, warnings: [] }
+        },
+      }),
+    )
 
     const onProgress = vi.fn()
     await importMarkdown('- a', 'x.md', 'SPACE_A', onProgress)
@@ -243,12 +271,16 @@ describe('importMarkdown', () => {
     // #1925 — PR 2 adds the optional 5th `vaultFiles` arg (referenced
     // attachment bytes from the vault picker). When supplied it must flow
     // through to the IPC `vaultFiles` arg unchanged.
-    mockedInvoke.mockResolvedValueOnce({
-      page_title: 'P',
-      blocks_created: 1,
-      properties_set: 0,
-      warnings: [],
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        import_markdown: () => ({
+          page_title: 'P',
+          blocks_created: 1,
+          properties_set: 0,
+          warnings: [],
+        }),
+      }),
+    )
 
     const vaultFiles = [{ path: 'assets/a.png', bytes: [1, 2, 3] }]
     await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', undefined, vaultFiles)
@@ -269,18 +301,19 @@ describe('importMarkdown', () => {
 
 describe('restoreAllDeletedInSpace', () => {
   it('drains listTrash for the space and restores the collected root ids', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
-        expect(args).toEqual({
-          cursor: null,
-          limit: 50,
-          scope: { kind: 'active', space_id: 'SPACE_A' },
-        })
-        return { items: [{ id: 'A1' }, { id: 'A2' }], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: (args) => {
+          expect(args).toEqual({
+            cursor: null,
+            limit: 50,
+            scope: { kind: 'active', space_id: 'SPACE_A' },
+          })
+          return trashPage(['A1', 'A2'])
+        },
+        restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      }),
+    )
 
     const result = await restoreAllDeletedInSpace('SPACE_A')
 
@@ -292,17 +325,17 @@ describe('restoreAllDeletedInSpace', () => {
   })
 
   it('follows the cursor chain across multiple pages before restoring', async () => {
+    // The page order IS the subject here, so the handler counts its own calls.
     let call = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') {
-        call++
-        return call === 1
-          ? { items: [{ id: 'P1' }], next_cursor: 'CUR', has_more: true }
-          : { items: [{ id: 'P2' }], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: () => {
+          call++
+          return call === 1 ? trashPage(['P1'], 'CUR') : trashPage(['P2'])
+        },
+        restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      }),
+    )
 
     const result = await restoreAllDeletedInSpace('SPACE_A')
 
@@ -313,10 +346,7 @@ describe('restoreAllDeletedInSpace', () => {
   })
 
   it('returns affected_count 0 without calling restoreBlocksByIds when the space has no trash', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: [], next_cursor: null, has_more: false }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_trash: () => trashPage([]) }))
 
     const result = await restoreAllDeletedInSpace('SPACE_A')
 
@@ -326,12 +356,12 @@ describe('restoreAllDeletedInSpace', () => {
 
   it('chunks batches larger than the backend cap into multiple restore_blocks_by_ids calls', async () => {
     const ids = Array.from({ length: 1500 }, (_, i) => `B${i}`)
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash')
-        return { items: ids.map((id) => ({ id })), next_cursor: null, has_more: false }
-      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1000 }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: () => trashPage(ids),
+        restore_blocks_by_ids: () => ({ affected_count: 1000 }),
+      }),
+    )
 
     const result = await restoreAllDeletedInSpace('SPACE_A')
 
@@ -345,7 +375,9 @@ describe('restoreAllDeletedInSpace', () => {
   })
 
   it('propagates errors from listTrash', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ list_trash: () => Promise.reject(new Error('db error')) }),
+    )
     await expect(restoreAllDeletedInSpace('SPACE_A')).rejects.toThrow('db error')
   })
 
@@ -356,18 +388,19 @@ describe('restoreAllDeletedInSpace', () => {
 
 describe('purgeAllDeletedInSpace', () => {
   it('drains listTrash for the space and purges the collected root ids', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_trash') {
-        expect(args).toEqual({
-          cursor: null,
-          limit: 50,
-          scope: { kind: 'active', space_id: 'SPACE_B' },
-        })
-        return { items: [{ id: 'B1' }], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: (args) => {
+          expect(args).toEqual({
+            cursor: null,
+            limit: 50,
+            scope: { kind: 'active', space_id: 'SPACE_B' },
+          })
+          return trashPage(['B1'])
+        },
+        purge_blocks_by_ids: () => ({ affected_count: 1 }),
+      }),
+    )
 
     const result = await purgeAllDeletedInSpace('SPACE_B')
 
@@ -377,10 +410,7 @@ describe('purgeAllDeletedInSpace', () => {
   })
 
   it('returns affected_count 0 without calling purgeBlocksByIds when the space has no trash', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: [], next_cursor: null, has_more: false }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_trash: () => trashPage([]) }))
 
     const result = await purgeAllDeletedInSpace('SPACE_B')
 
@@ -389,11 +419,14 @@ describe('purgeAllDeletedInSpace', () => {
   })
 
   it('propagates errors from purgeBlocksByIds', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash') return { items: [{ id: 'B1' }], next_cursor: null, has_more: false }
-      if (cmd === 'purge_blocks_by_ids') throw new Error('db error')
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: () => trashPage(['B1']),
+        purge_blocks_by_ids: () => {
+          throw new Error('db error')
+        },
+      }),
+    )
     await expect(purgeAllDeletedInSpace('SPACE_B')).rejects.toThrow('db error')
   })
 
@@ -404,19 +437,20 @@ describe('purgeAllDeletedInSpace', () => {
   // that most of it succeeded.
   it('surfaces the earlier chunks’ committed count via PartialPurgeError when a later chunk fails', async () => {
     const ids = Array.from({ length: 1500 }, (_, i) => `B${i}`)
+    // The chunk ORDER is the subject, so the handler counts its own calls.
     let purgeCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash')
-        return { items: ids.map((id) => ({ id })), next_cursor: null, has_more: false }
-      if (cmd === 'purge_blocks_by_ids') {
-        purgeCalls += 1
-        // First chunk (1000 ids) commits successfully; the second (500
-        // ids) fails.
-        if (purgeCalls === 1) return { affected_count: 1000 }
-        throw new Error('db error on second chunk')
-      }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: () => trashPage(ids),
+        purge_blocks_by_ids: () => {
+          purgeCalls += 1
+          // First chunk (1000 ids) commits successfully; the second (500
+          // ids) fails.
+          if (purgeCalls === 1) return { affected_count: 1000 }
+          throw new Error('db error on second chunk')
+        },
+      }),
+    )
 
     const rejection: unknown = await purgeAllDeletedInSpace('SPACE_B').catch((e: unknown) => e)
 
@@ -437,22 +471,23 @@ describe('purgeAllDeletedInSpace', () => {
   // half-covered again.
   it('preserves the backend message when the chunk fails with a raw AppError envelope', async () => {
     const ids = Array.from({ length: 1500 }, (_, i) => `B${i}`)
+    // The chunk ORDER is the subject, so the handler counts its own calls.
     let purgeCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_trash')
-        return { items: ids.map((id) => ({ id })), next_cursor: null, has_more: false }
-      if (cmd === 'purge_blocks_by_ids') {
-        purgeCalls += 1
-        if (purgeCalls === 1) return { affected_count: 1000 }
-        // What the backend actually sends: a plain object, not an Error.
-        const rejection: AppError = {
-          kind: 'invalid_operation',
-          message: "block 'B1200' is not deleted",
-        }
-        throw rejection
-      }
-      throw new Error(`unexpected invoke: ${cmd}`)
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_trash: () => trashPage(ids),
+        purge_blocks_by_ids: () => {
+          purgeCalls += 1
+          if (purgeCalls === 1) return { affected_count: 1000 }
+          // What the backend actually sends: a plain object, not an Error.
+          const rejection: AppError = {
+            kind: 'invalid_operation',
+            message: "block 'B1200' is not deleted",
+          }
+          throw rejection
+        },
+      }),
+    )
 
     const rejection: unknown = await purgeAllDeletedInSpace('SPACE_B').catch((e: unknown) => e)
 
@@ -473,15 +508,16 @@ describe('purgeAllDeletedInSpace', () => {
 
 describe('createBlock', () => {
   it('invokes create_block with all parameters', async () => {
-    const expected = {
-      id: 'BLK001',
-      block_type: 'content',
-      content: 'hello',
-      parent_id: 'PARENT01',
-      position: 3,
-      deleted_at: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
+    const expected = withOps(
+      makeBlockRow({
+        id: 'BLK001',
+        block_type: 'content',
+        content: 'hello',
+        parent_id: 'PARENT01',
+        position: 3,
+      }),
+    )
+    mockedInvoke.mockImplementation(mockInvokeCommands({ create_block: () => expected }))
 
     const result = await createBlock({
       blockType: 'content',
@@ -508,14 +544,14 @@ describe('createBlock', () => {
   })
 
   it('defaults optional parentId and position to null', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'BLK002',
-      block_type: 'page',
-      content: 'test',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        create_block: () =>
+          withOps(
+            makeBlockRow({ id: 'BLK002', block_type: 'page', content: 'test', position: null }),
+          ),
+      }),
+    )
 
     await createBlock({ blockType: 'page', content: 'test' })
 
@@ -536,7 +572,9 @@ describe('createBlock', () => {
   })
 
   it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Validation error'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ create_block: () => Promise.reject(new Error('Validation error')) }),
+    )
     await expect(createBlock({ blockType: 'bad', content: '' })).rejects.toThrow('Validation error')
   })
 })
@@ -553,7 +591,7 @@ describe('searchBlocks', () => {
   // `spaceId`. The wrapper's public API stays flat — these tests verify the
   // marshalling at the IPC boundary.
   it('invokes search_blocks with default-shaped filter when no optional params given', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
 
     const result = await searchBlocks({ query: 'hello', spaceId: 'TEST_SPACE_01' })
 
@@ -600,6 +638,11 @@ describe('searchBlocks', () => {
           parent_id: null,
           position: null,
           deleted_at: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: null,
           snippet: null,
         },
       ],
@@ -607,7 +650,7 @@ describe('searchBlocks', () => {
       has_more: true,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => pageResp }))
 
     const result = await searchBlocks({
       query: 'found',
@@ -649,7 +692,7 @@ describe('searchBlocks', () => {
   })
 
   it('wraps spaceId into an active scope inside `filter` (#2248 c)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
     await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     const filter = args['filter'] as Record<string, unknown>
@@ -657,7 +700,7 @@ describe('searchBlocks', () => {
   })
 
   it('marshals parentId and tagIds into the filter struct', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
     await searchBlocks({
       query: 'q',
       parentId: 'PAGE1',
@@ -702,7 +745,7 @@ describe('searchBlocks', () => {
 
 describe('logFrontend', () => {
   it('invokes log_frontend with all parameters', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ log_frontend: () => null }))
 
     await logFrontend('error', 'EditableBlock', 'failed to save', 'Error: x', 'ctx', '{"k":"v"}')
 
@@ -718,7 +761,7 @@ describe('logFrontend', () => {
   })
 
   it('defaults optional stack, context and data to null', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
+    mockedInvoke.mockImplementation(mockInvokeCommands({ log_frontend: () => null }))
 
     await logFrontend('info', 'mod', 'msg')
 
