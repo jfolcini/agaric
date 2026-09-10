@@ -17,12 +17,18 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { TagValuePicker } from '@/components/properties/TagValuePicker'
+import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const mockTags = [
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+const mockTags: TagCacheRow[] = [
   { tag_id: '01TAGWORKAAAAAAAAAAAAAAAA', name: 'work', usage_count: 5, updated_at: '2026-01-01' },
   {
     tag_id: '01TAGWORKOUTAAAAAAAAAAAA',
@@ -39,19 +45,17 @@ const mockTags = [
 ]
 
 function mockTagSearch() {
-  mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-    if (cmd === 'list_tags_by_prefix') {
-      const a = args as Record<string, unknown>
-      const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
+  stubInvoke({
+    list_tags_by_prefix: (args) => {
+      const prefix = ((args['prefix'] as string) ?? '').toLowerCase()
       return mockTags.filter((t) => t.name.toLowerCase().startsWith(prefix))
-    }
-    return []
+    },
   })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue([])
+  stubInvoke({ list_tags_by_prefix: () => [] })
 })
 
 describe('TagValuePicker', () => {
@@ -186,7 +190,7 @@ describe('TagValuePicker', () => {
   })
 
   it('handles search errors gracefully', async () => {
-    mockedInvoke.mockRejectedValue(new Error('Network error'))
+    stubInvoke({ list_tags_by_prefix: () => Promise.reject(new Error('Network error')) })
     const user = userEvent.setup()
     renderPicker()
 
@@ -203,7 +207,7 @@ describe('TagValuePicker', () => {
   it('logs a warn when listTagsByPrefix rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const boom = new Error('boom')
-    mockedInvoke.mockRejectedValueOnce(boom)
+    stubInvoke({ list_tags_by_prefix: () => Promise.reject(boom) })
     const user = userEvent.setup()
     renderPicker()
 
