@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { PropertyDefinition } from '@/lib/tauri'
+import type { PropertyDefinition } from '@/lib/bindings'
 
 import {
   buildInlinePropertySetParams,

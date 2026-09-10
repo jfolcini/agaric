@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import type { PeerRef } from '@/lib/bindings'
 import { peerDisplayName, peerDisplayNameOrId, peerName } from '@/lib/peer-display-name'
-import type { PeerRef } from '@/lib/tauri'
 
 function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
   return {

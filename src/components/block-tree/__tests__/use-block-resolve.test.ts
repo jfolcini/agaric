@@ -16,7 +16,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 8 — the hook now calls generated `commands.*` directly, so
-// mocking only the `@/lib/tauri` wrapper no longer intercepts anything. Mock
+// mocking only the hand-written wrapper no longer intercepts anything. Mock
 // the bindings surface instead, resolving the same typed-result envelope
 // `unwrap` expects (mirrors `use-block-link-resolve.test.ts`'s pattern).
 const mockedCreateBlock = vi.hoisted(() => vi.fn())

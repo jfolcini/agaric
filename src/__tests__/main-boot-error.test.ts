@@ -125,6 +125,29 @@ describe('main.tsx — observability init failure does not block render', () => 
   })
 })
 
+describe('main.tsx — the backend log sink is wired at boot', () => {
+  it('registers logFrontend as the transport sink', async () => {
+    // The wiring used to be an import-time side effect inside the wrapper
+    // layer #2927 deleted. Nothing imports that layer now, so `bootstrap`
+    // calls `setLogBackendSink` itself — and if that call goes away, every
+    // frontend warn/error stops reaching the Rust log file with no other
+    // symptom. This case is the only thing that would notice.
+    document.body.innerHTML = '<div id="root"></div>'
+    mockCommonDeps()
+    vi.doMock('@/lib/observability', () => ({
+      initFrontendObservability: vi.fn().mockResolvedValue(undefined),
+    }))
+
+    await bootAndSettle()
+
+    // Same module registry as the `import('@/main')` above (`vi.resetModules()`
+    // runs in `afterEach`), so these are the instances `main.tsx` itself used.
+    const { getLogBackendSink } = await import('@/lib/logger-transport')
+    const { logFrontend } = await import('@/lib/ipc-helpers')
+    expect(getLogBackendSink()).toBe(logFrontend)
+  })
+})
+
 describe('main.tsx — pre-mount failure renders a static fallback screen', () => {
   it('injects a fallback screen with a reload button when #root is missing', async () => {
     // No `#root` in the DOM — `main()` throws synchronously with

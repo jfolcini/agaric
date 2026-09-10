@@ -354,8 +354,8 @@ pub async fn batch_resolve_inner(
 /// the agenda knobs `date` / `date_range` / `source`) live together as
 /// fields of the request; the grouping reflects the request, not the
 /// `tauri-specta` 10-arg transport limit, and a new filter is added as a
-/// field there. The hand-written TS wrapper in `src/lib/tauri.ts` keeps
-/// its flat public API and builds the request only at the IPC boundary.
+/// field there. The TS call site keeps its own flat shape and builds the
+/// request only at the IPC boundary.
 ///
 /// # Scope (#2248)
 ///

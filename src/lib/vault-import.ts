@@ -14,10 +14,18 @@
  */
 
 import { isAppError } from '@/lib/app-error'
+import type { VaultFile } from '@/lib/bindings'
 import { type EnexNote, enexNoteToMarkdown, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
 import { type JexNote, jexNoteToMarkdown } from '@/lib/jex-import'
-import type { BibliographyFormat, VaultFile } from '@/lib/tauri'
+
+/**
+ * Source format accepted by the `import_bibliography` command (#1454).
+ * `'bibtex'` for `.bib` files, `'csl-json'` for CSL-JSON `.json` files.
+ * Passing `null` as the command's `format` asks the backend to auto-detect
+ * from the content.
+ */
+export type BibliographyFormat = 'bibtex' | 'csl-json'
 
 /**
  * Extract a user-facing reason from a failed import. The backend rejects

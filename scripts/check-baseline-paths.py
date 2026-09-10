@@ -146,7 +146,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     # JSON arrays of bare path strings.
     "scripts/lib-layering-baseline.json": ("json:list", "."),
     "scripts/strict-invoke-optout-baseline.json": ("json:list", "."),
-    "scripts/tauri-import-baseline.json": ("json:list", "."),
     # `<count> <path>` text lines.
     "src-tauri/dynamic-sql-baseline.txt": ("text:count-path", "."),
     "src-tauri/space-filter-baseline.txt": ("text:count-path", "."),
@@ -169,7 +168,6 @@ NO_PATHS: dict[str, str] = {
         "`<count> <crate> <table>` — crate labels and SQL table names"
     ),
     # Matched by name but is a guard script, not its data.
-    "scripts/check-tauri-import-baseline.mjs": "a guard script, not a baseline",
     "scripts/check-unsafe-allowlist.sh": "a guard script, not an allowlist",
     "scripts/check-baseline-paths.py": (
         "this script — it DECLARES the population, it is not in it"

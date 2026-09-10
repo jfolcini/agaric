@@ -7,7 +7,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 
 // #2927 phase 4 — `ImageResizeToolbar` now calls `commands.setProperty`
-// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
+// from `@/lib/bindings` directly instead of the hand-written wrapper.
 const mockedSetProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()

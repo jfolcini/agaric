@@ -20,7 +20,7 @@ import { useSpaceStore } from '@/stores/space'
 const mockListAllPagesInSpace = vi.fn()
 const mockListAllTagsInSpace = vi.fn()
 const mockCreateBlock = vi.fn()
-// `createPageInSpace` retired its `@/lib/tauri` wrapper (#4411) — the
+// `createPageInSpace` retired its hand-written wrapper (#4411) — the
 // resolver now calls `commands.createPageInSpace` directly and unwraps the
 // `Result` envelope, so its mock backs the `commands.*` surface below and
 // resolves the `{ status: 'ok', data }` shape.
@@ -30,11 +30,10 @@ const mockCreatePageInSpace = vi.hoisted(() => vi.fn())
 // load; stub the ones they bind so the mocked module satisfies every importer.
 // (#2927 phase 7 — `@/stores/space` no longer binds `listSpaces` from this
 // module, so the stub that used to satisfy it has been dropped.)
-vi.mock('@/lib/tauri', () => ({
-  listBlocks: vi.fn(),
-  listBlocksLimit: vi.fn(),
-  createBlock: (...args: unknown[]) => mockCreateBlock(...args),
-}))
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
+  return { ...actual, createBlock: (...args: unknown[]) => mockCreateBlock(...args) }
+})
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()

@@ -42,7 +42,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 const virtualWindow = vi.hoisted(() => ({ size: null as number | null }))
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
 
-// `listUnlinkedReferences` retired its `@/lib/tauri` wrapper (#4411) —
+// `listUnlinkedReferences` retired its hand-written wrapper (#4411) —
 // `useUnlinkedReferences` dispatches `commands.listUnlinkedReferences`, so the
 // spy resolves/rejects with the bare `GroupedBacklinkResponse` and the shim
 // below adds the `{ status: 'ok', data }` envelope `unwrap` expects.

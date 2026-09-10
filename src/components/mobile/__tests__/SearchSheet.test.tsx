@@ -27,8 +27,8 @@ function makeHost(): HTMLElement {
 // CommandPalette, which fires `searchBlocksPartitioned` IPC on every
 // debounced keystroke. Mock both `searchBlocks` (linkMode) and
 // `searchBlocksPartitioned` (default) to keep tests deterministic.
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   }
 })
 
-import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)

@@ -175,7 +175,7 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 
 ## TypeScript Bindings (specta)
 
-`src/lib/bindings.ts` is generated from the Rust command surface. New code imports from `@/lib/bindings`; the legacy `@/lib/tauri` wrapper is frozen by the `tauri-import-baseline` ratchet and only shrinks. Regenerate after any command signature, arg/return type, or command-list change (the `ts_bindings_up_to_date` test fails on drift), including doc-comment-only changes:
+`src/lib/bindings.ts` is generated from the Rust command surface. New code imports from `@/lib/bindings`; the hand-written wrapper layer that used to sit on top of it is gone (#2927) and the small permanent floor that remains lives in `@/lib/ipc-helpers`. Regenerate after any command signature, arg/return type, or command-list change (the `ts_bindings_up_to_date` test fails on drift), including doc-comment-only changes:
 
 ```bash
 cd src-tauri && cargo test -- specta_tests --ignored     # or: just gen-bindings

@@ -9,10 +9,10 @@
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { PageHeading } from '@/lib/bindings'
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import { t } from '@/lib/i18n'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
-import type { PageHeading } from '@/lib/tauri'
 
 // Re-export the graph data types from their leaf home (`@/lib/graph-types`,
 // #761) so existing `from '@/components/graph/GraphView.helpers'` import sites keep working.

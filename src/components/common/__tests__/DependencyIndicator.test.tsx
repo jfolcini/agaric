@@ -22,7 +22,7 @@ const mockBatchResolve = vi.fn()
 
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) calls
 // `commands.getBatchProperties` from `@/lib/bindings` directly.
-// #2927 phase 6 — `DependencyIndicator` itself is now off the `@/lib/tauri`
+// #2927 phase 6 — `DependencyIndicator` itself is now off the hand-written
 // wrapper too: its legacy fallback fetch is `commands.getProperties` and its
 // title lookup is `commands.batchResolve`. All three spies therefore live on
 // the bindings surface, wrapped in the `{status:'ok', data}` envelope that

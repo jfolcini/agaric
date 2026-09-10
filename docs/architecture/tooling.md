@@ -14,9 +14,7 @@ Because both consumers come from the same token tree, the handler and the bindin
 
 Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings` ignored test (`cargo test -- specta_tests --ignored`). The generated file is checked in. A Rust test gate (`ts_bindings_up_to_date`) runs in CI; the generated content is whitespace-and-header-normalised before compare, so cosmetic diffs don't fail the gate.
 
-The frontend never calls `invoke()` directly (enforced by the `no-raw-invoke` prek hook). It calls either the generated `commands.*` surface or the hand-written wrapper modules under `src/lib/tauri/`, which handle Tauri 2's explicit-null-vs-undefined contract (Tauri rejects `undefined` over the wire; the wrapper coerces).
-
-The wrapper layer is being retired in favour of direct `bindings.ts` use (#2927). The `tauri-import-baseline` prek hook ratchets it: the allowlist of files importing `@/lib/tauri` (`scripts/tauri-import-baseline.json`) may only shrink. New code should call `commands.*` and unwrap with `unwrap` from `@/lib/app-error`. See [`frontend.md § Tauri command wrappers`](frontend.md).
+The frontend never calls `invoke()` directly (enforced by the `no-raw-invoke` prek hook). It calls the generated `commands.*` surface and unwraps with `unwrap` from `@/lib/app-error`. The hand-written wrapper layer that used to sit on top is gone (#2927), along with the ratchet that retired it; what survives is the small permanent floor in `src/lib/ipc-helpers.ts`. See [`frontend.md § Tauri command surface`](frontend.md).
 
 ## Compile-time SQL
 
@@ -44,9 +42,8 @@ Pre-commit vs pre-push split is deliberate: fast hooks (oxlint, oxfmt, type-chec
 Notable hooks that enforce architectural contracts:
 
 - **`tauri-command-sanitize`** — see Security § Error sanitization below.
-- **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler that the wrapper layer expects.
+- **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler the frontend calls.
 - **`no-raw-invoke`** — no bare `invoke()` in app code.
-- **`tauri-import-baseline`** — ratchets the `@/lib/tauri` → `bindings.ts` migration (#2927); the importer allowlist may only shrink. This is the sole guard on the wrapper layer's retirement — a former sibling hook (`tauri-bindings-parity`, one wrapper per command) was retired in #3218 for pulling in the opposite direction of this ratchet.
 - **`lib-layering`** — ranks the frontend tiers `lib(0) ← stores(1) ← hooks(2) ← components(3)` and fails a commit where a lower tier imports a higher one (#3121). Ratcheted through `scripts/lib-layering-baseline.json`: a new upward import fails, and so does a stale baseline entry, so the count may only fall. Distinct from `import-cycles` (which only proves acyclicity) and `store-layering` (store-to-store edges only); `src/editor/`, `src/workers/` and `src/types/` are out of scope on both sides. Full rules in [`frontend.md`](frontend.md) § `lib-layering` — the frontend tier ratchet.
 - **`migrations-immutable`** — refuses changes to already-shipped migrations.
 - **`migrations-strict-tables`** — every new schema migration must use `STRICT` mode.

@@ -2460,7 +2460,8 @@ pub fn run() {
     // bind / unbind the user-configured "quick capture" hotkey at runtime.
     // The plugin doesn't need a fixed binding at registration time —
     // bindings are registered/unregistered dynamically from the frontend
-    // (see `src/lib/tauri.ts` + `src/components/QuickCaptureDialog.tsx`).
+    // (see `src/lib/platform/global-shortcut.ts` +
+    // `src/components/dialogs/QuickCaptureDialog.tsx`).
     // Desktop-only — Android / iOS have no global-shortcut concept, so
     // the plugin is gated behind `#[cfg(desktop)]`.
     #[cfg(desktop)]

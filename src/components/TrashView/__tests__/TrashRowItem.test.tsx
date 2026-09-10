@@ -23,7 +23,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 
 // Render rich content as plain text so the parse is queryable AND we can
 // count how many times it runs (the memo regression guard).

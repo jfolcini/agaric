@@ -25,7 +25,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
 
-// #4412 — `queryByProperty` / `batchResolve` retired their `@/lib/tauri`
+// #4412 — `queryByProperty` / `batchResolve` retired their hand-written
 // wrappers; the panel calls `commands.*` and unwraps the `Result` envelope, so
 // the spies resolve raw data and the mock wraps it in `{ status: 'ok', data }`.
 const { mockedQueryByProperty, mockedBatchResolve } = vi.hoisted(() => ({

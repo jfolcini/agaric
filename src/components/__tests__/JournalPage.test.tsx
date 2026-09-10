@@ -149,7 +149,7 @@ import {
   MIN_JOURNAL_DATE,
 } from '@/components/JournalPage'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'

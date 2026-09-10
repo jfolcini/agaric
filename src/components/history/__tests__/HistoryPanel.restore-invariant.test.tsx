@@ -24,8 +24,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import type { HistoryEntry } from '@/lib/bindings'
 import { queryClient } from '@/lib/query-client'
-import type { HistoryEntry } from '@/lib/tauri'
 
 // Stub BlockHistoryItem: render a restore button for EVERY row, defeating the
 // child's own "no affordance for non-restorable rows" invariant so the test

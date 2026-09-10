@@ -15,8 +15,8 @@
  * The baseline is the FILE SET, not its size. A count alone is satisfied by a
  * PR that migrates one file and adds a hand-stub in another — the arithmetic
  * that hid a regression behind a win. Naming the files also makes the
- * migration auditable in the diff, and it is what
- * `scripts/tauri-import-baseline.json` does for the sibling ratchet.
+ * migration auditable in the diff, and it is what the retired
+ * `tauri-import-baseline` ratchet (#2927) did for the wrapper layer.
  *
  * The match is textual, so the source goes through `js-scanner.mjs`'s
  * `stripComments` first (the sanctioned tokenizer) and the walk is fenced to
@@ -101,7 +101,6 @@ const MIGRATION_BACKLOG: readonly string[] = [
   'src/lib/__tests__/property-save-utils.test.ts',
   'src/lib/__tests__/property-values-cache.test.ts',
   'src/lib/__tests__/slash-commands.test.ts',
-  'src/lib/__tests__/tauri.test.ts',
   'src/lib/__tests__/template-utils.test.ts',
   'src/stores/__tests__/page-blocks.crud.test.ts',
   'src/stores/__tests__/page-blocks.load-reconcile.test.ts',

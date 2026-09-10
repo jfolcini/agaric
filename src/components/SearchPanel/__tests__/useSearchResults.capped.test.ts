@@ -16,12 +16,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    getBlock: vi.fn(),
   }
 })
 
@@ -35,9 +34,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
+import type { SearchBlockRow } from '@/lib/bindings'
+import { searchBlocks } from '@/lib/ipc-helpers'
 import { queryClient } from '@/lib/query-client'
 import { parse } from '@/lib/search-query'
-import { searchBlocks, type SearchBlockRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 

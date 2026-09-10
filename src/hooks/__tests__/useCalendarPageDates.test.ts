@@ -24,7 +24,7 @@ import {
   PAGE_DATES_TTL_MS,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)

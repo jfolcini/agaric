@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
-import type { DiffSpan } from '@/lib/tauri'
+import type { DiffSpan } from '@/lib/bindings'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({

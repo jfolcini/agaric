@@ -32,13 +32,13 @@ import { axe } from '@/__tests__/helpers/axe'
 import type { BacklinkFilterBuilderProps } from '@/components/BacklinkFilterBuilder'
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
-import type { BacklinkFilter } from '@/lib/tauri'
+import type { BacklinkFilter } from '@/lib/bindings'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
 // `HasTagFilterForm` calls `commands.listTagsByPrefix` from `@/lib/bindings`
-// directly (positional `(prefix, limit)`; the `@/lib/tauri` wrapper was
+// directly (positional `(prefix, limit)`; the hand-written wrapper was
 // retired, #4411) and unwraps the `Result` envelope — resolve the
 // `{ status: 'ok', data }` shape.
 const { mockListTagsByPrefix } = vi.hoisted(() => ({

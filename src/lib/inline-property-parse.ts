@@ -186,7 +186,7 @@ export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<num
   return kept.join('\n')
 }
 
-/** Param shape accepted by `setProperty` in `@/lib/tauri` (structural copy —
+/** Param shape accepted by `commands.setProperty` (structural copy —
  *  kept local so this module stays free of value imports). */
 export interface InlineSetPropertyParams {
   blockId: string

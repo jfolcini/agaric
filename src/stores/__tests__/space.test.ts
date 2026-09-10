@@ -17,7 +17,7 @@ import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
 // #2927 phase 7 — `useSpaceStore` calls `commands.listSpaces()` from
-// `@/lib/bindings` directly (the `@/lib/tauri` wrapper is gone). The spy
+// `@/lib/bindings` directly (the hand-written wrapper is gone). The spy
 // resolves the bare `SpaceRow[]`; the binding shim below wraps it in the
 // `{ status: 'ok', data }` envelope `unwrap` expects, so a
 // `mockRejectedValueOnce` still surfaces as a rejected IPC.

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #4338 — the palette's `create-new-page` command creates through
 // `@/lib/untitled-page`, which calls `commands.createPageInSpace` from
-// `@/lib/bindings` directly (its `@/lib/tauri` wrapper was retired, #4411).
+// `@/lib/bindings` directly (its hand-written wrapper was retired, #4411).
 // Spread the real module so every other importer still binds what it expects,
 // and intercept the create plus the #4723 page-list read that precedes it;
 // resolve the OK-envelope shape so the real `unwrap` at the call site runs.

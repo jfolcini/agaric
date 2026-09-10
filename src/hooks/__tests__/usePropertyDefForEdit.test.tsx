@@ -7,7 +7,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 6 — the hook now calls the generated `commands.getPropertyDef` /
-// `commands.listBlocks`, so mocking only the `@/lib/tauri` wrapper no longer
+// `commands.listBlocks`, so mocking only the hand-written wrapper no longer
 // intercepts. Back the generated surface instead, resolving the same typed-result
 // envelope `unwrap` expects.
 const mockGetPropertyDef = vi.hoisted(() => vi.fn())

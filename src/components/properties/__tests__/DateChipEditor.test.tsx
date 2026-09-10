@@ -23,7 +23,7 @@ import { axe } from 'vitest-axe'
 // ── Mocks ──────────────────────────────────────────────────────────────
 
 // #2927 — `useBlockReschedule` calls the generated bindings directly, so the
-// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// seam this suite stubs is `commands.*`, not the retired hand-written
 // wrapper. Spreading `actual.commands` keeps every other command real, and
 // the resolved `{ status: 'ok' }` envelope means the production `unwrap`
 // runs for real instead of being bypassed by a wrapper-level mock.

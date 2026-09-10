@@ -25,14 +25,11 @@
 # anyway (the typecheck — see the #4078 section below): the Rust guard trio
 # that shares the five-crate-root scan (#3107) —
 # check-raw-tx, check-dynamic-sql, check-table-ownership — all stdlib-only
-# Python, no cargo, no node_modules; plus (#3978) the three OTHER whole-tree
+# Python, no cargo, no node_modules; plus (#3978) the two OTHER whole-tree
 # ratchets that were previously left out — `unsafe-allowlist` and
-# `migrations-immutable` (bash) and `tauri-import-baseline` (node — it
-# imports nothing beyond the stdlib and `scripts/lib/js-scanner.mjs`, so
-# despite the name it needs no `node_modules` either; ubuntu-24.04 runners
-# carry `node` preinstalled). All six are invoked exactly as their own prek
-# hook would (prek.toml's `entry =`), against the merged tree's OWN copy of
-# each script — see `run_one_guard` below for the per-guard invocation
+# `migrations-immutable`, both bash. All five are invoked exactly as their own
+# prek hook would (prek.toml's `entry =`), against the merged tree's OWN copy
+# of each script — see `run_one_guard` below for the per-guard invocation
 # shape, which differs because each guard resolves "which repo am I in"
 # differently.
 #
@@ -185,8 +182,7 @@
 #            paths), a guard named in RATCHET_GUARDS is absent from the
 #            merged tree, a PREREQUISITE a present guard refuses to run
 #            without is absent from the merged tree (#3989 — a missing
-#            `scripts/lib/js-scanner.mjs`, `src-tauri/unsafe-allowlist.txt`
-#            or `scripts/tauri-import-baseline.json` used to surface as
+#            `src-tauri/unsafe-allowlist.txt` used to surface as
 #            that guard "FAILING on the MERGED tree", i.e. exit 1, which
 #            pr-overlap.yml renders as "a ratchet guard fails on the merge
 #            result" and tells the author to merge main — wrong advice for
@@ -236,7 +232,7 @@
 
 set -uo pipefail
 
-# The six whole-tree ratchet guards this script runs (#3672, #3978), in the
+# The five whole-tree ratchet guards this script runs (#3672, #3978), in the
 # order they are cheapest to fail fast on. Each is a `language = "system"`
 # prek hook (prek.toml) invoked exactly as its own `entry =` names it — this
 # script calls the same entry point prek would, just against the merged
@@ -249,7 +245,6 @@ RATCHET_GUARDS=(
   check-table-ownership.py
   check-unsafe-allowlist.sh
   check-migrations-immutable.sh
-  check-tauri-import-baseline.mjs
 )
 
 # ---------------------------------------------------------------------------
@@ -349,44 +344,20 @@ for r in roots:
 # ratchet violation — it is infrastructure breakage, and mapping it to exit 1
 # ("a ratchet guard fails on the merge result") tells the PR author to merge
 # main and re-run prek for something their diff did not cause. Measured
-# before this table existed: a merged tree missing scripts/lib/js-scanner.mjs
-# exited 1 with a raw ERR_MODULE_NOT_FOUND stack trace; missing
-# src-tauri/unsafe-allowlist.txt and missing scripts/tauri-import-baseline.json
-# exited 1 with the guard's own ERROR line and a "FAILED on the MERGED tree"
-# verdict on top of it.
+# before this table existed: a merged tree missing
+# src-tauri/unsafe-allowlist.txt exited 1 with the guard's own ERROR line and
+# a "FAILED on the MERGED tree" verdict on top of it.
 #
 # Keyed by the OWNING guard, and only checked when that guard is present, so
 # a tree with no scripts/ at all still gets the ABSENT-guard message (which
 # is the more fundamental diagnosis) rather than a prerequisite one.
-#
-# js-scanner.mjs is not itself in RATCHET_GUARDS — it is a library the mjs
-# guard imports, so it can never appear in the ABSENT-guard note, which is
-# exactly why it needs naming here.
-#
-# scripts/tauri-sanctioned-symbols.json is here for a DIFFERENT reason than
-# the other three: the guard's own readSanctioned() does not hard-error on
-# its absence, it silently degrades to an empty Set (see that function's own
-# comment). Left off this table, a merged tree missing the file does not
-# fail closed the way the other prerequisites do — it runs the guard to
-# completion and gets a WRONG answer: every file whose only @/lib/tauri
-# dependency was a sanctioned symbol now reads as a brand-new importer, so
-# the guard reports "FAILED on the MERGED tree" over infrastructure
-# breakage the PR did not cause. That is worse than the other three, which
-# at least fail LOUDLY (a stack trace or the guard's own ERROR line) — this
-# one fails with a plausible-looking wrong verdict. Listing it here routes
-# that same breakage through check_prereqs' exit-3 "nothing was verified"
-# path instead, before the guard ever runs.
 RATCHET_PREREQS=(
   'check-unsafe-allowlist.sh|src-tauri/unsafe-allowlist.txt|the allowlist it ratchets against'
-  'check-tauri-import-baseline.mjs|scripts/lib/js-scanner.mjs|the shared scanner it imports'
-  'check-tauri-import-baseline.mjs|scripts/tauri-import-baseline.json|the baseline it ratchets against'
-  'check-tauri-import-baseline.mjs|scripts/tauri-sanctioned-symbols.json|the sanctioned-symbols list a missing copy of which silently turns sanctioned-only importers into false new-importer verdicts'
-  'check-tauri-import-baseline.mjs|src/|the frontend tree it scans'
   # All three Python guards load this by PATH at import time (#4017). Absent,
   # they die with a FileNotFoundError traceback — exit 1, which this script
   # would otherwise read as "the guard FAILED on the merged tree": a content
   # verdict about a merge, from a guard that never ran. Same shape as the
-  # js-scanner.mjs entry above, and the same remedy.
+  # unsafe-allowlist.txt entry above, and the same remedy.
   'check-raw-tx.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
   'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
   'check-command-arity.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
@@ -496,7 +467,7 @@ count_examined() {
 }
 
 # Invokes exactly one ratchet guard against the merged tree, the way its own
-# prek hook would (prek.toml's `entry =`) — but the six guards do not share
+# prek hook would (prek.toml's `entry =`) — but the five guards do not share
 # one invocation shape, only a common "run against the merged tree" intent:
 #
 #   *.py                          — python3 <script> <crate-root targets>.
@@ -525,12 +496,6 @@ count_examined() {
 #                                    pins the third dot: an equivalence that
 #                                    does not hold in general is not a
 #                                    property to assert.
-#   *.mjs                         — node <script>, no args; it resolves its
-#                                    own root from import.meta.dirname (its
-#                                    OWN path), so cwd does not matter — but
-#                                    its sibling scripts/lib/js-scanner.mjs
-#                                    import resolves the same way, so both
-#                                    must exist together in the merged tree.
 run_one_guard() {
   local guard="$1" workdir="$2" base_tip="$3"
   shift 3
@@ -557,13 +522,6 @@ run_one_guard() {
       ;;
     check-migrations-immutable.sh)
       ( cd "$workdir" && bash "scripts/$guard" --range "${base_tip}...HEAD" )
-      ;;
-    *.mjs)
-      # Deliberately NOT wrapped in `( cd "$workdir" && … )` like the two
-      # bash guards: the claim above is that this guard is cwd-INDEPENDENT,
-      # and a cd here would make that claim untestable by satisfying it
-      # accidentally.
-      node "$workdir/scripts/$guard"
       ;;
     *)
       # An unknown guard must be a hard FAILURE, never a silent pass:
@@ -851,14 +809,15 @@ run_merge_check() {
     echo "  neither a pass nor a finding against this PR." >&2
     return 3
   fi
-  # #3978: check-tauri-import-baseline.mjs needs `node`. Same "verified
-  # nothing, not a per-guard skip" reasoning as the python3 check above —
-  # this script reports ALL SIX guards or none, not a partial result that
-  # would read as a pass on the five it could run.
+  # The typecheck stage probes the merged tree's package.json with `node -e`
+  # before invoking npm; without `node` that probe fails and the stage reports
+  # "the merged tree defines no typecheck script" — an accusation against the
+  # PR for an absent tool. Checked here, up front, for the same "verified
+  # nothing, not a per-stage skip" reasoning as the python3 check above.
   if ! command -v node >/dev/null 2>&1; then
-    echo "pr-merge-result-check: node is not on PATH — the tauri-import-baseline" >&2
-    echo "  guard needs it. NOTHING was verified; this is neither a pass nor a" >&2
-    echo "  finding against this PR." >&2
+    echo "pr-merge-result-check: node is not on PATH — the typecheck stage needs" >&2
+    echo "  it. NOTHING was verified; this is neither a pass nor a finding" >&2
+    echo "  against this PR." >&2
     return 3
   fi
 
@@ -1042,12 +1001,12 @@ run_merge_check() {
   # How many files did each Python guard actually EXAMINE? Computed BEFORE
   # cleanup (it needs the merged tree) and judged after, so the more
   # fundamental diagnoses below still get to win the exit code. Only the
-  # three Python guards can be probed this way — the other three do not
+  # three Python guards can be probed this way — the other two do not
   # declare a file-set constant that could be read back out of the merged
-  # tree; check-unsafe-allowlist.sh and check-tauri-import-baseline.mjs
-  # discover their own inputs by walking the tree, and
-  # check-migrations-immutable.sh reads a commit range, so for those three
-  # "did it examine anything" has no counterpart to interrogate here. The
+  # tree; check-unsafe-allowlist.sh discovers its own inputs by walking the
+  # tree, and check-migrations-immutable.sh reads a commit range, so for
+  # those two "did it examine anything" has no counterpart to interrogate
+  # here. The
   # missing-PREREQUISITE check above is what covers their fail-open shape:
   # each of them hard-errors rather than passing vacuously when the file set
   # it walks is gone.

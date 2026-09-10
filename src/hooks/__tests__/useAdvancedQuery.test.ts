@@ -4,14 +4,14 @@
  * Validates that the hook threads the new engine inputs (fulltext / sort /
  * groupBy / aggregates) into `runAdvancedQuery`, surfaces `groups` and
  * `aggregates` from the response, and handles grouped pagination over the same
- * cursor. IPC is mocked at the `@/lib/tauri` wrapper boundary.
+ * cursor. IPC is mocked at the hand-written wrapper boundary.
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #4411 / #4412 — `runAdvancedQuery` and `batchResolve` retired their
-// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
 const { mockedResolve, mockedRun } = vi.hoisted(() => ({
   mockedResolve: vi.fn(),

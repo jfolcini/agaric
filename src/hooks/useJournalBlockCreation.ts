@@ -28,10 +28,10 @@ import { useTranslation } from 'react-i18next'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { createBlock } from '@/lib/tauri'
 import {
   insertTemplateBlocks,
   insertTemplateBlocksFromString,

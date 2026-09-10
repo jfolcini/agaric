@@ -35,8 +35,8 @@ Components using `usePageBlockStore` / `usePageBlockStoreApi` render inside `<Pa
 
 ## Choosing the mock layer
 
-- **`invoke` from `@tauri-apps/api/core`** — mocked globally in `src/test-setup.ts`, below the `@/lib/tauri/*` wrappers and `@/lib/bindings`, so it catches every call. Prefer it.
-- **`vi.mock('@/lib/tauri', …)`** — catches only imports through the barrel (`undo.test.ts`); a store importing `@/lib/bindings` directly bypasses it. Check the store's imports first.
+- **`invoke` from `@tauri-apps/api/core`** — mocked globally in `src/test-setup.ts`, below both `@/lib/bindings` and the `@/lib/ipc-helpers` floor, so it catches every call. Prefer it.
+- **`vi.mock('@/lib/ipc-helpers', …)`** — catches only the hand-written floor; a store calling `commands.*` from `@/lib/bindings` directly bypasses it. Check the store's imports first.
 
 ## Conventions
 

@@ -44,10 +44,10 @@
 //     pattern silently creep back in.
 //
 // Baselining is occurrence-COUNT-granular, deliberately NOT file-granular
-// like the sibling `check-tauri-import-baseline.mjs` / `check-lib-layering.mjs`
-// ratchets: those track a single per-file boolean fact ("does this file
-// depend on the wrapper layer at all") where the unit of fix is inherently
-// the whole file, so presence-only baselining loses nothing. Here, each
+// like the sibling `check-lib-layering.mjs` ratchet (or the retired
+// `tauri-import-baseline` one, #2927): those track a single per-file boolean
+// fact ("does this file have an upward import at all") where the unit of fix
+// is inherently the whole file, so presence-only baselining loses nothing. Here, each
 // `JSON.parse(...) as` site is an INDEPENDENT hazard — two casts in one
 // file are two unrelated bugs, one may be fixed while the other lands
 // brand new in the same commit — so a file-presence baseline would let an
@@ -149,7 +149,7 @@
 //
 // Scans `src/**/*.{ts,tsx}`, excluding test files (`*.test.ts[x]`,
 // `__tests__/`, `/tests/` directories) and `.d.ts` — the same exclusion as
-// `check-tauri-import-baseline.mjs` / `check-set-property-args.mjs`. Test
+// `check-set-property-args.mjs`. Test
 // files legitimately parse known-good fixture JSON (`JSON.parse(readFileSync(
 // FIXTURE_PATH, 'utf8')) as Vectors`) and cast controlled mock payloads —
 // that is a different trust boundary from a value that round-tripped through
@@ -213,7 +213,7 @@ function toPosix(p) {
 /**
  * Walk `src/**` for `*.ts` / `*.tsx` files, excluding test files,
  * `__tests__/` + `tests/` directories, and `EXCLUDED_DIR` (the tauri-mock
- * layer — see the Scope header). Mirrors `check-tauri-import-baseline.mjs`'s
+ * layer — see the Scope header). Mirrors `check-set-property-args.mjs`'s
  * `listSourceFiles`, plus the one extra directory exclusion.
  */
 function listSourceFiles(srcDir = SRC_DIR) {

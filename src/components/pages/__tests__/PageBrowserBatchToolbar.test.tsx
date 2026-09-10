@@ -44,7 +44,7 @@ import { useSpaceStore } from '@/stores/space'
 // Partial-mock the generated bindings so the bulk set-property path can be
 // asserted directly (ids/key/value) without threading through `invoke`. All
 // OTHER commands (trash/tag/space) keep their real implementation and still
-// hit the mocked `invoke`. #4411 — `setPropertyBatch` retired its `@/lib/tauri`
+// hit the mocked `invoke`. #4411 — `setPropertyBatch` retired its hand-written
 // wrapper, so the spy resolves raw data and the mock wraps it in the
 // `{ status: 'ok', data }` envelope the real `unwrap` expects.
 const mockedSetPropertyBatch = vi.hoisted(() => vi.fn())

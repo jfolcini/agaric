@@ -22,7 +22,7 @@
 // `src/__tests__/AGENTS.md` § Shared setup ("No per-file `vi.mock`"), while every other
 // invariant of comparable weight in this repo carries a committed baseline
 // (`scripts/lib-layering-baseline.json`, `src-tauri/dynamic-sql-baseline.txt`,
-// `scripts/tauri-import-baseline.json`, `src-tauri/unsafe-allowlist.txt`).
+// `src-tauri/unsafe-allowlist.txt`).
 // This guard is that baseline — for the mechanism that protects the
 // truthfulness of the frontend suite itself.
 //

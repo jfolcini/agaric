@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { DataTab } from '@/components/settings/DataTab'
-import type { SpaceRow } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
@@ -37,16 +37,15 @@ const mockImportBibliography = vi.fn()
 // id via `resolvePageByAlias`, then calls `useTabsStore.navigateToPage`.
 const mockResolvePageByAlias = vi.fn()
 
-vi.mock('@/lib/tauri', () => ({
-  importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
-  importBibliography: (...args: unknown[]) => mockImportBibliography(...args),
-}))
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
+  return { ...actual, importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args) }
+})
 
-// #2927 — `BibliographySection` migrated off the `@/lib/tauri` wrapper to
-// `commands.importBibliography` from `@/lib/bindings` (unwrapped with the
-// helper from `@/lib/app-error`). Re-use the same spy but wrap its resolved
-// value in the `Result` envelope `commands.*` returns; a rejection still
-// bubbles as an `AppError`.
+// `BibliographySection` calls `commands.importBibliography` from
+// `@/lib/bindings` (unwrapped with the helper from `@/lib/app-error`). Wrap
+// the spy's resolved value in the `Result` envelope `commands.*` returns; a
+// rejection still bubbles as an `AppError`.
 vi.mock('@/lib/bindings', async () => {
   const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
   return {

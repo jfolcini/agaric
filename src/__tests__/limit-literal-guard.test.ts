@@ -7,9 +7,9 @@
  * `SafeLimit` brand from `@/lib/safe-limit`, so the bounds check runs at the
  * call site instead of round-tripping a bad value to the backend.
  *
- * That was enforced by one thing — the hand-written `@/lib/tauri` wrappers
- * typed `limit` as `SafeLimit`, so `{ limit: 500 }` did not assign. #4411 is
- * retiring those wrappers, and the generated bindings type every `limit` as
+ * That was enforced by one thing — the hand-written IPC wrappers typed
+ * `limit` as `SafeLimit`, so `{ limit: 500 }` did not assign. #4411 retired
+ * those wrappers, and the generated bindings type every `limit` as
  * plain `number | null`, so a direct `commands.*` call compiles with any
  * number. The defect that motivates this guard was in the tree when it was
  * written: `empty-block-cleanup.ts` passed a bare `1` to `getBacklinks`.

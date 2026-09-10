@@ -25,8 +25,8 @@ import {
 } from '@/components/PageBrowser/PageBrowserRowRenderer'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
+import type { BlockRow } from '@/lib/bindings'
 import type { PageTreeNode } from '@/lib/page-tree'
-import type { BlockRow } from '@/lib/tauri'
 
 /** #2850 — no-op `ViewportObserver` stub (see `DensityRow.test.tsx`). */
 function makeMockViewport(): ViewportObserver {

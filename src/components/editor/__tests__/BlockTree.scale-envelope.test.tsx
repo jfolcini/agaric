@@ -97,7 +97,7 @@ import { cleanup, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
 
 /**

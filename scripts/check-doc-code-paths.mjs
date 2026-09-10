@@ -735,21 +735,18 @@ function extractCandidates(text) {
 // check can do.
 //
 // Deliberately a WARNING, not a red: a citation can legitimately name a
-// line number past the file's CURRENT length on purpose — the tree already
-// has one, `tauri.ts:1871` in `src/lib/__tests__/platform.test.ts`, a
-// historical anchor a test asserts the ABSENCE of (`src/lib/tauri.ts` is
-// 106 lines; the comment calls the anchor "stale" in so many words). A hard
-// check would redden the build on that citation, which is correct as
-// written. So a WARNING itself never folds into `failed` — see `check()`.
+// line number past the file's CURRENT length on purpose — a historical
+// anchor a test asserts the ABSENCE of, say. A hard check would redden the
+// build on such a citation, which is correct as written. So a WARNING itself
+// never folds into `failed` — see `check()`.
 //
-// Known floor: that same `tauri.ts:1871` anchor is permanent by
-// construction (the test it lives in exists to assert the anchor stays
-// gone), so this warning channel opens at a floor of ONE known-intentional
-// citation, not zero — a clean tree still prints one warning line. This is
-// the only entry in that floor as of #4258; if the floor grows beyond
-// deliberately-historical anchors like this one, add to the acknowledgment
-// list below, NOT delete the warning — a permanent non-zero floor left
-// undocumented is how a warning channel gets tuned out and ignored.
+// Known floor: the acknowledgment list below is EMPTY today. #2927 deleted
+// `src/lib/tauri.ts`, and with it the one deliberately-historical anchor
+// (`tauri.ts:1871`, asserted absent by `src/lib/__tests__/platform.test.ts`)
+// that populated this floor. A clean tree therefore prints no warning line
+// at all. If the floor grows again, add to the acknowledgment list, NOT
+// delete the warning — a permanent non-zero floor left undocumented is how
+// a warning channel gets tuned out and ignored.
 //
 // `extractCandidates` above already discards the `:N` suffix (that is the
 // whole reason #4244 part (a), the sweep, has to happen by hand instead of
@@ -767,7 +764,7 @@ function extractCandidates(text) {
 // exists to close for `newMisses` — so this acknowledgment list gets the
 // SAME shrink-only treatment: an entry whose (doc, ref, maxCited) no
 // longer corresponds to a LIVE warning (the citing file was fixed, the
-// anchor was removed, `platform.test.ts` was renamed) is a STALE entry,
+// anchor was removed, the citing doc was renamed) is a STALE entry,
 // and `check()` DOES now fold that into `failed` — never the warning
 // itself, only a rotted acknowledgment of one. Structured records (not
 // pre-joined `warningKey` strings) so the staleness check can read
@@ -796,9 +793,7 @@ function extractCandidates(text) {
 // never stand up this guard are untouched (`knownIntentionalWarningScenarios`
 // asserts that directly); the real repository, which always tracks this
 // file, gets BOTH rot triggers.
-const KNOWN_INTENTIONAL_WARNINGS = [
-  { doc: 'src/lib/__tests__/platform.test.ts', ref: 'src/lib/tauri.ts', maxCited: 1871 },
-]
+const KNOWN_INTENTIONAL_WARNINGS = []
 const warningKey = (w) => `${w.doc} ${w.ref} ${w.maxCited}`
 
 // The path this guard occupies in its OWN repository — the marker that says
@@ -3135,6 +3130,26 @@ function knownIntentionalWarningScenarios(root, selfPath = GUARD_SELF_PATH) {
           `no repository found above ${import.meta.filename}, so GUARD_SELF_PATH is null and ` +
           'no fixture can declare itself this guard’s home tree — run the self-test from a git ' +
           'checkout to exercise it',
+      },
+    ]
+  }
+  // Every scenario below reproduces the acknowledgment list's single live
+  // entry — the gate (a tree the list does not describe), both staleness
+  // triggers, the cap's NEW-first ordering, and the warning dedupe all need
+  // one acknowledged warning to observe. #2927 emptied the list, so there is
+  // nothing to stand up. Reported by name rather than silently omitted, for
+  // the reason the runner's `skipped` branch gives: a self-test that
+  // exercises strictly less must not print the same "self-test OK". The
+  // battery below is left intact and comes back with the first new entry.
+  if (KNOWN_INTENTIONAL_WARNINGS.length === 0) {
+    return [
+      {
+        name: 'the KNOWN_INTENTIONAL_WARNINGS battery (needs a live acknowledgment to reproduce)',
+        ok: true,
+        skipped: true,
+        detail:
+          'the acknowledgment list is empty since #2927 retired the tauri.ts:1871 anchor, and ' +
+          'every scenario in this battery is built around reproducing one of its entries',
       },
     ]
   }

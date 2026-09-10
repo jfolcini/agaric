@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PeerListItem } from '@/components/peers/PeerListItem'
-import type { PeerRef } from '@/lib/tauri'
+import type { PeerRef } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
 

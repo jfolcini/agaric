@@ -67,17 +67,9 @@ vi.mock('@/components/editor/EditableBlock', () => ({
   ),
 }))
 
-// Mock tauri IPC surface SortableBlock's descendants touch on mount/interact.
-vi.mock('@/lib/tauri', () => ({
-  setProperty: vi.fn().mockResolvedValue({}),
-  listBlocks: vi
-    .fn()
-    .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null }),
-}))
-
 // #2927 phase 7 — the page-blocks store's `load()` moved to
 // `commands.loadPageSubtree` from `@/lib/bindings`. Keep the same empty-page
-// stand-in reachable (a `@/lib/tauri` stub for it would now be inert), wrapped
+// stand-in reachable (a stub on the deleted wrapper layer would now be inert), wrapped
 // in the `{ status: 'ok', data }` envelope `unwrap` expects.
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()

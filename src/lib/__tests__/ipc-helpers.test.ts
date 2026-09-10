@@ -1,13 +1,17 @@
 /**
- * Tests for src/lib/ipc-helpers.ts (#4413) — the floor of the
- * `@/lib/tauri` → `bindings.ts` migration (#2927): functions that carry real
- * logic (Channel plumbing, a chunked drain, a client-side abort bridge, the
- * sanctioned raw-`invoke` seam) and so can't collapse to a bare `commands.*`
- * call site.
+ * Tests for src/lib/ipc-helpers.ts — the permanent floor under `bindings.ts`
+ * (#2927): functions that carry real logic (Channel plumbing, a chunked
+ * drain, a client-side abort bridge, a scope default the wire does not have,
+ * the explicit-null coercion, the sanctioned raw-`invoke` seam) and so can't
+ * collapse to a bare `commands.*` call site.
+ *
+ * Each wrapper is checked for the same four things: the snake_case Rust
+ * command name, camelCase argument keys (Tauri 2 convention), `null` — never
+ * `undefined` — for optional `Option<T>` parameters, and the invoke value
+ * returned unchanged.
  *
  * These describe blocks were moved verbatim (import path only) from the
- * former `src/lib/__tests__/tauri.test.ts` / `tauri-abort.test.ts` when the
- * underlying functions moved out of `src/lib/tauri/`.
+ * per-wrapper test files that died with the hand-written wrapper layer.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -16,15 +20,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type AppError, isCancellation } from '@/lib/app-error'
 import {
   cancelledError,
+  createBlock,
   importMarkdown,
+  logFrontend,
   MAX_TRASH_BATCH_IDS,
   PartialPurgeError,
   purgeAllDeletedInSpace,
   readAttachment,
   restoreAllDeletedInSpace,
+  searchBlocks,
   startSync,
   withAbort,
 } from '@/lib/ipc-helpers'
+import { paginationLimit } from '@/lib/safe-limit'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -455,6 +463,272 @@ describe('purgeAllDeletedInSpace', () => {
     expect((rejection as PartialPurgeError).cause).toEqual({
       kind: 'invalid_operation',
       message: "block 'B1200' is not deleted",
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createBlock (explicit-null coercion)
+// ---------------------------------------------------------------------------
+
+describe('createBlock', () => {
+  it('invokes create_block with all parameters', async () => {
+    const expected = {
+      id: 'BLK001',
+      block_type: 'content',
+      content: 'hello',
+      parent_id: 'PARENT01',
+      position: 3,
+      deleted_at: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await createBlock({
+      blockType: 'content',
+      content: 'hello',
+      parentId: 'PARENT01',
+      index: 3,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+      blockType: 'content',
+      content: 'hello',
+      parentId: 'PARENT01',
+      index: 3,
+      // H-3a + Phase 3: every `create_block` IPC call
+      // carries the `scope` tagged-enum. For non-page block types
+      // `{ kind: 'global' }` is correct (the backend ignores it).
+      scope: { kind: 'global' },
+      // #2849 PR2: `blockId` defaults to null (server mints the id) when the
+      // caller does not supply a client-generated ULID for optimistic create.
+      blockId: null,
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('defaults optional parentId and position to null', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'BLK002',
+      block_type: 'page',
+      content: 'test',
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+    })
+
+    await createBlock({ blockType: 'page', content: 'test' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+      blockType: 'page',
+      content: 'test',
+      parentId: null,
+      index: null,
+      // H-3a + Phase 3: in production a page-typed
+      // `createBlock` MUST pass an active scope; this unit test exercises
+      // only the wrapper's payload shape, so `{ kind: 'global' }` here
+      // documents that the wrapper forwards `undefined` → Global (the
+      // backend will then surface `Validation` for a real call).
+      scope: { kind: 'global' },
+      // #2849 PR2: `blockId` defaults to null when no client id is supplied.
+      blockId: null,
+    })
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Validation error'))
+    await expect(createBlock({ blockType: 'bad', content: '' })).rejects.toThrow('Validation error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// searchBlocks (scope default)
+// ---------------------------------------------------------------------------
+
+describe('searchBlocks', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+  // Phase 0 — the IPC payload is now a struct: `{ query, cursor, limit, filter }`
+  // where `filter` carries the previously-positional `parentId`, `tagIds`, and
+  // `spaceId`. The wrapper's public API stays flat — these tests verify the
+  // marshalling at the IPC boundary.
+  it('invokes search_blocks with default-shaped filter when no optional params given', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    const result = await searchBlocks({ query: 'hello', spaceId: 'TEST_SPACE_01' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'hello',
+      cursor: null,
+      limit: null,
+      filter: {
+        parentId: null,
+        tagIds: [],
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
+        // Additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
+        // Additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
+        // Additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
+        // Additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
+      },
+    })
+    expect(result).toEqual(emptyPage)
+  })
+
+  it('passes all optional parameters through into the filter struct', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'found',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          snippet: null,
+        },
+      ],
+      next_cursor: 'next123',
+      has_more: true,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await searchBlocks({
+      query: 'found',
+      cursor: 'cursor123',
+      limit: paginationLimit(25),
+      spaceId: 'TEST_SPACE_01',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'found',
+      cursor: 'cursor123',
+      limit: 25,
+      filter: {
+        parentId: null,
+        tagIds: [],
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
+        // Additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
+        // Additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
+        // Additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
+        // Additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
+      },
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('wraps spaceId into an active scope inside `filter` (#2248 c)', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
+    const filter = args['filter'] as Record<string, unknown>
+    expect(filter['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
+  })
+
+  it('marshals parentId and tagIds into the filter struct', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    await searchBlocks({
+      query: 'q',
+      parentId: 'PAGE1',
+      tagIds: ['TAG1', 'TAG2'],
+      spaceId: 'SPACE_42',
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'q',
+      cursor: null,
+      limit: null,
+      filter: {
+        parentId: 'PAGE1',
+        tagIds: ['TAG1', 'TAG2'],
+        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
+        scope: { kind: 'active', space_id: 'SPACE_42' },
+        // Additive fields default to empty arrays.
+        includePageGlobs: [],
+        excludePageGlobs: [],
+        // Additive toggle fields default to false.
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
+        // Additive `block_type_filter` defaults to null.
+        blockTypeFilter: null,
+        // Additive metadata fields default to empty / null.
+        stateFilter: [],
+        priorityFilter: [],
+        dueFilter: null,
+        scheduledFilter: null,
+        propertyFilters: [],
+        excludedPropertyFilters: [],
+        excludedStateFilter: [],
+        excludedPriorityFilter: [],
+      },
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// logFrontend (the logger's backend sink)
+// ---------------------------------------------------------------------------
+
+describe('logFrontend', () => {
+  it('invokes log_frontend with all parameters', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await logFrontend('error', 'EditableBlock', 'failed to save', 'Error: x', 'ctx', '{"k":"v"}')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('log_frontend', {
+      level: 'error',
+      module: 'EditableBlock',
+      message: 'failed to save',
+      stack: 'Error: x',
+      context: 'ctx',
+      data: '{"k":"v"}',
+    })
+  })
+
+  it('defaults optional stack, context and data to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await logFrontend('info', 'mod', 'msg')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('log_frontend', {
+      level: 'info',
+      module: 'mod',
+      message: 'msg',
+      stack: null,
+      context: null,
+      data: null,
     })
   })
 })

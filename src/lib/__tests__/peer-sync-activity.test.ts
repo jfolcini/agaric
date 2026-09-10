@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import type { PeerRef } from '@/lib/bindings'
 import { comparePeers, lastSyncActivityAt } from '@/lib/peer-sync-activity'
-import type { PeerRef } from '@/lib/tauri'
 
 function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
   return {

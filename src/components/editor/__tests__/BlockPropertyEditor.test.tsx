@@ -80,7 +80,7 @@ function defaultSetProperty(...args: unknown[]): Promise<unknown> {
 }
 
 // #2927 phase 4 — `BlockPropertyEditor` now calls `commands.setProperty`
-// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
+// from `@/lib/bindings` directly instead of the hand-written wrapper.
 const mockSetProperty = vi.fn(defaultSetProperty)
 // #3275 — the key-rename path now reads the OLD key's raw typed row via
 // `getProperties` (instead of re-writing the flattened display string) so it

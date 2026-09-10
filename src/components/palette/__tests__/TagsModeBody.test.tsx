@@ -13,16 +13,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TagsModeBody } from '@/components/palette/TagsModeBody'
 import { Command } from '@/components/ui/command'
+import { searchBlocks } from '@/lib/ipc-helpers'
 import { notify } from '@/lib/notify'
-import { searchBlocks } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/lib/tauri', () => ({
-  searchBlocks: vi.fn(),
-  // `searchBlocksLimit` is a plain clamp helper — keep it pure so the
-  // component's limit math runs unchanged.
-  searchBlocksLimit: (n: number) => n,
-}))
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
+  return { ...actual, searchBlocks: vi.fn() }
+})
 
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },

@@ -4,8 +4,8 @@
  * The anti-pattern (`listBlocks({ limit: 500 })` silently
  * truncated to the backend clamp) is now both a backend `AppError::
  * Validation` (Phase 1) AND a TypeScript error, but ONLY for call sites
- * that go through the hand-written wrapper layer (this module's scope).
- * The surviving pagination-aware wrappers in `src/lib/tauri/*.ts` take
+ * that brand their limit (this module's scope). The pagination-aware
+ * helpers in `src/lib/ipc-helpers.ts` take
  * `SafeLimit` instead of `number`, so a plain `number` literal does
  * not assign and the caller is forced through {@link safeLimit} (or
  * one of the per-IPC cap helpers below), which runs the bounds check

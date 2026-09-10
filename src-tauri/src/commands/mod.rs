@@ -305,9 +305,9 @@ pub struct DateRange {
 /// filter is optional; `None` means "no filter applies" (the common case).
 ///
 /// Serde `rename_all = "camelCase"` matches the Tauri command-arg
-/// convention (camelCase keys on the IPC boundary), so the hand-written
-/// TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
-/// keys without an extra translation layer.
+/// convention (camelCase keys on the IPC boundary), so the
+/// TS call site can build the request with camelCase keys without an
+/// extra translation layer.
 #[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBlocksRequest {
@@ -349,9 +349,9 @@ pub struct ListBlocksRequest {
 /// parameter — the request shape is the IPC boundary concern only.
 ///
 /// Serde `rename_all = "camelCase"` matches the Tauri command-arg
-/// convention (camelCase keys on the IPC boundary), so the hand-written
-/// TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
-/// keys without an extra translation layer.
+/// convention (camelCase keys on the IPC boundary), so the
+/// TS call site can build the request with camelCase keys without an
+/// extra translation layer.
 #[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryByPropertyRequest {

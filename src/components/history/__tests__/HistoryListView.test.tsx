@@ -14,8 +14,8 @@ import { axe } from 'vitest-axe'
 import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { HistoryListView } from '@/components/history/HistoryListView'
+import type { HistoryEntry } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import type { HistoryEntry } from '@/lib/tauri'
 
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 

@@ -11,10 +11,10 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { RefInternalizers } from '@/lib/block-clipboard'
+import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { requireActiveScope } from '@/lib/space-scope'
-import { createBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 

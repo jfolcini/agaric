@@ -21,9 +21,9 @@ import { useCallback, useRef, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { toSpaceScope } from '@/lib/space-scope'
-import { importMarkdown } from '@/lib/tauri'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useTabsStore } from '@/stores/tabs'
 

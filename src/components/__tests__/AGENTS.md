@@ -83,7 +83,7 @@ One audit per distinct visual state (focused / unfocused, open / closed). `src/t
 
 ### Tauri IPC
 
-`src/test-setup.ts` mocks `@tauri-apps/api/core` globally, below the `@/lib/tauri/*` wrappers and `@/lib/bindings`, so one mock intercepts both. Stub per command with `mockInvokeCommands` (root § Shared setup); an unstubbed command rejects. Positional `mockResolvedValueOnce` / `mockRejectedValueOnce` queues drain in call order regardless of command — single-call tests only.
+`src/test-setup.ts` mocks `@tauri-apps/api/core` globally, below both `@/lib/bindings` and the `@/lib/ipc-helpers` floor, so one mock intercepts every IPC call. Stub per command with `mockInvokeCommands` (root § Shared setup); an unstubbed command rejects. Positional `mockResolvedValueOnce` / `mockRejectedValueOnce` queues drain in call order regardless of command — single-call tests only.
 
 The `ipc-error-path-coverage` prek hook requires every test file for a component that invokes Tauri to carry at least one `mockRejectedValue*` / `Promise.reject` / `throw` test.
 
@@ -131,4 +131,4 @@ Production-code rules pinned by tests here; each fixed a shipped bug.
 7. **Blur splitting uses `shouldSplitOnBlur()`**, not `content.includes('\n')` — code blocks contain newlines. `useEditorBlur`'s early-persist path checks it too, or `edit()` and `splitBlock()` both run.
 8. **Editor-area overlays carry `data-editor-portal=""`** on their outermost portal element (`EDITOR_PORTAL_SELECTOR` in `src/hooks/useEditorBlur.ts`); untagged overlays fire `handleBlur` when clicked.
 9. **`Dialog` for modals with text inputs; `AlertDialog` only for confirm/cancel** — its focus trap makes input `autoFocus` unreliable.
-10. **`null`, not `undefined`, for Rust `Option<T>` args.** The `src/lib/tauri/` wrappers normalize with `?? null`.
+10. **`null`, not `undefined`, for Rust `Option<T>` args.** `commands.*` passes what you give it; `createBlock` in `@/lib/ipc-helpers` is the one helper that still normalizes with `?? null`.

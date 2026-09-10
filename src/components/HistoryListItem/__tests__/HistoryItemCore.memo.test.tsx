@@ -21,7 +21,7 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { HistoryEntry } from '@/lib/tauri'
+import type { HistoryEntry } from '@/lib/bindings'
 
 // Return STABLE callback identities across renders (the real hooks use
 // `useCallback` with empty deps), so the component's content-preview memo

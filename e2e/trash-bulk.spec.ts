@@ -26,7 +26,7 @@ import {
  * `purge_blocks_by_ids` (handlers.ts ~2165-2203) all mutate the shared
  * in-memory `blocks` map, and the TrashView "Restore all" / "Empty trash"
  * header actions actually call `restoreAllDeletedInSpace` /
- * `purgeAllDeletedInSpace` (src/lib/tauri.ts ~475-500), which drain
+ * `purgeAllDeletedInSpace` (`src/lib/ipc-helpers.ts`), which drain
  * `listTrash` and hand the ids to `restoreBlocksByIds` / `purgeBlocksByIds`
  * — the SAME space-scoped IPCs the batch-toolbar path uses (NOT the
  * unscoped `restore_all_deleted` / `purge_all_deleted` commands — see the

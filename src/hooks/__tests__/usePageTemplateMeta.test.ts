@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 4 — `usePageTemplateMeta` now calls `commands.getProperties` /
 // `commands.deleteProperty` / `commands.setProperty` from `@/lib/bindings`
-// directly instead of the `@/lib/tauri` wrapper. The same spies back both
+// directly instead of the hand-written wrapper. The same spies back both
 // surfaces so the `vi.mocked(...)` assertions keep working; they resolve
 // the `{ status: 'ok', data }` envelope that `unwrap` expects.
 const { mockGetProperties, mockDeleteProperty, mockSetProperty } = vi.hoisted(() => ({

@@ -86,8 +86,8 @@ export interface UseBlockResolveReturn {
    * rather than re-derived:
    *
    *  1. ONE ENTRY POINT (as of #4411). `createPageInSpace` used to exist
-   *     both as a typed wrapper in the (now-deleted) `system` module under
-   *     the `@/lib/tauri` layer AND as the raw binding, so a reference
+   *     both as a typed wrapper in the (now-deleted) `system` module of the
+   *     hand-written IPC layer AND as the raw binding, so a reference
    *     query on either alone undercounted — asymmetrically: the wrapper
    *     reached five of the sites below and the binding the other four.
    *     That wrapper is gone; every site now calls

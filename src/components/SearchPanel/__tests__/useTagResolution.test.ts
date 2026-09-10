@@ -21,7 +21,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411); the hook now
+// `listTagsByPrefix` retired its hand-written wrapper (#4411); the hook now
 // calls `commands.listTagsByPrefix` from `@/lib/bindings` directly and
 // unwraps the `Result` envelope, so the mock intercepts THAT and resolves
 // the `{ status: 'ok', data }` shape.
