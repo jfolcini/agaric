@@ -729,7 +729,7 @@ function relabelHead(head: string, labels: ReadonlyMap<string, string>): string 
  * attributes like `page_id` read `B1` rather than a stack-local id. Attribute
  * NAMES pass through untouched. Mirror of `relabel_token` in the Rust twin.
  */
-function relabelToken(token: string, labels: ReadonlyMap<string, string>): string {
+export function relabelToken(token: string, labels: ReadonlyMap<string, string>): string {
   const [head, ...attrs] = token.split('#')
   let out = relabelHead(head ?? token, labels)
   for (const attr of attrs) {
@@ -921,8 +921,12 @@ function attrValue(name: string, v: unknown): string {
   return JSON.stringify(v)
 }
 
-/** Build `<row[idKey]>#<attr>=<value>…` for one row. */
-function idToken(row: Record<string, unknown>, idKey: string, attrKeys: readonly string[]): string {
+/** Build `<row[idKey]>#<attr>=<value>…` for one row. Mirror of `row_token` in the Rust twin. */
+export function idToken(
+  row: Record<string, unknown>,
+  idKey: string,
+  attrKeys: readonly string[],
+): string {
   let token = (row[idKey] as string | undefined) ?? '<missing-id>'
   for (const attr of attrKeys) {
     token += `#${attr}=${attrValue(attr, row[attr])}`

@@ -80,13 +80,24 @@
     "page_links": [],
     "properties": []
   },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "cascade_reports_cohort_size",
+      "returns": ["B2#deleted_at=DELETED#descendants_affected=3"]
+    }
+  ],
   "name": "cascade_delete_subtree",
   "ops": [
     {
       "args": {
         "blockId": "S2"
       },
-      "command": "delete_block"
+      "command": "delete_block",
+      "comment": "#4670 — pins DeleteResponse.descendants_affected, the seed-INCLUSIVE cohort size (S2, S3, S4).",
+      "name": "cascade_reports_cohort_size",
+      "via": "command"
     }
   ],
   "scenarios": ["cascade-active-subtree"],

@@ -20,27 +20,25 @@ import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { checkDeclaration } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
   assertUniqueStepNames,
   type QueryStep,
   runQuerySteps,
-  stampMockSpace,
 } from '@/lib/tauri-mock/__tests__/conformance-query'
 import {
   canonicalOrder,
   clearMock,
-  createdBlockIdsInOpOrder,
-  expandOpArgs,
   type Fixture,
   loadSeed,
   replayFixture,
+  replayFixtureInSpace,
 } from '@/lib/tauri-mock/__tests__/conformance-replay'
 import {
   buildSnapshot,
   canonicalLabelMap,
   type NormalizedSnapshot,
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
-import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, blockTags, opLog, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
@@ -164,17 +162,7 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
             `author it with CONFORMANCE_UPDATE=1 on the Rust side`,
         ).toBeDefined()
 
-        loadSeed(fixture)
-        // Mirror image of the Rust runner's `assign_all_to_test_space`, which
-        // runs BOTH after the seed insert (so ops replay with space membership
-        // already resolved) and again after the ops (to catch pages the ops
-        // created). Stamping only once, at the end, would replay every op
-        // against a space-less mock.
-        stampMockSpace()
-        for (const op of fixture.ops) {
-          dispatch(op.command, expandOpArgs(op.args, createdBlockIdsInOpOrder()))
-        }
-        stampMockSpace()
+        replayFixtureInSpace(fixture)
 
         const labels = canonicalLabelMap(canonicalOrder(fixture))
         const actual = await runQuerySteps(fixture.queries ?? [], labels)
@@ -183,6 +171,72 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
       },
     )
   }
+
+  // #4670 — the MUTATING-command leg: the return value or refusal of every
+  // `via: "command"` op, projected like a query row and diffed against the
+  // backend-authored `expected_ops`. Rides the SAME stamped replay as the
+  // query leg, so a space-scoped refusal in the mock can fire.
+  for (const { fixture } of fixtures) {
+    if (!fixture.ops.some((op) => op.via === 'command')) continue
+    const run = DRIFT_SKIP.has(fixture.name) ? it.skip : it
+    run(`fixture '${fixture.name}' — mock reproduces the backend-authored command results`, () => {
+      expect(
+        fixture.expected_ops,
+        `fixture '${fixture.name}' has \`via: "command"\` ops but no \`expected_ops\` — ` +
+          `author it with CONFORMANCE_UPDATE=1 on the Rust side`,
+      ).toBeDefined()
+
+      expect(replayFixtureInSpace(fixture)).toEqual(fixture.expected_ops)
+    })
+  }
+})
+
+// #4670 — the command leg's declaration discipline, mirror of the Rust
+// `check_declaration` tests. No committed fixture declares an `expect_code`,
+// so without these the code arms never execute.
+describe('#4670 a command op declares its refusal, kind and code alike', () => {
+  it('accepts matching declarations', () => {
+    expect(() => checkDeclaration('at', null, null, null, null)).not.toThrow()
+    expect(() =>
+      checkDeclaration('at', 'invalid_operation', null, 'invalid_operation', null),
+    ).not.toThrow()
+    expect(() =>
+      checkDeclaration(
+        'at',
+        'validation',
+        'DuplicatePageTitle',
+        'validation',
+        'DuplicatePageTitle',
+      ),
+    ).not.toThrow()
+  })
+
+  it('rejects an undeclared, stale or mismatched kind', () => {
+    expect(() => checkDeclaration('at', null, null, 'not_found', null)).toThrow(
+      /REFUSED with `not_found`, and the op did not declare it/,
+    )
+    expect(() => checkDeclaration('at', 'not_found', null, null, null)).toThrow(
+      /but the command SUCCEEDED/,
+    )
+    expect(() => checkDeclaration('at', 'not_found', null, 'validation', null)).toThrow(
+      /declares "expect_error": "not_found" but the command refused with `validation`/,
+    )
+  })
+
+  it('rejects a code on a non-validation kind, and an undeclared, stale or mismatched code', () => {
+    expect(() => checkDeclaration('at', 'not_found', 'InvalidGlob', 'not_found', null)).toThrow(
+      /accompanies "expect_error": "validation" only/,
+    )
+    expect(() =>
+      checkDeclaration('at', 'validation', null, 'validation', 'DuplicatePageTitle'),
+    ).toThrow(/carries ValidationCode `DuplicatePageTitle`, and the op did not declare it/)
+    expect(() => checkDeclaration('at', 'validation', 'InvalidGlob', 'validation', null)).toThrow(
+      /declares "expect_code": "InvalidGlob" but the refusal carries no code/,
+    )
+    expect(() =>
+      checkDeclaration('at', 'validation', 'InvalidGlob', 'validation', 'DuplicatePageTitle'),
+    ).toThrow(/declares "expect_code": "InvalidGlob" but the refusal carries `DuplicatePageTitle`/)
+  })
 })
 
 // ---------------------------------------------------------------------------

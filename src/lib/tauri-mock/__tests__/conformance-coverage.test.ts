@@ -1734,7 +1734,9 @@ const FIXTURES_DIR = path.resolve(
 
 interface FixtureShape {
   name: string
-  ops: Array<{ command: string; args?: Record<string, unknown> }>
+  ops: Array<{ command: string; args?: Record<string, unknown>; via?: string; name?: string }>
+  /** #4670 — the backend-authored record of each `via: "command"` op. */
+  expected_ops?: Array<{ name: string; returns: string[]; error?: string | null }>
   /** #3347 — post-op READ steps (see `conformance-query.ts`). */
   queries?: Array<QueryStepShape>
   /** #3347 — the backend-authored projection of each `queries` step. */
@@ -1795,6 +1797,9 @@ interface QueryStepShape {
 interface LoadedFixture {
   name: string
   opCommands: Set<string>
+  /** #4670 — the `via: "command"` ops, in op order, and their recordings. */
+  commandOps: Array<{ command: string; name?: string }>
+  expectedOps: Array<{ name: string; returns: string[]; error?: string | null }>
   queryCommands: Set<string>
   querySteps: QueryStepShape[]
   expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
@@ -1947,6 +1952,8 @@ function loadFixtures(): LoadedFixture[] {
       return {
         name: raw.name,
         opCommands: new Set(raw.ops.map((o) => o.command)),
+        commandOps: raw.ops.filter((o) => o.via === 'command'),
+        expectedOps: raw.expected_ops ?? [],
         queryCommands: new Set((raw.queries ?? []).map((q) => q.command)),
         querySteps: raw.queries ?? [],
         expectedQueries: raw.expected_queries ?? [],
@@ -3615,6 +3622,47 @@ describe('#3083 conformance-coverage ratchet', () => {
         `Crockford characters is legal fixture content — the label map is not the fix: this ` +
         `check scans attribute values on purpose (see \`rawIdHits\`) and cannot tell the two ` +
         `apart, so re-author the fixture's content instead. Either way, do not re-record the row.`,
+    ).toEqual([])
+  })
+
+  // #4670 — the same vacuity discipline over the COMMAND leg. A `via:
+  // "command"` op's record is authored and asserted exactly like a query
+  // step's, and `[] == []` passes having compared nothing, so a record must
+  // carry either a non-empty `returns` or a recorded `error`. Alignment is by
+  // index, as `expected_queries` is.
+  it('every `via: "command"` op records a non-empty return or a refusal', () => {
+    const misaligned: string[] = []
+    const vacuous: string[] = []
+    for (const fx of fixtures) {
+      if (fx.commandOps.length !== fx.expectedOps.length) {
+        misaligned.push(
+          `${fx.name} (${fx.commandOps.length} ops, ${fx.expectedOps.length} records)`,
+        )
+        continue
+      }
+      for (const [i, op] of fx.commandOps.entries()) {
+        const recorded = fx.expectedOps[i]
+        if (!recorded || recorded.name !== op.name) {
+          misaligned.push(`${fx.name}/${op.name}`)
+          continue
+        }
+        if (recorded.returns.length === 0 && (recorded.error ?? null) === null) {
+          vacuous.push(`${fx.name}/${op.name}`)
+        }
+      }
+    }
+    expect(
+      misaligned,
+      `These \`via: "command"\` ops have no positionally-matching \`expected_ops\` entry ` +
+        `${JSON.stringify(misaligned)}. Re-author with CONFORMANCE_UPDATE=1 cargo nextest run ` +
+        `-E 'test(conformance_fixtures_match_backend)'.`,
+    ).toEqual([])
+    expect(
+      vacuous,
+      `These \`via: "command"\` ops recorded neither a return value nor a refusal ` +
+        `${JSON.stringify(vacuous)}. The mock reproduces \`[]\` whatever it does, so the ` +
+        `record reads as coverage while comparing nothing. Re-author, or give the op an input ` +
+        `the command answers.`,
     ).toEqual([])
   })
 
