@@ -15,6 +15,7 @@ import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { JournalControls } from '@/components/journal/JournalControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
@@ -51,9 +52,13 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
-  // UseCalendarPageDates now hits `list_journal_pages_in_range`,
-  // which returns a flat `BlockRow[]` (no pagination envelope).
-  mockedInvoke.mockResolvedValue([])
+  // The two commands the controls fire on mount: the calendar-highlight page
+  // fetch (a flat `BlockRow[]`, no pagination envelope) and the dropdown's
+  // per-date agenda counts. Anything else fails by name.
+  stubInvoke(mockedInvoke, {
+    list_journal_pages_in_range: () => [],
+    count_agenda_batch_by_source: () => ({}),
+  })
 })
 
 describe('JournalControls', () => {

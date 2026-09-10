@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import type { PeerRef } from '@/lib/bindings'
 
@@ -52,7 +53,8 @@ const defaultProps = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  // The only command the row fires; `set_peer_address` returns `()` in Rust.
+  stubInvoke(mockedInvoke, { set_peer_address: () => null })
 })
 
 describe('PeerListItem', () => {
@@ -288,7 +290,9 @@ describe('PeerListItem', () => {
       const peer = makePeer({ device_name: 'Work Laptop' })
       const onAddressUpdated = vi.fn()
 
-      mockedInvoke.mockRejectedValueOnce(new Error('invalid address format'))
+      stubInvoke(mockedInvoke, {
+        set_peer_address: () => Promise.reject(new Error('invalid address format')),
+      })
 
       render(<PeerListItem peer={peer} {...defaultProps} onAddressUpdated={onAddressUpdated} />)
 
@@ -319,8 +323,6 @@ describe('PeerListItem', () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
       const onAddressUpdated = vi.fn()
-
-      mockedInvoke.mockResolvedValueOnce(undefined)
 
       render(<PeerListItem peer={peer} {...defaultProps} onAddressUpdated={onAddressUpdated} />)
 
@@ -373,8 +375,6 @@ describe('PeerListItem', () => {
     it('passes correct args to set_peer_address invoke call', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
-
-      mockedInvoke.mockResolvedValueOnce(undefined)
 
       render(<PeerListItem peer={peer} {...defaultProps} />)
 

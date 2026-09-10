@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBlockStore } from '@/stores/blocks'
@@ -63,8 +64,9 @@ function RealRow({ blockId }: { blockId: string }): React.ReactElement {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Benign IPC default — no test drives a specific backend call.
-  mockedInvoke.mockResolvedValue([])
+  // No handlers: this suite audits markup and drives no backend call, so any
+  // IPC the row fires should fail by name rather than be absorbed.
+  stubInvoke(mockedInvoke, {})
   useBlockStore.setState({ focusedBlockId: null })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({

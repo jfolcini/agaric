@@ -14,6 +14,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePageHeading } from '@/__tests__/fixtures'
+import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { LinkTargetEditor } from '@/components/PageBrowser/add-filter/editors'
 import { t } from '@/lib/i18n'
 import { useResolveStore } from '@/stores/resolve'
@@ -39,8 +41,9 @@ describe('LinkTargetEditor load branches (#2245)', () => {
   })
 
   it('recovers to the empty state without crashing when the page load rejects', async () => {
-    // `listAllPagesInSpace` → invoke('list_all_pages_in_space') rejects.
-    mockedInvoke.mockRejectedValueOnce(new Error('backend down'))
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => Promise.reject(new Error('backend down')),
+    })
 
     const { container } = renderEditor()
 
@@ -52,13 +55,8 @@ describe('LinkTargetEditor load branches (#2245)', () => {
 
   it('shows the aria-busy spinner while the load is pending', async () => {
     // Deferred: hold the promise open to observe the pending state.
-    let resolvePages: (pages: Array<{ id: string; content: string }>) => void = () => {}
-    mockedInvoke.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolvePages = resolve
-        }),
-    )
+    const pages = deferred<CommandReturns['list_all_pages_in_space']>()
+    stubInvoke(mockedInvoke, { list_all_pages_in_space: () => pages.promise })
 
     const { container } = renderEditor()
 
@@ -71,14 +69,14 @@ describe('LinkTargetEditor load branches (#2245)', () => {
 
     // Resolve → the spinner clears and results render.
     await act(async () => {
-      resolvePages([{ id: 'PAGE_A', content: 'Roadmap' }])
+      pages.resolve([makePageHeading({ id: 'PAGE_A', content: 'Roadmap' })])
     })
     await waitFor(() => expect(container.querySelector('[aria-busy="false"]')).toBeInTheDocument())
     expect(screen.getByText('Roadmap')).toBeInTheDocument()
   })
 
   it('shows the empty state when the space has no pages', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
+    stubInvoke(mockedInvoke, { list_all_pages_in_space: () => [] })
 
     renderEditor()
 
@@ -86,7 +84,9 @@ describe('LinkTargetEditor load branches (#2245)', () => {
   })
 
   it('has no a11y violations once the page list has loaded', async () => {
-    mockedInvoke.mockResolvedValueOnce([{ id: 'PAGE_A', content: 'Roadmap' }])
+    stubInvoke(mockedInvoke, {
+      list_all_pages_in_space: () => [makePageHeading({ id: 'PAGE_A', content: 'Roadmap' })],
+    })
 
     const { container } = renderEditor()
     await screen.findByText('Roadmap')

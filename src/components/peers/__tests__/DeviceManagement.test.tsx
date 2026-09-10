@@ -22,6 +22,12 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import type { PeerRef } from '@/lib/bindings'
 // #4084 (review): `comparePeers` moved to `@/lib/peer-sync-activity` so the
@@ -122,39 +128,50 @@ const mockedInvoke = vi.mocked(invoke)
 
 const mockDeviceId = 'local-device-id-abc123'
 
-const mockPeers = [
-  {
-    peer_id: 'peer-abc-1234567890',
-    last_hash: 'hash1',
+/** A complete `PeerRef`, with the columns a test cares about overridden. */
+function makePeerRef(over: Partial<PeerRef> = {}): PeerRef {
+  return {
+    peer_id: 'peer-x',
+    last_hash: null,
     last_sent_hash: null,
     streamed_at: null,
-    synced_at: Date.now() - 5 * 60 * 1000,
+    synced_at: null,
     reset_count: 0,
     last_reset_at: null,
     cert_hash: null,
     device_name: null,
     remote_device_name: null,
     last_address: null,
-  },
-  {
-    peer_id: 'peer-def-0987654321',
-    last_hash: null,
-    last_sent_hash: null,
-    streamed_at: null,
-    synced_at: null,
-    reset_count: 1,
-    last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
-    cert_hash: null,
-    device_name: null,
-    remote_device_name: null,
-    last_address: null,
-  },
-]
+    endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
+    ...over,
+  }
+}
 
-function mockInvokeByCommand(commands: Record<string, unknown>) {
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd in commands) return commands[cmd]
-    return undefined
+const peerAbc = makePeerRef({
+  peer_id: 'peer-abc-1234567890',
+  last_hash: 'hash1',
+  synced_at: Date.now() - 5 * 60 * 1000,
+})
+
+const peerDef = makePeerRef({
+  peer_id: 'peer-def-0987654321',
+  reset_count: 1,
+  last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
+})
+
+const mockPeers: PeerRef[] = [peerAbc, peerDef]
+
+/**
+ * The commands `DeviceManagement` fires, defaulted to their benign answers.
+ * A test overrides the ones it drives; anything unlisted fails by name rather
+ * than resolving `undefined` through a catch-all.
+ */
+function mockInvokeByCommand(handlers: TypedInvokeHandlers = {}) {
+  stubInvoke(mockedInvoke, {
+    get_mdns_status: () => ({ disabled: false, reason: null }),
+    get_bind_exposure_status: () => ({ internet_facing: null }),
+    ...handlers,
   })
 }
 
@@ -166,8 +183,8 @@ beforeEach(() => {
 describe('DeviceManagement', () => {
   it('renders local device ID', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -181,8 +198,8 @@ describe('DeviceManagement', () => {
     // label text (which has been i18n-ified to "Local Device ID"). Keep
     // them in sync if renaming the UI string.
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -199,8 +216,8 @@ describe('DeviceManagement', () => {
 
   it('shows list of paired peers', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     render(<DeviceManagement />)
@@ -215,8 +232,8 @@ describe('DeviceManagement', () => {
 
   it('"Pair New Device" button exists', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -228,8 +245,8 @@ describe('DeviceManagement', () => {
   it('"Pair New Device" button opens PairingDialog', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -243,15 +260,15 @@ describe('DeviceManagement', () => {
   it('"Sync Now" button calls startSync', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
-      start_sync: {
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => ({
         state: 'syncing',
         local_device_id: mockDeviceId,
         remote_device_id: 'peer-abc-1234567890',
         ops_received: 0,
         ops_sent: 0,
-      },
+      }),
     })
 
     render(<DeviceManagement />)
@@ -276,9 +293,9 @@ describe('DeviceManagement', () => {
   it('"Unpair" button calls deletePeerRef after confirmation', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
-      delete_peer_ref: undefined,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      delete_peer_ref: () => undefined,
     })
 
     render(<DeviceManagement />)
@@ -308,8 +325,8 @@ describe('DeviceManagement', () => {
 
   it('shows no peers message when empty', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -318,7 +335,10 @@ describe('DeviceManagement', () => {
   })
 
   it('shows error when loading fails', async () => {
-    mockedInvoke.mockRejectedValue(new Error('network failure'))
+    mockInvokeByCommand({
+      get_device_id: () => Promise.reject(new Error('network failure')),
+      list_peer_refs: () => Promise.reject(new Error('network failure')),
+    })
 
     render(<DeviceManagement />)
 
@@ -326,7 +346,11 @@ describe('DeviceManagement', () => {
   })
 
   it('shows loading skeleton with aria-busy during initial load', () => {
-    mockedInvoke.mockReturnValue(new Promise(() => {}))
+    const loading = deferred<CommandReturns['get_device_id']>()
+    mockInvokeByCommand({
+      get_device_id: () => loading.promise,
+      list_peer_refs: () => [],
+    })
 
     const { container } = render(<DeviceManagement />)
 
@@ -336,8 +360,8 @@ describe('DeviceManagement', () => {
 
   it('shows reset count badge for peers with resets', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     render(<DeviceManagement />)
@@ -348,8 +372,8 @@ describe('DeviceManagement', () => {
 
   it('calls get_device_id and list_peer_refs on mount', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -362,8 +386,8 @@ describe('DeviceManagement', () => {
 
   it('has no a11y violations with device info loaded', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -379,11 +403,10 @@ describe('DeviceManagement', () => {
 
   it('shows error when sync fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'start_sync') throw new Error('sync failed')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => Promise.reject(new Error('sync failed')),
     })
 
     render(<DeviceManagement />)
@@ -400,7 +423,10 @@ describe('DeviceManagement', () => {
   })
 
   it('error message has aria-live for screen readers', async () => {
-    mockedInvoke.mockRejectedValue(new Error('network failure'))
+    mockInvokeByCommand({
+      get_device_id: () => Promise.reject(new Error('network failure')),
+      list_peer_refs: () => Promise.reject(new Error('network failure')),
+    })
 
     const { container } = render(<DeviceManagement />)
 
@@ -413,11 +439,10 @@ describe('DeviceManagement', () => {
 
   it('announces sync errors to screen readers via sr-only aria-live region (#423)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'start_sync') throw new Error('Connection refused by peer')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => Promise.reject(new Error('Connection refused by peer')),
     })
 
     const { container } = render(<DeviceManagement />)
@@ -446,17 +471,12 @@ describe('DeviceManagement', () => {
   // land while `syncingPeerId` is still set.
   it('announces sync progress using the device name, not the raw peer id', async () => {
     const user = userEvent.setup()
-    let resolveStartSync: (() => void) | undefined
-    const namedPeers = [{ ...mockPeers[0], device_name: 'Pixel 8' }, mockPeers[1]]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return namedPeers
-      if (cmd === 'start_sync') {
-        return new Promise((resolve) => {
-          resolveStartSync = () => resolve(undefined)
-        })
-      }
-      return undefined
+    const startSync = deferred<CommandReturns['start_sync']>()
+    const namedPeers = [{ ...peerAbc, device_name: 'Pixel 8' }, peerDef]
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => namedPeers,
+      start_sync: () => startSync.promise,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -473,7 +493,13 @@ describe('DeviceManagement', () => {
       expect(srOnly?.textContent).not.toContain('peer-abc-1234567890')
     })
 
-    resolveStartSync?.()
+    startSync.resolve({
+      state: 'completed',
+      local_device_id: mockDeviceId,
+      remote_device_id: 'peer-abc-1234567890',
+      ops_received: 0,
+      ops_sent: 0,
+    })
   })
 
   // --- New tests ---
@@ -481,8 +507,8 @@ describe('DeviceManagement', () => {
   it('refreshes peer list when PairingDialog closes', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -515,17 +541,17 @@ describe('DeviceManagement', () => {
   it('shows retry button on error and re-fetches on click', async () => {
     const user = userEvent.setup()
     let attempt = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') {
+    mockInvokeByCommand({
+      // The FIRST load fails and the retry succeeds: the order is the subject.
+      get_device_id: () => {
         attempt++
-        if (attempt === 1) throw new Error('network failure')
+        if (attempt === 1) return Promise.reject(new Error('network failure'))
         return mockDeviceId
-      }
-      if (cmd === 'list_peer_refs') {
-        if (attempt <= 1) throw new Error('network failure')
+      },
+      list_peer_refs: () => {
+        if (attempt <= 1) return Promise.reject(new Error('network failure'))
         return []
-      }
-      return undefined
+      },
     })
 
     render(<DeviceManagement />)
@@ -555,12 +581,13 @@ describe('DeviceManagement', () => {
     })
 
     it('shows timeout error after 60 seconds and calls cancelSync', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'get_device_id') return mockDeviceId
-        if (cmd === 'list_peer_refs') return mockPeers
-        if (cmd === 'start_sync') return new Promise(() => {}) // never resolves
-        if (cmd === 'cancel_sync') return undefined
-        return undefined
+      const neverSettles = deferred<CommandReturns['start_sync']>()
+      mockInvokeByCommand({
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => mockPeers,
+        // Parked: the watchdog, not the response, ends this sync.
+        start_sync: () => neverSettles.promise,
+        cancel_sync: () => null,
       })
 
       // Render with act so microtask-based loadData resolves under fake timers
@@ -593,8 +620,8 @@ describe('DeviceManagement', () => {
 
   it('Unpair button has aria-label with truncated peer ID', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     render(<DeviceManagement />)
@@ -609,8 +636,8 @@ describe('DeviceManagement', () => {
 
   it('uses gap-2 spacing between Sync Now and Unpair buttons', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -629,8 +656,8 @@ describe('DeviceManagement', () => {
   // becomes a row at `sm:` and up — the same idiom as `TrashRowItem`.
   it('peer row stacks vertically below the sm breakpoint', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -645,8 +672,8 @@ describe('DeviceManagement', () => {
 
   it('keeps the "Last synced" line on a single line', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -660,11 +687,10 @@ describe('DeviceManagement', () => {
 
   it('preserves backend error message on sync failure', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'start_sync') throw new Error('Connection refused by peer')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => Promise.reject(new Error('Connection refused by peer')),
     })
 
     render(<DeviceManagement />)
@@ -683,8 +709,8 @@ describe('DeviceManagement', () => {
 
   it('shows Sync All button when 2+ peers exist', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -694,24 +720,9 @@ describe('DeviceManagement', () => {
   })
 
   it('hides Sync All button when fewer than 2 peers', async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return 'device-123'
-      if (cmd === 'list_peer_refs')
-        return [
-          {
-            peer_id: 'peer-1',
-            last_hash: null,
-            last_sent_hash: null,
-            streamed_at: null,
-            synced_at: null,
-            reset_count: 0,
-            last_reset_at: null,
-            cert_hash: null,
-            device_name: null,
-            remote_device_name: null,
-          },
-        ]
-      return null
+    mockInvokeByCommand({
+      get_device_id: () => 'device-123',
+      list_peer_refs: () => [makePeerRef({ peer_id: 'peer-1' })],
     })
     const { container } = render(<DeviceManagement />)
     await waitFor(() => {
@@ -722,46 +733,23 @@ describe('DeviceManagement', () => {
 
   it('Sync All calls startSync for each peer sequentially', async () => {
     const syncCalls: string[] = []
-    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_device_id') return 'device-123'
-      if (cmd === 'list_peer_refs')
-        return [
-          {
-            peer_id: 'peer-1',
-            last_hash: null,
-            last_sent_hash: null,
-            streamed_at: null,
-            synced_at: null,
-            reset_count: 0,
-            last_reset_at: null,
-            cert_hash: null,
-            device_name: null,
-            remote_device_name: null,
-          },
-          {
-            peer_id: 'peer-2',
-            last_hash: null,
-            last_sent_hash: null,
-            streamed_at: null,
-            synced_at: null,
-            reset_count: 0,
-            last_reset_at: null,
-            cert_hash: null,
-            device_name: null,
-            remote_device_name: null,
-          },
-        ]
-      if (cmd === 'start_sync') {
-        syncCalls.push((args as Record<string, string>)['peerId'] as string)
+    mockInvokeByCommand({
+      get_device_id: () => 'device-123',
+      list_peer_refs: () => [
+        makePeerRef({ peer_id: 'peer-1' }),
+        makePeerRef({ peer_id: 'peer-2' }),
+      ],
+      start_sync: (args) => {
+        const peerId = args['peerId'] as string
+        syncCalls.push(peerId)
         return {
           state: 'completed',
           local_device_id: 'device-123',
-          remote_device_id: (args as Record<string, string>)['peerId'] as string,
+          remote_device_id: peerId,
           ops_received: 0,
           ops_sent: 0,
         }
-      }
-      return null
+      },
     })
 
     const { container } = render(<DeviceManagement />)
@@ -779,21 +767,8 @@ describe('DeviceManagement', () => {
 
   it('displays device name when set', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [
-        {
-          peer_id: 'PEER01',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: null,
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: "Javier's Phone",
-          remote_device_name: null,
-        },
-      ],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [makePeerRef({ peer_id: 'PEER01', device_name: "Javier's Phone" })],
     })
     const { container } = render(<DeviceManagement />)
     await waitFor(() => {
@@ -805,39 +780,16 @@ describe('DeviceManagement', () => {
 
   it('Sync All continues when first peer fails (#421)', async () => {
     const syncCalls: string[] = []
-    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_device_id') return 'device-123'
-      if (cmd === 'list_peer_refs')
-        return [
-          {
-            peer_id: 'peer-1',
-            last_hash: null,
-            last_sent_hash: null,
-            streamed_at: null,
-            synced_at: null,
-            reset_count: 0,
-            last_reset_at: null,
-            cert_hash: null,
-            device_name: null,
-            remote_device_name: null,
-          },
-          {
-            peer_id: 'peer-2',
-            last_hash: null,
-            last_sent_hash: null,
-            streamed_at: null,
-            synced_at: null,
-            reset_count: 0,
-            last_reset_at: null,
-            cert_hash: null,
-            device_name: null,
-            remote_device_name: null,
-          },
-        ]
-      if (cmd === 'start_sync') {
-        const peerId = (args as Record<string, string>)['peerId'] as string
+    mockInvokeByCommand({
+      get_device_id: () => 'device-123',
+      list_peer_refs: () => [
+        makePeerRef({ peer_id: 'peer-1' }),
+        makePeerRef({ peer_id: 'peer-2' }),
+      ],
+      start_sync: (args) => {
+        const peerId = args['peerId'] as string
         syncCalls.push(peerId)
-        if (peerId === 'peer-1') throw new Error('Connection refused')
+        if (peerId === 'peer-1') return Promise.reject(new Error('Connection refused'))
         return {
           state: 'completed',
           local_device_id: 'device-123',
@@ -845,8 +797,7 @@ describe('DeviceManagement', () => {
           ops_received: 0,
           ops_sent: 0,
         }
-      }
-      return null
+      },
     })
 
     const { container } = render(<DeviceManagement />)
@@ -868,11 +819,10 @@ describe('DeviceManagement', () => {
 
   it('error can be dismissed with X button (#419)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'start_sync') throw new Error('sync failed')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => Promise.reject(new Error('sync failed')),
     })
 
     render(<DeviceManagement />)
@@ -901,12 +851,11 @@ describe('DeviceManagement', () => {
 
   it('shows friendly timeout message instead of raw text (#426)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'start_sync') throw new Error('Sync timed out')
-      if (cmd === 'cancel_sync') return undefined
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      start_sync: () => Promise.reject(new Error('Sync timed out')),
+      cancel_sync: () => null,
     })
 
     render(<DeviceManagement />)
@@ -926,8 +875,8 @@ describe('DeviceManagement', () => {
 
   it('renders copy button for device ID with correct aria-label (#432)', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
     })
 
     render(<DeviceManagement />)
@@ -941,22 +890,9 @@ describe('DeviceManagement', () => {
   it('unpair dialog shows device name when clicking unpair on a named device (#440)', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [
-        {
-          peer_id: 'peer-named-1',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: null,
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: 'Work Laptop',
-          remote_device_name: null,
-        },
-      ],
-      delete_peer_ref: undefined,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [makePeerRef({ peer_id: 'peer-named-1', device_name: 'Work Laptop' })],
+      delete_peer_ref: () => null,
     })
 
     render(<DeviceManagement />)
@@ -978,44 +914,11 @@ describe('DeviceManagement', () => {
 
   it('sorts peers: named alphabetically first, then unnamed (#434)', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [
-        {
-          peer_id: 'peer-3',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: 1735862400000, // 2025-01-03T00:00:00Z
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: null,
-          remote_device_name: null,
-        },
-        {
-          peer_id: 'peer-1',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: 1735689600000, // 2025-01-01T00:00:00Z
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: 'Zebra',
-          remote_device_name: null,
-        },
-        {
-          peer_id: 'peer-2',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: 1735776000000, // 2025-01-02T00:00:00Z
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: 'Apple',
-          remote_device_name: null,
-        },
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [
+        makePeerRef({ peer_id: 'peer-3', synced_at: 1735862400000 }), // 2025-01-03T00:00:00Z
+        makePeerRef({ peer_id: 'peer-1', synced_at: 1735689600000, device_name: 'Zebra' }),
+        makePeerRef({ peer_id: 'peer-2', synced_at: 1735776000000, device_name: 'Apple' }),
       ],
     })
 
@@ -1032,22 +935,7 @@ describe('DeviceManagement', () => {
 
   // #1673: total-order comparator properties + tiebreaks
   describe('comparePeers (#1673)', () => {
-    const row = (over: Partial<PeerRef>): PeerRef => ({
-      peer_id: 'peer-x',
-      last_hash: null,
-      last_sent_hash: null,
-      streamed_at: null,
-      synced_at: null,
-      reset_count: 0,
-      last_reset_at: null,
-      cert_hash: null,
-      device_name: null,
-      remote_device_name: null,
-      last_address: null,
-      endpoint_id: null,
-      unpaired_by_peer_at_ms: null,
-      ...over,
-    })
+    const row = makePeerRef
 
     const sign = (n: number): number => (n > 0 ? 1 : n < 0 ? -1 : 0)
 
@@ -1163,7 +1051,7 @@ describe('DeviceManagement', () => {
   })
 
   it('opens rename dialog when rename button clicked (#422)', async () => {
-    mockInvokeByCommand({ get_device_id: mockDeviceId, list_peer_refs: mockPeers })
+    mockInvokeByCommand({ get_device_id: () => mockDeviceId, list_peer_refs: () => mockPeers })
     render(<DeviceManagement />)
     await screen.findByText(mockDeviceId)
 
@@ -1179,14 +1067,10 @@ describe('DeviceManagement', () => {
       resolveRename = resolve
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return mockPeers
-      if (cmd === 'update_peer_name') {
-        await renamePromise
-        return undefined
-      }
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+      update_peer_name: () => renamePromise.then(() => null),
     })
 
     const { container } = render(<DeviceManagement />)
@@ -1224,11 +1108,10 @@ describe('DeviceManagement', () => {
   })
 
   it('shows error when rename fails (#444)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return [mockPeers[0]]
-      if (cmd === 'update_peer_name') throw new Error('DB write failed')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [peerAbc],
+      update_peer_name: () => Promise.reject(new Error('DB write failed')),
     })
 
     const { container } = render(<DeviceManagement />)
@@ -1256,11 +1139,10 @@ describe('DeviceManagement', () => {
   it('shows error when unpair fails (#444)', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_device_id') return mockDeviceId
-      if (cmd === 'list_peer_refs') return [mockPeers[0]]
-      if (cmd === 'delete_peer_ref') throw new Error('FK constraint')
-      return undefined
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [peerAbc],
+      delete_peer_ref: () => Promise.reject(new Error('FK constraint')),
     })
 
     render(<DeviceManagement />)
@@ -1283,22 +1165,8 @@ describe('DeviceManagement', () => {
 
   it('shows truncated peer_id when device_name is null (#444)', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [
-        {
-          peer_id: 'ABCDEFGHIJKLMNOP',
-          last_hash: null,
-          last_sent_hash: null,
-          streamed_at: null,
-          synced_at: null,
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: null,
-          remote_device_name: null,
-          last_address: null,
-        },
-      ],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [makePeerRef({ peer_id: 'ABCDEFGHIJKLMNOP' })],
     })
 
     render(<DeviceManagement />)
@@ -1312,8 +1180,8 @@ describe('DeviceManagement', () => {
   describe('peer address display (#522)', () => {
     it('shows "No address" when peer has no last_address', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [{ ...peerAbc, last_address: null }],
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1326,8 +1194,8 @@ describe('DeviceManagement', () => {
 
     it('shows last_address when set on a peer', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [{ ...mockPeers[0], last_address: '192.168.1.42:9000' }],
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [{ ...peerAbc, last_address: '192.168.1.42:9000' }],
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1339,8 +1207,8 @@ describe('DeviceManagement', () => {
 
     it('renders an edit-address button with correct aria-label', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [{ ...peerAbc, last_address: null }],
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1353,9 +1221,9 @@ describe('DeviceManagement', () => {
 
     it('calls set_peer_address when user enters an address via popover', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
-        set_peer_address: undefined,
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [{ ...peerAbc, last_address: null }],
+        set_peer_address: () => undefined,
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1379,8 +1247,8 @@ describe('DeviceManagement', () => {
 
     it('shows manual IP hint text', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1419,9 +1287,9 @@ describe('DeviceManagement', () => {
 
     it('does not show the banner when mDNS is working', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_mdns_status: { disabled: false, reason: null },
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_mdns_status: () => ({ disabled: false, reason: null }),
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1432,9 +1300,9 @@ describe('DeviceManagement', () => {
 
     it('shows the banner with the reason when the mount-time backfill reports disabled', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_mdns_status: { disabled: true, reason: 'multicast lock missing' },
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_mdns_status: () => ({ disabled: true, reason: 'multicast lock missing' }),
       })
 
       render(<DeviceManagement />)
@@ -1446,9 +1314,9 @@ describe('DeviceManagement', () => {
 
     it('shows the banner when the live sync:mdns_disabled event fires', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_mdns_status: { disabled: false, reason: null },
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_mdns_status: () => ({ disabled: false, reason: null }),
       })
 
       render(<DeviceManagement />)
@@ -1503,9 +1371,9 @@ describe('DeviceManagement', () => {
      */
     it('does not show the banner when the sync bind is not internet-facing', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: { internet_facing: null },
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({ internet_facing: null }),
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1521,11 +1389,11 @@ describe('DeviceManagement', () => {
      */
     it('shows the banner from the mount-time durable status, naming the address and port', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: {
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({
           internet_facing: { address: '192.160.160.80', port: 54321 },
-        },
+        }),
       })
 
       render(<DeviceManagement />)
@@ -1542,9 +1410,9 @@ describe('DeviceManagement', () => {
 
     it('shows the banner when the live sync:internet_facing_bind event fires', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: { internet_facing: null },
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({ internet_facing: null }),
       })
 
       render(<DeviceManagement />)
@@ -1569,11 +1437,11 @@ describe('DeviceManagement', () => {
      */
     it('stays dismissed across a remount once the address is acknowledged', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: {
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({
           internet_facing: { address: '192.160.160.80', port: 54321 },
-        },
+        }),
       })
 
       const first = render(<DeviceManagement />)
@@ -1602,11 +1470,11 @@ describe('DeviceManagement', () => {
     it('warns again when a different public address is bound after a dismissal', async () => {
       localStorage.setItem(PREFERENCES.internetFacingBindAck.key, '192.160.160.80')
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: {
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({
           internet_facing: { address: '198.51.100.4', port: 41234 },
-        },
+        }),
       })
 
       render(<DeviceManagement />)
@@ -1618,11 +1486,11 @@ describe('DeviceManagement', () => {
 
     it('has no a11y violations while the banner is shown', async () => {
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: [],
-        get_bind_exposure_status: {
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [],
+        get_bind_exposure_status: () => ({
           internet_facing: { address: '192.160.160.80', port: 54321 },
-        },
+        }),
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1638,8 +1506,8 @@ describe('DeviceManagement', () => {
   // straight out of the (truncating) device name on a phone.
   it('edit address button sits on the address line, not in the name column', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [{ ...peerAbc, last_address: null }],
     })
 
     const { container } = render(<DeviceManagement />)
@@ -1664,8 +1532,8 @@ describe('DeviceManagement', () => {
   // on mobile and become a row at `sm:`.
   it('peer action buttons stack full-width on mobile and become a row at sm', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -1697,8 +1565,8 @@ describe('DeviceManagement', () => {
   // line, right-aligned, keeping its 44px touch target.
   it('rename button sits on the name line, not in the action stack', async () => {
     mockInvokeByCommand({
-      get_device_id: mockDeviceId,
-      list_peer_refs: mockPeers,
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
     })
 
     const { container } = render(<DeviceManagement />)
@@ -1719,7 +1587,10 @@ describe('DeviceManagement', () => {
   // English literals or hand-rolled pluralization.
   describe('#2058 i18n recovery path', () => {
     it('surfaces device.loadFailed key on load failure', async () => {
-      mockedInvoke.mockRejectedValue(new Error('network failure'))
+      mockInvokeByCommand({
+        get_device_id: () => Promise.reject(new Error('network failure')),
+        list_peer_refs: () => Promise.reject(new Error('network failure')),
+      })
 
       render(<DeviceManagement />)
 
@@ -1729,11 +1600,10 @@ describe('DeviceManagement', () => {
 
     it('surfaces device.unpairFailed key on unpair failure', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'get_device_id') return mockDeviceId
-        if (cmd === 'list_peer_refs') return [mockPeers[0]]
-        if (cmd === 'delete_peer_ref') throw new Error('FK constraint')
-        return undefined
+      mockInvokeByCommand({
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => [peerAbc],
+        delete_peer_ref: () => Promise.reject(new Error('FK constraint')),
       })
 
       render(<DeviceManagement />)
@@ -1750,12 +1620,11 @@ describe('DeviceManagement', () => {
 
     it('surfaces device.syncTimedOut key (friendly timeout copy) on timeout', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'get_device_id') return mockDeviceId
-        if (cmd === 'list_peer_refs') return mockPeers
-        if (cmd === 'start_sync') throw new Error('Sync timed out')
-        if (cmd === 'cancel_sync') return undefined
-        return undefined
+      mockInvokeByCommand({
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => mockPeers,
+        start_sync: () => Promise.reject(new Error('Sync timed out')),
+        cancel_sync: () => null,
       })
 
       render(<DeviceManagement />)
@@ -1773,12 +1642,14 @@ describe('DeviceManagement', () => {
     })
 
     it('surfaces device.syncFailedForList (interpolated) when Sync All has failures', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-        if (cmd === 'get_device_id') return mockDeviceId
-        if (cmd === 'list_peer_refs') return mockPeers
-        if (cmd === 'start_sync') {
-          const peerId = (args as Record<string, string>)['peerId']
-          if (peerId === 'peer-abc-1234567890') throw new Error('Connection refused')
+      mockInvokeByCommand({
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => mockPeers,
+        start_sync: (args) => {
+          const peerId = args['peerId'] as string
+          if (peerId === 'peer-abc-1234567890') {
+            return Promise.reject(new Error('Connection refused'))
+          }
           return {
             state: 'completed',
             local_device_id: mockDeviceId,
@@ -1786,8 +1657,7 @@ describe('DeviceManagement', () => {
             ops_received: 0,
             ops_sent: 0,
           }
-        }
-        return undefined
+        },
       })
 
       const { container } = render(<DeviceManagement />)
@@ -1806,8 +1676,8 @@ describe('DeviceManagement', () => {
     it('renders the reset-count badge via the device.resetCount plural key', async () => {
       // mockPeers[1] has reset_count: 1 -> _one form, no trailing "s"
       mockInvokeByCommand({
-        get_device_id: mockDeviceId,
-        list_peer_refs: mockPeers,
+        get_device_id: () => mockDeviceId,
+        list_peer_refs: () => mockPeers,
       })
 
       render(<DeviceManagement />)

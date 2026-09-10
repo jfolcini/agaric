@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { logger } from '@/lib/logger'
 
@@ -68,7 +69,8 @@ function Harness({ onClose }: { onClose?: () => void } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue({})
+  // The only command the dropdown fires: per-date agenda counts by source.
+  stubInvoke(mockedInvoke, { count_agenda_batch_by_source: () => ({}) })
 })
 
 describe('JournalCalendarDropdown focus restoration (#1101)', () => {
@@ -139,7 +141,9 @@ describe('JournalCalendarDropdown IPC error path (#1270)', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     // The `countAgendaBatchBySource` IPC (routed through `invoke`) rejects on
     // mount — the dropdown must swallow it (catch branch), not crash.
-    mockedInvoke.mockRejectedValueOnce(new Error('agenda fetch failed'))
+    stubInvoke(mockedInvoke, {
+      count_agenda_batch_by_source: () => Promise.reject(new Error('agenda fetch failed')),
+    })
 
     render(<Harness />)
     await user.click(screen.getByRole('button', { name: /open calendar picker/i }))

@@ -29,30 +29,33 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { HasTagFilterForm } from '@/components/backlink-filter/categories/HasTagFilterForm'
+import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
 
 /** A `TagCacheRow` as the backend returns it (the wrapper maps `tag_id`→`id`). */
-function makeTagRow(tag_id: string, name: string) {
+function makeTagRow(tag_id: string, name: string): TagCacheRow {
   return { tag_id, name, usage_count: 0, updated_at: '2025-01-01T00:00:00Z' }
+}
+
+/** The only command this form fires; anything else fails by name. */
+function stubTagSearch(rows: () => TagCacheRow[] | Promise<TagCacheRow[]>): void {
+  stubInvoke(mockedInvoke, { list_tags_by_prefix: rows })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Default: any `list_tags_by_prefix` call resolves empty unless overridden.
-  mockedInvoke.mockResolvedValue([])
+  stubTagSearch(() => [])
 })
 
 describe('HasTagFilterForm — happy path', () => {
   it('surfaces tags resolved by the debounced listTagsByPrefix search', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue([
-      makeTagRow('01TAG_BETA', 'Beta'),
-      makeTagRow('01TAG_GAMMA', 'Gamma'),
-    ])
+    stubTagSearch(() => [makeTagRow('01TAG_BETA', 'Beta'), makeTagRow('01TAG_GAMMA', 'Gamma')])
 
     render(<HasTagFilterForm tags={[{ id: '01TAG_ALPHA', name: 'Alpha' }]} />)
 
@@ -81,7 +84,7 @@ describe('HasTagFilterForm — IPC error path (#1270)', () => {
     const user = userEvent.setup()
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     // The debounced search (fired on open with the empty prefix) rejects.
-    mockedInvoke.mockRejectedValueOnce(new Error('tag backend unavailable'))
+    stubTagSearch(() => Promise.reject(new Error('tag backend unavailable')))
 
     render(<HasTagFilterForm tags={[]} />)
 

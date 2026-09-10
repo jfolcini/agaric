@@ -10,11 +10,18 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { TagComposer, type TagComposerCallbacks } from '@/components/filters/TagComposer'
+import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { emptyTagBuilder } from '@/lib/tagExpr'
 
 const mockedInvoke = vi.mocked(invoke)
+
+/** The only command the composer fires; anything else fails by name. */
+function stubTagSearch(rows: () => TagCacheRow[] | Promise<TagCacheRow[]>): void {
+  stubInvoke(mockedInvoke, { list_tags_by_prefix: rows })
+}
 
 function renderComposer() {
   const onAddTag = vi.fn()
@@ -47,7 +54,7 @@ describe('TagComposer — tag typeahead IPC', () => {
 
   it('swallows a list_tags_by_prefix rejection without crashing and shows no matches (#1426 error path)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockRejectedValue(new Error('IPC failed'))
+    stubTagSearch(() => Promise.reject(new Error('IPC failed')))
 
     const { onAddTag } = renderComposer()
     await openAndType(user, 'wo')
@@ -65,7 +72,9 @@ describe('TagComposer — tag typeahead IPC', () => {
 
   it('renders matches when list_tags_by_prefix resolves (happy path)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue([{ tag_id: 'TAG001', name: 'work', usage_count: 5 }])
+    stubTagSearch(() => [
+      { tag_id: 'TAG001', name: 'work', usage_count: 5, updated_at: '2025-01-01T00:00:00Z' },
+    ])
 
     renderComposer()
     await openAndType(user, 'wo')
@@ -77,7 +86,7 @@ describe('TagComposer — tag typeahead IPC', () => {
 
   it('has no a11y violations with the composer open', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue([])
+    stubTagSearch(() => [])
 
     const { container } = renderComposer()
     await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))

@@ -18,7 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
+import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { AttachmentList, formatSize } from '@/components/attachments/AttachmentList'
+import type { AttachmentRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 
@@ -36,8 +38,10 @@ function renderWithProvider(ui: React.ReactElement) {
 function makeAttachment(
   id: string,
   filename: string,
-  opts: { mimeType?: string; sizeBytes?: number; createdAt?: string } = {},
-) {
+  // `created_at` is epoch-ms since migration 0081, not the ISO string this
+  // fixture used to hand the untyped mock.
+  opts: { mimeType?: string; sizeBytes?: number; createdAt?: number } = {},
+): AttachmentRow {
   return {
     id,
     block_id: 'block-1',
@@ -45,15 +49,19 @@ function makeAttachment(
     mime_type: opts.mimeType ?? 'application/octet-stream',
     size_bytes: opts.sizeBytes ?? 1024,
     fs_path: `/files/${filename}`,
-    created_at: opts.createdAt ?? new Date().toISOString(),
+    created_at: opts.createdAt ?? 1_735_689_600_000,
   }
+}
+
+/** The commands `AttachmentList` can fire; anything else fails by name. */
+function stubAttachments(handlers: Parameters<typeof stubInvoke>[1] = {}): void {
+  stubInvoke(mockedInvoke, { list_attachments: () => [], ...handlers })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   pageStore = createPageBlockStore('PAGE_1')
-  // Default: list_attachments returns empty
-  mockedInvoke.mockResolvedValue([])
+  stubAttachments()
 })
 
 afterEach(() => {
@@ -62,18 +70,18 @@ afterEach(() => {
 
 describe('AttachmentList', () => {
   it('renders empty state when no attachments', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
     expect(await screen.findByText(/No attachments yet/)).toBeInTheDocument()
   })
 
   it('renders list of attachments with filenames', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makeAttachment('a1', 'report.pdf'),
-      makeAttachment('a2', 'photo.png', { mimeType: 'image/png' }),
-    ])
+    stubAttachments({
+      list_attachments: () => [
+        makeAttachment('a1', 'report.pdf'),
+        makeAttachment('a2', 'photo.png', { mimeType: 'image/png' }),
+      ],
+    })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -82,8 +90,9 @@ describe('AttachmentList', () => {
   })
 
   it('shows loading state', () => {
-    // Never-resolving promise keeps loading state
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    // Parked promise keeps the loading state up.
+    const pending = deferred<CommandReturns['list_attachments']>()
+    stubAttachments({ list_attachments: () => pending.promise })
 
     const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -93,11 +102,13 @@ describe('AttachmentList', () => {
   })
 
   it('renders human-readable file sizes', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makeAttachment('a1', 'small.txt', { sizeBytes: 500, mimeType: 'text/plain' }),
-      makeAttachment('a2', 'medium.doc', { sizeBytes: 2048 }),
-      makeAttachment('a3', 'large.zip', { sizeBytes: 1048576 * 5 }),
-    ])
+    stubAttachments({
+      list_attachments: () => [
+        makeAttachment('a1', 'small.txt', { sizeBytes: 500, mimeType: 'text/plain' }),
+        makeAttachment('a2', 'medium.doc', { sizeBytes: 2048 }),
+        makeAttachment('a3', 'large.zip', { sizeBytes: 1048576 * 5 }),
+      ],
+    })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -110,7 +121,10 @@ describe('AttachmentList', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'to-delete.txt')])
+    stubAttachments({
+      list_attachments: () => [makeAttachment('a1', 'to-delete.txt')],
+      delete_attachment: () => null,
+    })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -128,9 +142,6 @@ describe('AttachmentList', () => {
       }),
     )
 
-    // Mock delete_attachment response
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
     // Second click — actually deletes
     await user.click(deleteBtn)
     expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
@@ -146,7 +157,7 @@ describe('AttachmentList', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'armed.txt')])
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', 'armed.txt')] })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -167,7 +178,11 @@ describe('AttachmentList', () => {
   it('rename button opens an input that calls rename_attachment IPC on Enter', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'old-name.txt')])
+    stubAttachments({
+      list_attachments: () => [makeAttachment('a1', 'old-name.txt')],
+      // The hook applies an optimistic local update, so there is no refetch.
+      rename_attachment: () => null,
+    })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -178,10 +193,6 @@ describe('AttachmentList', () => {
 
     const input = screen.getByRole('textbox', { name: /rename attachment old-name\.txt/i })
     expect(input).toHaveValue('old-name.txt')
-
-    // rename_attachment resolves; the hook applies an optimistic local update
-    // (no list refetch).
-    mockedInvoke.mockResolvedValueOnce(undefined)
 
     await user.clear(input)
     await user.type(input, 'new-name.txt{Enter}')
@@ -197,7 +208,7 @@ describe('AttachmentList', () => {
   it('rename input uses the design-system focus-ring-visible utility (#1349)', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'old-name.txt')])
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', 'old-name.txt')] })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
     expect(await screen.findByText('old-name.txt')).toBeInTheDocument()
@@ -213,7 +224,9 @@ describe('AttachmentList', () => {
   it('rename input cancels on Escape without calling IPC', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep.txt')])
+    // `rename_attachment` deliberately unstubbed: if the Escape path ever
+    // fired it, the strict fallback names it.
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', 'keep.txt')] })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -234,7 +247,9 @@ describe('AttachmentList', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'timeout-test.txt')])
+    // `delete_attachment` deliberately unstubbed — the point of the test is
+    // that the second click re-arms rather than deleting.
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', 'timeout-test.txt')] })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -266,7 +281,7 @@ describe('AttachmentList', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'unmount-test.txt')])
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', 'unmount-test.txt')] })
 
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -299,8 +314,6 @@ describe('AttachmentList', () => {
   })
 
   it('calls list_attachments with the correct blockId', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
     renderWithProvider(<AttachmentList blockId="my-block-42" />)
 
     await waitFor(() => {
@@ -309,8 +322,6 @@ describe('AttachmentList', () => {
   })
 
   it('has no a11y violations (empty state)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
     const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
     await waitFor(async () => {
@@ -320,10 +331,12 @@ describe('AttachmentList', () => {
   })
 
   it('has no a11y violations (with attachments)', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makeAttachment('a1', 'doc.pdf', { mimeType: 'application/pdf' }),
-      makeAttachment('a2', 'photo.jpg', { mimeType: 'image/jpeg' }),
-    ])
+    stubAttachments({
+      list_attachments: () => [
+        makeAttachment('a1', 'doc.pdf', { mimeType: 'application/pdf' }),
+        makeAttachment('a2', 'photo.jpg', { mimeType: 'image/jpeg' }),
+      ],
+    })
 
     const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -334,7 +347,9 @@ describe('AttachmentList', () => {
   })
 
   it('shows error toast when list_attachments fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+    stubAttachments({
+      list_attachments: () => Promise.reject(new Error('network failure')),
+    })
 
     const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -360,7 +375,10 @@ describe('AttachmentList', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
-    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep-me.txt')])
+    stubAttachments({
+      list_attachments: () => [makeAttachment('a1', 'keep-me.txt')],
+      delete_attachment: () => Promise.reject(new Error('backend error')),
+    })
 
     renderWithProvider(<AttachmentList blockId="block-1" />)
 
@@ -371,9 +389,6 @@ describe('AttachmentList', () => {
     // First click — confirmation toast
     await user.click(deleteBtn)
     expect(mockedToast).toHaveBeenCalled()
-
-    // Mock delete_attachment to reject
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
 
     // Second click — attempts delete, which fails
     await user.click(deleteBtn)

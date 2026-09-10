@@ -64,27 +64,7 @@ const DELIBERATE_EXCEPTIONS: readonly string[] = [
  * done yet. Delete an entry when you migrate its file; the test fails in both
  * directions, so a stale entry cannot hide a win and a new one cannot slip in.
  */
-const MIGRATION_BACKLOG: readonly string[] = [
-  'src/__tests__/viewTransition.test.tsx',
-  'src/components/PageBrowser/__tests__/editors.test.tsx',
-  'src/components/attachments/__tests__/AttachmentList.test.tsx',
-  'src/components/backlink-filter/categories/__tests__/HasTagFilterForm.test.tsx',
-  'src/components/dialogs/__tests__/QuickCaptureDialog.test.tsx',
-  'src/components/editor/__tests__/BlockPropertyDrawer.test.tsx',
-  'src/components/editor/__tests__/BlockTree.a11y.test.tsx',
-  'src/components/editor/__tests__/BlockTree.test.tsx',
-  'src/components/editor/__tests__/StaticBlock.test.tsx',
-  'src/components/filters/__tests__/TagComposer.test.tsx',
-  'src/components/filters/__tests__/TagFilterPanel.test.tsx',
-  'src/components/history/__tests__/HistoryView.test.tsx',
-  'src/components/journal/__tests__/JournalCalendarDropdown.test.tsx',
-  'src/components/journal/__tests__/JournalControls.test.tsx',
-  'src/components/peers/__tests__/DeviceManagement.test.tsx',
-  'src/components/peers/__tests__/PeerListItem.test.tsx',
-  'src/components/query/__tests__/QueryResult.test.tsx',
-  'src/components/templates/__tests__/CompactionCard.test.tsx',
-  'src/components/templates/__tests__/TemplatesView.test.tsx',
-]
+const MIGRATION_BACKLOG: readonly string[] = []
 
 // Anchored at the alias: only a stub call that immediately follows it counts,
 // so a `.mockResolvedValue(` on a different mock nearby cannot be attributed

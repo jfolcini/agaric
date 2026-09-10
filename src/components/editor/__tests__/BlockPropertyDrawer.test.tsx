@@ -41,6 +41,13 @@ const mockedReportIpcError = vi.mocked(reportIpcError)
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { BlockPropertyDrawer } from '@/components/editor/BlockPropertyDrawer'
 import { PropertyField } from '@/components/properties/PropertyField'
 
@@ -74,16 +81,29 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
   }
 }
 
-function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'get_properties') return props
-    // Paginated PageResponse envelope.
-    if (cmd === 'list_property_defs') return { items: defs, next_cursor: null, has_more: false }
-    if (cmd === 'set_property') return undefined
-    if (cmd === 'delete_property') return undefined
-    if (cmd === 'set_due_date') return { id: 'BLOCK_1', block_type: 'content' }
-    if (cmd === 'set_scheduled_date') return { id: 'BLOCK_1', block_type: 'content' }
-    return null
+/**
+ * The commands the drawer fires, defaulted to success. `overrides` is how a
+ * test fails exactly one of them: a positional `mockRejectedValueOnce` failed
+ * whichever call happened to land first, whatever command it was (#3217).
+ */
+function setupMock(
+  props: PropertyRow[] = [],
+  defs: PropertyDefinition[] = [],
+  overrides: TypedInvokeHandlers = {},
+) {
+  stubInvoke(mockedInvoke, {
+    get_properties: () => props,
+    list_property_defs: () => ({
+      items: defs,
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }),
+    set_property: () => withOps(makeBlockRow({ id: 'BLOCK_1' })),
+    delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'my_custom' }),
+    set_due_date: () => makeBlockRow({ id: 'BLOCK_1' }),
+    set_scheduled_date: () => makeBlockRow({ id: 'BLOCK_1' }),
+    ...overrides,
   })
 }
 
@@ -105,8 +125,9 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('shows LoadingSkeleton initially (sub-fix 3)', () => {
-    // Return a never-resolving promise to keep loading state
-    mockedInvoke.mockReturnValue(new Promise(() => {}))
+    // Parked promise keeps the loading state up.
+    const pending = deferred<CommandReturns['get_properties']>()
+    setupMock([], [], { get_properties: () => pending.promise })
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     // Sheet portals to document.body; query the document instead of container
@@ -119,7 +140,8 @@ describe('BlockPropertyDrawer', () => {
 
   it('disables the Add property button while loading with a tooltip (sub-fix 3)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockReturnValue(new Promise(() => {}))
+    const pending = deferred<CommandReturns['get_properties']>()
+    setupMock([], [], { get_properties: () => pending.promise })
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const addBtn = screen.getByRole('button', { name: 'Add property' })
@@ -655,7 +677,7 @@ describe('BlockPropertyDrawer', () => {
   // ── Error path tests ────────────────────────────────────────────────
 
   it('shows error toast when loading properties fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+    setupMock([], [], { get_properties: () => Promise.reject(new Error('network failure')) })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
@@ -665,7 +687,7 @@ describe('BlockPropertyDrawer', () => {
   })
 
   it('exits loading state when loading properties fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+    setupMock([], [], { get_properties: () => Promise.reject(new Error('network failure')) })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
@@ -679,10 +701,8 @@ describe('BlockPropertyDrawer', () => {
     // still render the property row from the successful side and surface the
     // defs failure via reportIpcError instead of failing the whole load.
     const props = [makeProp('status', { value_text: 'active' })]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return props
-      if (cmd === 'list_property_defs') throw new Error('defs IPC failed')
-      return null
+    setupMock(props, [], {
+      list_property_defs: () => Promise.reject(new Error('defs IPC failed')),
     })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
@@ -714,16 +734,15 @@ describe('BlockPropertyDrawer', () => {
   it('shows error toast when saving a property fails', async () => {
     const user = userEvent.setup()
     const props = [makeProp('status', { value_text: 'active' })]
-    setupMock(props, [makeDef('status')])
+    setupMock(props, [makeDef('status')], {
+      set_property: () => Promise.reject(new Error('save failure')),
+    })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
     })
-
-    // Now make the next set_property call fail
-    mockedInvoke.mockRejectedValueOnce(new Error('save failure'))
 
     const input = screen.getByLabelText('status value')
     await user.clear(input)
@@ -738,16 +757,15 @@ describe('BlockPropertyDrawer', () => {
   it('shows error toast when deleting a property fails', async () => {
     const user = userEvent.setup()
     const props = [makeProp('my_custom', { value_text: 'hello' })]
-    setupMock(props, [makeDef('my_custom')])
+    setupMock(props, [makeDef('my_custom')], {
+      delete_property: () => Promise.reject(new Error('delete failure')),
+    })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
     })
-
-    // Make the next delete_property call fail
-    mockedInvoke.mockRejectedValueOnce(new Error('delete failure'))
 
     const deleteBtn = screen.getByRole('button', { name: 'Delete property' })
     await user.click(deleteBtn)
@@ -760,16 +778,15 @@ describe('BlockPropertyDrawer', () => {
   it('preserves property list when delete fails', async () => {
     const user = userEvent.setup()
     const props = [makeProp('my_custom', { value_text: 'hello' })]
-    setupMock(props, [makeDef('my_custom')])
+    setupMock(props, [makeDef('my_custom')], {
+      delete_property: () => Promise.reject(new Error('delete failure')),
+    })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
     })
-
-    // Make the next delete_property call fail
-    mockedInvoke.mockRejectedValueOnce(new Error('delete failure'))
 
     const deleteBtn = screen.getByRole('button', { name: 'Delete property' })
     await user.click(deleteBtn)
@@ -802,16 +819,13 @@ describe('BlockPropertyDrawer', () => {
         },
       ],
     })
-    setupMock()
+    setupMock([], [], { set_due_date: () => Promise.reject(new Error('clear date failure')) })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
     })
-
-    // Make set_due_date reject
-    mockedInvoke.mockRejectedValueOnce(new Error('clear date failure'))
 
     const clearBtn = screen.getByRole('button', { name: 'Clear due date' })
     await user.click(clearBtn)
@@ -841,16 +855,15 @@ describe('BlockPropertyDrawer', () => {
         },
       ],
     })
-    setupMock()
+    setupMock([], [], {
+      set_scheduled_date: () => Promise.reject(new Error('clear scheduled failure')),
+    })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
     })
-
-    // Make set_scheduled_date reject
-    mockedInvoke.mockRejectedValueOnce(new Error('clear scheduled failure'))
 
     const clearBtn = screen.getByRole('button', { name: 'Clear scheduled date' })
     await user.click(clearBtn)
@@ -880,16 +893,13 @@ describe('BlockPropertyDrawer', () => {
         },
       ],
     })
-    setupMock()
+    setupMock([], [], { set_due_date: () => Promise.reject(new Error('save date failure')) })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
     })
-
-    // Make set_due_date reject
-    mockedInvoke.mockRejectedValueOnce(new Error('save date failure'))
 
     const dateInput = screen.getByDisplayValue('2026-06-15')
     await user.clear(dateInput)
@@ -908,7 +918,7 @@ describe('BlockPropertyDrawer', () => {
     // (text/select defs no longer persist on add — see the draft-row tests.)
     const defs = [makeDef('new_prop', 'number')]
     // No existing properties, but one definition available
-    setupMock([], defs)
+    setupMock([], defs, { set_property: () => Promise.reject(new Error('add property failure')) })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
@@ -919,9 +929,6 @@ describe('BlockPropertyDrawer', () => {
     // Open the add-property popover
     const addBtn = screen.getByRole('button', { name: 'Add property' })
     await user.click(addBtn)
-
-    // Make set_property reject when adding from definition
-    mockedInvoke.mockRejectedValueOnce(new Error('add property failure'))
 
     // Click on the definition in the popover
     const defOption = await screen.findByText('New Prop')
@@ -1034,16 +1041,21 @@ describe('BlockPropertyDrawer', () => {
   it('does not crash when reloading properties after ref save fails', async () => {
     const props = [makeProp('linked_page', { value_ref: null })]
     const defs = [makeDef('linked_page', 'ref')]
-    setupMock(props, defs)
+    // The initial load succeeds; the reload `onRefSaved` triggers rejects.
+    let loaded = false
+    setupMock(props, defs, {
+      get_properties: () => {
+        if (loaded) return Promise.reject(new Error('reload failure'))
+        loaded = true
+        return props
+      },
+    })
 
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Linked Page')).toBeInTheDocument()
     })
-
-    // Make get_properties reject for the reload path
-    mockedInvoke.mockRejectedValueOnce(new Error('reload failure'))
 
     // The reloadProperties function is passed as onRefSaved to PropertyRowEditor.
     // It catches errors silently (logger.warn only, no toast).

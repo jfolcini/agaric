@@ -19,6 +19,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
+import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { QuickCaptureDialog } from '@/components/dialogs/QuickCaptureDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
@@ -79,13 +81,9 @@ describe('QuickCaptureDialog', () => {
   it('clicking Capture invokes quick_capture_block with the trimmed content and closes the dialog', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'BLK_X',
-      block_type: 'content',
-      content: 'captured',
-      parent_id: 'PARENT',
-      position: 1,
-      deleted_at: null,
+    stubInvoke(mockedInvoke, {
+      quick_capture_block: () =>
+        makeBlockRow({ id: 'BLK_X', content: 'captured', parent_id: 'PARENT' }),
     })
 
     render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
@@ -107,13 +105,9 @@ describe('QuickCaptureDialog', () => {
   it('Cmd/Ctrl + Enter submits the same as the Capture button', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'BLK_Y',
-      block_type: 'content',
-      content: 'hotkey-submit',
-      parent_id: 'PARENT',
-      position: 1,
-      deleted_at: null,
+    stubInvoke(mockedInvoke, {
+      quick_capture_block: () =>
+        makeBlockRow({ id: 'BLK_Y', content: 'hotkey-submit', parent_id: 'PARENT' }),
     })
 
     render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
@@ -146,7 +140,9 @@ describe('QuickCaptureDialog', () => {
   it('shows an error toast and stays open when quick_capture_block fails', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    mockedInvoke.mockRejectedValueOnce(new Error('disk full'))
+    stubInvoke(mockedInvoke, {
+      quick_capture_block: () => Promise.reject(new Error('disk full')),
+    })
 
     render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
     await user.type(screen.getByTestId('quick-capture-textarea'), 'will fail')
@@ -165,13 +161,8 @@ describe('QuickCaptureDialog', () => {
   // <Spinner/> (not just go disabled) while the quick-capture IPC is pending.
   it('shows an in-flight Spinner in the Capture button while the capture is pending', async () => {
     const user = userEvent.setup()
-    let resolveCapture: (value: unknown) => void = () => {}
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveCapture = resolve
-        }),
-    )
+    const capture = deferred<CommandReturns['quick_capture_block']>()
+    stubInvoke(mockedInvoke, { quick_capture_block: () => capture.promise })
 
     render(<QuickCaptureDialog open onOpenChange={() => {}} />)
     await user.type(screen.getByTestId('quick-capture-textarea'), 'pending capture')
@@ -183,14 +174,9 @@ describe('QuickCaptureDialog', () => {
     })
 
     // Settle the pending promise so the component finishes cleanly.
-    resolveCapture({
-      id: 'BLK_PENDING',
-      block_type: 'content',
-      content: 'pending capture',
-      parent_id: 'PARENT',
-      position: 1,
-      deleted_at: null,
-    })
+    capture.resolve(
+      makeBlockRow({ id: 'BLK_PENDING', content: 'pending capture', parent_id: 'PARENT' }),
+    )
   })
 
   it('whitespace-only content keeps the Capture button disabled', async () => {
