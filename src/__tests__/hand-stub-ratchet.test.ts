@@ -50,15 +50,6 @@ const DELIBERATE_EXCEPTIONS: Readonly<Record<string, string>> = {
     'installed to prove that an explicit stub overrides `strictInvokeFallback` — ' +
     'the case the whole design turns on. Expressing it through `mockInvokeCommands` ' +
     'would test that helper instead of the fallback it is asserting about.',
-  'src/lib/__tests__/ipc-helpers.test.ts':
-    'the `readAttachment` describe ONLY. `read_attachment` returns a raw-byte ' +
-    '`tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has NO ' +
-    'generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key of ' +
-    '`CommandReturns` — the typed seam cannot name it, and the stub is an ' +
-    '`ArrayBuffer` no generated type would describe. The rest of this file ' +
-    '(`startSync`, `importMarkdown`) has generated bindings and SHOULD migrate; ' +
-    'the exception is file-granular only because one stub pins the whole file in ' +
-    'the live set.',
 }
 
 /**
@@ -67,6 +58,15 @@ const DELIBERATE_EXCEPTIONS: Readonly<Record<string, string>> = {
  * directions, so a stale entry cannot hide a win and a new one cannot slip in.
  */
 const MIGRATION_BACKLOG: readonly string[] = [
+  // Most of this file's stubs — `startSync`, `importMarkdown`, the trash
+  // drains — have generated bindings and should migrate. It will not leave
+  // this list even so: `read_attachment` returns a raw-byte
+  // `tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has no
+  // generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key of
+  // `CommandReturns`. Move it to DELIBERATE_EXCEPTIONS once the others are
+  // done — until then, exempting it would hide every new hand-stub added here
+  // for a command that IS bound.
+  'src/lib/__tests__/ipc-helpers.test.ts',
   'src/__tests__/viewTransition.test.tsx',
   'src/components/PageBrowser/__tests__/editors.test.tsx',
   'src/components/agenda/__tests__/AgendaFilterBuilder.test.tsx',
