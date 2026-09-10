@@ -355,7 +355,7 @@ fn token_head(what: &str, head: &str) -> String {
 }
 
 /// Build `<row[id_key]>#<attr>=<value>…` for one serialized row.
-fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
+pub(super) fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
     let mut token = token_head(
         "row id",
         row.get(id_key)
@@ -647,7 +647,7 @@ tokio::task_local! {
     /// would silently drop a thread-local set before the await.
     /// `agaric_store::task_locals::ACTOR` is the same shape for the same
     /// reason.
-    static PROJECTING_STEP: String;
+    pub(super) static PROJECTING_STEP: String;
 }
 
 /// [`step_context`] plus its separator, or the EMPTY string when no step is in
@@ -1660,7 +1660,7 @@ fn relabel_head(head: &str, labels: &BTreeMap<String, String>) -> String {
 /// Relabel a full row token: the head (an id, or an `a->b` pair) and every
 /// attribute VALUE, so id-valued attributes like `page_id` read `B1` rather
 /// than a stack-local ULID. Attribute NAMES pass through untouched.
-fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
+pub(super) fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
     let mut parts = token.split('#');
     let head = parts.next().unwrap_or(token);
     let mut out = relabel_head(head, labels);
@@ -2019,7 +2019,7 @@ pub async fn run_query_steps(
     Value::Array(out)
 }
 
-mod reader_delegation_tests {
+pub(super) mod reader_delegation_tests {
     /// #3928 — pin that the harness arm and the SHIPPED command reach the same
     /// reader.
     ///
@@ -2169,7 +2169,7 @@ mod reader_delegation_tests {
     /// to describe a set of arms that no longer exists.
     #[test]
     fn the_write_sweep_denominator_still_matches() {
-        let (commands, arms) = wired_commands(HARNESS_RS);
+        let (commands, arms) = wired_commands(HARNESS_RS, "fn run_step(", "match args.command {");
         assert_eq!(
             commands.len(),
             SWEPT_ARM_COUNT,
@@ -2233,12 +2233,19 @@ mod reader_delegation_tests {
     /// A string literal inside a pattern GUARD would be counted as a command
     /// (there is none today). That is the safe direction for a tripwire: it
     /// reddens and asks for a human, rather than passing while under-counting.
-    fn wired_commands(src: &str) -> (Vec<String>, usize) {
-        const DISPATCH: &str = "match args.command {";
-        let body = body_after(src, "fn run_step(", "\n}\n");
-        let start = body.find(DISPATCH).unwrap_or_else(|| {
-            panic!("{DISPATCH:?} not found inside `run_step` — did the dispatch move or rename?")
-        }) + DISPATCH.len();
+    ///
+    /// `fn_needle` names the dispatching function and `dispatch` its `match`
+    /// header; the mutating leg (`conformance_command.rs`) walks its own
+    /// dispatcher with the same scanner.
+    pub(crate) fn wired_commands(
+        src: &str,
+        fn_needle: &str,
+        dispatch: &str,
+    ) -> (Vec<String>, usize) {
+        let body = body_after(src, fn_needle, "\n}\n");
+        let start = body.find(dispatch).unwrap_or_else(|| {
+            panic!("{dispatch:?} not found inside `{fn_needle}` — did the dispatch move or rename?")
+        }) + dispatch.len();
 
         let chars: Vec<char> = body[start..].chars().collect();
         let mut commands = Vec::new();
@@ -2396,7 +2403,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             "the fixture is supposed to be one the OLD filter under-counts; it saw {legacy}"
         );
 
-        let (commands, arms) = wired_commands(FIXTURE);
+        let (commands, arms) = wired_commands(FIXTURE, "fn run_step(", "match args.command {");
         assert_eq!(
             commands,
             vec!["plain", "or_a", "or_b", "split_a", "split_b", "expr"],

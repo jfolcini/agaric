@@ -17,9 +17,20 @@
  * drivers.
  */
 
-import { type QueryResult, type QueryStep } from '@/lib/tauri-mock/__tests__/conformance-query'
+import {
+  type CommandOpStep,
+  type CommandRecord,
+  runCommandOp,
+} from '@/lib/tauri-mock/__tests__/conformance-command'
+import {
+  type QueryResult,
+  type QueryStep,
+  relabelToken,
+  stampMockSpace,
+} from '@/lib/tauri-mock/__tests__/conformance-query'
 import {
   buildSnapshot,
+  canonicalLabelMap,
   type MockState,
   type NormalizedSnapshot,
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
@@ -41,12 +52,14 @@ export interface Fixture {
     properties: Array<Record<string, unknown>>
     tags: Array<Record<string, unknown>>
   }
-  ops: Array<{ command: string; args: Record<string, unknown> }>
+  ops: CommandOpStep[]
   expected: Record<string, unknown> | null
   /** #3347 — optional post-op READ steps (see `./conformance-query`). */
   queries?: QueryStep[]
   /** Backend-authored projection of each `queries` step. */
   expected_queries?: QueryResult[]
+  /** #4670 — backend-authored record of each `via: "command"` op (see `./conformance-command`). */
+  expected_ops?: CommandRecord[]
 }
 
 /**
@@ -233,15 +246,71 @@ export function canonicalOrder(fixture: Fixture): string[] {
 }
 
 /**
+ * Replay `fixture.ops` against the loaded mock. A `via: "command"` op (#4670)
+ * is recorded — raw ids, relabelled by the caller — and its declared refusal
+ * is caught there rather than crashing the replay; every other op dispatches
+ * as before. Mirror of the op loop in the Rust `replay_fixture`.
+ */
+function replayOps(fixture: Fixture): CommandRecord[] {
+  const records: CommandRecord[] = []
+  const names = new Set<string>()
+  for (const op of fixture.ops) {
+    const args = expandOpArgs(op.args, createdBlockIdsInOpOrder())
+    if (op.via == null) {
+      dispatch(op.command, args)
+      continue
+    }
+    if (op.via !== 'command') {
+      throw new Error(
+        `fixture '${fixture.name}': op '${op.command}' has \`via\`: ${JSON.stringify(op.via)}; ` +
+          `the only value is "command"`,
+      )
+    }
+    const record = runCommandOp(op, args, fixture.name)
+    if (names.has(record.name)) {
+      throw new Error(
+        `fixture '${fixture.name}' has duplicate command op name '${record.name}' — every ` +
+          `\`via: "command"\` op's \`name\` must be unique, or a failure cannot be attributed ` +
+          `to the right op.`,
+      )
+    }
+    names.add(record.name)
+    records.push(record)
+  }
+  return records
+}
+
+/**
  * Reset the mock, load `fixture`'s seed, replay its ops, and return the
  * normalized snapshot — the SAME shape the Rust runner authors as `expected`.
  */
 export function replayFixture(fixture: Fixture): NormalizedSnapshot {
   clearMock()
   loadSeed(fixture)
-  for (const op of fixture.ops) {
-    dispatch(op.command, expandOpArgs(op.args, createdBlockIdsInOpOrder()))
-  }
+  replayOps(fixture)
   const state: MockState = { blocks, properties, blockTags, opLog }
   return buildSnapshot(state, canonicalOrder(fixture))
+}
+
+/**
+ * The replay the QUERY and COMMAND legs run over: seed, then the mirror image
+ * of the Rust runner's two `assign_all_to_test_space` calls around the ops —
+ * the backend replays every op with space membership already resolved, and the
+ * second stamp catches pages the ops created. Returns the relabelled
+ * `expected_ops` records, which the command leg asserts and the query leg
+ * ignores.
+ *
+ * The snapshot leg ({@link replayFixture}) does NOT stamp, so a space-scoped
+ * guard in the mock (`ownerSpaceOf`) silently no-ops there; a command whose
+ * refusal depends on the space must ride this replay.
+ */
+export function replayFixtureInSpace(fixture: Fixture): CommandRecord[] {
+  clearMock()
+  loadSeed(fixture)
+  stampMockSpace()
+  const records = replayOps(fixture)
+  stampMockSpace()
+  const labels = canonicalLabelMap(canonicalOrder(fixture))
+  for (const r of records) r.returns = r.returns.map((t) => relabelToken(t, labels))
+  return records
 }

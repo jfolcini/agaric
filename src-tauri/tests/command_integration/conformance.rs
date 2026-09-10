@@ -32,9 +32,11 @@
 //! This runner intentionally tests the durable serialized-op boundary: it
 //! builds an `OpPayload`, appends it, and feeds the resulting record to the
 //! test-only `Materializer::dispatch_op` helper (`ApplyOp` in normal mode plus
-//! background fan-out). It does not exercise validation that exists only in
-//! the command layer before an op is appended; those contracts belong in
-//! command integration tests.
+//! background fan-out). Validation that exists only in the command layer, and
+//! the value a command returns, never reach that boundary — so an op may opt
+//! in to the OTHER leg with `"via": "command"` (#4670): that op alone runs its
+//! `*_inner`, and its return value or refusal is recorded in `expected_ops`
+//! (`conformance_command.rs`). Every other op keeps the payload replay.
 //!
 //! The runner therefore SEEDS each fixture's seed blocks into the test
 //! materializer's per-space Loro tree (mirroring the raw-SQL seed insert) so
@@ -88,6 +90,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use super::conformance_command::{relabel_records, run_command_op};
 use super::conformance_snapshot::{Snapshot, build_snapshot_with_order};
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1069,8 @@ pub struct FixtureReplay {
     pub snapshot: Value,
     pub canonical_order: Vec<String>,
     pub pool: SqlitePool,
+    /// #4670 — one record per `via: "command"` op, with raw ids.
+    pub op_records: Vec<Value>,
     /// Held so the temp DB and the per-instance engine state outlive the
     /// `queries` leg, exactly as they did when this was one function.
     _mat: Materializer,
@@ -1186,9 +1191,19 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
     // `Cn` op-arg label resolves against. Refreshed after every op, so an op
     // can only name a block an EARLIER op created.
     let mut created_ids: Vec<String> = Vec::new();
+    let mut op_records: Vec<Value> = Vec::new();
+    let mut command_op_names: BTreeSet<String> = BTreeSet::new();
     if let Some(ops) = fixture["ops"].as_array() {
         for op in ops.clone() {
             let command = op["command"].as_str().expect("op command");
+            let via_command = match op.get("via") {
+                None | Some(Value::Null) => false,
+                Some(Value::String(via)) if via == "command" => true,
+                Some(other) => panic!(
+                    "fixture '{name}': op '{command}' has `via`: {other}; the only value is \
+                     \"command\""
+                ),
+            };
             let resolve = |label: Option<&str>| label.map(|l| resolve_op_arg_id(l, &created_ids));
             let old_parent = if matches!(command, "move_block" | "purge_block") {
                 let block_id =
@@ -1199,25 +1214,47 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             } else {
                 None
             };
-            apply_op(&pool, &mat, &op, &created_ids).await;
+            // #4670 — a REJECTED command changed nothing, so the structural
+            // bookkeeping and the removed-value check below only apply to an
+            // op that ran; the engine-parity guard after them stays
+            // unconditional, which is what proves the refusal was atomic.
+            let applied = if via_command {
+                let record = run_command_op(&pool, &mat, &name, &op, &created_ids).await;
+                settle(&mat).await;
+                let op_name = record["name"].as_str().expect("record name").to_owned();
+                assert!(
+                    command_op_names.insert(op_name.clone()),
+                    "fixture '{name}' has duplicate command op name '{op_name}' — every \
+                     `via: \"command\"` op's `name` must be unique, or a failure cannot be \
+                     attributed to the right op."
+                );
+                let applied = record["error"].is_null();
+                op_records.push(record);
+                applied
+            } else {
+                apply_op(&pool, &mat, &op, &created_ids).await;
+                true
+            };
 
-            match command {
-                "create_block" => {
-                    let parent = resolve(op["args"]["parentId"].as_str());
-                    purge_gapped_parents.remove(&parent);
+            if applied {
+                match command {
+                    "create_block" => {
+                        let parent = resolve(op["args"]["parentId"].as_str());
+                        purge_gapped_parents.remove(&parent);
+                    }
+                    "move_block" => {
+                        let new_parent = resolve(op["args"]["newParentId"].as_str());
+                        purge_gapped_parents.remove(&old_parent);
+                        purge_gapped_parents.remove(&new_parent);
+                    }
+                    "purge_block" => {
+                        purge_gapped_parents.insert(old_parent);
+                    }
+                    _ => {}
                 }
-                "move_block" => {
-                    let new_parent = resolve(op["args"]["newParentId"].as_str());
-                    purge_gapped_parents.remove(&old_parent);
-                    purge_gapped_parents.remove(&new_parent);
-                }
-                "purge_block" => {
-                    purge_gapped_parents.insert(old_parent);
-                }
-                _ => {}
+                verify_removed_value_in_engine(state, &name, &op, &created_ids)
+                    .unwrap_or_else(|message| panic!("{message}"));
             }
-            verify_removed_value_in_engine(state, &name, &op, &created_ids)
-                .unwrap_or_else(|message| panic!("{message}"));
             created_ids = read_created_block_ids_in_op_order(&pool).await;
             for created in &created_ids {
                 if !canonical_order.contains(created) {
@@ -1258,6 +1295,7 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
         snapshot: snapshot_value,
         canonical_order,
         pool,
+        op_records,
         _mat: mat,
         _dir,
     }
@@ -1279,6 +1317,8 @@ async fn run_fixture(path: &PathBuf) {
     let labels = super::conformance_snapshot::canonical_label_map(&replay.canonical_order);
     let queries_value =
         super::conformance_query::run_query_steps(&replay.pool, &fixture, &labels).await;
+    // #4670 — the mutating-command leg, same contract as the two above.
+    let ops_value = relabel_records(&replay.op_records, &labels);
 
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         fixture["expected"] = snapshot_value;
@@ -1289,6 +1329,13 @@ async fn run_fixture(path: &PathBuf) {
             }
         } else {
             fixture["expected_queries"] = queries_value;
+        }
+        if ops_value.is_null() {
+            if let Some(obj) = fixture.as_object_mut() {
+                obj.remove("expected_ops");
+            }
+        } else {
+            fixture["expected_ops"] = ops_value;
         }
         // Pretty-print with a trailing newline so the file stays diff-friendly.
         let mut out = serde_json::to_string_pretty(&fixture).unwrap();
@@ -1332,6 +1379,27 @@ async fn run_fixture(path: &PathBuf) {
         assert_eq!(
             &queries_value, expected_queries,
             "conformance QUERY mismatch for fixture '{name}' (backend is source of truth; \
+             re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed \
+             intentionally)",
+        );
+    }
+
+    let expected_ops = &fixture["expected_ops"];
+    if ops_value.is_null() {
+        assert!(
+            expected_ops.is_null(),
+            "fixture '{name}' carries `expected_ops` but no op declares `via: \"command\"` — \
+             delete the stale key (or add the declaration back)",
+        );
+    } else {
+        assert!(
+            !expected_ops.is_null(),
+            "fixture '{name}' has `via: \"command\"` ops but no `expected_ops` — run with \
+             CONFORMANCE_UPDATE=1 to author it",
+        );
+        assert_eq!(
+            &ops_value, expected_ops,
+            "conformance COMMAND mismatch for fixture '{name}' (backend is source of truth; \
              re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed \
              intentionally)",
         );
