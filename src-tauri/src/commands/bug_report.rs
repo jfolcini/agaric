@@ -270,7 +270,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "the OS has restored this app's network traffic",
     "SyncDaemon shut down cleanly",
     "Failed to start SyncDaemon",
-    "mDNS disabled: no first-ever pair is possible; already-paired peers may still use a cached address",
+    "mDNS disabled: automatic discovery is off; a first-ever pair needs the QR payload, and already-paired peers may still use a cached address",
     "rejecting sync with self",
     "rejecting sync from an unpaired device: no pairing is in progress",
     "responder locked peer for sync",
