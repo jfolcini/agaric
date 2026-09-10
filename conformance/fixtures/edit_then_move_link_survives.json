@@ -69,6 +69,7 @@
     },
     "page_links": [
       {
+        "kind": "page_link",
         "source_id": "B2",
         "source_page_id": "B1",
         "target_id": "B4"

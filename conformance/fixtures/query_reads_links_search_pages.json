@@ -94,6 +94,7 @@
     },
     "page_links": [
       {
+        "kind": "page_link",
         "source_id": "B3",
         "source_page_id": "B2",
         "target_id": "B1"

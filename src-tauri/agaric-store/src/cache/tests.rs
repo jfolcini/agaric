@@ -6043,3 +6043,160 @@ async fn backfill_block_links_runs_once_per_vault() {
         "the second block is the incremental path's job, not the backfill's"
     );
 }
+
+// ====================================================================
+// block_links.kind (#4551)
+// ====================================================================
+
+/// The Rust classifier and migration 0119's SQL probe are two spellings of one
+/// rule; this executes the SQL spelling on the same strings rather than
+/// restating it, so a divergence in what `instr` and `str::contains` accept
+/// (bytes vs. characters, NULL handling) shows up here.
+#[tokio::test]
+async fn classify_link_kind_matches_the_sql_probe_4551() {
+    let (pool, _dir) = test_pool().await;
+    let target = "01HZ00000000000000000000AB";
+    let shapes = [
+        ("see [[01HZ00000000000000000000AB]]", "page_link"),
+        ("quote ((01HZ00000000000000000000AB))", "block_ref"),
+        (
+            "both [[01HZ00000000000000000000AB]] and ((01HZ00000000000000000000AB))",
+            "block_ref",
+        ),
+        ("mixed [[01HZ00000000000000000000AB))", "page_link"),
+        ("other ((01HZ00000000000000000000CD))", "page_link"),
+    ];
+    for (content, expected) in shapes {
+        assert_eq!(classify_link_kind(content, target), expected, "{content}");
+        let sql_says_block_ref: i64 =
+            sqlx::query_scalar("SELECT instr(?1, '((' || ?2 || '))') > 0")
+                .bind(content)
+                .bind(target)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            sql_says_block_ref == 1,
+            expected == "block_ref",
+            "migration 0119's instr() probe must agree with classify_link_kind for {content:?}"
+        );
+    }
+}
+
+/// The reindexer names `kind` on every INSERT (the column's DEFAULT would
+/// otherwise stamp `page_link` silently) and upserts it, so a pair whose token
+/// changed form lands the new kind on the existing row; a run over unchanged
+/// content writes nothing.
+#[tokio::test]
+async fn reindex_block_links_writes_kind_and_updates_on_change_4551() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "see [[01HZ00000000000000000000AB]]",
+    )
+    .await;
+
+    reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+    assert_eq!(
+        link_kinds(&pool, "01HZ0000000000000000000SRC").await,
+        vec![(
+            "01HZ00000000000000000000AB".to_owned(),
+            "page_link".to_owned()
+        )],
+        "a [[X]] token is a page_link"
+    );
+
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        "quote ((01HZ00000000000000000000AB))",
+        "01HZ0000000000000000000SRC",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+    assert_eq!(
+        link_kinds(&pool, "01HZ0000000000000000000SRC").await,
+        vec![(
+            "01HZ00000000000000000000AB".to_owned(),
+            "block_ref".to_owned()
+        )],
+        "the same pair rewritten as ((X)) must become a block_ref on the existing row"
+    );
+
+    let mut conn = pool.acquire().await.unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT total_changes()")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    reindex_block_links_conn(&mut conn, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+    let after: i64 = sqlx::query_scalar("SELECT total_changes()")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, before,
+        "a reindex over unchanged content writes no row"
+    );
+}
+
+/// The split variant carries its own copy of the diff; pin its kind-change arm.
+#[tokio::test]
+async fn reindex_block_links_split_updates_kind_on_change_4551() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "see [[01HZ00000000000000000000AB]]",
+    )
+    .await;
+    reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+    assert_eq!(
+        link_kinds(&pool, "01HZ0000000000000000000SRC").await,
+        vec![(
+            "01HZ00000000000000000000AB".to_owned(),
+            "page_link".to_owned()
+        )]
+    );
+
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ?",
+        "quote ((01HZ00000000000000000000AB))",
+        "01HZ0000000000000000000SRC",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    reindex_block_links_split(&pool, &pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+    assert_eq!(
+        link_kinds(&pool, "01HZ0000000000000000000SRC").await,
+        vec![(
+            "01HZ00000000000000000000AB".to_owned(),
+            "block_ref".to_owned()
+        )],
+        "the split path must upsert kind on the existing row too"
+    );
+}
+
+async fn link_kinds(pool: &SqlitePool, source_id: &str) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT target_id, kind FROM block_links WHERE source_id = ? ORDER BY target_id")
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}

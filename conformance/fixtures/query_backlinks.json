@@ -168,26 +168,31 @@
     },
     "page_links": [
       {
+        "kind": "page_link",
         "source_id": "B3",
         "source_page_id": "B2",
         "target_id": "B1"
       },
       {
+        "kind": "page_link",
         "source_id": "B4",
         "source_page_id": "B2",
         "target_id": "B1"
       },
       {
+        "kind": "page_link",
         "source_id": "B7",
         "source_page_id": "B6",
         "target_id": "B1"
       },
       {
+        "kind": "page_link",
         "source_id": "B8",
         "source_page_id": "B2",
         "target_id": "B1"
       },
       {
+        "kind": "page_link",
         "source_id": "B10",
         "source_page_id": "B2",
         "target_id": "B9"

@@ -206,16 +206,24 @@ export function buildSnapshot(
   // real materialized `block_links` table, so a private copy here would have
   // let the two `page_links` snapshots agree while every live link handler
   // served different semantics.
-  const linkRows: Array<Record<string, unknown>> = []
+  //
+  // One row per (source, target): `deriveLinkEdges` emits one edge per token
+  // OCCURRENCE, which the real table's primary key collapses. The kind is a
+  // property of the pair (`classifyLinkKind` reads the whole content), so every
+  // occurrence of a pair already carries the same kind and the first one wins.
+  const linkRows = new Map<string, Record<string, unknown>>()
   for (const edge of deriveLinkEdges(state.blocks)) {
     if (!state.blocks.has(edge.targetId)) continue
-    linkRows.push({
+    const pair = `${edge.sourceId} ${edge.targetId}`
+    if (linkRows.has(pair)) continue
+    linkRows.set(pair, {
       source_id: relabel(edge.sourceId),
       target_id: relabel(edge.targetId),
       source_page_id: relabelOpt(edge.sourcePageId),
+      kind: edge.kind,
     })
   }
-  const page_links = linkRows.toSorted((a, b) => {
+  const page_links = [...linkRows.values()].toSorted((a, b) => {
     let c = cmpTokens(a['source_id'] as string, b['source_id'] as string)
     if (c !== 0) return c
     c = cmpTokens(a['target_id'] as string, b['target_id'] as string)

@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved FROM block_links WHERE source_id = ?1 UNION ALL SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved FROM block_links_unresolved WHERE source_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "unresolved",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3e50fc3dbe9cc1a0fb9382acac52331be8ecb55216f0c704ad50686dd24833f6"
+}
