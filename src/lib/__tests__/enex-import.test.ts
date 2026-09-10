@@ -97,23 +97,6 @@ describe('parseEnex', () => {
     expect(note.markdown).toContain('const x = 1;')
   })
 
-  it('maps <en-todo> to task markers and drops <en-media>', () => {
-    const enml =
-      '<div><en-todo checked="true"/>Done thing</div>' +
-      '<div><en-todo checked="false"/>Pending thing</div>' +
-      '<div>See <en-media hash="abc123" type="image/png"/> here</div>'
-    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
-
-    const note = at(parseEnex(xml))
-    expect(note.markdown).toContain('- [x] Done thing')
-    expect(note.markdown).toContain('- [ ] Pending thing')
-    // The en-media reference is dropped, leaving only the surrounding text.
-    expect(note.markdown).not.toContain('en-media')
-    expect(note.markdown).not.toContain('abc123')
-    expect(note.markdown).toContain('See')
-    expect(note.markdown).toContain('here')
-  })
-
   it('yields one EnexNote per <note>', () => {
     const xml = enex(
       `<note><title>First</title><content>${content('<p>a</p>')}</content></note>`,
@@ -656,8 +639,8 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
   })
 
   it('still renders standalone <en-todo>s (outside a list) as task lines', () => {
-    // The <li> handling must not regress the div-wrapped form (existing test),
-    // and EVERY checkbox converts — a note has more than one todo in it.
+    // The <li> handling must not regress the div-wrapped form, and EVERY
+    // checkbox converts — a note has more than one todo in it.
     const enml =
       '<div><en-todo checked="true"/>Done thing</div>' +
       '<div><en-todo checked="true"/>Done twice</div>' +
