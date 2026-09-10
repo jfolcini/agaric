@@ -9,7 +9,6 @@
  *  - a11y compliance
  */
 
-import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -404,14 +403,131 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
-import { emptyPage, makeBlock } from '@/__tests__/fixtures'
+import { emptyPage, makeBlock, makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  deleteResp,
+  echoEditBlock,
+  moveResp,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { announce } from '@/lib/announcer'
+import type { BlockRow } from '@/lib/bindings'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { guessMimeType } from '@/lib/file-utils'
 import { setListStyle } from '@/lib/list-style'
 
 const mockedInvoke = vi.mocked(invoke)
+
+/** The `blockId` an IPC was called with, for an echoing stub. */
+const argBlockId = (args: Record<string, unknown>): string =>
+  String((args['blockId'] as string | undefined) ?? 'A')
+
+/**
+ * Every command a mounted `BlockTree` can fire, answered with the shape the
+ * backend really sends. The blanket `mockResolvedValue(null)` / `({})` this
+ * replaced answered EVERY command with one literal, so a test could be green
+ * against a response no command produces (#4668).
+ *
+ * `load_page_subtree` rejects by default so the mount-time `load()` fails
+ * silently (catch branch) and leaves the seeded `pageStore.blocks` untouched;
+ * a test that wants a populated load overrides it.
+ */
+const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
+  load_page_subtree: () => Promise.reject(new Error('test: load suppressed')),
+  list_all_pages_in_space: () => [],
+  list_all_tags_in_space: () => [],
+  list_blocks: () => emptyPage,
+  list_page_aliases_by_prefix: () => [],
+  list_attachments_batch: () => ({}),
+  get_batch_properties: () => ({}),
+  get_properties: () => [],
+  list_property_defs: () => emptyPage,
+  list_tags_for_block: () => [],
+  first_child_for_blocks: () => ({}),
+  batch_resolve: () => [],
+  search_blocks: () => emptyPage,
+  get_backlinks: () => emptyPage,
+  query_by_property: () => emptyPage,
+  get_block: (args) => makeBlockRow({ id: argBlockId(args) }),
+  create_block: (args) =>
+    withOps(
+      makeBlockRow({
+        id: (args['blockId'] as string | null) ?? 'NEW_BLOCK',
+        content: (args['content'] as string | null) ?? null,
+        parent_id: (args['parentId'] as string | null) ?? null,
+      }),
+    ),
+  create_blocks_batch: () => [],
+  edit_block: echoEditBlock,
+  delete_block: (args) => deleteResp(argBlockId(args)),
+  delete_blocks_by_ids: (args) => ({
+    deleted_count: (args['blockIds'] as string[] | undefined)?.length ?? 0,
+    affected_page_ids: [],
+  }),
+  delete_draft: () => null,
+  move_block: (args) =>
+    moveResp(
+      argBlockId(args),
+      (args['newParentId'] as string | null) ?? null,
+      Number(args['newIndex'] ?? 0),
+    ),
+  move_blocks_batch: () => [],
+  set_property: (args) => withOps(makeBlockRow({ id: argBlockId(args) })),
+  delete_property: (args) =>
+    withOps({ block_id: argBlockId(args), key: String((args['key'] as string | undefined) ?? '') }),
+  set_todo_state: (args) => makeBlockRow({ id: argBlockId(args) }),
+  set_todo_state_batch: (args) => (args['blockIds'] as string[] | undefined)?.length ?? 0,
+  set_priority: (args) => makeBlockRow({ id: argBlockId(args) }),
+  set_due_date: (args) => makeBlockRow({ id: argBlockId(args) }),
+  set_scheduled_date: (args) => makeBlockRow({ id: argBlockId(args) }),
+  create_page_in_space: () => 'NEW_PAGE_ID_00000000000000',
+  add_attachment_with_bytes: (args) => ({
+    id: 'ATT_1',
+    block_id: argBlockId(args),
+    filename: String((args['filename'] as string | undefined) ?? 'file.bin'),
+    mime_type: String((args['mimeType'] as string | undefined) ?? 'application/octet-stream'),
+    size_bytes: (args['bytes'] as number[] | undefined)?.length ?? 0,
+    fs_path: '/files/file.bin',
+    created_at: 1_735_689_600_000,
+  }),
+}
+
+/** A successful, empty `load_page_subtree`. */
+const emptySubtree = { blocks: [], truncated: false, total: 0 }
+
+/**
+ * Install {@link BLOCK_TREE_DEFAULTS} with this test's overrides on top.
+ * Overrides ACCUMULATE within a test, so a second call mid-test refines the
+ * set rather than dropping what the mount installed.
+ */
+let blockTreeHandlers: TypedInvokeHandlers = BLOCK_TREE_DEFAULTS
+
+function stubBlockTree(extra: TypedInvokeHandlers = {}): void {
+  blockTreeHandlers = { ...blockTreeHandlers, ...extra }
+  stubInvoke(mockedInvoke, blockTreeHandlers)
+}
+
+/**
+ * #3306 — `handleNavigate` space-scopes its target through `batch_resolve`
+ * before caching / navigating; echo the requested ids back as in-space so the
+ * same-space navigation assertions still apply.
+ */
+function stubNavigation(extra: TypedInvokeHandlers = {}): void {
+  stubBlockTree({
+    batch_resolve: (args) =>
+      ((args['ids'] ?? []) as string[]).map((blockId) => ({
+        id: blockId,
+        title: null,
+        block_type: 'content',
+        deleted: false,
+      })),
+    ...extra,
+  })
+}
 
 let pageStore: StoreApi<PageBlockState>
 
@@ -425,19 +541,8 @@ function renderBlockTree(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Default: reject `load_page_subtree` so the BlockTree's mount-time
-  // `load()` fails silently (catch branch) and leaves the seeded
-  // `pageStore.blocks` untouched.  Tests that explicitly want a
-  // populated load override this with their own mockImplementation.
-  // limit-clamp-followup — `list_all_pages_in_space` returns a flat
-  // array (`PageHeading[]`), not the paginated `emptyPage` shape; the
-  // picker-cache fallback in `useBlockResolve` would call `.map` on
-  // an object otherwise.
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-    if (cmd === 'list_all_pages_in_space') return []
-    return emptyPage
-  })
+  blockTreeHandlers = BLOCK_TREE_DEFAULTS
+  stubBlockTree()
   try {
     // #752 — collapse persistence is scoped per page (`collapsed_ids:<page>`);
     // drop every collapse key (legacy global one included) so a collapse
@@ -487,10 +592,7 @@ beforeEach(() => {
 
 describe('BlockTree picker wiring', () => {
   it('passes searchTags to useRovingEditor', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -501,10 +603,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('passes searchPages to useRovingEditor', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -515,10 +614,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchTags lists tags via the space-scoped command (#2543)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -526,11 +622,17 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchTags).toBeDefined()
     })
 
-    // Mock the tags response for the searchTags call
-    mockedInvoke.mockResolvedValueOnce([
-      { tag_id: 'TAG_01', name: 'important', usage_count: 5, updated_at: '2025-01-01T00:00:00Z' },
-      { tag_id: 'TAG_02', name: 'improvement', usage_count: 3, updated_at: '2025-01-02T00:00:00Z' },
-    ])
+    stubBlockTree({
+      list_all_tags_in_space: () => [
+        { tag_id: 'TAG_01', name: 'important', usage_count: 5, updated_at: '2025-01-01T00:00:00Z' },
+        {
+          tag_id: 'TAG_02',
+          name: 'improvement',
+          usage_count: 3,
+          updated_at: '2025-01-02T00:00:00Z',
+        },
+      ],
+    })
 
     const results = await capturedSearchTags?.('imp')
 
@@ -543,10 +645,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchTags returns "Create new tag" option when no tags match', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -554,7 +653,7 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchTags).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValueOnce([])
+    stubBlockTree({ list_all_tags_in_space: () => [] })
 
     const results = await capturedSearchTags?.('nonexistent')
 
@@ -562,10 +661,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages uses FTS5 for longer queries and filters to pages', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -576,36 +672,19 @@ describe('BlockTree picker wiring', () => {
     // For queries > 2 chars, searchPages uses search_blocks (FTS5)
     const searchResp = {
       items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Meeting Notes',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-        {
+        makeBlockRow({ id: 'P1', block_type: 'page', content: 'Meeting Notes', position: 0 }),
+        makeBlockRow({
           id: 'C1',
-          block_type: 'content',
           content: 'Meeting agenda item',
           parent_id: 'P1',
           position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
+        }),
       ],
       next_cursor: null,
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(searchResp)
+    stubBlockTree({ search_blocks: () => searchResp })
 
     const results = await capturedSearchPages?.('meet')
 
@@ -622,10 +701,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages filters case-insensitively', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -635,36 +711,14 @@ describe('BlockTree picker wiring', () => {
 
     const pagesResp = {
       items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'UPPERCASE PAGE',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
-        {
-          id: 'P2',
-          block_type: 'page',
-          content: 'lowercase page',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
+        makeBlockRow({ id: 'P1', block_type: 'page', content: 'UPPERCASE PAGE', position: 0 }),
+        makeBlockRow({ id: 'P2', block_type: 'page', content: 'lowercase page', position: 1 }),
       ],
       next_cursor: null,
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    stubBlockTree({ search_blocks: () => pagesResp })
 
     const results = await capturedSearchPages?.('PAGE')
 
@@ -676,11 +730,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages shows Untitled for pages with null content', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      if (cmd === 'list_all_pages_in_space') return []
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -690,16 +740,9 @@ describe('BlockTree picker wiring', () => {
 
     // limit-clamp-followup — empty query hits the cache path, now
     // backed by `list_all_pages_in_space` (flat `PageHeading[]`).
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        id: 'P1',
-        content: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      },
-    ])
+    stubBlockTree({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: null })],
+    })
 
     // Empty query matches everything (including null content treated as '')
     const results = await capturedSearchPages?.('')
@@ -708,10 +751,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages returns create-new item when no pages match query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -720,7 +760,7 @@ describe('BlockTree picker wiring', () => {
     })
 
     // FTS5 returns no results for this query
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubBlockTree({ search_blocks: () => emptyPage })
 
     const results = await capturedSearchPages?.('zzz_no_match')
 
@@ -728,10 +768,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages appends create-new item when query partially matches but no exact match', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -741,24 +778,13 @@ describe('BlockTree picker wiring', () => {
 
     const pagesResp = {
       items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Meeting Notes',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
+        makeBlockRow({ id: 'P1', block_type: 'page', content: 'Meeting Notes', position: 0 }),
       ],
       next_cursor: null,
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    stubBlockTree({ search_blocks: () => pagesResp })
 
     const results = await capturedSearchPages?.('Meet')
 
@@ -769,10 +795,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages does NOT append create-new when exact match exists (case-insensitive)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -782,24 +805,13 @@ describe('BlockTree picker wiring', () => {
 
     const pagesResp = {
       items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Meeting Notes',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        },
+        makeBlockRow({ id: 'P1', block_type: 'page', content: 'Meeting Notes', position: 0 }),
       ],
       next_cursor: null,
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    stubBlockTree({ search_blocks: () => pagesResp })
 
     const results = await capturedSearchPages?.('meeting notes')
 
@@ -807,11 +819,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages does NOT append create-new for empty query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      if (cmd === 'list_all_pages_in_space') return []
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -821,16 +829,9 @@ describe('BlockTree picker wiring', () => {
 
     // limit-clamp-followup — empty query hits the cache path, now
     // backed by `list_all_pages_in_space` (flat `PageHeading[]`).
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        id: 'P1',
-        content: 'Some page',
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      },
-    ])
+    stubBlockTree({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Some page' })],
+    })
 
     const results = await capturedSearchPages?.('')
 
@@ -838,11 +839,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('searchPages does NOT append create-new for whitespace-only query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      if (cmd === 'list_all_pages_in_space') return []
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -853,7 +850,7 @@ describe('BlockTree picker wiring', () => {
     // limit-clamp-followup — whitespace-only query also lands in the
     // cache path; mock `list_all_pages_in_space` returns an empty
     // flat array.
-    mockedInvoke.mockResolvedValueOnce([])
+    stubBlockTree({ list_all_pages_in_space: () => [] })
 
     const results = await capturedSearchPages?.('   ')
 
@@ -861,10 +858,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('passes onCreatePage to useRovingEditor', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -875,10 +869,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('onCreatePage calls create_page_in_space with content and current space id', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -888,7 +879,7 @@ describe('BlockTree picker wiring', () => {
 
     // Phase 2 — `onCreatePage` now routes through the atomic
     // `create_page_in_space` command, which returns the new page's ULID.
-    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID_00000000000000')
+    stubBlockTree({ create_page_in_space: () => 'NEW_PAGE_ID_00000000000000' })
 
     const resultId = await capturedOnCreatePage?.('My New Page')
 
@@ -916,10 +907,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('renders empty state when no blocks', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree({ autoCreateFirstBlock: false })
 
@@ -931,10 +919,7 @@ describe('BlockTree picker wiring', () => {
   })
 
   it('has no a11y violations in empty state', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     const { container } = renderBlockTree()
 
@@ -952,70 +937,19 @@ describe('BlockTree picker wiring', () => {
 describe('BlockTree rendering edge cases', () => {
   it('renders deeply nested blocks (3+ levels)', async () => {
     // Default fallback for preload + load effects
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
-    const deepBlocks = [
-      {
-        id: 'ROOT',
-        block_type: 'content',
-        content: 'Root',
-        parent_id: 'PAGE_1',
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        depth: 0,
-      },
-      {
-        id: 'L1',
-        block_type: 'content',
-        content: 'Level 1',
-        parent_id: 'ROOT',
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        depth: 1,
-      },
-      {
-        id: 'L2',
-        block_type: 'content',
-        content: 'Level 2',
-        parent_id: 'L1',
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        depth: 2,
-      },
-      {
-        id: 'L3',
-        block_type: 'content',
-        content: 'Level 3',
-        parent_id: 'L2',
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        depth: 3,
-      },
+    // `PageSubtree.blocks` are `BlockRow`s — the tree derives `depth` from
+    // `parent_id`, so the `depth` these literals carried is not a wire field.
+    const deepBlocks: BlockRow[] = [
+      makeBlockRow({ id: 'ROOT', content: 'Root', parent_id: 'PAGE_1', position: 0 }),
+      makeBlockRow({ id: 'L1', content: 'Level 1', parent_id: 'ROOT', position: 0 }),
+      makeBlockRow({ id: 'L2', content: 'Level 2', parent_id: 'L1', position: 0 }),
+      makeBlockRow({ id: 'L3', content: 'Level 3', parent_id: 'L2', position: 0 }),
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree')
-        return { blocks: deepBlocks, truncated: false, total: deepBlocks.length }
-      return emptyPage
+    stubBlockTree({
+      load_page_subtree: () => ({ blocks: deepBlocks, truncated: false, total: deepBlocks.length }),
     })
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1033,10 +967,7 @@ describe('BlockTree rendering edge cases', () => {
   })
 
   it('renders empty state when children array is empty', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     pageStore.setState({ blocks: [], loading: false })
 
@@ -1052,31 +983,18 @@ describe('BlockTree rendering edge cases', () => {
 
   it('renders single root block with no children', async () => {
     // Default fallback for preload + load effects
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
-    const singleBlock = [
-      {
-        id: 'ONLY',
-        block_type: 'content',
-        content: 'Only block',
-        parent_id: 'PAGE_1',
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        depth: 0,
-      },
+    const singleBlock: BlockRow[] = [
+      makeBlockRow({ id: 'ONLY', content: 'Only block', parent_id: 'PAGE_1', position: 0 }),
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree')
-        return { blocks: singleBlock, truncated: false, total: singleBlock.length }
-      return emptyPage
+    stubBlockTree({
+      load_page_subtree: () => ({
+        blocks: singleBlock,
+        truncated: false,
+        total: singleBlock.length,
+      }),
     })
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1100,7 +1018,7 @@ describe('BlockTree collapse/expand', () => {
     // mockResolvedValue({}) ensures .then() chains work (tauri wrappers
     // are non-async, so invoke must return a Promise).
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('passes hasChildren=true for blocks with children', async () => {
@@ -1261,20 +1179,14 @@ describe('BlockTree task cycling', () => {
     mockedInvoke.mockReset()
     // Echo the seeded `pageStore.blocks` back from `load_page_subtree`
     // so the mount-time `load()` is a no-op.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return {}
-    })
+    stubBlockTree()
   })
 
   it('passes todoState to SortableBlock from block store field', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1287,10 +1199,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'No task' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1304,7 +1213,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1333,7 +1242,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'TODO' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1360,7 +1269,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'DONE' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1383,7 +1292,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'CANCELLED' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1412,10 +1321,7 @@ describe('BlockTree task cycling', () => {
     ]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1430,7 +1336,7 @@ describe('BlockTree task cycling', () => {
 
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1458,10 +1364,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -1553,10 +1456,7 @@ describe('processCheckboxSyntax', () => {
 
 describe('BlockTree slash command wiring', () => {
   it('passes searchSlashCommands to useRovingEditor', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1567,10 +1467,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('passes onSlashCommand to useRovingEditor', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1581,10 +1478,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns all commands for empty query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1635,10 +1529,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands filters commands by query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1653,10 +1544,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns empty array when nothing matches', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1670,10 +1558,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands is case-insensitive', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1688,10 +1573,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /link command when query matches "link"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1705,10 +1587,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /tag command when query matches "tag"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1722,10 +1601,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /code command when query matches "code"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1739,10 +1615,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /effort command when query matches "effort"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1756,10 +1629,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /assignee command when query matches "assignee"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1773,10 +1643,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /location command when query matches "location"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1790,10 +1657,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /repeat command when query matches "repeat"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1807,10 +1671,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns /query command when query matches "query"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1824,10 +1685,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns parameterized table item for "table 4x6" query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1846,10 +1704,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1865,10 +1720,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('searchSlashCommands handles "table 2x2" with small dimensions', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -1882,10 +1734,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1904,10 +1753,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1926,10 +1772,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1951,10 +1794,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog uses standard max-sm breakpoint', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1967,45 +1807,27 @@ describe('BlockTree slash command wiring', () => {
 
     // Mock query_by_property → returns one template page
     // Then list_blocks → returns one child (for preview)
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 'TPL_01',
-            block_type: 'page',
-            content: 'My Template',
-            parent_id: null,
-            position: 0,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-          },
-        ],
+    stubBlockTree({
+      query_by_property: () => ({
+        items: [makeBlockRow({ id: 'TPL_01', block_type: 'page', content: 'My Template' })],
         next_cursor: null,
         has_more: false,
         total_count: null,
-      })
-      .mockResolvedValueOnce({
+      }),
+      list_blocks: () => ({
         items: [
-          {
+          makeBlockRow({
             id: 'CHILD_01',
-            block_type: 'content',
             content: 'Template preview text',
             parent_id: 'TPL_01',
             position: 0,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-          },
+          }),
         ],
         next_cursor: null,
         has_more: false,
         total_count: null,
-      })
+      }),
+    })
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'template', label: 'TEMPLATE' })
@@ -2019,10 +1841,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog has responsive max-width', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2033,45 +1852,27 @@ describe('BlockTree slash command wiring', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke
-      .mockResolvedValueOnce({
-        items: [
-          {
-            id: 'TPL_01',
-            block_type: 'page',
-            content: 'My Template',
-            parent_id: null,
-            position: 0,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-          },
-        ],
+    stubBlockTree({
+      query_by_property: () => ({
+        items: [makeBlockRow({ id: 'TPL_01', block_type: 'page', content: 'My Template' })],
         next_cursor: null,
         has_more: false,
         total_count: null,
-      })
-      .mockResolvedValueOnce({
+      }),
+      list_blocks: () => ({
         items: [
-          {
+          makeBlockRow({
             id: 'CHILD_01',
-            block_type: 'content',
             content: 'Template preview text',
             parent_id: 'TPL_01',
             position: 0,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-          },
+          }),
         ],
         next_cursor: null,
         has_more: false,
         total_count: null,
-      })
+      }),
+    })
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'template', label: 'TEMPLATE' })
@@ -2127,18 +1928,15 @@ describe('BlockTree query builder save (#1016)', () => {
     // Capture every edit_block target, and hang the write until we resolve it
     // so we can move focus to a different block while it is in flight.
     const editTargets: Array<{ blockId: string; toText: string }> = []
-    let resolveEdit: ((v: unknown) => void) | undefined
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'list_all_pages_in_space') return []
-      if (cmd === 'edit_block') {
-        const a = args as { blockId: string; toText: string }
-        editTargets.push({ blockId: a.blockId, toText: a.toText })
-        return new Promise((resolve) => {
-          resolveEdit = resolve
+    const pendingEdit = deferred<CommandReturns['edit_block']>()
+    stubBlockTree({
+      edit_block: (args) => {
+        editTargets.push({
+          blockId: args['blockId'] as string,
+          toText: args['toText'] as string,
         })
-      }
-      return emptyPage
+        return pendingEdit.promise
+      },
     })
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2161,7 +1959,9 @@ describe('BlockTree query builder save (#1016)', () => {
     // Let the in-flight write resolve (echo the same content we sent so the
     // store's echo-adopt path is a no-op).
     await act(async () => {
-      resolveEdit?.({ id: 'BLOCK_A', content: '{{query status = "done"}}' })
+      pendingEdit.resolve(
+        withOps(makeBlockRow({ id: 'BLOCK_A', content: '{{query status = "done"}}' })),
+      )
       await savePromise
     })
 
@@ -2179,14 +1979,13 @@ describe('BlockTree query builder save (#1016)', () => {
     })
 
     let loadCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') {
+    stubBlockTree({
+      load_page_subtree: () => {
         loadCalls += 1
-        return { blocks: [], truncated: false, total: 0 }
-      }
-      if (cmd === 'list_all_pages_in_space') return []
-      if (cmd === 'edit_block') return { id: 'BLOCK_A', content: '{{query status = "done"}}' }
-      return emptyPage
+        return emptySubtree
+      },
+      edit_block: () =>
+        withOps(makeBlockRow({ id: 'BLOCK_A', content: '{{query status = "done"}}' })),
     })
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2211,10 +2010,7 @@ describe('BlockTree query builder save (#1016)', () => {
 
 describe('BlockTree cross-page navigation', () => {
   it('accepts onNavigateToPage prop without error', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
     const onNav = vi.fn()
 
     renderBlockTree({ onNavigateToPage: onNav })
@@ -2233,10 +2029,7 @@ describe('BlockTree cross-page navigation', () => {
 
 describe('BlockTree resolve cache preload', () => {
   it('does NOT fetch pages or tags on mount (App.tsx preloads those)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2260,20 +2053,14 @@ describe('BlockTree resolve cache preload', () => {
 
   it('preload fetches uncached ULIDs found in block content', async () => {
     const CONTENT_ULID = '01TESTUNCACHED0000000BLKX1'
-    const blockWithLink = {
+    const blockWithLink = makeBlockRow({
       id: 'B1',
-      block_type: 'content',
       content: `See [[${CONTENT_ULID}]] here`,
       parent_id: 'PAGE_1',
       position: 0,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-    }
-    const handleBatchResolve = (args: unknown) => {
-      const ids = ((args as { ids?: string[] } | undefined)?.ids as string[]) ?? []
+    })
+    const handleBatchResolve = (args: Record<string, unknown>) => {
+      const ids = (args['ids'] ?? []) as string[]
       return ids
         .filter((id: string) => id === CONTENT_ULID)
         .map((id: string) => ({
@@ -2283,21 +2070,12 @@ describe('BlockTree resolve cache preload', () => {
           deleted: false,
         }))
     }
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'load_page_subtree') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['rootBlockId'] === 'PAGE_1')
-          return { blocks: [blockWithLink], truncated: false, total: 1 }
-        return { blocks: [], truncated: false, total: 0 }
-      }
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'batch_resolve') return handleBatchResolve(args)
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      return emptyPage
+    stubBlockTree({
+      load_page_subtree: (args) =>
+        args['rootBlockId'] === 'PAGE_1'
+          ? { blocks: [blockWithLink], truncated: false, total: 1 }
+          : emptySubtree,
+      batch_resolve: handleBatchResolve,
     })
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2317,7 +2095,7 @@ describe('BlockTree resolve cache preload', () => {
   })
 
   it('preload handles API errors gracefully', async () => {
-    mockedInvoke.mockRejectedValue(new Error('Network failure'))
+    stubBlockTree({ batch_resolve: () => Promise.reject(new Error('Network failure')) })
 
     renderBlockTree({ autoCreateFirstBlock: false })
 
@@ -2337,37 +2115,16 @@ describe('BlockTree handleNavigate', () => {
     const PAGE_ID = '01TESTPAGE00000000000NAV01'
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
-        return {
-          id: PAGE_ID,
-          block_type: 'page',
-          content: 'Target Page Title',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      return emptyPage
+    stubNavigation({
+      get_block: (args) =>
+        args['blockId'] === PAGE_ID
+          ? makeBlockRow({
+              id: PAGE_ID,
+              block_type: 'page',
+              content: 'Target Page Title',
+              position: 0,
+            })
+          : makeBlockRow({ id: argBlockId(args) }),
     })
 
     renderBlockTree({ onNavigateToPage: onNav })
@@ -2390,61 +2147,21 @@ describe('BlockTree handleNavigate', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV03'
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
-        return {
-          id: CONTENT_ID,
-          block_type: 'content',
-          content: 'Some block text',
-          parent_id: PARENT_ID,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
-        return {
-          id: PARENT_ID,
-          block_type: 'page',
-          content: 'Parent Page Title',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      return emptyPage
+    stubNavigation({
+      get_block: (args) =>
+        args['blockId'] === PARENT_ID
+          ? makeBlockRow({
+              id: PARENT_ID,
+              block_type: 'page',
+              content: 'Parent Page Title',
+              position: 0,
+            })
+          : makeBlockRow({
+              id: CONTENT_ID,
+              content: 'Some block text',
+              parent_id: PARENT_ID,
+              position: 0,
+            }),
     })
 
     // parentId differs from PARENT_ID so handleNavigate goes cross-page
@@ -2468,25 +2185,7 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_block') throw new Error('Block not found')
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      return emptyPage
-    })
+    stubNavigation({ get_block: () => Promise.reject(new Error('Block not found')) })
 
     renderBlockTree({ onNavigateToPage: onNav })
 
@@ -2510,11 +2209,7 @@ describe('BlockTree handleNavigate', () => {
 
 describe('BlockTree searchPages caching', () => {
   it('searchPages short-query fallback caches results for subsequent calls', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      if (cmd === 'list_all_pages_in_space') return []
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2536,11 +2231,7 @@ describe('BlockTree searchPages caching', () => {
       },
     ]
     // Route by command name to avoid resolve_page_by_alias consuming the mock
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return pagesResp
-      if (cmd === 'resolve_page_by_alias') return null
-      return emptyPage
-    })
+    stubBlockTree({ list_all_pages_in_space: () => pagesResp, resolve_page_by_alias: () => null })
     // Use short query (≤2 chars) to hit the cache path
     const result1 = await capturedSearchPages?.('al')
 
@@ -2568,22 +2259,10 @@ describe('BlockTree searchPages caching', () => {
   })
 
   it('onCreatePage adds new page to search results', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          {
-            id: 'P1',
-            content: 'Alpha Page',
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-          },
-        ]
-      }
-      if (cmd === 'resolve_page_by_alias') return null
-      return emptyPage
+    stubBlockTree({
+      load_page_subtree: () => emptySubtree,
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Alpha Page' })],
+      resolve_page_by_alias: () => null,
     })
 
     renderBlockTree()
@@ -2603,7 +2282,7 @@ describe('BlockTree searchPages caching', () => {
 
     // Phase 2 — onCreatePage routes through create_page_in_space,
     // which returns the new page's ULID (a plain string).
-    mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID')
+    stubBlockTree({ create_page_in_space: () => 'NEW_PAGE_ID' })
 
     await capturedOnCreatePage?.('Freshly Created')
 
@@ -2620,10 +2299,7 @@ describe('BlockTree searchPages caching', () => {
 
 describe('BlockTree priority slash commands', () => {
   it('searchSlashCommands returns priority commands when query matches "priority"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2641,10 +2317,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('priority commands have "PRIORITY 1/2/3" labels', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2661,10 +2334,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('priority commands are not shown for empty query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2685,10 +2355,7 @@ describe('BlockTree priority slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2696,7 +2363,7 @@ describe('BlockTree priority slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'priority-high', label: 'PRIORITY 1 — Set high priority' })
@@ -2715,10 +2382,7 @@ describe('BlockTree priority slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2726,7 +2390,7 @@ describe('BlockTree priority slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'priority-medium', label: 'PRIORITY 2 — Set medium priority' })
@@ -2745,10 +2409,7 @@ describe('BlockTree priority slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2756,7 +2417,7 @@ describe('BlockTree priority slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'priority-low', label: 'PRIORITY 3 — Set low priority' })
@@ -2774,10 +2435,7 @@ describe('BlockTree priority slash commands', () => {
     const tree = [makeBlock({ id: 'A', content: 'Priority block', priority: '2' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2794,10 +2452,7 @@ describe('BlockTree priority slash commands', () => {
 
     pageStore.setState({ blocks: tree, loading: false })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2812,7 +2467,7 @@ describe('BlockTree priority slash commands', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2843,10 +2498,7 @@ describe('BlockTree priority slash commands', () => {
 
 describe('BlockTree repeat slash commands', () => {
   it('searchSlashCommands returns repeat preset commands when query matches "repeat"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2865,10 +2517,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('repeat preset commands have correct labels', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2886,10 +2535,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('repeat preset commands are not shown for empty query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -2911,10 +2557,7 @@ describe('BlockTree repeat slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2922,7 +2565,7 @@ describe('BlockTree repeat slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'repeat-weekly', label: 'REPEAT WEEKLY — Every week' })
@@ -2948,10 +2591,7 @@ describe('BlockTree repeat slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2959,7 +2599,7 @@ describe('BlockTree repeat slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'repeat-daily', label: 'REPEAT DAILY — Every day' })
@@ -2985,10 +2625,7 @@ describe('BlockTree repeat slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -2996,7 +2633,7 @@ describe('BlockTree repeat slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'repeat-monthly', label: 'REPEAT MONTHLY — Every month' })
@@ -3022,10 +2659,7 @@ describe('BlockTree repeat slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3033,7 +2667,7 @@ describe('BlockTree repeat slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'repeat-yearly', label: 'REPEAT YEARLY — Every year' })
@@ -3061,10 +2695,7 @@ describe('BlockTree repeat slash commands', () => {
 
 describe('BlockTree repeat mode variants', () => {
   it('searchSlashCommands returns .+ and ++ mode variants for repeat query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3089,10 +2720,7 @@ describe('BlockTree repeat mode variants', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3100,7 +2728,7 @@ describe('BlockTree repeat mode variants', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -3129,10 +2757,7 @@ describe('BlockTree repeat mode variants', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3140,7 +2765,7 @@ describe('BlockTree repeat mode variants', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -3169,10 +2794,7 @@ describe('BlockTree repeat mode variants', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3180,7 +2802,7 @@ describe('BlockTree repeat mode variants', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -3200,10 +2822,7 @@ describe('BlockTree repeat mode variants', () => {
 
 describe('BlockTree repeat end-condition commands', () => {
   it('searchSlashCommands returns end-condition commands for repeat query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3228,10 +2847,7 @@ describe('BlockTree repeat end-condition commands', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
     useMockEditor = true
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3257,10 +2873,7 @@ describe('BlockTree repeat end-condition commands', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
     useMockEditor = true
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3279,8 +2892,6 @@ describe('BlockTree repeat end-condition commands', () => {
     await waitFor(() => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
-
-    mockedInvoke.mockResolvedValueOnce(null)
 
     // Simulate selecting June 30, 2026 from the calendar
     await act(async () => {
@@ -3307,10 +2918,7 @@ describe('BlockTree repeat end-condition commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3318,7 +2926,7 @@ describe('BlockTree repeat end-condition commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -3347,10 +2955,7 @@ describe('BlockTree repeat end-condition commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3358,7 +2963,7 @@ describe('BlockTree repeat end-condition commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -3386,10 +2991,7 @@ describe('BlockTree repeat end-condition commands', () => {
 
 describe('BlockTree effort slash commands', () => {
   it('searchSlashCommands returns effort presets when query matches "effort"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3414,10 +3016,7 @@ describe('BlockTree effort slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3425,7 +3024,7 @@ describe('BlockTree effort slash commands', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'effort-1h', label: 'EFFORT 1h — 1 hour' })
@@ -3453,10 +3052,7 @@ describe('BlockTree effort slash commands', () => {
 
 describe('BlockTree due slash command', () => {
   it('searchSlashCommands returns due command when query matches "due"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3472,10 +3068,7 @@ describe('BlockTree due slash command', () => {
   })
 
   it('due command has correct label', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3491,10 +3084,7 @@ describe('BlockTree due slash command', () => {
   })
 
   it('due command is not returned for non-matching query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3514,10 +3104,7 @@ describe('BlockTree due slash command', () => {
 
 describe('BlockTree schedule slash command', () => {
   it('searchSlashCommands returns schedule command when query matches "schedule"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3533,10 +3120,7 @@ describe('BlockTree schedule slash command', () => {
   })
 
   it('schedule command has correct label', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3552,10 +3136,7 @@ describe('BlockTree schedule slash command', () => {
   })
 
   it('schedule command is not returned for non-matching query', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3574,14 +3155,11 @@ describe('BlockTree schedule slash command', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1')
-          return { items: [tree[0]], next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree.slice(0, 1), next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -3600,18 +3178,14 @@ describe('BlockTree schedule slash command', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // Mock set_scheduled_date response
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'A',
-      block_type: 'content',
-      content: 'Some block',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: '2025-03-15',
+    stubBlockTree({
+      set_scheduled_date: () =>
+        makeBlockRow({
+          id: 'A',
+          content: 'Some block',
+          position: 0,
+          scheduled_date: '2025-03-15',
+        }),
     })
 
     // Simulate selecting March 15, 2025 from the calendar
@@ -3648,7 +3222,7 @@ describe('BlockTree schedule slash command', () => {
 describe('BlockTree heading slash command execution', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('when /h1 is selected, block content gets "# " prefix', async () => {
@@ -3656,10 +3230,7 @@ describe('BlockTree heading slash command execution', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3668,10 +3239,12 @@ describe('BlockTree heading slash command execution', () => {
     })
 
     // Mock edit_block call — #2468: resolves a WithOps envelope (op_refs).
-    mockedInvoke.mockResolvedValue({
-      id: 'A',
-      content: '',
-      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    // #2468 — `edit_block` resolves a `WithOps<BlockRow>` envelope.
+    stubBlockTree({
+      edit_block: () => ({
+        ...makeBlockRow({ id: 'A', content: '' }),
+        op_refs: [{ device_id: 'dev1', seq: 3 }],
+      }),
     })
 
     await act(async () => {
@@ -3697,10 +3270,7 @@ describe('BlockTree heading slash command execution', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3708,10 +3278,12 @@ describe('BlockTree heading slash command execution', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue({
-      id: 'A',
-      content: '',
-      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    // #2468 — `edit_block` resolves a `WithOps<BlockRow>` envelope.
+    stubBlockTree({
+      edit_block: () => ({
+        ...makeBlockRow({ id: 'A', content: '' }),
+        op_refs: [{ device_id: 'dev1', seq: 3 }],
+      }),
     })
 
     await act(async () => {
@@ -3736,10 +3308,7 @@ describe('BlockTree heading slash command execution', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3747,10 +3316,12 @@ describe('BlockTree heading slash command execution', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue({
-      id: 'A',
-      content: '',
-      op_refs: [{ device_id: 'dev1', seq: 3 }],
+    // #2468 — `edit_block` resolves a `WithOps<BlockRow>` envelope.
+    stubBlockTree({
+      edit_block: () => ({
+        ...makeBlockRow({ id: 'A', content: '' }),
+        op_refs: [{ device_id: 'dev1', seq: 3 }],
+      }),
     })
 
     await act(async () => {
@@ -3766,10 +3337,7 @@ describe('BlockTree heading slash command execution', () => {
   })
 
   it('heading commands appear in searchSlashCommands when query matches', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -3796,7 +3364,7 @@ const mockedAnnounce = vi.mocked(announce)
 describe('BlockTree aria-live announcements', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   // ── #41 — Focus change announcements ──────────────────────────────
@@ -3810,10 +3378,7 @@ describe('BlockTree aria-live announcements', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3837,10 +3402,7 @@ describe('BlockTree aria-live announcements', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3864,10 +3426,7 @@ describe('BlockTree aria-live announcements', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3892,10 +3451,7 @@ describe('BlockTree aria-live announcements', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3921,10 +3477,7 @@ describe('BlockTree aria-live announcements', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3946,7 +3499,7 @@ describe('BlockTree aria-live announcements', () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3966,7 +3519,7 @@ describe('BlockTree aria-live announcements', () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -3986,7 +3539,7 @@ describe('BlockTree aria-live announcements', () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'DONE' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4006,7 +3559,7 @@ describe('BlockTree aria-live announcements', () => {
     const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'CANCELLED' })]
 
     pageStore.setState({ blocks: tree, loading: false })
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4031,37 +3584,8 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
-        return {
-          id: BLOCK_ID,
-          block_type: 'content',
-          content: 'Local block text',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      return emptyPage
+    stubNavigation({
+      get_block: () => makeBlockRow({ id: BLOCK_ID, content: 'Local block text', position: 0 }),
     })
 
     renderBlockTree({ onNavigateToPage: onNav })
@@ -4087,41 +3611,17 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV05'
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
-        return {
+    stubNavigation({
+      get_block: (args) => {
+        // The parent fetch fails; the content block itself resolves.
+        if (args['blockId'] === PARENT_ID) return Promise.reject(new Error('Parent not found'))
+        return makeBlockRow({
           id: CONTENT_ID,
-          block_type: 'content',
           content: 'Cross-page block',
           parent_id: PARENT_ID,
           position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      // Parent fetch fails
-      if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
-        throw new Error('Parent not found')
-      }
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      // #3306 — handleNavigate now space-scopes the target through
-      // `batch_resolve` before caching/navigating; echo the requested ids back
-      // as in-space so these same-space navigation assertions still apply.
-      if (cmd === 'batch_resolve')
-        return ((args?.ids ?? []) as string[]).map((id) => ({
-          id,
-          title: null,
-          block_type: 'content',
-          deleted: false,
-        }))
-      return emptyPage
+        })
+      },
     })
 
     renderBlockTree({ parentId: 'DIFFERENT_ROOT', onNavigateToPage: onNav })
@@ -4148,7 +3648,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
 describe('BlockTree handleDeleteBlock', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('deleting a block calls delete_block via invoke', async () => {
@@ -4159,10 +3659,7 @@ describe('BlockTree handleDeleteBlock', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4185,10 +3682,7 @@ describe('BlockTree handleDeleteBlock', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'ONLY' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4215,10 +3709,7 @@ describe('BlockTree handleDeleteBlock', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4244,10 +3735,7 @@ describe('BlockTree handleDeleteBlock', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4273,7 +3761,7 @@ describe('BlockTree handleDeleteBlock', () => {
 describe('BlockTree handleMergeWithPrev', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('merge concatenates previous block content with current and removes current', async () => {
@@ -4284,10 +3772,7 @@ describe('BlockTree handleMergeWithPrev', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4334,29 +3819,20 @@ describe('BlockTree handleMergeWithPrev', () => {
     useBlockStore.setState({ focusedBlockId: 'B' })
 
     // The MOUNT load reflects the pre-merge tree (B1 still under B) so the merge
-    // handler plans a reparent of B1. AFTER the move commits, the reconciling
-    // load reflects B1 under A — so the verifying wrapper sees the child landed
-    // and does NOT abort, and the source B is then delete_block'd.
-    let moved = false
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'move_blocks_batch') {
-        moved = true
-        // #2274 — one batched IPC; the authoritative response lets the store
-        // reconcile surgically (no reload needed on this success path).
-        return [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }]
-      }
-      if (cmd === 'load_page_subtree') {
-        return {
-          blocks: [
-            { ...tree[0], parent_id: 'PAGE_1', position: 0 },
-            { ...tree[1], parent_id: 'PAGE_1', position: 1 },
-            { ...tree[2], parent_id: moved ? 'A' : 'B', position: 0 },
-          ],
-          truncated: false,
-          total: 3,
-        }
-      }
-      return {}
+    // handler plans a reparent of B1. #2274 — one batched IPC, and its
+    // authoritative response lets the store reconcile surgically, so there is
+    // no post-move reload for this stub to answer differently.
+    stubBlockTree({
+      move_blocks_batch: () => [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }],
+      load_page_subtree: () => ({
+        blocks: [
+          { ...makeBlock(tree[0]), parent_id: 'PAGE_1', position: 0 },
+          { ...makeBlock(tree[1]), parent_id: 'PAGE_1', position: 1 },
+          { ...makeBlock(tree[2]), parent_id: 'B', position: 0 },
+        ],
+        truncated: false,
+        total: 3,
+      }),
     })
 
     renderBlockTree()
@@ -4402,20 +3878,17 @@ describe('BlockTree handleMergeWithPrev', () => {
     // child did not land under A and throw, so the merge aborts: the edit is
     // reverted and the source block is NEVER delete_block'd (the subtree
     // stays intact).
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'move_blocks_batch') throw new Error('test: move_blocks_batch rejected')
-      if (cmd === 'load_page_subtree') {
-        return {
-          blocks: [
-            { ...tree[0], parent_id: 'PAGE_1', position: 0 },
-            { ...tree[1], parent_id: 'PAGE_1', position: 1 },
-            { ...tree[2], parent_id: 'B', position: 0 },
-          ],
-          truncated: false,
-          total: 3,
-        }
-      }
-      return {}
+    stubBlockTree({
+      move_blocks_batch: () => Promise.reject(new Error('test: move_blocks_batch rejected')),
+      load_page_subtree: () => ({
+        blocks: [
+          { ...makeBlock(tree[0]), parent_id: 'PAGE_1', position: 0 },
+          { ...makeBlock(tree[1]), parent_id: 'PAGE_1', position: 1 },
+          { ...makeBlock(tree[2]), parent_id: 'B', position: 0 },
+        ],
+        truncated: false,
+        total: 3,
+      }),
     })
 
     renderBlockTree()
@@ -4450,11 +3923,7 @@ describe('BlockTree handleMergeWithPrev', () => {
     // toasts) and resolves void — it never rejects. Without the verifying
     // wrapper the merge would report success, leaving 'Beta' duplicated in
     // both blocks with no revert.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'delete_block') throw new Error('test: delete_block rejected')
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return {}
-    })
+    stubBlockTree({ delete_block: () => Promise.reject(new Error('test: delete_block rejected')) })
 
     renderBlockTree()
     await waitFor(() => {
@@ -4488,10 +3957,7 @@ describe('BlockTree handleMergeWithPrev', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4525,11 +3991,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
 
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'list_all_pages_in_space') return []
-      return {}
-    })
+    stubBlockTree()
   })
 
   afterEach(() => {
@@ -4663,8 +4125,14 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
 
     // `pageStore.getState().rootParentId` is this page's id ('PAGE_1', see
     // the top-level `beforeEach`'s `createPageBlockStore('PAGE_1')`).
+    //
+    // #4668 — the refs arm, not the bare-pageId one: `edit_block` answers a
+    // `WithOps<BlockRow>`, so `op_refs` is always present and
+    // `notifyUndoNewAction` forwards it with the content-edit coalesce key
+    // (page-blocks-reducers.ts:308). The single-argument shape was reachable
+    // only through a stub the backend could not have produced.
     await waitFor(() => {
-      expect(onNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [], 'edit:b1')
     })
   })
 
@@ -4673,12 +4141,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
   // `false` on a write failure, so `handleTurnInto`'s `if (!ok) return` guard
   // must skip the remount + `load()` it would otherwise perform on success.
   it('Turn into does not remount or reload when the write fails', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'list_all_pages_in_space') return []
-      if (cmd === 'edit_block') throw new Error('backend rejected the write')
-      return {}
-    })
+    stubBlockTree({ edit_block: () => Promise.reject(new Error('backend rejected the write')) })
 
     pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
     useBlockStore.setState({ focusedBlockId: 'b1' })
@@ -4740,7 +4203,7 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
 describe('BlockTree handleIndent / handleDedent', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('indent calls move_block with previous sibling as new parent', async () => {
@@ -4751,10 +4214,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4784,10 +4244,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'B' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4814,10 +4271,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4841,10 +4295,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4871,7 +4322,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
 describe('BlockTree priority keyboard shortcuts', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('set-priority-1 event sets priority 1 on focused block', async () => {
@@ -4879,7 +4330,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4910,7 +4361,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4939,7 +4390,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4967,10 +4418,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -4996,7 +4444,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
 describe('BlockTree handleDatePick date format', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('creates date page in YYYY-MM-DD format (not DD/MM/YYYY)', async () => {
@@ -5005,13 +4453,11 @@ describe('BlockTree handleDatePick date format', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Default response for load/preload/batch-resolve effects
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree, next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5033,12 +4479,12 @@ describe('BlockTree handleDatePick date format', () => {
     // limit-clamp-followup — `handleDateMode` now looks up the date
     // page via `list_all_pages_in_space`, which returns a flat
     // `PageHeading[]` (no `.items` wrapper).
-    mockedInvoke.mockResolvedValueOnce([])
-
-    // Mock create_page_in_space response for the new date page
-    // (H-3b: date pages route through `createPageInSpace` so
-    // they own a `space` property and surface in PageBrowser).
-    mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
+    stubBlockTree({
+      list_all_pages_in_space: () => [],
+      // H-3b: date pages route through `createPageInSpace` so they own a
+      // `space` property and surface in PageBrowser.
+      create_page_in_space: () => 'DATE_PAGE_1',
+    })
 
     // Simulate selecting March 15, 2025 from the calendar
     await act(async () => {
@@ -5073,13 +4519,11 @@ describe('BlockTree handleDatePick date format', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree, next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5099,16 +4543,11 @@ describe('BlockTree handleDatePick date format', () => {
     // limit-clamp-followup — `handleDateMode` now awaits
     // `list_all_pages_in_space`, which returns a flat `PageHeading[]`
     // (no `.items` wrapper, no pagination).
-    mockedInvoke.mockResolvedValueOnce([
-      {
-        id: 'EXISTING_DATE_PAGE',
-        content: '2025-03-15',
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      },
-    ])
+    stubBlockTree({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'EXISTING_DATE_PAGE', content: '2025-03-15' }),
+      ],
+    })
 
     await act(async () => {
       mockCalendarOnSelect?.(new Date(2025, 2, 15))
@@ -5137,14 +4576,11 @@ describe('BlockTree handleDatePick date format', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1')
-          return { items: [tree[0]], next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree.slice(0, 1), next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5163,17 +4599,9 @@ describe('BlockTree handleDatePick date format', () => {
       expect(mockCalendarOnSelect).toBeDefined()
     })
 
-    // Mock set_due_date response
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'A',
-      block_type: 'content',
-      content: 'Some block',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: '2025-03-15',
+    stubBlockTree({
+      set_due_date: () =>
+        makeBlockRow({ id: 'A', content: 'Some block', position: 0, due_date: '2025-03-15' }),
     })
 
     // Simulate selecting March 15, 2025 from the calendar
@@ -5214,10 +4642,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -5238,10 +4663,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -5262,10 +4684,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -5286,10 +4705,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -5317,15 +4733,12 @@ describe('BlockTree link/tag/code slash commands', () => {
 describe('BlockTree /attach slash command', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
     useMockEditor = false
   })
 
   it('/attach appears in the slash command list', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -5343,10 +4756,7 @@ describe('BlockTree /attach slash command', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     // Spy on document.createElement to intercept the file input
     const clickSpy = vi.fn()
@@ -5381,14 +4791,17 @@ describe('BlockTree /attach slash command', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue({
-      id: 'att-1',
-      block_id: 'A',
-      filename: 'test.pdf',
-      mime_type: 'application/pdf',
-      size_bytes: 1024,
-      fs_path: 'attachments/att-1',
-      created_at: '2025-01-01',
+    stubBlockTree({
+      add_attachment_with_bytes: () => ({
+        id: 'att-1',
+        block_id: 'A',
+        filename: 'test.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 1024,
+        fs_path: 'attachments/att-1',
+        // Epoch-ms since migration 0081, not the ISO string this stub had.
+        created_at: 1_735_689_600_000,
+      }),
     })
 
     // Capture the file input so we can simulate file selection
@@ -5445,10 +4858,7 @@ describe('BlockTree /attach slash command', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     let capturedInput: HTMLInputElement | null = null
     const origCreateElement = document.createElement.bind(document)
@@ -5496,14 +4906,16 @@ describe('BlockTree /attach slash command', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue({
-      id: 'att-2',
-      block_id: 'A',
-      filename: 'photo.png',
-      mime_type: 'image/png',
-      size_bytes: 2048,
-      fs_path: '/tmp/photo.png',
-      created_at: '2025-01-01',
+    stubBlockTree({
+      add_attachment_with_bytes: () => ({
+        id: 'att-2',
+        block_id: 'A',
+        filename: 'photo.png',
+        mime_type: 'image/png',
+        size_bytes: 2048,
+        fs_path: '/tmp/photo.png',
+        created_at: 1_735_689_600_000,
+      }),
     })
 
     let capturedInput: HTMLInputElement | null = null
@@ -5598,7 +5010,7 @@ describe('guessMimeType', () => {
 describe('DatePickerOverlay text input', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('date picker shows text input field', async () => {
@@ -5606,13 +5018,11 @@ describe('DatePickerOverlay text input', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree, next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5642,13 +5052,11 @@ describe('DatePickerOverlay text input', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree, next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5681,13 +5089,11 @@ describe('DatePickerOverlay text input', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1') return { items: tree, next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree, next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree()
@@ -5718,28 +5124,19 @@ describe('DatePickerOverlay text input', () => {
     useBlockStore.setState({ focusedBlockId: 'A' })
 
     // Use mockImplementation to handle set_due_date specifically
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1')
-          return { items: [tree[0]], next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      if (cmd === 'set_due_date') {
-        return {
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: tree.slice(0, 1), next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
+      set_due_date: () =>
+        makeBlockRow({
           id: 'A',
-          block_type: 'content',
           content: 'Some block',
           parent_id: 'PAGE_1',
           position: 0,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
           due_date: '2025-04-15',
-          scheduled_date: null,
-        }
-      }
-      return emptyPage
+        }),
     })
 
     renderBlockTree()
@@ -5785,7 +5182,7 @@ describe('DatePickerOverlay text input', () => {
 describe('BlockTree Enter creates new sibling block', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('Enter creates a new sibling block below and focuses it', async () => {
@@ -5796,23 +5193,15 @@ describe('BlockTree Enter creates new sibling block', () => {
     // Mock create_block to return a new block.  Throw from
     // load_page_subtree so load() falls into its catch branch and the
     // seeded tree survives.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'create_block') {
-        return {
-          id: 'NEW_BLOCK_01',
-          block_type: 'content',
-          content: '',
-          parent_id: (args?.parentId as string) ?? null,
-          position: 1,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      return []
+    stubBlockTree({
+      create_block: (args) =>
+        withOps(
+          makeBlockRow({
+            id: 'NEW_BLOCK_01',
+            content: '',
+            parent_id: (args['parentId'] as string | null) ?? null,
+          }),
+        ),
     })
 
     renderBlockTree()
@@ -5865,30 +5254,18 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'create_block') {
-        return {
-          id: 'NEW_EMPTY',
-          block_type: 'content',
-          content: '',
-          parent_id: (args?.parentId as string) ?? null,
-          position: 1,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'delete_block') {
-        return { deleted_count: 1 }
-      }
+    stubBlockTree({
+      create_block: (args) =>
+        withOps(
+          makeBlockRow({
+            id: 'NEW_EMPTY',
+            content: '',
+            parent_id: (args['parentId'] as string | null) ?? null,
+          }),
+        ),
       // #4729 — the focus-leave cleanup probes for inbound references before
       // deleting; `get_backlinks` returns a PageResponse, not a bare array.
-      if (cmd === 'get_backlinks') {
-        return { items: [], next_cursor: null }
-      }
-      return []
+      get_backlinks: () => emptyPage,
     })
 
     renderBlockTree()
@@ -5930,28 +5307,17 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'create_block') {
-        return {
-          id: 'NEW_WITH_CONTENT',
-          block_type: 'content',
-          content: '',
-          parent_id: (args?.parentId as string) ?? null,
-          position: 1,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-        }
-      }
-      if (cmd === 'edit_block') {
-        return args
-      }
-      if (cmd === 'delete_block') {
-        return { deleted_count: 1 }
-      }
-      return []
+    stubBlockTree({
+      create_block: (args) =>
+        withOps(
+          makeBlockRow({
+            id: 'NEW_WITH_CONTENT',
+            content: '',
+            parent_id: (args['parentId'] as string | null) ?? null,
+          }),
+        ),
+      edit_block: echoEditBlock,
+      get_backlinks: () => emptyPage,
     })
 
     renderBlockTree()
@@ -6011,14 +5377,8 @@ describe('BlockTree Enter creates new sibling block', () => {
 
 describe('BlockTree leaked-empty-block cleanup', () => {
   /** Backend that answers the cleanup's probes with "carries nothing". */
-  function mockBareBackend(overrides: Record<string, unknown> = {}) {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd in overrides) return overrides[cmd]
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'delete_block') return { deleted_count: 1, op_refs: [] }
-      if (cmd === 'get_backlinks') return { items: [], next_cursor: null }
-      return []
-    })
+  function mockBareBackend(overrides: TypedInvokeHandlers = {}) {
+    stubBlockTree({ get_backlinks: () => emptyPage, ...overrides })
   }
 
   beforeEach(() => {
@@ -6101,10 +5461,12 @@ describe('BlockTree leaked-empty-block cleanup', () => {
 
   it('keeps a block that another block references', async () => {
     mockBareBackend({
-      get_backlinks: {
+      get_backlinks: () => ({
         items: [makeBlock({ id: 'SOURCE', content: 'see ((STRANDED))' })],
         next_cursor: null,
-      },
+        has_more: false,
+        total_count: null,
+      }),
     })
     pageStore.setState({
       blocks: [
@@ -6130,20 +5492,9 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     // empty source is the user's blank line; deleting it would make the
     // keystroke a visible no-op.
     mockBareBackend({
-      create_block: {
-        id: 'SERVER_IGNORED',
-        block_type: 'content',
-        content: 'the whole line',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        op_refs: [],
-      },
-      edit_block: { op_refs: [] },
+      create_block: () =>
+        withOps(makeBlockRow({ id: 'SERVER_IGNORED', content: 'the whole line' })),
+      edit_block: echoEditBlock,
     })
     pageStore.setState({
       blocks: [makeBlock({ id: 'SRC', content: 'the whole line', position: 0 })],
@@ -6186,25 +5537,12 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     // the already-empty source BEFORE `createBelow` has run — so the exemption
     // must already be registered, or the cleanup deletes the source and the
     // after-text has no anchor left to be created below.
-    let releaseEdit!: () => void
-    const editGate = new Promise<void>((resolve) => {
-      releaseEdit = resolve
-    })
+    const editGate = deferred<CommandReturns['edit_block']>()
+    const releaseEdit = () => editGate.resolve(withOps(makeBlockRow({ id: 'SRC', content: '' })))
     mockBareBackend({
-      edit_block: editGate.then(() => ({ op_refs: [] })),
-      create_block: {
-        id: 'SERVER_IGNORED',
-        block_type: 'content',
-        content: 'the whole line',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        op_refs: [],
-      },
+      edit_block: () => editGate.promise,
+      create_block: () =>
+        withOps(makeBlockRow({ id: 'SERVER_IGNORED', content: 'the whole line' })),
     })
     pageStore.setState({
       blocks: [
@@ -6259,7 +5597,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
   // deliberately do NOT carry it, which is why they need the exemption.
 
   it('keeps the block the visual query builder was opened for, and saves into it', async () => {
-    mockBareBackend({ edit_block: { op_refs: [] } })
+    mockBareBackend({ edit_block: echoEditBlock })
     pageStore.setState({
       blocks: [
         makeBlock({ id: 'A', content: 'before', position: 0 }),
@@ -6415,11 +5753,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
 describe('BlockTree zoom-in', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      if (cmd === 'list_all_pages_in_space') return []
-      return emptyPage
-    })
+    stubBlockTree()
   })
 
   it('zoom filters blocks to descendants only', async () => {
@@ -6650,10 +5984,7 @@ describe('BlockTree zoom-in', () => {
 
 describe('BlockTree /template slash command', () => {
   it('searchSlashCommands returns /template command when query matches "template"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -6667,10 +5998,7 @@ describe('BlockTree /template slash command', () => {
   })
 
   it('searchSlashCommands includes template in full command list', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -6690,10 +6018,7 @@ describe('BlockTree /template slash command', () => {
 
 describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
   it('passes onShowProperties to useBlockKeyboard', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -6711,10 +6036,7 @@ describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
 
 describe('BlockTree assignee slash command presets', () => {
   it('searchSlashCommands returns assignee presets when query matches "assignee"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -6736,10 +6058,7 @@ describe('BlockTree assignee slash command presets', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -6747,7 +6066,7 @@ describe('BlockTree assignee slash command presets', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'assignee-me', label: 'ASSIGNEE Me — Assign to me' })
@@ -6775,10 +6094,7 @@ describe('BlockTree assignee slash command presets', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -6786,7 +6102,7 @@ describe('BlockTree assignee slash command presets', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -6810,10 +6126,7 @@ describe('BlockTree assignee slash command presets', () => {
 
 describe('BlockTree location slash command presets', () => {
   it('searchSlashCommands returns location presets when query matches "location"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -6837,10 +6150,7 @@ describe('BlockTree location slash command presets', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -6848,7 +6158,7 @@ describe('BlockTree location slash command presets', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({ id: 'location-office', label: 'LOCATION Office — Office' })
@@ -6876,10 +6186,7 @@ describe('BlockTree location slash command presets', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -6887,7 +6194,7 @@ describe('BlockTree location slash command presets', () => {
       expect(capturedOnSlashCommand).toBeDefined()
     })
 
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
 
     await act(async () => {
       capturedOnSlashCommand?.({
@@ -6910,7 +6217,7 @@ describe('BlockTree location slash command presets', () => {
 describe('BlockTree multi-selection (#657)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('Ctrl+Click toggles block selection via onSelect', async () => {
@@ -7115,7 +6422,7 @@ describe('BlockTree multi-selection (#657)', () => {
 describe('BlockTree batch toolbar (#657)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('shows batch toolbar when blocks are selected', async () => {
@@ -7182,11 +6489,8 @@ describe('BlockTree batch toolbar (#657)', () => {
       selectedBlockIds: ['A', 'B'],
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      // #4480 — `BatchDeleteResponse`, not a bare count.
-      if (cmd === 'delete_blocks_by_ids') return { deleted_count: 2, affected_page_ids: [] }
-      return null
-    })
+    // #4480 — `BatchDeleteResponse`, not a bare count.
+    stubBlockTree({ delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: [] }) })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
@@ -7219,10 +6523,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       selectedBlockIds: ['A', 'B'],
     })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_todo_state_batch') return 2
-      return null
-    })
+    stubBlockTree({ set_todo_state_batch: () => 2 })
 
     renderBlockTree()
     await screen.findByTestId('sortable-block-A')
@@ -7260,7 +6561,7 @@ describe('BlockTree batch toolbar (#657)', () => {
   })
 
   it('batch buttons disabled during operation', async () => {
-    let resolveInvoke!: (v: unknown) => void
+    const pendingBatch = deferred<CommandReturns['set_todo_state_batch']>()
     const tree = [
       makeBlock({ id: 'A', content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
@@ -7276,14 +6577,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
     // Mock set_todo_state_batch to block, after initial render is done.
     // The batch IPC replaces the per-row set_todo_state loop.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'set_todo_state_batch') {
-        return new Promise((resolve) => {
-          resolveInvoke = resolve
-        })
-      }
-      return { items: [], next_cursor: null, has_more: false, total_count: null }
-    })
+    stubBlockTree({ set_todo_state_batch: () => pendingBatch.promise })
 
     // Start a batch TODO operation
     const todoBtn = screen.getByRole('button', { name: 'TODO' })
@@ -7298,7 +6592,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.getByRole('button', { name: /Delete/i })).toBeDisabled()
 
     // Resolve the pending invoke call (returns the affected count) to clean up.
-    resolveInvoke(2)
+    pendingBatch.resolve(2)
   })
 })
 
@@ -7309,7 +6603,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 describe('BlockTree unfocused-Escape handler', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('Escape on unfocused editor closes editor and saves content', async () => {
@@ -7382,7 +6676,7 @@ describe('BlockTree unfocused-Escape handler', () => {
 describe('BlockTree container mousedown', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('pointerdown on whitespace within block tree closes active editor', async () => {
@@ -7431,10 +6725,7 @@ describe('H-9: auto-create first block on empty page', () => {
       content: '',
       parent_id: 'PAGE_1',
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') return newBlock
-      return emptyPage
-    })
+    stubBlockTree({ create_block: () => withOps(newBlock) })
 
     renderBlockTree({ parentId: 'PAGE_1' })
 
@@ -7461,15 +6752,12 @@ describe('H-9: auto-create first block on empty page', () => {
     // B-2 fix: store now starts with loading: true, so the auto-create
     // effect waits for load() to finish. Return the newBlock from
     // list_blocks so both paths converge on the same final state.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'create_block') return newBlock
-      if (cmd === 'list_blocks') {
-        const a = args as Record<string, unknown> | undefined
-        if (a?.['parentId'] === 'PAGE_1')
-          return { items: [newBlock], next_cursor: null, has_more: false }
-        return emptyPage
-      }
-      return emptyPage
+    stubBlockTree({
+      create_block: () => withOps(newBlock),
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: [newBlock], next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     await act(async () => {
@@ -7491,11 +6779,11 @@ describe('H-9: auto-create first block on empty page', () => {
     // Pre-set blocks so the initial render sees blocks.length > 0,
     // preventing auto-create from firing before load() completes.
     pageStore.setState({ blocks: [existing], loading: false })
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      const a = args as Record<string, unknown> | undefined
-      if (cmd === 'list_blocks' && a?.['parentId'] === 'PAGE_1')
-        return { items: [existing], next_cursor: null, has_more: false }
-      return emptyPage
+    stubBlockTree({
+      list_blocks: (args) =>
+        args['parentId'] === 'PAGE_1'
+          ? { items: [existing], next_cursor: null, has_more: false, total_count: null }
+          : emptyPage,
     })
 
     renderBlockTree({ parentId: 'PAGE_1' })
@@ -7514,11 +6802,9 @@ describe('H-9: auto-create first block on empty page', () => {
   it('does not auto-create while loading', async () => {
     // Pre-set loading=true so the initial render's auto-create guard fires
     pageStore.setState({ loading: true })
-    // Use a never-resolving promise for load_page_subtree to keep loading=true
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return new Promise(() => {})
-      return emptyPage
-    })
+    // A parked `load_page_subtree` keeps loading=true.
+    const pendingLoad = deferred<CommandReturns['load_page_subtree']>()
+    stubBlockTree({ load_page_subtree: () => pendingLoad.promise })
 
     renderBlockTree({ parentId: 'PAGE_1' })
 
@@ -7540,7 +6826,7 @@ describe('H-9: auto-create first block on empty page', () => {
   it('does not auto-create when rootParentId is null', async () => {
     // Set rootParentId to null to test the guard condition
     pageStore.setState({ rootParentId: null })
-    mockedInvoke.mockImplementation(async (_cmd: string) => emptyPage)
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
 
@@ -7560,10 +6846,7 @@ describe('H-9: auto-create first block on empty page', () => {
   it('shows toast on create_block failure', async () => {
     const { toast } = await import('sonner')
     const mockedToastError = vi.mocked(toast.error)
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') throw new Error('DB error')
-      return emptyPage
-    })
+    stubBlockTree({ create_block: () => Promise.reject(new Error('DB error')) })
 
     renderBlockTree({ parentId: 'PAGE_1' })
 
@@ -7573,10 +6856,7 @@ describe('H-9: auto-create first block on empty page', () => {
   })
 
   it('does not auto-create when autoCreateFirstBlock is false', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
-      return emptyPage
-    })
+    stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree({ parentId: 'PAGE_1', autoCreateFirstBlock: false })
 
@@ -7605,10 +6885,7 @@ describe('H-9: auto-create first block on empty page', () => {
       content: '',
       parent_id: 'PAGE_1',
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') return newBlock
-      return emptyPage
-    })
+    stubBlockTree({ create_block: () => withOps(newBlock) })
 
     renderBlockTree({ parentId: 'PAGE_1', autoCreateFirstBlock: true })
 
@@ -7631,10 +6908,7 @@ describe('H-9: auto-create first block on empty page', () => {
       content: '',
       parent_id: 'PAGE_1',
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_block') return newBlock
-      return emptyPage
-    })
+    stubBlockTree({ create_block: () => withOps(newBlock) })
 
     renderBlockTree({ parentId: 'PAGE_1' })
 
@@ -7663,7 +6937,7 @@ describe('H-9: auto-create first block on empty page', () => {
 describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('calls handleFlush (edit) instead of discarding when editor is mounted but DOM-unfocused', async () => {
@@ -7705,7 +6979,7 @@ describe('B-7: whitespace click saves edits when DOM-unfocused', () => {
 describe('B-8: unfocused Escape saves edits', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('saves content via handleFlush when Escape is pressed with editor DOM-unfocused', async () => {
@@ -7745,7 +7019,7 @@ describe('B-8: unfocused Escape saves edits', () => {
 describe('B-14: zoom clears focus on invisible block', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   it('clears focus when zoomed block does not contain the focused block', async () => {
@@ -7988,7 +7262,7 @@ describe('#2943: DnD screen-reader announcements resolve block text, not ULIDs',
 describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    stubBlockTree()
   })
 
   // #2246 — no axe assertion in this suite: SortableBlock is stubbed to a
@@ -8104,10 +7378,7 @@ describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
     ]
     pageStore.setState({ blocks: tree, loading: false })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -8159,10 +7430,7 @@ describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
     ]
     pageStore.setState({ blocks: tree, loading: false })
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
-      return []
-    })
+    stubBlockTree()
 
     renderBlockTree()
 
@@ -8222,7 +7490,7 @@ describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
 describe('BlockTree zoom × Ctrl+A × batch actions (#3344)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue(null)
+    stubBlockTree()
   })
 
   /**

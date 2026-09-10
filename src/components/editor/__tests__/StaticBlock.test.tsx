@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
 import { BULLET_GLYPH } from '@/components/editor/ListMarker'
 import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
@@ -171,6 +172,19 @@ const mockedParse = vi.mocked(parse)
 
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
+const { stubInvoke } = await import('@/__tests__/helpers/invoke')
+
+/**
+ * Every embedded-query error path below fails the one query IPC the
+ * expression compiles to; `list_tags_by_prefix` resolves so the failure is
+ * unambiguously the query's.
+ */
+function stubQueryRejection(reason: unknown): void {
+  stubInvoke(mockedInvoke, {
+    list_tags_by_prefix: () => [],
+    run_advanced_query: () => Promise.reject(reason),
+  })
+}
 
 const { readAttachment } = await import('@/lib/ipc-helpers')
 const mockedGetBatchProperties = mockGetBatchProperties
@@ -1603,7 +1617,7 @@ describe('StaticBlock', () => {
 
   describe('error paths (invoke rejection)', () => {
     it('shows error when tag query invoke rejects', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Backend unavailable'))
+      stubQueryRejection(new Error('Backend unavailable'))
       render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
       )
@@ -1613,7 +1627,7 @@ describe('StaticBlock', () => {
     })
 
     it('shows error when property query invoke rejects', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Property lookup failed'))
+      stubQueryRejection(new Error('Property lookup failed'))
       render(
         <StaticBlock
           blockId="B1"
@@ -1625,7 +1639,7 @@ describe('StaticBlock', () => {
     })
 
     it('shows error when backlinks query invoke rejects', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Backlinks fetch failed'))
+      stubQueryRejection(new Error('Backlinks fetch failed'))
       render(
         <StaticBlock
           blockId="B1"
@@ -1637,7 +1651,7 @@ describe('StaticBlock', () => {
     })
 
     it('shows error when filtered query invoke rejects', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
+      stubQueryRejection(new Error('Filter query broken'))
       render(
         <StaticBlock blockId="B1" content="{{query property:todo_state=TODO}}" onFocus={vi.fn()} />,
       )
@@ -1647,34 +1661,25 @@ describe('StaticBlock', () => {
     it('shows error when batchResolve rejects after successful query', async () => {
       // The tag query reroutes through the rich engine: list_tags_by_prefix →
       // run_advanced_query (succeeds) → batch_resolve (rejects).
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        if (cmd === 'run_advanced_query') {
-          return {
-            rows: [
-              {
-                id: 'BLK_RES_1',
-                parent_id: 'PARENT_1',
-                page_id: 'PARENT_1',
-                content: 'Result block',
-                position: 0,
-                block_type: 'text',
-                created_at: '2024-01-01T00:00:00Z',
-                updated_at: '2024-01-01T00:00:00Z',
-                deleted_at: null,
-                todo_state: null,
-                priority: null,
-                due_date: null,
-                scheduled_date: null,
-              },
-            ],
-            nextCursor: null,
-            hasMore: false,
-            totalCount: null,
-          }
-        }
-        if (cmd === 'batch_resolve') throw new Error('Batch resolve failed')
-        return null
+      // `QueryResultRow` is an `ActiveBlockRow` (+ an optional score); the
+      // `created_at` / `updated_at` this literal carried are not wire fields.
+      stubInvoke(mockedInvoke, {
+        list_tags_by_prefix: () => [],
+        run_advanced_query: () => ({
+          rows: [
+            makeBlockRow({
+              id: 'BLK_RES_1',
+              parent_id: 'PARENT_1',
+              page_id: 'PARENT_1',
+              content: 'Result block',
+              position: 0,
+            }),
+          ],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }),
+        batch_resolve: () => Promise.reject(new Error('Batch resolve failed')),
       })
       render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
@@ -1683,12 +1688,7 @@ describe('StaticBlock', () => {
     })
 
     it('shows generic fallback for non-Error rejection in query', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        // oxlint-disable-next-line typescript/only-throw-error -- the non-Error rejection this test exists to exercise
-        if (cmd === 'run_advanced_query') throw 'string error without Error wrapper'
-        return null
-      })
+      stubQueryRejection('string error without Error wrapper')
       render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:project}}" onFocus={vi.fn()} />,
       )
@@ -1696,11 +1696,7 @@ describe('StaticBlock', () => {
     })
 
     it('query block remains clickable after invoke rejection', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        if (cmd === 'run_advanced_query') throw new Error('Service down')
-        return null
-      })
+      stubQueryRejection(new Error('Service down'))
       const onFocus = vi.fn()
       const user = userEvent.setup()
       render(<StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={onFocus} />)
@@ -1710,11 +1706,7 @@ describe('StaticBlock', () => {
     })
 
     it('has no a11y violations when query invoke fails', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        if (cmd === 'run_advanced_query') throw new Error('Service unavailable')
-        return null
-      })
+      stubQueryRejection(new Error('Service unavailable'))
       const { container } = render(
         <StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={vi.fn()} />,
       )

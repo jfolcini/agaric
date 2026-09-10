@@ -44,7 +44,17 @@ vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
       </div>
     ) : null,
 }))
+import { stubInvoke } from '@/__tests__/helpers/invoke'
+
 const mockedInvoke = vi.mocked(invoke)
+
+/** Every error path below fails the one query IPC the expression compiles to. */
+function stubQueryRejection(message: string): void {
+  stubInvoke(mockedInvoke, {
+    list_tags_by_prefix: () => [],
+    run_advanced_query: () => Promise.reject(new Error(message)),
+  })
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -1292,7 +1302,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
 
 describe('QueryResult – error paths', () => {
   it('shows error when tag query rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Tag service unavailable'))
+    stubQueryRejection('Tag service unavailable')
 
     render(<QueryResult expression="type:tag expr:project" />)
 
@@ -1304,7 +1314,7 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when property query rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Property lookup failed'))
+    stubQueryRejection('Property lookup failed')
 
     render(<QueryResult expression="type:property key:priority value:1" />)
 
@@ -1313,7 +1323,7 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when backlinks query rejects', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Backlinks fetch failed'))
+    stubQueryRejection('Backlinks fetch failed')
 
     render(<QueryResult expression="type:backlinks target:TARGET1" />)
 
@@ -1322,9 +1332,8 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when filtered property query rejects', async () => {
-    // Shorthand `property:` routes through
-    // `filtered_blocks_query` (single IPC).
-    mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
+    // Shorthand `property:` compiles to one `run_advanced_query` IPC.
+    stubQueryRejection('Filter query broken')
 
     render(<QueryResult expression="property:todo_state=TODO" />)
 
@@ -1333,10 +1342,10 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when filtered_blocks_query rejects for tag+property combo', async () => {
-    // Tag + property filters now collapse into a
-    // single `filtered_blocks_query` IPC. A rejection of that one IPC
-    // surfaces as the error message — no Promise.all fan-out exists.
-    mockedInvoke.mockRejectedValueOnce(new Error('Filtered query rejected'))
+    // Tag + property filters collapse into a single `run_advanced_query`
+    // IPC. A rejection of that one IPC surfaces as the error message — no
+    // Promise.all fan-out exists.
+    stubQueryRejection('Filtered query rejected')
 
     render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
 

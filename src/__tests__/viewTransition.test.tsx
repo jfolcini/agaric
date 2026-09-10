@@ -17,6 +17,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { emptyPage } from '@/__tests__/fixtures'
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { App } from '@/App'
 import { useBootStore } from '@/stores/boot'
 import { useNavigationStore } from '@/stores/navigation'
@@ -43,7 +45,6 @@ vi.mock('@/hooks/useSyncTrigger', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -56,7 +57,19 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  mockedInvoke.mockResolvedValue(emptyPage)
+  // The commands `App` fires while mounting the journal, pages and tags
+  // views. Anything else reaches `strictInvokeFallback` and fails by name —
+  // this suite is about the fade, so a new mount-time IPC should surface here
+  // rather than be absorbed by a catch-all.
+  stubInvoke(mockedInvoke, {
+    flush_all_drafts: () => ({ flushed: 0 }),
+    get_property_def: () => null,
+    is_flatpak: () => false,
+    list_projected_agenda: () => emptyPage,
+    list_spaces: () => [],
+    list_unfinished_tasks: () => emptyPage,
+    query_by_property: () => emptyPage,
+  })
 })
 
 describe('view transition wrapper', () => {

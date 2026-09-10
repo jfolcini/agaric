@@ -19,6 +19,12 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { TemplatesView } from '@/components/templates/TemplatesView'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -29,6 +35,19 @@ import { selectPageStack, useTabsStore } from '@/stores/tabs'
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+/**
+ * The commands `TemplatesView` fires on mount, defaulted to "nothing here".
+ * A test overrides what it drives; anything unlisted fails by name.
+ */
+function stubTemplates(handlers: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    query_by_property: () => emptyPage,
+    first_child_for_blocks: () => ({}),
+    list_all_pages_in_space: () => [],
+    ...handlers,
+  })
+}
 
 function makeTemplate(id: string, content: string) {
   return {
@@ -82,8 +101,9 @@ beforeEach(() => {
 
 describe('TemplatesView', () => {
   it('renders loading skeleton while fetching', () => {
-    // Never-resolving promise keeps component in loading state
-    mockedInvoke.mockReturnValue(new Promise(() => {}))
+    // Parked promise keeps the component in its loading state.
+    const pending = deferred<CommandReturns['query_by_property']>()
+    stubTemplates({ query_by_property: () => pending.promise })
 
     const { container } = render(<TemplatesView />)
 
@@ -92,7 +112,7 @@ describe('TemplatesView', () => {
   })
 
   it('renders empty state when no templates exist', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTemplates()
 
     render(<TemplatesView />)
 
@@ -102,7 +122,7 @@ describe('TemplatesView', () => {
   })
 
   it('surfaces the dynamic template variables as a discoverability hint (#215)', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTemplates()
 
     render(<TemplatesView />)
 
@@ -638,7 +658,7 @@ describe('TemplatesView', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTemplates()
 
     render(<TemplatesView />)
 
@@ -723,7 +743,7 @@ describe('TemplatesView', () => {
 
   it('shows error toast when loading templates fails', async () => {
     const mockedToastError = vi.mocked(toast.error)
-    mockedInvoke.mockRejectedValue(new Error('network'))
+    stubTemplates({ query_by_property: () => Promise.reject(new Error('network')) })
 
     render(<TemplatesView />)
 
@@ -775,7 +795,7 @@ describe('TemplatesView', () => {
 
   describe('create template form', () => {
     it('renders input and Create button', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubTemplates()
       render(<TemplatesView />)
 
       await waitFor(() => {
@@ -785,7 +805,7 @@ describe('TemplatesView', () => {
     })
 
     it('disables Create button when input is empty', async () => {
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubTemplates()
       render(<TemplatesView />)
 
       await waitFor(() => {
@@ -797,7 +817,7 @@ describe('TemplatesView', () => {
 
     it('disables Create button when input is whitespace only', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubTemplates()
       render(<TemplatesView />)
 
       const input = await screen.findByPlaceholderText('New template name...')

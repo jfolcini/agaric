@@ -27,6 +27,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeHistoryEntry } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { HistoryView } from '@/components/history/HistoryView'
 import {
@@ -60,14 +66,65 @@ const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
+/**
+ * The three commands `HistoryView` fires. Handlers ACCUMULATE within a test,
+ * so a later `stubHistory({ revert_ops: … })` refines the set the load
+ * installed rather than replacing it — which is what the positional
+ * `mockResolvedValueOnce` chains expressed by call order alone (#3217).
+ */
+let historyHandlers: TypedInvokeHandlers = {}
+
+function stubHistory(extra: TypedInvokeHandlers = {}): void {
+  historyHandlers = { ...historyHandlers, ...extra }
+  stubInvoke(mockedInvoke, historyHandlers)
+}
+
+/**
+ * A revert run: the reload after it answers `after`, the load before it
+ * answers `before`. The order IS the subject here, so it is explicit state
+ * rather than a queue position.
+ */
+function stubRevertRun(
+  before: CommandReturns['list_page_history'],
+  revert: () => CommandReturns['revert_ops'] | Promise<never>,
+  after: CommandReturns['list_page_history'] = before,
+): void {
+  let reverted = false
+  stubHistory({
+    list_page_history: () => (reverted ? after : before),
+    revert_ops: () => {
+      reverted = true
+      return revert()
+    },
+  })
+}
+
+/** The same, for the restore-to-op flow. */
+function stubRestoreRun(
+  before: CommandReturns['list_page_history'],
+  restore: () => CommandReturns['restore_page_to_op'] | Promise<never>,
+  after: CommandReturns['list_page_history'] = before,
+): void {
+  let restored = false
+  stubHistory({
+    list_page_history: () => (restored ? after : before),
+    restore_page_to_op: () => {
+      restored = true
+      return restore()
+    },
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  historyHandlers = {}
+  stubHistory({ list_page_history: () => emptyPage })
   _resetAttachmentInvalidationForTest()
 })
 
 describe('HistoryView', () => {
   it('renders empty state when no history entries', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubHistory({ list_page_history: () => emptyPage })
 
     render(<HistoryView />)
 
@@ -84,7 +141,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -105,7 +162,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -136,7 +193,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -172,7 +229,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -201,7 +258,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -229,7 +286,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -258,10 +315,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockResolvedValueOnce([]) // revertOps
-      .mockResolvedValueOnce(emptyPage) // reload after revert
+    stubRevertRun(page, () => [], emptyPage)
 
     render(<HistoryView />)
 
@@ -303,7 +357,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -325,7 +379,7 @@ describe('HistoryView', () => {
       has_more: true,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -349,7 +403,8 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+    // Keyed on the cursor the Load-more sends, not on call order.
+    stubHistory({ list_page_history: (args) => (args['cursor'] == null ? page1 : page2) })
 
     render(<HistoryView />)
 
@@ -372,7 +427,7 @@ describe('HistoryView', () => {
 
   it('op type filter updates query', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubHistory({ list_page_history: () => emptyPage })
 
     render(<HistoryView />)
 
@@ -407,12 +462,12 @@ describe('HistoryView', () => {
   it('refetches history on returning to a previously-viewed op-type filter (staleTime: 0)', async () => {
     const user = userEvent.setup()
     const callsByFilter: Record<string, number> = {}
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_page_history') {
-        const f = (args as { opTypeFilter?: string | null }).opTypeFilter ?? '__null__'
+    stubHistory({
+      list_page_history: (args) => {
+        const f = (args['opTypeFilter'] as string | null) ?? '__null__'
         callsByFilter[f] = (callsByFilter[f] ?? 0) + 1
-      }
-      return emptyPage
+        return emptyPage
+      },
     })
 
     render(<HistoryView />)
@@ -440,7 +495,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     const { container } = render(<HistoryView />)
 
@@ -467,7 +522,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -491,7 +546,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -522,7 +577,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -548,7 +603,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -562,7 +617,7 @@ describe('HistoryView', () => {
   })
 
   it('calls list_page_history with correct params on mount', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubHistory({ list_page_history: () => emptyPage })
 
     render(<HistoryView />)
 
@@ -578,7 +633,9 @@ describe('HistoryView', () => {
   })
 
   it('shows loading skeletons during initial load', () => {
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    // Parked promise keeps the skeletons up.
+    const pending = deferred<CommandReturns['list_page_history']>()
+    stubHistory({ list_page_history: () => pending.promise })
 
     const { container } = render(<HistoryView />)
 
@@ -593,7 +650,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -604,7 +661,7 @@ describe('HistoryView', () => {
   })
 
   it('handles error from listPageHistory without crashing', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+    stubHistory({ list_page_history: () => Promise.reject(new Error('network failure')) })
 
     render(<HistoryView />)
 
@@ -630,7 +687,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -655,7 +712,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -669,7 +726,7 @@ describe('HistoryView', () => {
   })
 
   it('has no a11y violations with empty state', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    stubHistory({ list_page_history: () => emptyPage })
 
     const { container } = render(<HistoryView />)
 
@@ -690,7 +747,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -733,9 +790,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+    stubRevertRun(page, () => Promise.reject(new Error('revert failed')))
 
     render(<HistoryView />)
 
@@ -778,10 +833,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page1) // initial load
-      .mockResolvedValueOnce([]) // revertOps succeeds
-      .mockResolvedValueOnce(page2) // reload after revert
+    stubRevertRun(page1, () => [], page2)
 
     render(<HistoryView />)
 
@@ -822,10 +874,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page1) // initial load
-      .mockResolvedValueOnce([]) // revertOps succeeds
-      .mockResolvedValueOnce(page1) // reload after revert
+    stubRevertRun(page1, () => [])
 
     render(<HistoryView />)
     await screen.findByText('b.txt')
@@ -853,9 +902,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockRejectedValueOnce(new Error('revert failed')) // revertOps fails
+    stubRevertRun(page, () => Promise.reject(new Error('revert failed')))
 
     render(<HistoryView />)
 
@@ -900,10 +947,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockResolvedValueOnce([]) // revert_ops resolves successfully
-      .mockResolvedValueOnce(emptyPage) // reload after revert
+    stubRevertRun(page, () => [], emptyPage)
 
     render(<HistoryView />)
 
@@ -936,14 +980,16 @@ describe('HistoryView', () => {
 
   it('focus ring resets when op type filter changes', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
-        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubHistory({
+      list_page_history: () => ({
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     render(<HistoryView />)
@@ -971,11 +1017,13 @@ describe('HistoryView', () => {
 
   it('arrow navigation works from reset position after filter change', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'filtered item' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    stubHistory({
+      list_page_history: () => ({
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'filtered item' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     render(<HistoryView />)
@@ -1007,9 +1055,15 @@ describe('HistoryView', () => {
   })
 
   it('shows error banner when loadHistory fails and clears on retry', async () => {
-    mockedInvoke
-      .mockRejectedValueOnce(new Error('network failure')) // initial load fails
-      .mockResolvedValueOnce(emptyPage) // retry succeeds
+    // The FIRST load fails and the retry succeeds: the order is the subject.
+    let attempt = 0
+    stubHistory({
+      list_page_history: () => {
+        attempt++
+        if (attempt === 1) return Promise.reject(new Error('network failure'))
+        return emptyPage
+      },
+    })
 
     const user = userEvent.setup()
 
@@ -1040,9 +1094,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+    stubRevertRun(page, () => Promise.reject(new Error('revert failed')))
 
     render(<HistoryView />)
 
@@ -1079,7 +1131,7 @@ describe('HistoryView', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubHistory({ list_page_history: () => page })
 
     render(<HistoryView />)
 
@@ -1099,7 +1151,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1123,10 +1175,11 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke
-        .mockResolvedValueOnce(page) // initial load
-        .mockResolvedValueOnce({ ops_reverted: 1, non_reversible_skipped: 0, results: [] }) // restorePageToOp
-        .mockResolvedValueOnce(emptyPage) // reload
+      stubRestoreRun(
+        page,
+        () => ({ ops_reverted: 1, non_reversible_skipped: 0, results: [] }),
+        emptyPage,
+      )
 
       render(<HistoryView />)
 
@@ -1156,10 +1209,11 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke
-        .mockResolvedValueOnce(page) // initial load
-        .mockResolvedValueOnce({ ops_reverted: 3, non_reversible_skipped: 0, results: [] }) // restorePageToOp
-        .mockResolvedValueOnce(emptyPage) // reload
+      stubRestoreRun(
+        page,
+        () => ({ ops_reverted: 3, non_reversible_skipped: 0, results: [] }),
+        emptyPage,
+      )
 
       render(<HistoryView />)
 
@@ -1182,10 +1236,11 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke
-        .mockResolvedValueOnce(page) // initial load
-        .mockResolvedValueOnce({ ops_reverted: 2, non_reversible_skipped: 1, results: [] }) // restorePageToOp
-        .mockResolvedValueOnce(emptyPage) // reload
+      stubRestoreRun(
+        page,
+        () => ({ ops_reverted: 2, non_reversible_skipped: 1, results: [] }),
+        emptyPage,
+      )
 
       render(<HistoryView />)
 
@@ -1208,9 +1263,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke
-        .mockResolvedValueOnce(page) // initial load
-        .mockRejectedValueOnce(new Error('restore failed')) // restorePageToOp throws
+      stubRestoreRun(page, () => Promise.reject(new Error('restore failed')))
 
       render(<HistoryView />)
 
@@ -1242,7 +1295,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1271,7 +1324,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1299,7 +1352,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1327,7 +1380,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1356,7 +1409,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       const { container } = render(<HistoryView />)
       await screen.findByText(/ux198 regression/)
@@ -1383,7 +1436,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
       await screen.findByText('item 1')
@@ -1415,7 +1468,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
       await screen.findByText('item 1')
@@ -1464,7 +1517,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1486,7 +1539,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1513,7 +1566,7 @@ describe('HistoryView', () => {
         has_more: false,
         total_count: null,
       }
-      mockedInvoke.mockResolvedValueOnce(page)
+      stubHistory({ list_page_history: () => page })
 
       render(<HistoryView />)
 
@@ -1550,10 +1603,7 @@ describe('HistoryView screen reader announcements', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockResolvedValueOnce([]) // revertOps
-      .mockResolvedValueOnce(emptyPage) // reload after revert
+    stubRevertRun(page, () => [], emptyPage)
 
     render(<HistoryView />)
     await screen.findByText('a')
@@ -1577,9 +1627,7 @@ describe('HistoryView screen reader announcements', () => {
       has_more: false,
       total_count: null,
     }
-    mockedInvoke
-      .mockResolvedValueOnce(page) // initial load
-      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+    stubRevertRun(page, () => Promise.reject(new Error('revert failed')))
 
     render(<HistoryView />)
     await screen.findByText('a')
@@ -1598,7 +1646,7 @@ describe('HistoryView screen reader announcements', () => {
   // ===========================================================================
   describe(' error categorization', () => {
     it('does not classify a native Error from its message text', async () => {
-      mockedInvoke.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      stubHistory({ list_page_history: () => Promise.reject(new TypeError('Failed to fetch')) })
 
       render(<HistoryView />)
 
@@ -1611,9 +1659,12 @@ describe('HistoryView screen reader announcements', () => {
 
     it('classifies a typed pool-busy AppError and shows server-specific copy', async () => {
       // unwrap() throws this serialized IPC object directly, not an Error.
-      mockedInvoke.mockRejectedValueOnce({
-        kind: 'pool_busy',
-        message: 'Failed to fetch while offline',
+      stubHistory({
+        list_page_history: () =>
+          Promise.reject({
+            kind: 'pool_busy',
+            message: 'Failed to fetch while offline',
+          }),
       })
 
       render(<HistoryView />)
@@ -1624,9 +1675,12 @@ describe('HistoryView screen reader announcements', () => {
     })
 
     it('classifies a typed not-found AppError as unknown', async () => {
-      mockedInvoke.mockRejectedValueOnce({
-        kind: 'not_found',
-        message: 'Database network timeout (503)',
+      stubHistory({
+        list_page_history: () =>
+          Promise.reject({
+            kind: 'not_found',
+            message: 'Database network timeout (503)',
+          }),
       })
 
       render(<HistoryView />)
@@ -1640,9 +1694,12 @@ describe('HistoryView screen reader announcements', () => {
       const loggerError = vi.spyOn(logger, 'error')
       const mockedToastError = vi.mocked(toast.error)
       try {
-        mockedInvoke.mockRejectedValueOnce({
-          kind: 'cancelled',
-          message: 'Failed to fetch while offline',
+        stubHistory({
+          list_page_history: () =>
+            Promise.reject({
+              kind: 'cancelled',
+              message: 'Failed to fetch while offline',
+            }),
         })
 
         render(<HistoryView />)
@@ -1659,12 +1716,20 @@ describe('HistoryView screen reader announcements', () => {
 
     it('clears the categorised banner after a successful retry', async () => {
       const user = userEvent.setup()
-      mockedInvoke
-        .mockRejectedValueOnce({
-          kind: 'pool_busy',
-          message: 'Database connection pool timed out',
-        }) // initial load fails with a serialized IPC error
-        .mockResolvedValueOnce(emptyPage) // retry succeeds
+      // The FIRST load fails with a serialized IPC error; the retry succeeds.
+      let attempt = 0
+      stubHistory({
+        list_page_history: () => {
+          attempt++
+          if (attempt === 1) {
+            return Promise.reject({
+              kind: 'pool_busy',
+              message: 'Database connection pool timed out',
+            })
+          }
+          return emptyPage
+        },
+      })
 
       render(<HistoryView />)
 
@@ -1711,7 +1776,7 @@ describe('HistoryView screen reader announcements', () => {
         availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
         isReady: true,
       })
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubHistory({ list_page_history: () => emptyPage })
 
       render(<HistoryView />)
 
@@ -1733,7 +1798,7 @@ describe('HistoryView screen reader announcements', () => {
         availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
         isReady: true,
       })
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubHistory({ list_page_history: () => emptyPage })
 
       render(<HistoryView />)
 
@@ -1775,7 +1840,7 @@ describe('HistoryView screen reader announcements', () => {
       // Both the initial scoped query AND the post-toggle "All spaces"
       // query return empty pages so we can compare empty-state copy
       // either side of the toggle.
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubHistory({ list_page_history: () => emptyPage })
 
       render(<HistoryView />)
 
@@ -1808,7 +1873,7 @@ describe('HistoryView screen reader announcements', () => {
 
     it('persists the "All spaces" toggle state across remounts', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubHistory({ list_page_history: () => emptyPage })
 
       const { unmount } = render(<HistoryView />)
 

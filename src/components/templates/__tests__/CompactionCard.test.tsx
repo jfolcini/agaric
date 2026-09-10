@@ -21,6 +21,12 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { CompactionCard } from '@/components/templates/CompactionCard'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -36,18 +42,49 @@ vi.mock('@/lib/logger', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-const defaultStatus = {
+// `oldest_op_date` is epoch-ms, not the ISO string these literals used to
+// hand the untyped mock (`CompactionStatus.oldest_op_date: number | null`).
+const defaultStatus: CommandReturns['get_compaction_status'] = {
   total_ops: 1500,
-  oldest_op_date: '2024-06-15T10:00:00Z',
+  oldest_op_date: Date.UTC(2024, 5, 15, 10), // 2024-06-15T10:00:00Z
   eligible_ops: 300,
   retention_days: 90,
 }
 
-const emptyStatus = {
+const emptyStatus: CommandReturns['get_compaction_status'] = {
   total_ops: 42,
-  oldest_op_date: '2025-01-01T00:00:00Z',
+  oldest_op_date: Date.UTC(2025, 0, 1), // 2025-01-01T00:00:00Z
   eligible_ops: 0,
   retention_days: 90,
+}
+
+/** The two commands the card fires; anything else fails by name. */
+function stubCompaction(handlers: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    get_compaction_status: () => defaultStatus,
+    compact_op_log_cmd: () => ({ ops_deleted: 0 }),
+    ...handlers,
+  })
+}
+
+/**
+ * A compaction run whose refresh reports a DIFFERENT status: the second
+ * `get_compaction_status` answer is the post-compaction one, which a
+ * positional `…Once` queue used to express by call order alone.
+ */
+function stubCompactionRun(
+  status: CommandReturns['get_compaction_status'],
+  compact: () => CommandReturns['compact_op_log_cmd'] | Promise<never>,
+  afterCompact: CommandReturns['get_compaction_status'] = status,
+): void {
+  let compacted = false
+  stubCompaction({
+    get_compaction_status: () => (compacted ? afterCompact : status),
+    compact_op_log_cmd: () => {
+      compacted = true
+      return compact()
+    },
+  })
 }
 
 beforeEach(() => {
@@ -56,7 +93,8 @@ beforeEach(() => {
 
 describe('CompactionCard', () => {
   it('shows loading skeleton while fetching', () => {
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    const pending = deferred<CommandReturns['get_compaction_status']>()
+    stubCompaction({ get_compaction_status: () => pending.promise })
 
     render(<CompactionCard />)
 
@@ -67,7 +105,7 @@ describe('CompactionCard', () => {
   })
 
   it('shows stats when loaded (auto-expanded with eligible_ops > 0)', async () => {
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -90,10 +128,10 @@ describe('CompactionCard', () => {
   // ("15/6/2024") is distinguishable from English's M/D/Y ("6/15/2024"),
   // so this fails if the call site reverts to a locale-less call.
   it('#4555: oldest-date follows i18n.language, not the OS/browser locale', async () => {
-    // `mockResolvedValue` (not `-Once`) — `fetchStatus`'s `useCallback` deps
-    // on `t`, and `i18n.changeLanguage` gives `t` a new identity, so the
-    // mount effect can re-fire `fetchStatus` more than once here.
-    mockedInvoke.mockResolvedValue(defaultStatus)
+    // `fetchStatus`'s `useCallback` deps on `t`, and `i18n.changeLanguage`
+    // gives `t` a new identity, so the mount effect can re-fire it here; a
+    // command-keyed handler answers every call, not just the first.
+    stubCompaction()
     try {
       await i18n.changeLanguage('es')
       render(<CompactionCard />)
@@ -106,10 +144,7 @@ describe('CompactionCard', () => {
   })
 
   it('shows N/A when oldest_op_date is null', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      ...defaultStatus,
-      oldest_op_date: null,
-    })
+    stubCompaction({ get_compaction_status: () => ({ ...defaultStatus, oldest_op_date: null }) })
 
     render(<CompactionCard />)
 
@@ -121,7 +156,7 @@ describe('CompactionCard', () => {
 
   it('"Compact Now" is enabled when eligible_ops is 0 (backend handles no-op case)', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(emptyStatus)
+    stubCompaction({ get_compaction_status: () => emptyStatus })
 
     render(<CompactionCard />)
 
@@ -136,7 +171,7 @@ describe('CompactionCard', () => {
   })
 
   it('"Compact Now" is enabled when eligible_ops > 0', async () => {
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -151,7 +186,7 @@ describe('CompactionCard', () => {
 
   it('clicking "Compact Now" opens confirm dialog', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -166,7 +201,7 @@ describe('CompactionCard', () => {
 
   it('confirm dialog shows warning text with op count and retention days', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -187,7 +222,7 @@ describe('CompactionCard', () => {
   // "delete 1 operations older than..." / "Compacted 1 operations".
   it('uses singular wording in the confirm dialog when eligible_ops is 1', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 1 })
+    stubCompaction({ get_compaction_status: () => ({ ...defaultStatus, eligible_ops: 1 }) })
 
     render(<CompactionCard />)
 
@@ -206,10 +241,11 @@ describe('CompactionCard', () => {
 
   it('uses singular wording in the success toast when exactly 1 operation is compacted', async () => {
     const user = userEvent.setup()
-    mockedInvoke
-      .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 1 }) // getCompactionStatus
-      .mockResolvedValueOnce({ ops_deleted: 1 }) // compactOpLog
-      .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
+    stubCompactionRun(
+      { ...defaultStatus, eligible_ops: 1 },
+      () => ({ ops_deleted: 1 }),
+      emptyStatus,
+    )
 
     render(<CompactionCard />)
 
@@ -227,10 +263,7 @@ describe('CompactionCard', () => {
 
   it('confirming calls compactOpLog and shows success toast', async () => {
     const user = userEvent.setup()
-    mockedInvoke
-      .mockResolvedValueOnce(defaultStatus) // getCompactionStatus
-      .mockResolvedValueOnce({ ops_deleted: 300 }) // compactOpLog
-      .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
+    stubCompactionRun(defaultStatus, () => ({ ops_deleted: 300 }), emptyStatus)
 
     render(<CompactionCard />)
 
@@ -255,9 +288,9 @@ describe('CompactionCard', () => {
 
   it('shows error toast when compaction fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke
-      .mockResolvedValueOnce(defaultStatus) // getCompactionStatus
-      .mockRejectedValueOnce(new Error('compact failed')) // compactOpLog
+    stubCompaction({
+      compact_op_log_cmd: () => Promise.reject(new Error('compact failed')),
+    })
 
     render(<CompactionCard />)
 
@@ -277,7 +310,7 @@ describe('CompactionCard', () => {
   })
 
   it('shows error toast when loading status fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('load failed'))
+    stubCompaction({ get_compaction_status: () => Promise.reject(new Error('load failed')) })
 
     const user = userEvent.setup()
     render(<CompactionCard />)
@@ -292,7 +325,7 @@ describe('CompactionCard', () => {
 
   it('FE-H-10: logs warning when fetchStatus rejects', async () => {
     const err = new Error('load failed')
-    mockedInvoke.mockRejectedValueOnce(err)
+    stubCompaction({ get_compaction_status: () => Promise.reject(err) })
 
     const user = userEvent.setup()
     render(<CompactionCard />)
@@ -316,9 +349,7 @@ describe('CompactionCard', () => {
   it('FE-H-10: logs error when handleCompact rejects', async () => {
     const err = new Error('compact failed')
     const user = userEvent.setup()
-    mockedInvoke
-      .mockResolvedValueOnce(defaultStatus) // getCompactionStatus
-      .mockRejectedValueOnce(err) // compactOpLog
+    stubCompaction({ compact_op_log_cmd: () => Promise.reject(err) })
 
     render(<CompactionCard />)
 
@@ -348,7 +379,7 @@ describe('CompactionCard', () => {
   // Destructive dialogs must not compact on a reflex Enter on open.
   it('reflex Enter on compact confirm dialog dismisses without calling compactOpLog', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -372,7 +403,7 @@ describe('CompactionCard', () => {
 
   it('cancel button closes confirm dialog without compacting', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     render(<CompactionCard />)
 
@@ -396,7 +427,7 @@ describe('CompactionCard', () => {
 
   it('toggles collapse state', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(emptyStatus)
+    stubCompaction({ get_compaction_status: () => emptyStatus })
 
     render(<CompactionCard />)
 
@@ -417,7 +448,7 @@ describe('CompactionCard', () => {
   })
 
   it('has no a11y violations when expanded with stats', async () => {
-    mockedInvoke.mockResolvedValueOnce(defaultStatus)
+    stubCompaction()
 
     const { container } = render(<CompactionCard />)
 
@@ -432,7 +463,7 @@ describe('CompactionCard', () => {
 
   it('has no a11y violations when collapsed', async () => {
     // Use emptyStatus so the card stays collapsed (eligible_ops=0).
-    mockedInvoke.mockResolvedValueOnce(emptyStatus)
+    stubCompaction({ get_compaction_status: () => emptyStatus })
 
     const { container } = render(<CompactionCard />)
 
@@ -448,7 +479,7 @@ describe('CompactionCard', () => {
   // so users see the action surface instead of a silent collapsed header.
   describe(' auto-expand on eligible ops', () => {
     it('starts collapsed when eligible_ops is 0', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyStatus)
+      stubCompaction({ get_compaction_status: () => emptyStatus })
 
       render(<CompactionCard />)
 
@@ -462,7 +493,7 @@ describe('CompactionCard', () => {
     })
 
     it('auto-expands on mount when eligible_ops > 0', async () => {
-      mockedInvoke.mockResolvedValueOnce(defaultStatus)
+      stubCompaction()
 
       render(<CompactionCard />)
 
@@ -475,10 +506,12 @@ describe('CompactionCard', () => {
 
     it('auto-expand fires only once per mount; user-collapse is sticky even when eligible_ops grows', async () => {
       const user = userEvent.setup()
-      mockedInvoke
-        .mockResolvedValueOnce(defaultStatus) // initial fetch (eligible=300) — auto-expands
-        .mockResolvedValueOnce({ ops_deleted: 0 }) // compactOpLog
-        .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 999 }) // refresh — must NOT re-trigger auto-expand
+      // Initial fetch (eligible=300) auto-expands; the post-compaction refresh
+      // reports 999, which must NOT re-trigger it.
+      stubCompactionRun(defaultStatus, () => ({ ops_deleted: 0 }), {
+        ...defaultStatus,
+        eligible_ops: 999,
+      })
 
       render(<CompactionCard />)
 

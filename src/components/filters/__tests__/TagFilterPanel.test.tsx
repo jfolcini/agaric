@@ -20,8 +20,15 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { TagFilterPanel } from '@/components/filters/TagFilterPanel'
+import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -29,7 +36,7 @@ import { selectPageStack, useTabsStore } from '@/stores/tabs'
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
 
-const makeTag = (overrides?: Partial<Record<string, unknown>>) => ({
+const makeTag = (overrides?: Partial<TagCacheRow>): TagCacheRow => ({
   tag_id: 'TAG001',
   name: 'work',
   usage_count: 5,
@@ -38,6 +45,32 @@ const makeTag = (overrides?: Partial<Record<string, unknown>>) => ({
 })
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+/**
+ * The commands the panel fires. Handlers ACCUMULATE across calls within one
+ * test, so a later `stubTagFilter({ query_by_tags: … })` refines the set the
+ * search already installed instead of replacing it — which is what the
+ * positional `mockResolvedValue` chains expressed by call order alone (#3217).
+ */
+let tagFilterHandlers: TypedInvokeHandlers = {}
+
+function stubTagFilter(extra: TypedInvokeHandlers = {}): void {
+  tagFilterHandlers = { ...tagFilterHandlers, ...extra }
+  stubInvoke(mockedInvoke, tagFilterHandlers)
+}
+
+/**
+ * Both tag-query commands answer the same page: the panel picks one by mode
+ * (flat pills → `query_by_tags`, nested composer → `query_by_tag_expr`), and
+ * every caller here cares about the rows, not which command carried them.
+ */
+type TagQueryHandler = (
+  args: Record<string, unknown>,
+) => CommandReturns['query_by_tags'] | Promise<CommandReturns['query_by_tags']>
+
+function stubTagQuery(handler: TagQueryHandler): void {
+  stubTagFilter({ query_by_tags: handler, query_by_tag_expr: handler })
+}
 
 /**
  * Find a matching-tag <span> in the tag list by its full textContent.
@@ -64,6 +97,13 @@ let user: ReturnType<typeof userEvent.setup>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  tagFilterHandlers = {}
+  stubTagFilter({
+    list_tags_by_prefix: () => [],
+    query_by_tags: () => emptyPage,
+    query_by_tag_expr: () => emptyPage,
+    batch_resolve: () => [],
+  })
   vi.useFakeTimers({ shouldAdvanceTime: true })
   user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
   useNavigationStore.setState({
@@ -99,10 +139,12 @@ describe('TagFilterPanel', () => {
   })
 
   it('searches tags by prefix with debounce', async () => {
-    mockedInvoke.mockResolvedValue([
-      makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
-      makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
-    ])
+    stubTagFilter({
+      list_tags_by_prefix: () => [
+        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+        makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
+      ],
+    })
 
     render(<TagFilterPanel />)
 
@@ -126,10 +168,12 @@ describe('TagFilterPanel', () => {
   })
 
   it('highlights matching prefix in tag names', async () => {
-    mockedInvoke.mockResolvedValue([
-      makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
-      makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
-    ])
+    stubTagFilter({
+      list_tags_by_prefix: () => [
+        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+        makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
+      ],
+    })
 
     render(<TagFilterPanel />)
 
@@ -143,7 +187,9 @@ describe('TagFilterPanel', () => {
   })
 
   it('clears matching tags when prefix cleared', async () => {
-    mockedInvoke.mockResolvedValue([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -159,7 +205,9 @@ describe('TagFilterPanel', () => {
   })
 
   it('adds a tag to selection when Add is clicked', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -169,7 +217,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // Mock query_by_tags for when tag is selected
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTagQuery(() => emptyPage)
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -182,7 +230,9 @@ describe('TagFilterPanel', () => {
   })
 
   it('removes a tag from selection when × is clicked', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -191,7 +241,7 @@ describe('TagFilterPanel', () => {
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTagQuery(() => emptyPage)
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -288,7 +338,9 @@ describe('TagFilterPanel', () => {
 
   it('queries blocks when a tag is selected', async () => {
     // First call: list_tags_by_prefix
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -298,12 +350,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // Next call: query_by_tags
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'work note' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -324,7 +376,9 @@ describe('TagFilterPanel', () => {
 
   it('paginates results with Load more', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -334,12 +388,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // First page of query_by_tags
-    mockedInvoke.mockResolvedValueOnce({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'first result' })],
       next_cursor: 'cursor_abc',
       has_more: true,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -349,12 +403,12 @@ describe('TagFilterPanel', () => {
     expect(loadMoreBtn).toBeInTheDocument()
 
     // Second page
-    mockedInvoke.mockResolvedValueOnce({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B2', content: 'second result' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(loadMoreBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -380,7 +434,9 @@ describe('TagFilterPanel', () => {
 
   it('shows empty results message when no blocks match', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -390,7 +446,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns empty
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTagQuery(() => emptyPage)
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -404,7 +460,9 @@ describe('TagFilterPanel', () => {
   // flight.
   it('shows loading spinner over dimmed stale results during mode switch', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -412,12 +470,12 @@ describe('TagFilterPanel', () => {
     await typeAndWaitForTags(input, 'work')
 
     // First query_by_tags (AND mode): resolves immediately with one stale result
-    mockedInvoke.mockResolvedValueOnce({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'stale result' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(screen.getByRole('button', { name: /Add/i }))
     await vi.advanceTimersByTimeAsync(0)
@@ -426,14 +484,9 @@ describe('TagFilterPanel', () => {
     expect(screen.getByText('stale result')).toBeInTheDocument()
     expect(screen.queryByTestId('tag-filter-results-loading')).toBeNull()
 
-    // Next query_by_tags (mode switch) hangs so we can inspect mid-flight state
-    let resolveQuery: (value: unknown) => void = () => {}
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveQuery = resolve
-        }),
-    )
+    // Next query_by_tags (mode switch) is parked so we can inspect mid-flight state
+    const pendingQuery = deferred<CommandReturns['query_by_tags']>()
+    stubTagQuery(() => pendingQuery.promise)
 
     // Switch from AND to OR → fires a new query that stays pending
     await user.click(screen.getByRole('button', { name: /^OR$/i }))
@@ -454,7 +507,7 @@ describe('TagFilterPanel', () => {
 
     // Cleanup: resolve the pending query
     await act(async () => {
-      resolveQuery({ items: [], next_cursor: null, has_more: false, total_count: null })
+      pendingQuery.resolve({ items: [], next_cursor: null, has_more: false, total_count: null })
       await vi.advanceTimersByTimeAsync(0)
     })
   })
@@ -463,18 +516,15 @@ describe('TagFilterPanel', () => {
   // to hold, so the live region mounts with nothing to say: it must not read
   // "0 blocks match" over the loading skeleton for the whole IPC round trip.
   it('states no count while the first fetch is pending, then the real one', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
     render(<TagFilterPanel />)
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
     await typeAndWaitForTags(input, 'work')
 
-    let resolveQuery: (value: unknown) => void = () => {}
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveQuery = resolve
-        }),
-    )
+    const pendingQuery = deferred<CommandReturns['query_by_tags']>()
+    stubTagQuery(() => pendingQuery.promise)
     await user.click(screen.getByRole('button', { name: /Add/i }))
     await vi.advanceTimersByTimeAsync(0)
 
@@ -483,7 +533,7 @@ describe('TagFilterPanel', () => {
     expect(feedback).not.toHaveTextContent(/match/)
 
     await act(async () => {
-      resolveQuery({
+      pendingQuery.resolve({
         items: [makeBlock({ id: 'B1', content: 'one' }), makeBlock({ id: 'B2', content: 'two' })],
         next_cursor: null,
         has_more: false,
@@ -508,7 +558,9 @@ describe('TagFilterPanel', () => {
 
   it('shows match summary feedback when tags are selected and results exist', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -518,7 +570,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [
         makeBlock({ id: 'B1', content: 'result one' }),
         makeBlock({ id: 'B2', content: 'result two' }),
@@ -526,7 +578,7 @@ describe('TagFilterPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -539,7 +591,9 @@ describe('TagFilterPanel', () => {
 
   it('shows singular feedback when 1 result matches 1 tag', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -549,12 +603,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns exactly 1 result
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'only result' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -566,7 +620,7 @@ describe('TagFilterPanel', () => {
   })
 
   it('does not crash on search error', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+    stubTagFilter({ list_tags_by_prefix: () => Promise.reject(new Error('backend error')) })
 
     render(<TagFilterPanel />)
 
@@ -582,7 +636,7 @@ describe('TagFilterPanel', () => {
   })
 
   it('shows error toast when tag loading fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+    stubTagFilter({ list_tags_by_prefix: () => Promise.reject(new Error('backend error')) })
 
     render(<TagFilterPanel />)
 
@@ -602,10 +656,12 @@ describe('TagFilterPanel', () => {
   })
 
   it('hides already-selected tags from matching results', async () => {
-    mockedInvoke.mockResolvedValueOnce([
-      makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
-      makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
-    ])
+    stubTagFilter({
+      list_tags_by_prefix: () => [
+        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+        makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
+      ],
+    })
 
     render(<TagFilterPanel />)
 
@@ -620,7 +676,7 @@ describe('TagFilterPanel', () => {
     const addBtns = screen.getAllByRole('button', { name: /Add/i })
 
     // Mock query_by_tags response for when tag is selected
-    mockedInvoke.mockResolvedValue(emptyPage)
+    stubTagQuery(() => emptyPage)
 
     await user.click(addBtns[0] as HTMLElement)
     await vi.advanceTimersByTimeAsync(0)
@@ -641,7 +697,9 @@ describe('TagFilterPanel', () => {
 
   it('navigates to parent page when clicking a tag filter result', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -651,7 +709,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns a block with parent_id
-    mockedInvoke.mockResolvedValueOnce({
+    stubTagQuery(() => ({
       items: [
         makeBlock({
           id: 'CHILD1',
@@ -664,7 +722,7 @@ describe('TagFilterPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -672,13 +730,9 @@ describe('TagFilterPanel', () => {
     expect(screen.getByText('tagged content')).toBeInTheDocument()
 
     // Mock get_block for parent lookup
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
+    stubTagFilter({
+      get_block: () =>
+        makeBlockRow({ id: 'PARENT1', block_type: 'page', content: 'Parent Page', position: 0 }),
     })
 
     await user.click(screen.getByText('tagged content'))
@@ -695,7 +749,9 @@ describe('TagFilterPanel', () => {
 
   it('navigates directly when clicking a page-type tag filter result', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -705,7 +761,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns a page block
-    mockedInvoke.mockResolvedValueOnce({
+    stubTagQuery(() => ({
       items: [
         makeBlock({
           id: 'PAGE1',
@@ -717,7 +773,7 @@ describe('TagFilterPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -738,7 +794,9 @@ describe('TagFilterPanel', () => {
 
   it('clicking NOT button calls queryByTags with mode=not', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -748,12 +806,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results (initial AND mode)
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'work item' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -777,7 +835,9 @@ describe('TagFilterPanel', () => {
 
   it('shows match summary with (NOT) when mode is not', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -791,7 +851,7 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [
         makeBlock({ id: 'B1', content: 'result one' }),
         makeBlock({ id: 'B2', content: 'result two' }),
@@ -799,7 +859,7 @@ describe('TagFilterPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -812,7 +872,9 @@ describe('TagFilterPanel', () => {
 
   it('switching from NOT to AND updates query', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -826,12 +888,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results in NOT mode
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'excluded result' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -856,7 +918,9 @@ describe('TagFilterPanel', () => {
 
   it('switching from NOT to OR updates query', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -870,12 +934,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results in NOT mode
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'excluded result' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -907,10 +971,12 @@ describe('TagFilterPanel', () => {
     })
 
     it('tag results contain focusable Add buttons', async () => {
-      mockedInvoke.mockResolvedValueOnce([
-        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
-        makeTag({ tag_id: 'T2', name: 'personal', usage_count: 3 }),
-      ])
+      stubTagFilter({
+        list_tags_by_prefix: () => [
+          makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+          makeTag({ tag_id: 'T2', name: 'personal', usage_count: 3 }),
+        ],
+      })
       render(<TagFilterPanel />)
 
       const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -925,13 +991,15 @@ describe('TagFilterPanel', () => {
     })
 
     it('selected tag remove button has accessible label for keyboard users', async () => {
-      mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+      stubTagFilter({
+        list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+      })
       render(<TagFilterPanel />)
 
       const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
       await typeAndWaitForTags(input, 'work')
 
-      mockedInvoke.mockResolvedValue(emptyPage)
+      stubTagQuery(() => emptyPage)
 
       await user.click(screen.getByRole('button', { name: /Add/i }))
       await vi.advanceTimersByTimeAsync(0)
@@ -944,7 +1012,9 @@ describe('TagFilterPanel', () => {
   })
 
   it('matching tags section uses <section> element', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -961,7 +1031,9 @@ describe('TagFilterPanel', () => {
 
   it('results section uses <section> element', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -971,12 +1043,12 @@ describe('TagFilterPanel', () => {
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
     // query_by_tags returns results
-    mockedInvoke.mockResolvedValue({
+    stubTagQuery(() => ({
       items: [makeBlock({ id: 'B1', content: 'result one' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
-    })
+    }))
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -993,7 +1065,9 @@ describe('TagFilterPanel', () => {
   // Escape key clears search
   // -----------------------------------------------------------------------
   it('pressing Escape on search input clears the search and results', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -1016,7 +1090,9 @@ describe('TagFilterPanel', () => {
   // SearchInput clear (✕) button clears the prefix search
   // -----------------------------------------------------------------------
   it('SearchInput clear button clears prefix and hides matching tags', async () => {
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     const { container } = render(<TagFilterPanel />)
 
@@ -1051,7 +1127,9 @@ describe('TagFilterPanel', () => {
 
   it('has no a11y violations with search results visible', async () => {
     vi.useRealTimers()
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     const { container } = render(<TagFilterPanel />)
 
@@ -1075,7 +1153,9 @@ describe('TagFilterPanel', () => {
 
   it('renders page breadcrumbs for results', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -1084,28 +1164,22 @@ describe('TagFilterPanel', () => {
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
-    // Use mockImplementation so query_by_tags and batch_resolve both resolve correctly
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return {
-          items: [
-            makeBlock({
-              id: 'B1',
-              parent_id: 'PAGE1',
-              page_id: 'PAGE1',
-              content: 'tagged block',
-              block_type: 'content',
-            }),
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      }
-      if (cmd === 'batch_resolve') {
-        return [{ id: 'PAGE1', title: 'My Page', block_type: 'page', deleted: false }]
-      }
-      return null
+    stubTagQuery(() => ({
+      items: [
+        makeBlock({
+          id: 'B1',
+          parent_id: 'PAGE1',
+          page_id: 'PAGE1',
+          content: 'tagged block',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+    stubTagFilter({
+      batch_resolve: () => [{ id: 'PAGE1', title: 'My Page', block_type: 'page', deleted: false }],
     })
 
     await user.click(addBtn)
@@ -1122,7 +1196,9 @@ describe('TagFilterPanel', () => {
 
   it('handles batchResolve failure gracefully', async () => {
     // list_tags_by_prefix response
-    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
 
     render(<TagFilterPanel />)
 
@@ -1131,29 +1207,22 @@ describe('TagFilterPanel', () => {
 
     const addBtn = screen.getByRole('button', { name: /Add/i })
 
-    // Use mockImplementation: query_by_tags succeeds, batch_resolve rejects
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'query_by_tags') {
-        return {
-          items: [
-            makeBlock({
-              id: 'B1',
-              parent_id: 'PAGE1',
-              page_id: 'PAGE1',
-              content: 'tagged block',
-              block_type: 'content',
-            }),
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      }
-      if (cmd === 'batch_resolve') {
-        throw new Error('resolve failed')
-      }
-      return null
-    })
+    // query_by_tags succeeds, batch_resolve rejects.
+    stubTagQuery(() => ({
+      items: [
+        makeBlock({
+          id: 'B1',
+          parent_id: 'PAGE1',
+          page_id: 'PAGE1',
+          content: 'tagged block',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+    stubTagFilter({ batch_resolve: () => Promise.reject(new Error('resolve failed')) })
 
     await user.click(addBtn)
     await vi.advanceTimersByTimeAsync(0)
@@ -1173,17 +1242,9 @@ describe('TagFilterPanel', () => {
  * (typeahead), `query_by_tags` (flat results) and `query_by_tag_expr` (nested
  * composer results) resolve independently.
  */
-function routeInvoke(opts: {
-  tags?: { tag_id: string; name: string; usage_count: number }[]
-  page?: unknown
-}): void {
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'list_tags_by_prefix') return Promise.resolve(opts.tags ?? [])
-    if (cmd === 'query_by_tags') return Promise.resolve(opts.page ?? emptyPage)
-    if (cmd === 'query_by_tag_expr') return Promise.resolve(opts.page ?? emptyPage)
-    if (cmd === 'batch_resolve') return Promise.resolve([])
-    return Promise.resolve(emptyPage)
-  })
+function routeInvoke(opts: { tags?: TagCacheRow[]; page?: CommandReturns['query_by_tags'] }): void {
+  stubTagFilter({ list_tags_by_prefix: () => opts.tags ?? [], batch_resolve: () => [] })
+  stubTagQuery(() => opts.page ?? emptyPage)
 }
 
 /** Pull the args of the most recent `query_by_tags` invoke (flat mode). */
@@ -1385,27 +1446,24 @@ describe('TagFilterPanel — nested composer (#1426)', () => {
     })
     // Route each typeahead search to ONLY the tag the helper typed, so
     // findByText(name) is unambiguous.
-    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      if (cmd === 'list_tags_by_prefix') {
-        const prefix = ((args as { prefix?: string } | undefined)?.prefix ?? '').toLowerCase()
+    stubTagFilter({
+      list_tags_by_prefix: (args) => {
+        const prefix = String((args['prefix'] as string | undefined) ?? '').toLowerCase()
         const all = [
-          { tag_id: 'A', name: 'alpha', usage_count: 1 },
-          { tag_id: 'B', name: 'beta', usage_count: 1 },
-          { tag_id: 'C', name: 'gamma', usage_count: 1 },
+          makeTag({ tag_id: 'A', name: 'alpha', usage_count: 1 }),
+          makeTag({ tag_id: 'B', name: 'beta', usage_count: 1 }),
+          makeTag({ tag_id: 'C', name: 'gamma', usage_count: 1 }),
         ]
-        return Promise.resolve(all.filter((tg) => tg.name.startsWith(prefix)))
-      }
-      if (cmd === 'query_by_tag_expr') {
-        return Promise.resolve({
-          items: [makeBlock({ id: 'HIT', content: 'matched block' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        })
-      }
-      if (cmd === 'batch_resolve') return Promise.resolve([])
-      return Promise.resolve(emptyPage)
+        return all.filter((tg) => tg.name.startsWith(prefix))
+      },
+      batch_resolve: () => [],
     })
+    stubTagQuery(() => ({
+      items: [makeBlock({ id: 'HIT', content: 'matched block' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
 
     render(<TagFilterPanel />)
     await openComposer()
@@ -1478,20 +1536,16 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
    * conformance query and `resolve_tag_with_inheritance_includes_descendants`).
    */
   function routeByInheritance(opts?: { rejectInherited?: boolean }): void {
-    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      const a = (args ?? {}) as { includeInherited?: boolean | null }
-      if (cmd === 'list_tags_by_prefix') {
-        return Promise.resolve([makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })])
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })],
+      batch_resolve: () => [],
+    })
+    stubTagQuery((args) => {
+      if (args['includeInherited'] === true) {
+        if (opts?.rejectInherited) return Promise.reject(new Error('backend error'))
+        return { ...emptyPage, items: [PARENT, CHILD] }
       }
-      if (cmd === 'query_by_tags' || cmd === 'query_by_tag_expr') {
-        if (a.includeInherited === true) {
-          if (opts?.rejectInherited) return Promise.reject(new Error('backend error'))
-          return Promise.resolve({ ...emptyPage, items: [PARENT, CHILD] })
-        }
-        return Promise.resolve({ ...emptyPage, items: [PARENT] })
-      }
-      if (cmd === 'batch_resolve') return Promise.resolve([])
-      return Promise.resolve(emptyPage)
+      return { ...emptyPage, items: [PARENT] }
     })
   }
 
@@ -1642,27 +1696,21 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
   // (`isPlaceholderData`), not on any fetch being in flight: a load-more keeps
   // the current key's rows, so the note must stay put while the next page loads.
   it('keeps the inherited note while a load-more is in flight', async () => {
-    let resolveNextPage: (value: unknown) => void = () => {}
-    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      const a = (args ?? {}) as { includeInherited?: boolean | null; cursor?: string | null }
-      if (cmd === 'list_tags_by_prefix') {
-        return Promise.resolve([makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })])
-      }
-      if (cmd === 'query_by_tags') {
-        if (a.cursor != null) {
-          return new Promise((resolve) => {
-            resolveNextPage = resolve
-          })
-        }
-        return Promise.resolve({
+    const nextPage = deferred<CommandReturns['query_by_tags']>()
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })],
+      batch_resolve: () => [],
+      // The load-more page is parked so the note can be read mid-flight; the
+      // FIRST page is keyed on the absent cursor, not on call order.
+      query_by_tags: (args) => {
+        if (args['cursor'] != null) return nextPage.promise
+        return {
           ...emptyPage,
-          items: a.includeInherited === true ? [PARENT, CHILD] : [PARENT],
+          items: args['includeInherited'] === true ? [PARENT, CHILD] : [PARENT],
           next_cursor: 'cursor_next',
           has_more: true,
-        })
-      }
-      if (cmd === 'batch_resolve') return Promise.resolve([])
-      return Promise.resolve(emptyPage)
+        }
+      },
     })
     render(<TagFilterPanel />)
     await selectWorkTag()
@@ -1682,7 +1730,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(feedback).toHaveTextContent(t('tagFilter.includingInherited'))
 
     await act(async () => {
-      resolveNextPage(emptyPage)
+      nextPage.resolve(emptyPage)
       await vi.advanceTimersByTimeAsync(0)
     })
   })
