@@ -28,7 +28,11 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { t } from '@/lib/i18n'
@@ -62,6 +66,10 @@ const mockedToastError = vi.mocked(toast.error)
 
 const SELECTED = ['P1', 'P2', 'P3']
 
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
 /**
  * #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`, not a
  * bare count. `cascadedPageIds` models the half the frontend cannot see: PAGE
@@ -69,17 +77,32 @@ const SELECTED = ['P1', 'P2', 'P3']
  * selected page's nested page children). Defaults to the roots alone, which is
  * the flat-selection case every pre-#4480 test was written against.
  */
-function trashReply(rootIds: string[], cascadedPageIds: string[] = []) {
+function trashReply(
+  rootIds: string[],
+  cascadedPageIds: string[] = [],
+): CommandReturns['delete_blocks_by_ids'] {
   return {
     deleted_count: rootIds.length + cascadedPageIds.length,
     affected_page_ids: [...rootIds, ...cascadedPageIds],
   }
 }
 
-const tagRows = [
+const tagRows: CommandReturns['list_all_tags_in_space'] = [
   { tag_id: 'TAG_A', name: 'alpha', usage_count: 2, updated_at: '2025-01-01T00:00:00Z' },
   { tag_id: 'TAG_B', name: 'beta', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
 ]
+
+/** A page row as `list_all_pages_in_space` sends it (a full `PageHeading`). */
+function pageRow(id: string, content: string): CommandReturns['list_all_pages_in_space'][number] {
+  return {
+    id,
+    content,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+  }
+}
 
 function renderToolbar(overrides: Partial<Parameters<typeof PageBrowserBatchToolbar>[0]> = {}) {
   const onSelectAll = vi.fn()
@@ -110,7 +133,9 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  mockedInvoke.mockResolvedValue(undefined)
+  // No catch-all: the toolbar fires nothing until an action is taken, so a
+  // command reaching here is an unmodelled call and says so by name.
+  stubInvoke({})
 })
 
 afterEach(() => {
@@ -147,7 +172,7 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('Trash fires delete_blocks_by_ids and clears + refreshes once confirmed', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(trashReply(SELECTED)) // delete_blocks_by_ids
+    stubInvoke({ delete_blocks_by_ids: () => trashReply(SELECTED) })
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -172,7 +197,13 @@ describe('PageBrowserBatchToolbar', () => {
   // list-accepting IPC `usePageDeleteAction` already uses.
   it('the success toast exposes an Undo that restores the trashed ids', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(trashReply(SELECTED))
+    // #4668 — the undo used to be stubbed `{ restored: n }`, a shape
+    // `restore_blocks_by_ids` cannot send: it replies `BulkTrashResponse`,
+    // i.e. `{ affected_count }`.
+    stubInvoke({
+      delete_blocks_by_ids: () => trashReply(SELECTED),
+      restore_blocks_by_ids: () => ({ affected_count: SELECTED.length }),
+    })
     const { onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -188,7 +219,6 @@ describe('PageBrowserBatchToolbar', () => {
       ?.action
     expect(undo?.label).toBe(t('action.undo'))
 
-    mockedInvoke.mockResolvedValueOnce({ restored: SELECTED.length })
     undo?.onClick?.()
 
     await waitFor(() => {
@@ -202,7 +232,7 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('Trash surfaces an error toast with Retry and does NOT clear on failure', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
+    stubInvoke({ delete_blocks_by_ids: () => Promise.reject(new Error('backend boom')) })
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -232,7 +262,7 @@ describe('PageBrowserBatchToolbar', () => {
     /** Drive a failed batch trash and hand back the toast's Retry callback. */
     async function failTrash() {
       const user = userEvent.setup()
-      mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
+      stubInvoke({ delete_blocks_by_ids: () => Promise.reject(new Error('backend boom')) })
       const utils = renderToolbar()
 
       await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -289,10 +319,9 @@ describe('PageBrowserBatchToolbar', () => {
   it('Add tag loads the space tags, fires add_tags_by_ids with the chosen tag, clears + refreshes', async () => {
     const user = userEvent.setup()
     // list_all_tags_in_space → tag rows; add_tags_by_ids → count
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_tags_in_space') return Promise.resolve(tagRows)
-      if (cmd === 'add_tags_by_ids') return Promise.resolve(2)
-      return strictInvokeFallback(cmd)
+    stubInvoke({
+      list_all_tags_in_space: () => tagRows,
+      add_tags_by_ids: () => 2,
     })
     const { onClearSelection, onMutated } = renderToolbar()
 
@@ -325,10 +354,7 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('Move to space lists target spaces (excluding current) and fires move_blocks_to_space', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'move_blocks_to_space') return Promise.resolve(3)
-      return strictInvokeFallback(cmd)
-    })
+    stubInvoke({ move_blocks_to_space: () => 3 })
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-move-btn'))
@@ -575,7 +601,7 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
 
   async function confirmTrash(ids: string[], cascadedPageIds: string[] = []): Promise<void> {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(trashReply(ids, cascadedPageIds))
+    stubInvoke({ delete_blocks_by_ids: () => trashReply(ids, cascadedPageIds) })
     renderToolbar({ selectedIds: ids })
     await user.click(screen.getByTestId('page-batch-trash-btn'))
     await user.click(
@@ -649,7 +675,7 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
 
   async function confirmTrash(ids: string[], cascadedPageIds: string[] = []): Promise<void> {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(trashReply(ids, cascadedPageIds))
+    stubInvoke({ delete_blocks_by_ids: () => trashReply(ids, cascadedPageIds) })
     renderToolbar({ selectedIds: ids })
     await user.click(screen.getByTestId('page-batch-trash-btn'))
     await user.click(
@@ -713,9 +739,8 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
       // P_GONE was selected but never made it into the cohort; the backend
       // reports only P_LIVE.
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        deleted_count: 1,
-        affected_page_ids: ['P_LIVE'],
+      stubInvoke({
+        delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_LIVE'] }),
       })
       renderToolbar({ selectedIds: ['P_LIVE', 'P_GONE'] })
       await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -776,29 +801,14 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
   // defect the single delete has.
   it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
     const user = userEvent.setup()
-    function pageRow(id: string, content: string) {
-      return {
-        id,
-        content,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      }
-    }
     // The user is looking at SPACE_OTHER; these are its pages.
     useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([
-          pageRow('P_MOVED', 'Moved Page'),
-          pageRow('P_STAYS_OTHER', 'Stays Page'),
-        ])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        return Promise.resolve(trashReply(['P_ROOT'], ['P_MOVED']))
-      }
-      return strictInvokeFallback(cmd)
+    stubInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_MOVED', 'Moved Page'),
+        pageRow('P_STAYS_OTHER', 'Stays Page'),
+      ],
+      delete_blocks_by_ids: () => trashReply(['P_ROOT'], ['P_MOVED']),
     })
 
     const { result: resolveResult } = renderHook(() => useBlockResolve())
@@ -825,29 +835,14 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
 
   it('a cascaded nested page stops being offered by the [[ cache, with no space switch', async () => {
     const user = userEvent.setup()
-    function pageRow(id: string, content: string) {
-      return {
-        id,
-        content,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      }
-    }
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([
-          pageRow('P_ROOT', 'Root Page'),
-          pageRow('P_NESTED', 'Nested Page'),
-          pageRow('P_STAYS', 'Stays Page'),
-        ])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        // The user selected P_ROOT; the cascade also took its page child.
-        return Promise.resolve(trashReply(['P_ROOT'], ['P_NESTED']))
-      }
-      return strictInvokeFallback(cmd)
+    stubInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_ROOT', 'Root Page'),
+        pageRow('P_NESTED', 'Nested Page'),
+        pageRow('P_STAYS', 'Stays Page'),
+      ],
+      // The user selected P_ROOT; the cascade also took its page child.
+      delete_blocks_by_ids: () => trashReply(['P_ROOT'], ['P_NESTED']),
     })
 
     const { result: resolveResult } = renderHook(() => useBlockResolve())
@@ -899,10 +894,7 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
 
   async function confirmMove(ids: string[], destSpaceId: string): Promise<void> {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'move_blocks_to_space') return Promise.resolve(ids.length)
-      return strictInvokeFallback(cmd)
-    })
+    stubInvoke({ move_blocks_to_space: () => ids.length })
     renderToolbar({ selectedIds: ids })
     await user.click(screen.getByTestId('page-batch-move-btn'))
     const select = await screen.findByRole('combobox', {
@@ -973,22 +965,12 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
   // the change is narrow.
   it('a moved page stops being offered by the origin [[ cache, with no space switch required', async () => {
     const user = userEvent.setup()
-    function pageRow(id: string, content: string) {
-      return {
-        id,
-        content,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-      }
-    }
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([pageRow('P_MOVED', 'Moved Page'), pageRow('P_STAYS', 'Stays Page')])
-      }
-      if (cmd === 'move_blocks_to_space') return Promise.resolve(1)
-      return strictInvokeFallback(cmd)
+    stubInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_MOVED', 'Moved Page'),
+        pageRow('P_STAYS', 'Stays Page'),
+      ],
+      move_blocks_to_space: () => 1,
     })
 
     const { result: resolveResult } = renderHook(() => useBlockResolve())

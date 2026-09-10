@@ -14,6 +14,7 @@ import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   useHeaderLabel,
   useTrashCount,
@@ -73,7 +74,10 @@ vi.mock('@/components/TrashView', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 function defaultProps(overrides: Partial<ViewDispatcherProps> = {}): ViewDispatcherProps {
   return {
@@ -87,7 +91,9 @@ function defaultProps(overrides: Partial<ViewDispatcherProps> = {}): ViewDispatc
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(emptyPage)
+  // Every view is module-mocked, so the dispatcher itself issues no IPC; an
+  // unstubbed one now names itself instead of being absorbed by a catch-all.
+  stubInvoke({})
 })
 
 afterEach(() => {
@@ -431,10 +437,7 @@ describe('useTrashCount', () => {
   it('polls count_trash every 30 s', async () => {
     // The hook routes through the dedicated `count_trash` IPC (returns a
     // plain `number`) so the badge stays accurate regardless of trash size.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_trash') return 137 as unknown as never
-      return emptyPage
-    })
+    stubInvoke({ count_trash: () => 137 })
 
     const { result } = renderHook(() => useTrashCount())
 
@@ -462,9 +465,10 @@ describe('useTrashCount', () => {
   // the App shell over a transient count query). We assert the hook
   // reaches that safe state and never throws.
   it('returns 0 (no crash) when count_trash rejects', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_trash') throw new Error('boom')
-      return emptyPage
+    stubInvoke({
+      count_trash: () => {
+        throw new Error('boom')
+      },
     })
 
     const { result } = renderHook(() => useTrashCount())
@@ -483,10 +487,7 @@ describe('useTrashCount', () => {
   // wrapper wraps the active-space ULID into `{ kind: 'active', space_id }`;
   // there is no cross-space trash count.
   it('sends an active SpaceScope carrying the current space id', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_trash') return 3 as unknown as never
-      return emptyPage
-    })
+    stubInvoke({ count_trash: () => 3 })
 
     renderHook(() => useTrashCount())
     await act(async () => {
@@ -504,10 +505,7 @@ describe('useTrashCount', () => {
   // touches the IPC, so a malformed/global scope can never leak across spaces.
   it('short-circuits to 0 without calling count_trash when no space is active', async () => {
     useSpaceStore.setState({ currentSpaceId: null })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'count_trash') return 99 as unknown as never
-      return emptyPage
-    })
+    stubInvoke({ count_trash: () => 99 })
 
     const { result } = renderHook(() => useTrashCount())
     await act(async () => {

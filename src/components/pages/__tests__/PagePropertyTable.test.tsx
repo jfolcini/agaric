@@ -17,6 +17,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import type { AppError } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
@@ -98,26 +104,51 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/**
+ * The `list_property_defs` envelope.
+ *
+ * #4668 — the stubs this replaced omitted `total_count`, which
+ * `PageResponse<T>` always carries (it is serialised unconditionally, so
+ * consumers read it without an existence check).
+ */
+function defsPage(defs: PropertyDefinition[]): CommandReturns['list_property_defs'] {
+  return { items: defs, next_cursor: null, has_more: false, total_count: null }
+}
+
+/**
+ * `set_property` answers with the saved block row inside the op-ref envelope
+ * (`WithOps<BlockRow>`); the stubs this replaced resolved `undefined`.
+ */
+const setPropertyResult: CommandReturns['set_property'] = withOps(makeBlockRow({ id: 'PAGE_1' }))
+
+/** `delete_property` answers `WithOps<DeletePropertyResponse>`, not nothing. */
+function deletePropertyResult(key: string): CommandReturns['delete_property'] {
+  return withOps({ block_id: 'PAGE_1', key })
+}
+
 /** Standard mock: returns given properties and definitions for relevant commands. */
 function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
-  mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-    const a = args as Record<string, unknown> | undefined
-    if (cmd === 'get_properties') return props
-    if (cmd === 'list_property_defs') return { items: defs, next_cursor: null, has_more: false }
-    if (cmd === 'set_property') return undefined
-    if (cmd === 'delete_property') return undefined
-    if (cmd === 'create_property_def') {
-      return makeDef((a?.['key'] as string) ?? 'new', (a?.['valueType'] as string) ?? 'text')
-    }
-    if (cmd === 'update_property_def_options') {
-      const d = defs.find((def) => def.key === a?.['key'])
-      return { ...d, key: a?.['key'] as string, options: a?.['options'] as string }
-    }
-    // PageHeader also calls these in integration
-    if (cmd === 'list_blocks')
-      return { items: [], next_cursor: null, has_more: false, total_count: null }
-    if (cmd === 'list_tags_for_block') return []
-    return null
+  stubInvoke({
+    get_properties: () => props,
+    list_property_defs: () => defsPage(defs),
+    set_property: () => setPropertyResult,
+    delete_property: (args) => deletePropertyResult(args['key'] as string),
+    create_property_def: (args) =>
+      makeDef(
+        (args['key'] as string | undefined) ?? 'new',
+        (args['valueType'] as string | undefined) ?? 'text',
+      ),
+    // A def the backend re-sends in full; the stub this replaced spread a
+    // `find()` that could be `undefined`, dropping `value_type` / `created_at`.
+    update_property_def_options: (args) => {
+      const key = args['key'] as string
+      const existing = defs.find((def) => def.key === key)
+      return makeDef(key, existing?.value_type ?? 'select', args['options'] as string)
+    },
   })
 }
 
@@ -166,8 +197,12 @@ describe('PagePropertyTable rendering', () => {
   })
 
   it('shows loading skeletons while data loads', async () => {
-    // Never-resolving promise to simulate loading
-    mockedInvoke.mockImplementation(() => new Promise(() => {}))
+    // Never-resolving promises to simulate loading: both halves of the
+    // parallel load stay pending.
+    stubInvoke({
+      get_properties: () => new Promise<never>(() => {}),
+      list_property_defs: () => new Promise<never>(() => {}),
+    })
 
     const { container } = render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
@@ -565,21 +600,18 @@ describe('PagePropertyTable add property flow', () => {
     const props: PropertyRow[] = []
     const defs: PropertyDefinition[] = []
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      const a = args as Record<string, unknown> | undefined
-      if (cmd === 'get_properties') return [...props]
-      if (cmd === 'list_property_defs')
-        return { items: [...defs], next_cursor: null, has_more: false }
-      if (cmd === 'create_property_def') {
-        const newDef = makeDef(a?.['key'] as string, (a?.['valueType'] as string) ?? 'text')
+    stubInvoke({
+      get_properties: () => [...props],
+      list_property_defs: () => defsPage([...defs]),
+      create_property_def: (args) => {
+        const newDef = makeDef(
+          args['key'] as string,
+          (args['valueType'] as string | undefined) ?? 'text',
+        )
         defs.push(newDef)
         return newDef
-      }
-      if (cmd === 'set_property') return undefined
-      if (cmd === 'list_blocks')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_for_block') return []
-      return null
+      },
+      set_property: () => setPropertyResult,
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -626,14 +658,9 @@ describe('PagePropertyTable add property flow', () => {
     const props: PropertyRow[] = []
     const defs: PropertyDefinition[] = []
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return [...props]
-      if (cmd === 'list_property_defs')
-        return { items: [...defs], next_cursor: null, has_more: false }
-      if (cmd === 'list_blocks')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_for_block') return []
-      return null
+    stubInvoke({
+      get_properties: () => [...props],
+      list_property_defs: () => defsPage([...defs]),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -675,9 +702,8 @@ describe('PagePropertyTable add property flow', () => {
 
 describe('PagePropertyTable error handling', () => {
   it('load error shows toast', async () => {
-    mockedInvoke.mockImplementation(async () => {
-      throw new Error('backend error')
-    })
+    const fail = () => Promise.reject(new Error('backend error'))
+    stubInvoke({ get_properties: fail, list_property_defs: fail })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
 
@@ -691,10 +717,9 @@ describe('PagePropertyTable error handling', () => {
     // still render the property row from the successful side and surface the
     // defs failure via reportIpcError instead of failing the whole load.
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
-      if (cmd === 'list_property_defs') throw new Error('defs IPC failed')
-      return null
+    stubInvoke({
+      get_properties: () => [makeProp('author', { value_text: 'Alice' })],
+      list_property_defs: () => Promise.reject(new Error('defs IPC failed')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
@@ -728,16 +753,10 @@ describe('PagePropertyTable error handling', () => {
 
   it('save error shows toast', async () => {
     const user = userEvent.setup()
-    let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
-      if (cmd === 'list_property_defs')
-        return { items: [makeDef('author', 'text')], next_cursor: null, has_more: false }
-      if (cmd === 'set_property') {
-        callCount++
-        if (callCount >= 1) throw new Error('save failed')
-      }
-      return null
+    stubInvoke({
+      get_properties: () => [makeProp('author', { value_text: 'Alice' })],
+      list_property_defs: () => defsPage([makeDef('author', 'text')]),
+      set_property: () => Promise.reject(new Error('save failed')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
@@ -765,12 +784,10 @@ describe('PagePropertyTable error handling', () => {
 describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   it('delete_property rejection shows deleteFailed toast', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
-      if (cmd === 'list_property_defs')
-        return { items: [makeDef('author', 'text')], next_cursor: null, has_more: false }
-      if (cmd === 'delete_property') throw new Error('backend delete error')
-      return null
+    stubInvoke({
+      get_properties: () => [makeProp('author', { value_text: 'Alice' })],
+      list_property_defs: () => defsPage([makeDef('author', 'text')]),
+      delete_property: () => Promise.reject(new Error('backend delete error')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
@@ -802,12 +819,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     // #2792 — a number def persists immediately on add (buildInitParams gives
     // a valid `value_num: 0`), so this exercises the add-time failure path.
     // (text/select defs no longer persist on add — see the draft-row tests.)
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [makeDef('weight', 'number')], next_cursor: null, has_more: false }
-      if (cmd === 'set_property') throw new Error('backend set error')
-      return null
+    stubInvoke({
+      get_properties: () => [],
+      list_property_defs: () => defsPage([makeDef('weight', 'number')]),
+      set_property: () => Promise.reject(new Error('backend set error')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -826,19 +841,19 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   it('get_properties rejection during handleAddFromDef shows addFailed toast', async () => {
     const user = userEvent.setup()
     let addPhase = false
-    // #2792 — number def (see note above): still init-persists on add.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') {
+    // #2792 — number def (see note above): still init-persists on add. The
+    // reload AFTER that write is the one that fails, so `get_properties`
+    // keys on the phase the `set_property` handler flips.
+    stubInvoke({
+      get_properties: () => {
         if (addPhase) throw new Error('backend reload error')
         return []
-      }
-      if (cmd === 'list_property_defs')
-        return { items: [makeDef('weight', 'number')], next_cursor: null, has_more: false }
-      if (cmd === 'set_property') {
+      },
+      list_property_defs: () => defsPage([makeDef('weight', 'number')]),
+      set_property: () => {
         addPhase = true
-        return undefined
-      }
-      return null
+        return setPropertyResult
+      },
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -867,11 +882,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   // wire shape.
   it('create_property_def rejection shows the validation message from backend', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def') {
+    stubInvoke({
+      get_properties: () => [],
+      list_property_defs: () => defsPage([]),
+      create_property_def: () => {
         const rejection: AppError = {
           kind: 'validation',
           code: null,
@@ -880,8 +894,7 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
             'key would be rejected by that type (2 stored as number).',
         }
         throw rejection
-      }
-      return null
+      },
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -917,12 +930,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   // showing every thrown message.
   it('create_property_def transport Error shows the localized fallback', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def') throw new Error('ipc channel closed')
-      return null
+    stubInvoke({
+      get_properties: () => [],
+      list_property_defs: () => defsPage([]),
+      create_property_def: () => Promise.reject(new Error('ipc channel closed')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -951,16 +962,14 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
 
   it('create_property_def rejection without message shows fallback toast', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def') {
+    stubInvoke({
+      get_properties: () => [],
+      list_property_defs: () => defsPage([]),
+      create_property_def: () => {
         const err = new Error()
         Reflect.set(err, 'message', undefined)
         throw err
-      }
-      return null
+      },
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -992,25 +1001,25 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     // "creates a draft row" tests), so this exercises the init-persist
     // failure path with a number def instead, which still calls
     // `set_property` immediately after creation.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      const a = args as Record<string, unknown> | undefined
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def')
-        return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'number')
+    stubInvoke({
+      get_properties: () => [],
+      list_property_defs: () => defsPage([]),
+      create_property_def: (args) =>
+        makeDef(
+          (args['key'] as string | undefined) ?? 'myprop',
+          (args['valueType'] as string | undefined) ?? 'number',
+        ),
       // #4399 — the wire shape a real `set_property` rejection has (an
       // `AppError` OBJECT, which is what `unwrap` throws), not an `Error`,
       // which `typedError` rethrows and no backend rejection ever produces.
-      if (cmd === 'set_property') {
+      set_property: () => {
         const rejection: AppError = {
           kind: 'validation',
           code: null,
           message: 'set failed after create',
         }
         throw rejection
-      }
-      return null
+      },
     })
 
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
@@ -1043,7 +1052,8 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   })
 
   it('component does not crash when all invoke calls reject on mount', async () => {
-    mockedInvoke.mockRejectedValue(new Error('total failure'))
+    const fail = () => Promise.reject(new Error('total failure'))
+    stubInvoke({ get_properties: fail, list_property_defs: fail })
 
     const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
 
@@ -1330,20 +1340,10 @@ describe('PagePropertyTable edit select options', () => {
 
   it('shows error toast when save fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties') return [makeProp('stage', { value_text: 'TODO' })]
-      if (cmd === 'list_property_defs')
-        return {
-          items: [makeDef('stage', 'select', '["TODO","DOING"]')],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      if (cmd === 'update_property_def_options') throw new Error('backend error')
-      if (cmd === 'list_blocks')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_for_block') return []
-      return null
+    stubInvoke({
+      get_properties: () => [makeProp('stage', { value_text: 'TODO' })],
+      list_property_defs: () => defsPage([makeDef('stage', 'select', '["TODO","DOING"]')]),
+      update_property_def_options: () => Promise.reject(new Error('backend error')),
     })
 
     render(<PagePropertyTable pageId="PAGE_1" />)
