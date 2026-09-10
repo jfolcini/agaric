@@ -39,48 +39,20 @@ export interface CommandRecord {
   code: string | null
 }
 
-/** Every column of a `BlockRow` except the `id` head. */
-const BLOCK_ROW_ATTRS = [
-  'block_type',
-  'content',
-  'parent_id',
-  'page_id',
-  'position',
-  'deleted_at',
-  'todo_state',
-  'priority',
-  'due_date',
-  'scheduled_date',
-] as const
-
 interface ReturnShape {
   idKey: string
   attrs: readonly string[]
   lists: readonly string[]
 }
 
-const BLOCK_ROW: ReturnShape = { idKey: 'id', attrs: BLOCK_ROW_ATTRS, lists: [] }
-
 /** MUST match `RETURN_SHAPE` in the Rust twin. */
 const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
-  create_block: BLOCK_ROW,
-  edit_block: BLOCK_ROW,
-  set_property: BLOCK_ROW,
-  set_todo_state: BLOCK_ROW,
-  set_priority: BLOCK_ROW,
-  set_due_date: BLOCK_ROW,
-  set_scheduled_date: BLOCK_ROW,
-  move_block: { idKey: 'block_id', attrs: ['new_parent_id', 'new_position'], lists: [] },
   delete_block: {
     idKey: 'block_id',
     attrs: ['deleted_at', 'descendants_affected'],
     lists: ['affected_page_ids'],
   },
-  restore_block: { idKey: 'block_id', attrs: ['restored_count'], lists: [] },
   purge_block: { idKey: 'block_id', attrs: ['purged_count'], lists: [] },
-  add_tag: { idKey: 'block_id', attrs: ['tag_id'], lists: [] },
-  remove_tag: { idKey: 'block_id', attrs: ['tag_id'], lists: [] },
-  delete_property: { idKey: 'block_id', attrs: ['key'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */

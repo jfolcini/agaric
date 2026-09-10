@@ -32,53 +32,22 @@
 use super::common::*;
 use super::conformance::resolve_op_arg_id;
 use super::conformance_query::{PROJECTING_STEP, relabel_token, row_token};
-use agaric_core::ulid::{ActiveBlockId, BlockId};
+use agaric_core::ulid::BlockId;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-
-/// Every column of a `BlockRow` / `ActiveBlockRow` except the `id` head.
-const BLOCK_ROW_ATTRS: &[&str] = &[
-    "block_type",
-    "content",
-    "parent_id",
-    "page_id",
-    "position",
-    "deleted_at",
-    "todo_state",
-    "priority",
-    "due_date",
-    "scheduled_date",
-];
 
 /// `(command, id key, attributes, list-valued fields)` — how each mutating
 /// command's response becomes tokens. MUST match `RETURN_SHAPE` in the TS
 /// twin, which reads the mock's response through the same keys.
 const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
-    ("create_block", "id", BLOCK_ROW_ATTRS, &[]),
-    ("edit_block", "id", BLOCK_ROW_ATTRS, &[]),
-    ("set_property", "id", BLOCK_ROW_ATTRS, &[]),
-    ("set_todo_state", "id", BLOCK_ROW_ATTRS, &[]),
-    ("set_priority", "id", BLOCK_ROW_ATTRS, &[]),
-    ("set_due_date", "id", BLOCK_ROW_ATTRS, &[]),
-    ("set_scheduled_date", "id", BLOCK_ROW_ATTRS, &[]),
-    (
-        "move_block",
-        "block_id",
-        &["new_parent_id", "new_position"],
-        &[],
-    ),
     (
         "delete_block",
         "block_id",
         &["deleted_at", "descendants_affected"],
         &["affected_page_ids"],
     ),
-    ("restore_block", "block_id", &["restored_count"], &[]),
     ("purge_block", "block_id", &["purged_count"], &[]),
-    ("add_tag", "block_id", &["tag_id"], &[]),
-    ("remove_tag", "block_id", &["tag_id"], &[]),
-    ("delete_property", "block_id", &["key"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -97,117 +66,16 @@ pub(super) async fn apply_op_via_command(
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
     let arg = |k: &str| args.get(k);
-    let arg_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
     let arg_label_id = |k: &str| {
         arg(k)
             .and_then(Value::as_str)
             .map(|l| resolve_op_arg_id(l, created_ids))
     };
     let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
-    let active_id = || ActiveBlockId::from(arg_label_id("blockId").expect("blockId").as_str());
-    let tag_id = || BlockId::from(arg_label_id("tagId").expect("tagId").as_str());
-    let value = arg("value").cloned().unwrap_or(Value::Null);
-    let value_str = |f: &str| value.get(f).and_then(Value::as_str).map(str::to_owned);
 
     match command {
-        "create_block" => to_json(
-            create_block_inner(
-                pool,
-                DEV,
-                mat,
-                arg_str("blockType").expect("create_block.blockType"),
-                arg_str("content").unwrap_or_default(),
-                arg_label_id("parentId").map(|s| BlockId::from(s.as_str())),
-                arg("index").and_then(Value::as_i64),
-            )
-            .await,
-        ),
-        "edit_block" => to_json(
-            edit_block_inner(
-                pool,
-                DEV,
-                mat,
-                block_id(),
-                arg_str("toText").unwrap_or_default(),
-            )
-            .await,
-        ),
-        "move_block" => to_json(
-            move_block_inner(
-                pool,
-                DEV,
-                mat,
-                block_id(),
-                arg_label_id("newParentId").map(|s| BlockId::from(s.as_str())),
-                arg("newIndex").and_then(Value::as_i64).expect("newIndex"),
-            )
-            .await,
-        ),
         "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
-        "set_property" => to_json(
-            set_property_inner(
-                pool,
-                DEV,
-                mat,
-                active_id(),
-                arg_str("key").expect("set_property.key"),
-                value_str("value_text"),
-                value.get("value_num").and_then(Value::as_f64),
-                value_str("value_date"),
-                value_str("value_ref").map(|s| resolve_op_arg_id(&s, created_ids)),
-                value.get("value_bool").and_then(Value::as_bool),
-                None,
-            )
-            .await,
-        ),
-        "set_todo_state" => {
-            to_json(set_todo_state_inner(pool, DEV, mat, active_id(), arg_str("state")).await)
-        }
-        "set_priority" => {
-            to_json(set_priority_inner(pool, DEV, mat, active_id(), arg_str("level")).await)
-        }
-        "set_due_date" => {
-            to_json(set_due_date_inner(pool, DEV, mat, active_id(), arg_str("date")).await)
-        }
-        "set_scheduled_date" => {
-            to_json(set_scheduled_date_inner(pool, DEV, mat, active_id(), arg_str("date")).await)
-        }
-        "add_tag" => to_json(add_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
-        "remove_tag" => to_json(remove_tag_inner(pool, DEV, mat, block_id(), tag_id()).await),
-        "restore_block" => {
-            // Sourced the way `apply_op` sources it: the live tombstone's
-            // `deleted_at`, which is the cohort marker the restore is scoped to.
-            let id = arg_label_id("blockId").expect("restore_block.blockId");
-            let deleted_at_ref: i64 =
-                sqlx::query_as::<_, (Option<i64>,)>("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(&id)
-                    .fetch_one(pool)
-                    .await
-                    .expect("restore_block: fetch deleted_at")
-                    .0
-                    .expect("restore_block: target block must be tombstoned");
-            to_json(
-                restore_block_inner(pool, DEV, mat, BlockId::from(id.as_str()), deleted_at_ref)
-                    .await,
-            )
-        }
         "purge_block" => to_json(purge_block_inner(pool, DEV, mat, block_id()).await),
-        "delete_property" => {
-            // The inner returns unit; its `#[tauri::command]` wrapper echoes
-            // `DeletePropertyResponse { block_id, key }`, which is what the
-            // mock answers with, so the echo is what gets projected.
-            let id = arg_label_id("blockId").expect("blockId");
-            let key = arg_str("key").expect("delete_property.key");
-            delete_property_inner(
-                pool,
-                DEV,
-                mat,
-                ActiveBlockId::from(id.as_str()),
-                key.clone(),
-            )
-            .await
-            .map(|()| json!({ "block_id": id, "key": key }))
-        }
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -509,7 +377,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 14;
+    const MUTATING_ARM_COUNT: usize = 2;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

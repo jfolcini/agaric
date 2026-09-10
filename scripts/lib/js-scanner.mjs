@@ -32,7 +32,7 @@
 // ─── The count was wrong: it is not three ───────────────────────────
 //
 // #3991 asked whether a FOURTH copy existed, on the grounds that nobody had
-// looked for the third. More do, and they are BYTE-IDENTICAL to
+// looked for the third. Two more do, and they are BYTE-IDENTICAL to
 // each other and to the `stripTsComments` this module just replaced — same
 // `/*…*/`-first `String.replace` pair, same absence of string awareness, same
 // fail-open:

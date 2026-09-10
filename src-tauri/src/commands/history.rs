@@ -1623,7 +1623,7 @@ type PendingReverse = (OpRef, OpPayload, i64, String);
 /// sort the batch newest-first. Returns the reverses and the number of
 /// non-reversible ops skipped (always 0 unless `skip_non_reversible`).
 ///
-/// Two batched reads, whatever the batch size:
+/// A bounded number of batched reads, whatever the batch size:
 ///   1. one UNION-ALL `op_log` lookup for every input `OpRef`
 ///      (`get_op_records_batch`),
 ///   2. one UNION-ALL prior-context fetch per op-type present in

@@ -121,3 +121,4 @@ e2e-tauri/artifacts/
 # each run renames the previous one to `mutants.out.old` (#3386).
 mutants.out/
 mutants.out.old/
+scan.out/

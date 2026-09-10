@@ -28,6 +28,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePageHeading } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   mockInvokeCommands,
@@ -91,18 +92,6 @@ const tagRows: CommandReturns['list_all_tags_in_space'] = [
   { tag_id: 'TAG_A', name: 'alpha', usage_count: 2, updated_at: '2025-01-01T00:00:00Z' },
   { tag_id: 'TAG_B', name: 'beta', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
 ]
-
-/** A page row as `list_all_pages_in_space` sends it (a full `PageHeading`). */
-function pageRow(id: string, content: string): CommandReturns['list_all_pages_in_space'][number] {
-  return {
-    id,
-    content,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-  }
-}
 
 function renderToolbar(overrides: Partial<Parameters<typeof PageBrowserBatchToolbar>[0]> = {}) {
   const onSelectAll = vi.fn()
@@ -805,8 +794,8 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
     useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
     stubInvoke({
       list_all_pages_in_space: () => [
-        pageRow('P_MOVED', 'Moved Page'),
-        pageRow('P_STAYS_OTHER', 'Stays Page'),
+        makePageHeading({ id: 'P_MOVED', content: 'Moved Page' }),
+        makePageHeading({ id: 'P_STAYS_OTHER', content: 'Stays Page' }),
       ],
       delete_blocks_by_ids: () => trashReply(['P_ROOT'], ['P_MOVED']),
     })
@@ -837,9 +826,9 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
     const user = userEvent.setup()
     stubInvoke({
       list_all_pages_in_space: () => [
-        pageRow('P_ROOT', 'Root Page'),
-        pageRow('P_NESTED', 'Nested Page'),
-        pageRow('P_STAYS', 'Stays Page'),
+        makePageHeading({ id: 'P_ROOT', content: 'Root Page' }),
+        makePageHeading({ id: 'P_NESTED', content: 'Nested Page' }),
+        makePageHeading({ id: 'P_STAYS', content: 'Stays Page' }),
       ],
       // The user selected P_ROOT; the cascade also took its page child.
       delete_blocks_by_ids: () => trashReply(['P_ROOT'], ['P_NESTED']),
@@ -967,8 +956,8 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
     const user = userEvent.setup()
     stubInvoke({
       list_all_pages_in_space: () => [
-        pageRow('P_MOVED', 'Moved Page'),
-        pageRow('P_STAYS', 'Stays Page'),
+        makePageHeading({ id: 'P_MOVED', content: 'Moved Page' }),
+        makePageHeading({ id: 'P_STAYS', content: 'Stays Page' }),
       ],
       move_blocks_to_space: () => 1,
     })
