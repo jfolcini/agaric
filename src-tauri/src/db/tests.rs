@@ -6535,3 +6535,86 @@ async fn migration_0118_sweeps_only_the_unindexable_fts_rows_4904() {
          soft-deleted, purged and content-NULL ones"
     );
 }
+
+/// #4551 / migration 0119 — `block_links.kind` is derived from the token in
+/// the source's content for every pre-existing row, under the one rule the
+/// reindexer and the mock share: `block_ref` iff the content carries the exact
+/// `((target))` token. The four shapes below are the ones that tell the rule
+/// apart from its plausible neighbours: `[[X]]` only, `((X))` only, both forms
+/// on one pair (`block_ref` wins — the key holds one row), and the
+/// mixed-delimiter `[[X))` that `ULID_LINK_RE` tolerates (`page_link`).
+#[tokio::test]
+async fn block_links_0119_kind_derives_from_content_4551() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 118).await;
+
+    let target = "01HZ000000000000000000TGT1";
+    let sources = [
+        (
+            "01HZ000000000000000000SRC1",
+            "see [[01HZ000000000000000000TGT1]]",
+        ),
+        (
+            "01HZ000000000000000000SRC2",
+            "quote ((01HZ000000000000000000TGT1))",
+        ),
+        (
+            "01HZ000000000000000000SRC3",
+            "both [[01HZ000000000000000000TGT1]] and ((01HZ000000000000000000TGT1))",
+        ),
+        (
+            "01HZ000000000000000000SRC4",
+            "mixed [[01HZ000000000000000000TGT1))",
+        ),
+    ];
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'target')")
+        .bind(target)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (id, content) in sources {
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
+            .bind(id)
+            .bind(content)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(id)
+            .bind(target)
+            .execute(&pool)
+            .await
+            .expect("pre-0119 block_links has no kind column to fill");
+    }
+
+    apply_migrations_to_head(&pool, 118).await;
+
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, kind FROM block_links ORDER BY source_id")
+            .fetch_all(&pool)
+            .await
+            .expect("read block_links.kind back after 0119");
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "01HZ000000000000000000SRC1".to_owned(),
+                "page_link".to_owned()
+            ),
+            (
+                "01HZ000000000000000000SRC2".to_owned(),
+                "block_ref".to_owned()
+            ),
+            (
+                "01HZ000000000000000000SRC3".to_owned(),
+                "block_ref".to_owned()
+            ),
+            (
+                "01HZ000000000000000000SRC4".to_owned(),
+                "page_link".to_owned()
+            ),
+        ],
+        "0119 keeps every pre-existing pair and derives its kind from the token: \
+         `((X))` present → block_ref (also when `[[X]]` is present too), otherwise page_link"
+    );
+}

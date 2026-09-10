@@ -1,6 +1,6 @@
 use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use agaric_core::error::AppError;
 
@@ -77,8 +77,9 @@ pub async fn unresolved_link_sources(
 ///
 /// # Why `to_insert.is_empty()` is a complete short-circuit
 ///
-/// `to_insert = new_targets − old_targets`, and `old_targets` is exactly the
-/// set of targets that already have a `block_links` row. Empty `to_insert`
+/// `to_insert` is every `new_targets` entry absent from `old_targets` or held
+/// there under another kind, and `old_targets` is exactly the set of targets
+/// that already have a `block_links` row. Empty `to_insert`
 /// therefore means every token in the current content is ALREADY linked, so
 /// the desired unresolved set is empty and the only work left is dropping
 /// stale rows — which is a single source-keyed DELETE, and only when there
@@ -90,7 +91,7 @@ pub async fn unresolved_link_sources(
 /// Otherwise — `to_insert` non-empty, i.e. every create or edit that
 /// establishes at least one target not already in `block_links` — the
 /// recompute is pushed into SQL and reads `block_links` back, rather than
-/// being predicted in Rust from `to_insert`: the INSERT is `OR IGNORE` with an
+/// being predicted in Rust from `to_insert`: the INSERT is an upsert with an
 /// EXISTS guard and a cross-space subquery, so which of the offered targets
 /// actually landed is a fact about the database, not something the caller
 /// knows. Reading it back is one statement and cannot drift from the filter
@@ -102,7 +103,7 @@ pub async fn unresolved_link_sources(
 async fn sync_unresolved_links(
     conn: &mut sqlx::SqliteConnection,
     source_id: &str,
-    new_targets: &HashSet<String>,
+    new_targets: &HashMap<String, &'static str>,
     had_unresolved_rows: bool,
     all_tokens_already_linked: bool,
 ) -> Result<(), AppError> {
@@ -118,7 +119,7 @@ async fn sync_unresolved_links(
         return Ok(());
     }
 
-    let targets: Vec<&String> = new_targets.iter().collect();
+    let targets: Vec<&String> = new_targets.keys().collect();
     let targets_json = serde_json::to_string(&targets)?;
 
     // Drop rows the current content no longer names, plus rows whose target
@@ -451,6 +452,19 @@ pub async fn backfill_block_links(pool: &SqlitePool) -> Result<bool, AppError> {
 // reindex_block_links (p1-t21)
 // ---------------------------------------------------------------------------
 
+/// `block_links.kind` for a `(content, target)` pair (#4551): `block_ref` iff
+/// `content` carries the exact `((target))` token. The same rule as migration
+/// 0119's `instr()` backfill and the mock's `classifyLinkKind`; a pair whose
+/// content carries both forms is a `block_ref`, and a mixed-delimiter token
+/// such as `[[X))` is a `page_link`.
+pub fn classify_link_kind(content: &str, target: &str) -> &'static str {
+    if content.contains(&format!("(({target}))")) {
+        "block_ref"
+    } else {
+        "page_link"
+    }
+}
+
 /// Incremental reindex of `block_links` for a single block.
 ///
 /// 1. Opens a transaction for a consistent read snapshot.
@@ -522,10 +536,14 @@ pub async fn reindex_block_links_conn(
         None => String::new(),
     };
 
-    // 2. Parse [[ULID]] and ((ULID)) tokens
-    let new_targets: HashSet<String> = super::ulid_link_re()
+    // 2. Parse [[ULID]] and ((ULID)) tokens, each classified by kind.
+    let new_targets: HashMap<String, &'static str> = super::ulid_link_re()
         .captures_iter(&content)
-        .map(|cap| cap[1].to_string())
+        .map(|cap| {
+            let target = cap[1].to_string();
+            let kind = classify_link_kind(&content, &target);
+            (target, kind)
+        })
         .collect();
 
     // 3. Get existing outbound links (same tx — consistent snapshot), AND
@@ -539,29 +557,42 @@ pub async fn reindex_block_links_conn(
     //    cost of the whole #4118 mechanism at zero statements for a block with
     //    no link tokens.
     let existing_rows = sqlx::query!(
-        "SELECT target_id, CAST(0 AS INTEGER) AS unresolved \
+        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
            FROM block_links WHERE source_id = ?1 \
          UNION ALL \
-         SELECT target_id, CAST(1 AS INTEGER) AS unresolved \
+         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
            FROM block_links_unresolved WHERE source_id = ?1",
         block_id,
     )
     .fetch_all(&mut *conn)
     .await?;
 
-    let mut old_targets: HashSet<String> = HashSet::new();
+    let mut old_targets: HashMap<String, String> = HashMap::new();
     let mut had_unresolved_rows = false;
     for row in existing_rows {
         if row.unresolved == 0 {
-            old_targets.insert(row.target_id);
+            old_targets.insert(row.target_id, row.kind);
         } else {
             had_unresolved_rows = true;
         }
     }
 
-    // 4. Diff
-    let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    // 4. Diff. A pair whose kind changed is written too: the INSERT below
+    //    upserts `kind`, so a second run over unchanged content still writes
+    //    nothing.
+    let to_delete: Vec<&String> = old_targets
+        .keys()
+        .filter(|t| !new_targets.contains_key(*t))
+        .collect();
+    let to_insert: Vec<(&String, &'static str)> = new_targets
+        .iter()
+        .map(|(t, kind)| (t, *kind))
+        .filter(|(t, kind)| {
+            old_targets
+                .get(t.as_str())
+                .is_none_or(|old| old.as_str() != *kind)
+        })
+        .collect();
 
     // Phase 3 — filter out cross-space targets before inserting.
     // The write-time enforcement gate (Phase 2) rejects new cross-space
@@ -632,7 +663,7 @@ pub async fn reindex_block_links_conn(
     }
 
     if !to_insert.is_empty() {
-        // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
+        // The upsert absorbs PK conflicts but does NOT suppress FK
         // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
         // targets out of the result set instead of relying on the FK.
         // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
@@ -648,16 +679,20 @@ pub async fn reindex_block_links_conn(
         // (genuinely unresolvable / soft-deleted holder) yield
         // `NULL = ?3` → falsy → dropped, exactly as the prior loop did
         // (it only pushed `Ok(Some(space))` matches).
+        // `[target, kind]` pairs; the upsert is what lands a kind change on a
+        // pair that already exists (#4551).
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
-            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
-             SELECT ?1, je.value FROM json_each(?2) je \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
+            "INSERT INTO block_links (source_id, target_id, kind) \
+             SELECT ?1, json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]') \
+             FROM json_each(?2) je \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[0]') AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
                    SELECT COALESCE(tgt.space_id, tp.space_id) FROM blocks tgt \
                    LEFT JOIN blocks tp ON tp.id = tgt.page_id AND tp.deleted_at IS NULL \
-                   WHERE tgt.id = je.value AND tgt.deleted_at IS NULL \
-                   LIMIT 1))",
+                   WHERE tgt.id = json_extract(je.value, '$[0]') AND tgt.deleted_at IS NULL \
+                   LIMIT 1)) \
+             ON CONFLICT(source_id, target_id) DO UPDATE SET kind = excluded.kind",
         )
         .bind(block_id)
         .bind(&insert_json)
@@ -715,39 +750,56 @@ pub async fn reindex_block_links_split(
         None => String::new(),
     };
 
-    // 2. Parse [[ULID]] and ((ULID)) tokens
-    let new_targets: HashSet<String> = super::ulid_link_re()
+    // 2. Parse [[ULID]] and ((ULID)) tokens, each classified by kind.
+    let new_targets: HashMap<String, &'static str> = super::ulid_link_re()
         .captures_iter(&content)
-        .map(|cap| cap[1].to_string())
+        .map(|cap| {
+            let target = cap[1].to_string();
+            let kind = classify_link_kind(&content, &target);
+            (target, kind)
+        })
         .collect();
 
     // 3. Get existing outbound links from read pool, and (#4118) the source's
     //    currently-recorded unresolved tokens — one round-trip, exactly as in
     //    the single-pool variant.
     let existing_rows = sqlx::query!(
-        "SELECT target_id, CAST(0 AS INTEGER) AS unresolved \
+        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
            FROM block_links WHERE source_id = ?1 \
          UNION ALL \
-         SELECT target_id, CAST(1 AS INTEGER) AS unresolved \
+         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
            FROM block_links_unresolved WHERE source_id = ?1",
         block_id,
     )
     .fetch_all(read_pool)
     .await?;
 
-    let mut old_targets: HashSet<String> = HashSet::new();
+    let mut old_targets: HashMap<String, String> = HashMap::new();
     let mut had_unresolved_rows = false;
     for row in existing_rows {
         if row.unresolved == 0 {
-            old_targets.insert(row.target_id);
+            old_targets.insert(row.target_id, row.kind);
         } else {
             had_unresolved_rows = true;
         }
     }
 
-    // 4. Diff
-    let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    // 4. Diff. A pair whose kind changed is written too: the INSERT below
+    //    upserts `kind`, so a second run over unchanged content still writes
+    //    nothing.
+    let to_delete: Vec<&String> = old_targets
+        .keys()
+        .filter(|t| !new_targets.contains_key(*t))
+        .collect();
+    let to_insert: Vec<(&String, &'static str)> = new_targets
+        .iter()
+        .map(|(t, kind)| (t, *kind))
+        .filter(|(t, kind)| {
+            old_targets
+                .get(t.as_str())
+                .is_none_or(|old| old.as_str() != *kind)
+        })
+        .collect();
 
     // #375: resolve the source space so the INSERT below can exclude
     // cross-space targets, identically to the single-pool `reindex_block_links`
@@ -796,7 +848,7 @@ pub async fn reindex_block_links_split(
     }
 
     if !to_insert.is_empty() {
-        // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
+        // The upsert absorbs PK conflicts but does NOT suppress FK
         // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
         // targets out of the result set instead of relying on the FK.
         // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
@@ -812,16 +864,20 @@ pub async fn reindex_block_links_split(
         // space equals the source's (a still-NULL target space yields
         // `NULL = ?3` → dropped). See the single-pool variant for why the
         // owning-page fallback is load-bearing rather than cosmetic.
+        // `[target, kind]` pairs; the upsert is what lands a kind change on a
+        // pair that already exists (#4551).
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
-            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
-             SELECT ?1, je.value FROM json_each(?2) je \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
+            "INSERT INTO block_links (source_id, target_id, kind) \
+             SELECT ?1, json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]') \
+             FROM json_each(?2) je \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[0]') AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
                    SELECT COALESCE(tgt.space_id, tp.space_id) FROM blocks tgt \
                    LEFT JOIN blocks tp ON tp.id = tgt.page_id AND tp.deleted_at IS NULL \
-                   WHERE tgt.id = je.value AND tgt.deleted_at IS NULL \
-                   LIMIT 1))",
+                   WHERE tgt.id = json_extract(je.value, '$[0]') AND tgt.deleted_at IS NULL \
+                   LIMIT 1)) \
+             ON CONFLICT(source_id, target_id) DO UPDATE SET kind = excluded.kind",
         )
         .bind(block_id)
         .bind(&insert_json)

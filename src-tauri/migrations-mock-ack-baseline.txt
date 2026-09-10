@@ -121,3 +121,6 @@
 0114_peer_refs_remote_device_name.sql
 0115_agenda_cache_block_id_index.sql
 0116_compaction_watermark.sql
+0117_agenda_cache_date_source_index.sql
+0118_sweep_unindexable_fts_rows.sql
+0119_block_links_kind.sql

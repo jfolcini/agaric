@@ -494,8 +494,8 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
     // Page links — the migration-0070 surface. Derive `source_page_id` by
     // joining each `block_links` edge to its source block's `page_id`. This is
     // the projection the mock reimplements in `deriveLinkEdges` / `pageLinkStats`.
-    let link_rows = sqlx::query_as::<_, (String, String, Option<String>)>(
-        "SELECT bl.source_id, bl.target_id, src.page_id \
+    let link_rows = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        "SELECT bl.source_id, bl.target_id, src.page_id, bl.kind \
          FROM block_links bl \
          JOIN blocks src ON src.id = bl.source_id",
     )
@@ -508,6 +508,7 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
             source_id: r.0,
             target_id: r.1,
             source_page_id: r.2,
+            kind: r.3,
         })
         .collect();
 

@@ -1,0 +1,193 @@
+{
+  "description": "#4551 — `block_links.kind` (migration 0119) through the `page_links` projection. Three sources reach the same target block S6 through the token shapes the classifier tells apart: S2 page-links it (`[[S6]]`), S3 block-references it (`((S6))`), and S4 carries both forms on one pair, which the single-row primary key resolves to `block_ref`. The tokens arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S6]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "quote ((000000000000000000000000S6))",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "both [[000000000000000000000000S6]] and ((000000000000000000000000S6))",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Target page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "target block",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B2",
+        "source_page_id": "B1",
+        "target_id": "B6"
+      },
+      {
+        "kind": "block_ref",
+        "source_id": "B3",
+        "source_page_id": "B1",
+        "target_id": "B6"
+      },
+      {
+        "kind": "block_ref",
+        "source_id": "B4",
+        "source_page_id": "B1",
+        "target_id": "B6"
+      }
+    ],
+    "properties": []
+  },
+  "name": "block_ref_kind",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "see [[000000000000000000000000S6]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "quote ((000000000000000000000000S6))"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "both [[000000000000000000000000S6]] and ((000000000000000000000000S6))"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "B",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "C",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Target page",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "target block",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

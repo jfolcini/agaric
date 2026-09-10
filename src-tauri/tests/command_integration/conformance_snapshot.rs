@@ -67,6 +67,7 @@ pub struct RawLink {
     pub source_id: String,
     pub target_id: String,
     pub source_page_id: Option<String>,
+    pub kind: String,
 }
 
 /// A digest entry: the canonicalized op type and, for property ops, the key.
@@ -231,7 +232,7 @@ pub fn build_snapshot_with_order(state: RawState, canonical_order: &[String]) ->
                 sid.clone(),
                 tid.clone(),
                 spid_key,
-                json!({ "source_id": sid, "target_id": tid, "source_page_id": spid }),
+                json!({ "source_id": sid, "target_id": tid, "source_page_id": spid, "kind": l.kind }),
             )
         })
         .collect();

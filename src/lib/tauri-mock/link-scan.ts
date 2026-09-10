@@ -99,6 +99,24 @@ export interface MockLinkEdge {
   sourceId: string
   targetId: string
   sourcePageId: string | null
+  kind: MockLinkKind
+}
+
+/** `block_links.kind` (migration 0119). */
+export type MockLinkKind = 'page_link' | 'block_ref'
+
+/**
+ * `block_links.kind` for a `(content, targetId)` pair — the rule migration
+ * 0119's `instr()` backfill and the Rust `classify_link_kind` run: `block_ref`
+ * iff the content carries the exact `((targetId))` token. A pair carrying both
+ * forms is a `block_ref`; a mixed-delimiter token such as `[[X))` is a
+ * `page_link`.
+ */
+export function classifyLinkKind(
+  content: string | null | undefined,
+  targetId: string,
+): MockLinkKind {
+  return content?.includes(`((${targetId}))`) ? 'block_ref' : 'page_link'
 }
 
 /**
@@ -127,8 +145,14 @@ export function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>)
   const edges: MockLinkEdge[] = []
   for (const blk of allBlocks.values()) {
     const sourcePageId = (blk['page_id'] as string | null) ?? null
-    for (const targetId of scanLinkTargets(blk['content'] as string | null)) {
-      edges.push({ sourceId: blk['id'] as string, targetId, sourcePageId })
+    const content = blk['content'] as string | null
+    for (const targetId of scanLinkTargets(content)) {
+      edges.push({
+        sourceId: blk['id'] as string,
+        targetId,
+        sourcePageId,
+        kind: classifyLinkKind(content, targetId),
+      })
     }
   }
   return edges

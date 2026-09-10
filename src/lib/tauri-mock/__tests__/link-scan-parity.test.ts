@@ -26,7 +26,7 @@ import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
+import { classifyLinkKind, deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import {
   blockTags,
   blocks,
@@ -158,6 +158,38 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
       // Not vacuous: the (( ))-only source joins the pre-existing [[ ]] ones.
       expect(expectedSources(PAGE_B)).toEqual([A1, A2, BREF].toSorted())
+    })
+  })
+
+  // #4551 — `block_links.kind` (migration 0119): one rule in three places
+  // (the migration's `instr()` backfill, Rust `classify_link_kind`, and this
+  // mock), pinned here shape by shape and end to end through `deriveLinkEdges`.
+  describe('classifyLinkKind mirrors migration 0119', () => {
+    const X = 'XX'.padStart(26, '0')
+    const Y = 'YY'.padStart(26, '0')
+
+    it.each([
+      [`see [[${X}]]`, 'page_link'],
+      [`quote ((${X}))`, 'block_ref'],
+      [`both [[${X}]] and ((${X}))`, 'block_ref'],
+      [`mixed [[${X}))`, 'page_link'],
+      [`other ((${Y}))`, 'page_link'],
+      [null, 'page_link'],
+    ] as const)('%j is a %s', (content, kind) => {
+      expect(classifyLinkKind(content, X)).toBe(kind)
+    })
+
+    it('deriveLinkEdges carries the kind of every edge', () => {
+      const SRC = 'SRC'.padStart(26, '0')
+      const all = new Map<string, Record<string, unknown>>([
+        [X, makeBlock(X, 'content', 'x', null, 1)],
+        [Y, makeBlock(Y, 'content', 'y', null, 2)],
+        [SRC, makeBlock(SRC, 'content', `[[${X}]] then ((${Y}))`, null, 3)],
+      ])
+      expect(deriveLinkEdges(all).map((e) => [e.targetId, e.kind])).toEqual([
+        [X, 'page_link'],
+        [Y, 'block_ref'],
+      ])
     })
   })
 })
