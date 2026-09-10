@@ -29,6 +29,23 @@ export const references: Record<string, string> = {
   'references.filtersAppliedBadge': '{{count}}',
   'references.filtersAppliedAriaLabel_one': '{{count}} filter applied',
   'references.filtersAppliedAriaLabel_other': '{{count}} filters applied',
+  // ── Block-reference peek (#4551) ──────────────────────────────────
+  // The chip shows one capped line; the peek shows what it cannot — the
+  // target's full content, where it lives, and how many blocks point at it.
+  'refPeek.dialogLabel': 'Preview of {{title}}',
+  'refPeek.dialogLabelUnknown': 'Block reference preview',
+  'refPeek.breadcrumbLabel': 'Location of the referenced block',
+  'refPeek.breadcrumb': '{{space}} › {{page}}',
+  'refPeek.loading': 'Loading preview…',
+  'refPeek.empty': 'This block has no content.',
+  'refPeek.references_one': '{{count}} reference',
+  'refPeek.references_other': '{{count}} references',
+  'refPeek.open': 'Open',
+  'refPeek.copyReference': 'Copy reference',
+  'refPeek.deleted': '{{title}} is in the Trash. Restore it from Trash to follow this reference.',
+  'refPeek.unresolved':
+    'This block is not in the current space. Switch space to follow the reference.',
+  'refPeek.error': 'Could not load this block just now.',
   // ── Embeds (#4550) ────────────────────────────────────────────────
   // `{{embed ((ULID))}}` renders the target's subtree inline. Read-only in
   // phase 1: the two exits are `embed.openSource` and the block-ref chips

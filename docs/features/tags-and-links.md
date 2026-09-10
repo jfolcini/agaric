@@ -34,6 +34,7 @@ A pill-based UI lets you toggle each clause; advanced users can type the express
 - **Page chip**: links render as a chip with the target's title. Click to navigate; the page opens in the active tab.
 - **Insert a block reference**: type `((` to open the **BlockRefPicker**. Pick the block you want to point at.
 - **Block reference**: renders as a one-line **chip** carrying the target block's title. It is a link with a nicer label — it shows no children and no live content. To pull a block's actual content onto another page, use an **embed** (below).
+- **Peek a block reference**: hover a `((…))` chip for a moment — or focus it and press **Alt + ↓** — and a small popover opens with the target's full content, a *space › page* breadcrumb saying where it lives, its reference count, and **Open** / **Copy reference**. It is a look, not a jump: the pointer can move into it, **Escape** closes it and puts focus back on the chip, and a target in the Trash or in another space says so instead of showing content. Coarse-pointer devices keep the chip's tooltip instead.
 - **Aliases**: a page can declare aliases (via the **PageAliasSection** in the **PageHeader**). Picker results include the alias as a breadcrumb. Typing the alias matches the target page.
 
 ## Embeds

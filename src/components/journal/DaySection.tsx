@@ -7,12 +7,13 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DonePanel } from '@/components/agenda/DonePanel'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
+import { BlockRefPeek } from '@/components/BlockRefPeek'
 import { EmptyState } from '@/components/common/EmptyState'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
@@ -171,6 +172,8 @@ function DaySectionInner({
   mounted = false,
 }: DaySectionProps): React.ReactElement {
   const { t } = useTranslation()
+  /** Delegation container for this day's block-reference peek (#4551). */
+  const [sectionEl, setSectionEl] = useState<HTMLElement | null>(null)
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const goToDateAndPanel = useJournalStore((s) => s.goToDateAndPanel)
   const todayStr = formatDate(new Date())
@@ -269,6 +272,10 @@ function DaySectionInner({
 
   return (
     <section
+      // #4551 — the day is the peek's delegation container. `PageEditor`'s
+      // host does not cover the journal: this section mounts its own
+      // `BlockTree` and `LinkedReferences`, outside any page editor.
+      ref={setSectionEl}
       id={`journal-${entry.dateStr}`}
       aria-label={t('journal.dayAriaLabel', { date: entry.displayDate })}
       // NO bare `group` here. Tailwind's `group-hover:` matches ANY ancestor
@@ -504,6 +511,9 @@ function DaySectionInner({
           <AddBlockButton onClick={() => onAddBlock(entry.dateStr)} />
         </div>
       )}
+
+      {/* Block-reference peek — one delegated host per day. */}
+      <BlockRefPeek container={sectionEl} />
     </section>
   )
 }

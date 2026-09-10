@@ -1485,6 +1485,18 @@
   outline-offset: 1px;
 }
 
+/* #4551 — the peek's content pane. A soft cap, not a scroll container: the
+   peek is a glance at the target, and a nested scrollbar inside a popover that
+   itself closes on pointer-leave is a trap. Ten lines with the last one faded
+   says "there is more" and sends the reader to Open. `lh` is the line box the
+   pane actually renders, so the cap holds whatever the content's font-size
+   turns out to be. */
+.ref-peek-content {
+  max-height: 10lh;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black calc(100% - 1.5lh), transparent);
+}
+
 /* Shared focus-visible affordance for all chip types */
 .block-link-chip:focus-visible,
 .tag-ref-chip:focus-visible,
