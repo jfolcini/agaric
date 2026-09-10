@@ -112,3 +112,22 @@ cannot tell the two variants apart), and the four `.txt` lists are derived
 from the assembled outcomes, so a mutant appears in exactly one of them. Both
 refusal branches now remove `mutants.out/`. The harness gained the cross-shard
 case and asserts the directory is gone on both refusals.
+
+## Round four
+
+The reviewer caught an assumption: the `.txt` lists were regenerated from
+`mutants.json`'s `.name`, a field nothing in the repo pins, with `// empty`
+as the failure mode — an absent or differently spelled name would have
+shipped an empty `missed.txt`, which the filer reads as "nothing survived"
+and clears every tracked survivor (#3364's class). Stripping `name` from the
+harness's `mutants.json` produced exactly that: every list empty, every case
+red. The lists are now line sets: this shard's mutants are exactly the lines
+in the scan's four lists, the confirm's lists are filtered to those, and each
+class is the confirm's kept lines plus the scan's lines the confirm did not
+re-test. The harness keeps `name` stripped so nothing can start reading it,
+and has a truncated-scan case where the confirm's outcome for a
+never-scanned sibling is dropped. `total_mutants` is the assembled count, so
+`tested` and the per-package line agree on a truncated shard; the confirm's
+floor is five minutes and the wall-clock comment does the arithmetic; the
+guard's `--scan-filter` sits below `printShardCount` again, under its own
+doc.

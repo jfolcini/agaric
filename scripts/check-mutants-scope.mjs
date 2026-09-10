@@ -911,18 +911,6 @@ function main(root = REPO_ROOT) {
  * nothing on stdout, so the caller reds rather than comparing against a 0 that
  * every merge trivially clears.
  */
-/** #4872 — the scan phase's nextest filter for one package, from the table the guard checks. */
-function printScanFilter(root, pkg) {
-  const filter = readScanFilters(root)?.[pkg]
-  if (typeof filter !== 'string' || filter.trim() === '') {
-    console.error(
-      `--scan-filter: ${SCAN_FILTERS_PATH} has no nextest filter for '${pkg}'. The scan step reads this, so exiting non-zero here is what keeps it from running the full suite under the name of a narrowed one.`,
-    )
-    process.exit(2)
-  }
-  console.log(filter)
-}
-
 function printShardCount(root = REPO_ROOT) {
   const workflowAbs = resolve(root, WORKFLOW_PATH)
   const lines = existsSync(workflowAbs)
@@ -946,6 +934,18 @@ function printShardCount(root = REPO_ROOT) {
  * workflow slicer silently returns nothing, every other check "passes" while
  * inspecting an empty set.
  */
+/** #4872 — the scan phase's nextest filter for one package, from the table the guard checks. */
+function printScanFilter(root, pkg) {
+  const filter = readScanFilters(root)?.[pkg]
+  if (typeof filter !== 'string' || filter.trim() === '') {
+    console.error(
+      `--scan-filter: ${SCAN_FILTERS_PATH} has no nextest filter for '${pkg}'. The scan step reads this, so exiting non-zero here is what keeps it from running the full suite under the name of a narrowed one.`,
+    )
+    process.exit(2)
+  }
+  console.log(filter)
+}
+
 function selfTestReaders(ok, fail) {
   // `--output DIR` nests: DIR/mutants.out, not DIR. The bug that made every
   // reader path one level short.

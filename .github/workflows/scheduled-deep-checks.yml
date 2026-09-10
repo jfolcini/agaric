@@ -1241,9 +1241,10 @@ jobs:
         # `missed.txt`. The default location, `src-tauri/mutants.out/`, is
         # what the steps below read.
         #
-        # The wall-clock budget stays what it was, now per shard. 90 min
-        # leaves ~25 min of the job's 120 for setup, install and upload
-        # (observed: ~2 min of setup before cargo-mutants starts). Without it
+        # The wall-clock budget stays what it was, now per shard. 90 min of
+        # scan, the confirm's five-minute floor and two `--kill-after` grace
+        # periods come to ~99 min of the job's 120; the rest is setup, install
+        # and upload (observed: ~2 min of setup before cargo-mutants starts). Without it
         # a slow shard would be CANCELLED at 120 minutes, the guard step below
         # would never run, and the lane would be red for a brand-new reason.
         # `timeout --signal=INT` instead makes cargo-mutants stop cleanly: it
@@ -1283,8 +1284,8 @@ jobs:
         # escaping the whole name.
         # No `--shard`: the survivor set is already this shard's. No `--`:
         # the FULL suite is the point. The wall budget is what the scan left
-        # of `MUTANTS_WALL_BUDGET`, floored so a scan that ate it all still
-        # gets its baseline; survivors this phase does not reach are carried
+        # of `MUTANTS_WALL_BUDGET`, floored at five minutes so a scan that ate
+        # it all still gets a baseline; survivors this phase does not reach are carried
         # into `missed.txt` by the assemble step, never dropped.
         working-directory: src-tauri
         env:
@@ -1302,7 +1303,7 @@ jobs:
           count=$(printf '%s\n' "$sites" | grep -c .)
           re="^($(printf '%s\n' "$sites" | sed 's/\./\\./g' | paste -sd '|'))"
           remaining=$(( MUTANTS_WALL_BUDGET - ${SCAN_SECONDS:-0} ))
-          if [ "$remaining" -lt 600 ]; then remaining=600; fi
+          if [ "$remaining" -lt 300 ]; then remaining=300; fi
           echo "confirming $count surviving site(s) with the full $PACKAGE suite, ${remaining}s left of the budget"
           started=$(date +%s)
           timeout --signal=INT --kill-after=120 "$remaining" \
@@ -1325,8 +1326,13 @@ jobs:
         # the full suite); every other mutant keeps the scan's, which is how a
         # survivor the confirm did not reach stays a survivor — carried, never
         # dropped, and counted as `unconfirmed` in `two-phase.json`. The four
-        # `.txt` lists are then derived from the assembled outcomes, named via
-        # `mutants.json`, so a mutant appears in exactly one of them. When the
+        # `.txt` lists are the same union on LINES — a name is this shard's iff
+        # it is in the scan's four lists, and the confirm's lists are filtered
+        # to those before they replace the scan's classification — so the lines
+        # stay byte-identical to what `file-mutation-survivors` already tracks
+        # and nothing here reads a `mutants.json` field it cannot vouch for.
+        # `total_mutants` is the assembled count, so `tested` and the per-package
+        # line agree even on a shard the wall budget truncated. When the
         # scan left no survivors the scan IS the result. When the confirm was
         # needed and wrote nothing usable — no `outcomes.json`, or a baseline
         # that did not succeed — its directory is removed and nothing is
@@ -1361,25 +1367,31 @@ jobs:
               (.[2] | map(mkey)) as $shard
               | ([.[1].outcomes[]? | select((.scenario|type) == "object") | select((.scenario.Mutant | mkey) as $k | ($shard | index($k)) != null)]) as $confirmed
               | ($confirmed | map(.scenario.Mutant | mkey)) as $tested
+              | ([.[0].outcomes[]? | select((.scenario|type) != "object" or ((.scenario.Mutant | mkey) as $k | ($tested | index($k)) == null))] + $confirmed) as $outcomes
               | {
                   cargo_mutants_version: .[0].cargo_mutants_version,
-                  total_mutants: .[0].total_mutants,
-                  outcomes: ([.[0].outcomes[]? | select((.scenario|type) != "object" or ((.scenario.Mutant | mkey) as $k | ($tested | index($k)) == null))] + $confirmed),
+                  total_mutants: ($outcomes | map(select((.scenario|type) == "object")) | length),
+                  outcomes: $outcomes,
                 }' scan.out/outcomes.json mutants.out/outcomes.json scan.out/mutants.json > "$final/outcomes.json"
-            for pair in CaughtMutant:caught MissedMutant:missed Unviable:unviable Timeout:timeout; do
-              jq -rs --arg s "${pair%%:*}" '
-                def mkey: "\(.file):\(.span.start.line):\(.span.start.column):\(.replacement)";
-                (.[1] | map({key: mkey, value: .name}) | from_entries) as $names
-                | .[0].outcomes[]? | select((.scenario|type) == "object" and .summary == $s)
-                | $names[.scenario.Mutant | mkey] // empty' "$final/outcomes.json" scan.out/mutants.json > "$final/${pair##*:}.txt"
+            # This shard's mutants are the lines in the scan's four lists; the
+            # confirm's lists carry foreign siblings too. For each class:
+            # (confirm's, kept to this shard) + (scan's, minus what the confirm
+            # re-tested). `grep -f` on an empty pattern file matches nothing,
+            # which is the right identity on both sides.
+            cat scan.out/{caught,missed,unviable,timeout}.txt 2>/dev/null | sort -u > "$final/scan-all.txt"
+            cat mutants.out/{caught,missed,unviable,timeout}.txt 2>/dev/null | sort -u > "$final/confirm-all.txt"
+            for f in caught missed unviable timeout; do
+              {
+                grep -Fxf "$final/scan-all.txt" "mutants.out/$f.txt" 2>/dev/null || true
+                grep -Fxvf "$final/confirm-all.txt" "scan.out/$f.txt" 2>/dev/null || true
+              } | sort -u > "$final/$f.txt"
             done
+            confirmed_missed=$(grep -Fxf "$final/scan-all.txt" mutants.out/missed.txt 2>/dev/null | grep -c . || true)
+            unconfirmed=$(grep -Fxvf "$final/confirm-all.txt" scan.out/missed.txt 2>/dev/null | grep -c . || true)
+            rm -f "$final/scan-all.txt" "$final/confirm-all.txt"
           fi
-          confirmed_missed=$(jq -rs '
-            def mkey: "\(.file):\(.span.start.line):\(.span.start.column):\(.replacement)";
-            (.[1] | map(mkey)) as $shard
-            | [.[0].outcomes[]? | select((.scenario|type) == "object" and .summary == "MissedMutant") | select((.scenario.Mutant | mkey) as $k | ($shard | index($k)) != null)] | length' mutants.out/outcomes.json scan.out/mutants.json 2>/dev/null || echo 0)
-          final_missed=$(grep -c . "$final/missed.txt" 2>/dev/null || true)
-          unconfirmed=$(( ${final_missed:-0} - ${confirmed_missed:-0} ))
+          confirmed_missed=${confirmed_missed:-0}
+          unconfirmed=${unconfirmed:-0}
           if [ "$unconfirmed" -gt 0 ]; then
             echo "::notice::$unconfirmed of $scan_survivors scan survivor(s) were not reached by the confirm phase within the wall budget; they are carried into missed.txt UNCONFIRMED (a full-suite run may still catch them)."
           fi
