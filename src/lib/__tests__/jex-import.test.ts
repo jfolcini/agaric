@@ -575,24 +575,17 @@ function noteMember(id: string, title: string, body = ''): TarMember {
 }
 
 /** Concatenate byte runs into one archive. */
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let off = 0
-  for (const part of parts) {
-    out.set(part, off)
-    off += part.length
-  }
-  return out
-}
-
 describe('parseJex tar scan boundaries', () => {
   it('stops at the end-of-archive marker and ignores what follows it', () => {
     // Two archives back to back: everything past the first one's zero blocks is
     // no longer a member, so a padded or appended-to `.jex` yields no phantoms.
-    const archive = concatBytes(
-      buildTar([noteMember('a1'.repeat(16), 'Real Note')]),
-      buildTar([noteMember('a2'.repeat(16), 'Ghost Note')]),
-    )
+    // Two complete archives back to back: everything after the first one's
+    // end-of-archive marker must be ignored.
+    const real = buildTar([noteMember('a1'.repeat(16), 'Real Note')])
+    const ghost = buildTar([noteMember('a2'.repeat(16), 'Ghost Note')])
+    const archive = new Uint8Array(real.length + ghost.length)
+    archive.set(real, 0)
+    archive.set(ghost, real.length)
     const { notes, skipped } = parseJex(archive)
     expect(notes.map((n) => n.title)).toEqual(['Real Note'])
     expect(skipped).toBe(0)

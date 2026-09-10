@@ -43,11 +43,9 @@ assertions passed with an unclosed `---` fence that swallows the whole body.
 
 ## The accepted gaps, and one that was checked rather than argued
 
-Recorded in the test file's header as five recurring shapes rather than 57
-ids: type-required unreachable operands; a normalization applied twice; guards
-whose failure is unobservable; `unserialize`'s two blank-line branches, which
-differ only by a blank line `normalizeBody` strips either way; and tar headers
-no writer emits.
+The remaining 57 are recorded as five recurring shapes rather than 57 ids, in
+the test file's header — the copy a future reader on this issue will actually
+hit.
 
 One was verified empirically instead of by argument: `normalizeBody`'s
 `start < lines.length` → `<=` **survived** the hand-applied mutant, as
