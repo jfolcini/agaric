@@ -960,6 +960,46 @@ describe('LinkedReferences', () => {
     })
   })
 
+  // The counter moves at every typing pause; a refetch must not empty the
+  // panel into a skeleton while it runs (that is what a re-keyed query did).
+  it('keeps the rendered rows while a structure-triggered refetch is in flight', async () => {
+    const resp1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp1)
+    renderLinkedReferences({ targetId: 'PAGE1' })
+    await waitFor(() => {
+      expect(screen.getByText('page 1 block')).toBeInTheDocument()
+    })
+
+    let release: () => void = () => {}
+    const parked = new Promise<typeof resp1>((resolve) => {
+      release = () => resolve(resp1)
+    })
+    mockedInvoke.mockClear()
+    mockInvokeWith(parked)
+    act(() => {
+      recordGraphStructureChange()
+    })
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_backlinks_grouped'),
+      ).toHaveLength(1)
+    })
+    expect(screen.getByText('page 1 block')).toBeInTheDocument()
+    expect(screen.getByText('1 Reference')).toBeInTheDocument()
+
+    await act(async () => {
+      release()
+    })
+    expect(screen.getByText('page 1 block')).toBeInTheDocument()
+  })
+
   it('refetches when targetId changes', async () => {
     const resp1 = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }])],

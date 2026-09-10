@@ -23,7 +23,7 @@ import {
   useUnlinkedReferences,
   type UseUnlinkedReferencesParams,
 } from '@/hooks/useUnlinkedReferences'
-import { getGraphStructureKey, recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { queryClient } from '@/lib/query-client'
 
 // #3332 — the shared strict `invoke` mock from `src/test-setup.ts` stays in
@@ -138,8 +138,12 @@ describe('useUnlinkedReferences', () => {
     await waitFor(() => {
       expect(calls).toBe(2)
     })
-    // Second fetch parked: the header still knows 12.
+    // Second fetch parked: the header still knows 12 AND the list is still
+    // rendered — an invalidation refetches in place, a re-key would have
+    // emptied both into a skeleton.
     expect(result.current.totalCount).toBe(12)
+    expect(result.current.groups).toHaveLength(1)
+    expect(result.current.loading).toBe(false)
 
     await act(async () => {
       releaseSecond({ ...resp, total_count: 13, filtered_count: 13 })
@@ -180,15 +184,7 @@ describe('useUnlinkedReferences', () => {
     expect(result.current.isError).toBe(false)
     // The exported query key mirrors the hook's read location exactly. The
     // trailing element is the #3316 item-2 group limit (20 = panel expanded).
-    expect(result.current.queryKey).toEqual([
-      'unlinkedReferences',
-      null,
-      'PAGE1',
-      [],
-      null,
-      20,
-      getGraphStructureKey(),
-    ])
+    expect(result.current.queryKey).toEqual(['unlinkedReferences', null, 'PAGE1', [], null, 20])
   })
 
   it('load-more: appends + merges by page_id without mutating prior objects', async () => {
@@ -510,14 +506,9 @@ describe('useUnlinkedReferences', () => {
     })
 
     expect(result.current.queryKeyPrefix).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
-    // It is exactly the read key minus the trailing group limit and structure
-    // counter, so `setQueriesData` prefix-matching cannot drift from where the
-    // hook reads.
-    expect(result.current.queryKey).toEqual([
-      ...result.current.queryKeyPrefix,
-      20,
-      getGraphStructureKey(),
-    ])
+    // It is exactly the read key minus the trailing group limit, so
+    // `setQueriesData` prefix-matching cannot drift from where the hook reads.
+    expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])
   })
 
   // #3316 item 2 (b) — `pageId` is part of the query key, so under the client's

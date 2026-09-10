@@ -10,13 +10,13 @@
  *
  * Sibling to `useBacklinkGroups` (LinkedReferences). The differences are
  * deliberate and called out inline:
- *  - The refresh axis is the graph-structure counter, not the property
- *    counter: a mention becomes a link through a content edit, which fires no
- *    property event. The counter sits at the TAIL of the read key, outside the
- *    exported prefix, so a bump refetches without moving `countIdentity` (the
- *    header keeps the count it knows while the new one loads) and the
- *    prefix-matched optimistic removal still reaches every variant. Every bump
- *    mints a key, so the finite `gcTime` below is what bounds the churn.
+ *  - NO invalidation counter in the query key, so there is no monotonic-key
+ *    growth. The refresh axis is the graph-structure counter (a mention becomes
+ *    a link through a content edit, which fires no property event), applied as
+ *    `invalidateQueries` on the exported prefix: the loaded pages refetch in
+ *    place, the carried count and the rendered list survive the refetch, and
+ *    the key never moves. #3316 item 2: `pageId` is in the key, so a session
+ *    that visits N pages mints N entries; the finite `gcTime` below bounds it.
  *  - `totalCount`/`truncated` derive from the LAST page, not the first — the old
  *    component set BOTH unconditionally on every fetch (outside the cursor
  *    branch), unlike LinkedReferences' first-page-only rule.
@@ -27,7 +27,7 @@
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { unwrap } from '@/lib/app-error'
@@ -133,14 +133,6 @@ export function useUnlinkedReferences(
   // for why the counts survive a smaller limit.
   const groupLimit = collapsed ? COLLAPSED_GROUP_LIMIT : EXPANDED_GROUP_LIMIT
 
-  // A mention becomes a link (or a link is removed, un-linking a mention)
-  // through content edits, which fire no property event; the graph-structure
-  // counter is bumped on every local op and on `sync:complete`, so it is the
-  // refresh axis. It goes on the read key's tail, NOT in the prefix: the prefix
-  // is `countIdentity`, and moving it would drop the carried header count to
-  // "No Unlinked References" on every typing burst until the refetch lands.
-  const { structureKey } = useGraphStructureEvents()
-
   // Exported so the optimistic "Link it" removal can target this exact cache
   // entry. `groupLimit` IS part of the key so expanding the panel refetches the
   // full page rather than showing the single group the collapsed fetch returned.
@@ -148,10 +140,21 @@ export function useUnlinkedReferences(
     () => ['unlinkedReferences', spaceId, pageId, filters, sort],
     [spaceId, pageId, filters, sort],
   )
-  const queryKey = useMemo(
-    () => [...queryKeyPrefix, groupLimit, structureKey],
-    [queryKeyPrefix, groupLimit, structureKey],
-  )
+  const queryKey = useMemo(() => [...queryKeyPrefix, groupLimit], [queryKeyPrefix, groupLimit])
+
+  // A mention becomes a link (or a link is removed, un-linking a mention)
+  // through content edits, which fire no property event; the graph-structure
+  // counter (bumped on every local op and on `sync:complete`) is the refresh
+  // axis. Invalidate, do not re-key: the counter moves at every typing pause,
+  // and a new key would empty the list into a skeleton each time. The first
+  // value is the mount, not a change.
+  const { structureKey } = useGraphStructureEvents()
+  const seenStructureKeyRef = useRef(structureKey)
+  useEffect(() => {
+    if (seenStructureKeyRef.current === structureKey) return
+    seenStructureKeyRef.current = structureKey
+    void queryClient.invalidateQueries({ queryKey: queryKeyPrefix })
+  }, [structureKey, queryKeyPrefix])
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError, refetch } =
     useInfiniteQuery(

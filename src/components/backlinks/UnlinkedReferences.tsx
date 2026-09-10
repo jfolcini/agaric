@@ -38,6 +38,7 @@ import type {
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { resolveStoreTitle } from '@/lib/block-title'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
@@ -295,6 +296,10 @@ export function UnlinkedReferences({
       }
       try {
         unwrap(await commands.editBlock(blockId, newContent))
+        // Straight to the command, not through the page-block store, so the
+        // structure counter the reference panels refresh on must be bumped here;
+        // otherwise Linked References above keeps the pre-link list until a remount.
+        recordGraphStructureChange()
         // Optimistic removal. `groups`/`totalCount` are now derived from the
         // query cache, so the old `setGroups(...)` + `setTotalCount(prev-1)` is
         // reproduced by rewriting the cached pages in place: strip the linked
