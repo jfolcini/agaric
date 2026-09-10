@@ -561,20 +561,23 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
 
     const chip = renderChip(result.current)
 
-    // The chip's TEXT NODE (what a copy/paste or a screen reader walking the
-    // text picks up), not just what CSS happens to clip. Asserted BEFORE the
-    // store so a regression's failure output shows the rendered damage.
-    const chipText = chip.textContent ?? ''
-    expect(chipText).not.toContain('\n')
-    expect(chipText.length).toBeLessThanOrEqual(60)
-    expect(chipText).toBe(expectedTitle)
+    // The visible label's TEXT NODE (what a copy/paste picks up), not just
+    // what CSS happens to clip. Asserted BEFORE the store so a regression's
+    // failure output shows the rendered damage.
+    const labelText = chip.querySelector('.block-ref-chip-label')?.textContent ?? ''
+    expect(labelText).not.toContain('\n')
+    expect(labelText.length).toBeLessThanOrEqual(60)
+    expect(labelText).toBe(expectedTitle)
 
-    // The deleted `aria-label` is announced in full — CSS truncation does not
-    // touch it, so its bound has to come from the stored title.
-    const ariaLabel = chip.getAttribute('aria-label') ?? ''
-    expect(ariaLabel).not.toContain('\n')
-    expect(ariaLabel.length).toBeLessThanOrEqual(60 + ' (deleted)'.length)
-    expect(ariaLabel).toBe(`${expectedTitle} (deleted)`)
+    // The accessible name is the chip's text content — the label plus the
+    // visually hidden "(deleted)" (#4551, WCAG 2.5.3: the name must contain
+    // the visible label, so it is no longer an `aria-label` override). CSS
+    // truncation does not touch it, so its bound comes from the stored title.
+    expect(chip.hasAttribute('aria-label')).toBe(false)
+    const accessibleName = chip.textContent ?? ''
+    expect(accessibleName).not.toContain('\n')
+    expect(accessibleName.length).toBeLessThanOrEqual(60 + ' (deleted)'.length)
+    expect(accessibleName).toBe(`${expectedTitle} (deleted)`)
 
     // And the seed itself — the raw multi-line content never reaches the store.
     expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(expectedTitle)
