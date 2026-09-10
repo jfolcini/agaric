@@ -304,9 +304,10 @@ export function UnlinkedReferences({
         // query cache, so the old `setGroups(...)` + `setTotalCount(prev-1)` is
         // reproduced by rewriting the cached pages in place: strip the linked
         // block from every group, drop groups that become empty, and decrement
-        // the count by exactly one. `editBlock` only changes content — it emits
-        // no `block:properties-changed`, so nothing else refetches this; the
-        // update is purely optimistic (no invalidate).
+        // the count by exactly one. That makes the row disappear immediately;
+        // the `recordGraphStructureChange()` above then invalidates this panel
+        // (and Linked References above it) once the debounce settles, so the
+        // real fetched state lands right behind the optimistic one.
         const dropLinkedBlock = (
           old: InfiniteData<GroupedBacklinkResponse> | undefined,
         ): InfiniteData<GroupedBacklinkResponse> | undefined => {
