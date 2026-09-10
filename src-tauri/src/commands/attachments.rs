@@ -900,8 +900,8 @@ pub async fn add_attachment_with_bytes(
 /// is deliberately not a `#[specta::specta]` command and is absent from
 /// `agaric_commands!` / the generated `bindings.ts`. It is registered on the
 /// Tauri invoke handler directly (see `run()` in `lib.rs`) and called from the
-/// hand-written `readAttachment` wrapper in `src/lib/tauri.ts` (the sanctioned
-/// raw-`invoke` seam). The byte fetch itself delegates to
+/// hand-written `readAttachment` helper in `src/lib/ipc-helpers.ts` (the
+/// sanctioned raw-`invoke` seam). The byte fetch itself delegates to
 /// [`read_attachment_inner`].
 #[tauri::command]
 pub async fn read_attachment(

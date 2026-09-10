@@ -21,12 +21,12 @@ import {
   FilterHelperPopover,
   type FilterHelperPopoverProps,
 } from '@/components/search/FilterHelperPopover'
+import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { type FilterToken, parse, serialize, tokenSource } from '@/lib/search-query'
-import type { TagCacheRow } from '@/lib/tauri'
 
-// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411); the popover
+// `listTagsByPrefix` retired its hand-written wrapper (#4411); the popover
 // now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
 // envelope, so the mock intercepts THAT and resolves the `{ status: 'ok',
 // data }` shape.

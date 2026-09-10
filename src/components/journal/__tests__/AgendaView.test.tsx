@@ -28,13 +28,8 @@ vi.mock('@/lib/agenda-filters', () => ({
   loadMoreUnfilteredAgenda: vi.fn(),
 }))
 
-// ── Mock tauri lib ──────────────────────────────────────────────────
-vi.mock('@/lib/tauri', () => ({
-  paginationLimit: (n: number) => n,
-}))
-
 // #2927 phase 5 — AgendaView now calls the generated `commands.batchResolve`,
-// so mocking only the `@/lib/tauri` wrapper no longer intercepts it. Back the
+// so mocking only the hand-written wrapper no longer intercepts it. Back the
 // generated surface instead, resolving the same typed-result envelope
 // `unwrap` expects. #4412 — `queryByProperty` retired its wrapper too, so it is
 // mocked on the same generated surface.

@@ -9,7 +9,7 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { entryKey, isRevertible, useHistorySelection } from '@/hooks/useHistorySelection'
-import type { HistoryEntry } from '@/lib/tauri'
+import type { HistoryEntry } from '@/lib/bindings'
 
 function makeEntry(
   seq: number,

@@ -64,10 +64,10 @@ vi.mock('@/lib/notify', () => ({
 vi.mock('@/lib/clipboard', () => ({ writeText: vi.fn().mockResolvedValue(undefined) }))
 
 // Mock the partitioned IPC so we can drive its responses deterministically
-// from tests. Spread the actual module so other re-exports (paginationLimit,
-// etc.) stay intact.
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+// from tests. Spread the actual module so the rest of the IPC floor
+// (`withAbort`, `cancelledError`, …) stays real.
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
   return {
     ...actual,
     // LinkMode now fires `searchBlocks({blockTypeFilter:
@@ -78,7 +78,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   }
 })
 
-// #2942 — `create-new-page` retired its `@/lib/tauri` wrapper (#4411); the
+// #2942 — `create-new-page` retired its wrapper (#4411); the
 // palette command now calls `commands.createPageInSpace` directly and
 // unwraps the `Result` envelope, so the mock backs the `commands.*` surface
 // and resolves the `{ status: 'ok', data }` shape.
@@ -109,7 +109,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)

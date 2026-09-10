@@ -250,7 +250,7 @@ function PageEditorInner({
       // createBelow needs an afterBlockId, so for the empty case we call
       // createBlock from the Tauri API directly.
       try {
-        const { createBlock } = await import('@/lib/tauri')
+        const { createBlock } = await import('@/lib/ipc-helpers')
         const result = await createBlock({
           blockType: 'content',
           content: '',

@@ -28,9 +28,9 @@ import { axe } from 'vitest-axe'
 
 import { SpaceManageDialog } from '@/components/SpaceManageDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import type { SpaceRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/logger', () => ({

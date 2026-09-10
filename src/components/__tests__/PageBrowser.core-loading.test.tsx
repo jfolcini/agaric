@@ -17,7 +17,7 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 

@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockedInvoke = vi.mocked(invoke)
 
 import type { PropertyRow } from '@/lib/bindings'
+import type { PropertyDefinition } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import {
   buildInitParams,
@@ -25,7 +26,6 @@ import {
   NON_DELETABLE_PROPERTIES,
   renameMayDeclareKey,
 } from '@/lib/property-save-utils'
-import type { PropertyDefinition } from '@/lib/tauri'
 
 beforeEach(() => {
   vi.clearAllMocks()

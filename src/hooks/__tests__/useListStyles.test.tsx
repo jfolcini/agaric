@@ -10,7 +10,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// #2927 phase 4 migrated `useBatchPropertyRows` off the `@/lib/tauri` wrapper
+// #2927 phase 4 migrated `useBatchPropertyRows` off the hand-written wrapper
 // onto the generated `commands.getBatchProperties`, so mocking only the wrapper
 // no longer intercepts. Back the generated surface instead, resolving the same
 // typed-result envelope `unwrap` expects.

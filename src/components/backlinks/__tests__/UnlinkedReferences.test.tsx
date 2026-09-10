@@ -37,10 +37,10 @@ import { t } from '@/lib/i18n'
 // `usePropertyKeysCache` resolves through `propertyKeysQueryFn`
 // (`@/lib/property-keys-cache`), which calls `commands.listPropertyKeys` from
 // `@/lib/bindings` and unwraps the `Result` envelope. `listPropertyKeys` no
-// longer exists on `@/lib/tauri` (dead wrapper, #4410) — the hoisted mock
+// longer exists as a hand-written wrapper (dead, #4410) — the hoisted mock
 // below backs the `commands.*` surface only, and is used directly (not via
-// `vi.mocked(...)` on a `@/lib/tauri` import) for the assertion further down.
-// `listTagsByPrefix` retired its `@/lib/tauri` wrapper too (#4411) — the
+// `vi.mocked(...)` on a wrapper import) for the assertion further down.
+// `listTagsByPrefix` retired its hand-written wrapper too (#4411) — the
 // component now calls `commands.listTagsByPrefix` directly and unwraps the
 // `Result` envelope, so its mock backs the `commands.*` surface and resolves
 // the `{ status: 'ok', data }` shape. Same for `listUnlinkedReferences`

@@ -12,15 +12,11 @@
 // error, and omitting is NOT equivalent to passing `null`: it silently
 // clears whatever was previously stored for that key, because the
 // backend can't distinguish "field not sent" from "field sent as null"
-// once serde defaults it. The retired `src/lib/tauri/properties.ts`
-// wrapper always built all five with `?? null`; any new direct caller of
-// `commands.setProperty` must do the same, but nothing in the type
-// system enforces it.
-//
-// This is live risk for the ongoing #2927 migration: as more UI moves
-// off `@/lib/tauri` and calls `commands.setProperty` directly, a dropped
-// key is a silent behavior change (a property value quietly clearing)
-// that only manual review catches today.
+// once serde defaults it. The hand-written wrapper this repo used to have
+// always built all five with `?? null`; #2927 deleted that layer, so every
+// caller of `commands.setProperty` must now do the same and nothing in the
+// type system enforces it. A dropped key is a silent behavior change (a
+// property value quietly clearing) that only manual review catches.
 //
 // ─── How it works ───────────────────────────────────────────────────
 //
@@ -100,7 +96,7 @@
 //
 // Scans `src/**/*.{ts,tsx}`, excluding test files (`*.test.ts[x]`,
 // `__tests__/`, `/tests/`) and `.d.ts` — same exclusion as the sibling
-// `check-tauri-import-baseline.mjs` guard. Tests may legitimately
+// `check-json-parse-cast.mjs` guard. Tests may legitimately
 // construct partial/invalid `SetPropertyArgs` on purpose (to exercise
 // backend validation, mock-layer edge cases, etc.), so they are out of
 // scope by design, not by oversight.
@@ -150,8 +146,7 @@ function toPosix(p) {
 
 /**
  * Walk `src/**` for `*.ts` / `*.tsx` files, excluding test files and
- * `__tests__/` + `tests/` directories. Mirrors
- * `check-tauri-import-baseline.mjs`'s `listSourceFiles` exactly.
+ * `__tests__/` + `tests/` directories.
  */
 function listSourceFiles(srcDir = SRC_DIR) {
   const out = []

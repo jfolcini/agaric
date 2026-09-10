@@ -263,7 +263,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3992 item 3 — this reason used to say PageHeader.test.tsx was "the only
   // test naming undo_page_group". It is not: `stores/__tests__/undo.test.ts`
   // names it too, in a `'undo_page_group failed'` log assertion. The waiver's
-  // CONCLUSION survived (that test mocks `@/lib/tauri`, so it reaches the
+  // CONCLUSION survived (that test mocks hand-written, so it reaches the
   // handler no more than the other does) but the claim itself was an unchecked
   // universal — "no OTHER test exists" is not something a citation can carry,
   // and nothing in this guard could have contradicted it. Both files are named
@@ -272,7 +272,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   undo_page_group:
     'NOT cross-checked, and not mock-level guarded either: the tests naming ' +
     'undo_page_group — components/pages/__tests__/PageHeader.test.tsx (mocked invoke) and ' +
-    'stores/__tests__/undo.test.ts (mocked @/lib/tauri bindings) — assert the FE issues ' +
+    'stores/__tests__/undo.test.ts (mocked bindings) — assert the FE issues ' +
     'the IPC and neither reaches this handler (#3964, #3992)',
   redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
   revert_ops:
@@ -659,11 +659,12 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The shrink-only ratchet (#4667), mirroring `tauri-import-baseline`: these are
- * the waived commands that COULD be pinned and are not yet.
+ * The shrink-only ratchet (#4667), mirroring the retired
+ * `tauri-import-baseline` one (#2927): these are the waived commands that
+ * COULD be pinned and are not yet.
  *
- * NAMES, not a count, for the reason `check-tauri-import-baseline.mjs` uses a
- * sorted list: a count nets out. A diff that pins one command and waives a new
+ * NAMES, not a count, for the reason that ratchet used a sorted list: a count
+ * nets out. A diff that pins one command and waives a new
  * one leaves 42 either way and lands green, which is exactly the case this
  * ratchet exists to make visible. Both directions now name the command in the
  * diff — pin one and delete its line here, waive one and add it.

@@ -37,7 +37,9 @@ import {
   validationCode,
 } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { BlockRow, PageResponse, SearchBlockRow } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { searchBlocks } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
@@ -45,8 +47,6 @@ import { queryClient } from '@/lib/query-client'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import type { BlockRow, PageResponse, SearchBlockRow } from '@/lib/tauri'
-import { searchBlocks } from '@/lib/tauri'
 import {
   type RecentPage,
   selectRecentPagesForSpace,

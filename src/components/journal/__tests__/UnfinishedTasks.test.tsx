@@ -19,11 +19,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import type { BlockRow } from '@/lib/bindings'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -897,7 +897,7 @@ describe('UnfinishedTasks', () => {
     // but only ever look at what rendered. Dropping the scope argument would
     // have leaked another space's overdue tasks into this list without
     // reddening anything (found while migrating this call site off the
-    // `@/lib/tauri` wrapper, which used to supply it; #4411).
+    // hand-written wrapper, which used to supply it; #4411).
     it('sends the active space as the scope, and global when there is none', async () => {
       mockInvokeForBlocks([])
 

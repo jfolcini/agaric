@@ -21,8 +21,8 @@ import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)

@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { SpaceAccentBadge } from '@/components/common/SpaceAccentBadge'
-import type { SpaceRow } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 const PERSONAL: SpaceRow = {

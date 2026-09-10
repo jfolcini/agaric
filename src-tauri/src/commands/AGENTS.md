@@ -160,7 +160,7 @@ The Tauri wrapper is not unit-tested.
 
    (The test's own hint suggests `-p agaric-lib`; that package name does not exist, drop the flag. #569.)
 
-5. Call it from the frontend via `@/lib/bindings` (`commands.myCommand(...)` returns `{ status: 'ok' | 'error' }`; unwrap at the call site). No new wrappers in `src/lib/tauri.ts` or `src/lib/tauri/` — the `tauri-import-baseline` hook rejects new importers.
+5. Call it from the frontend via `@/lib/bindings` (`commands.myCommand(...)` returns `{ status: 'ok' | 'error' }`; unwrap at the call site). There is no hand-written wrapper layer to add to — #2927 deleted it; the only sanctioned exception is a helper that carries logic the generated binding cannot express, which goes in `src/lib/ipc-helpers.ts`.
 6. If you added or changed a `query!` / `query_as!` / `query_scalar!` macro, run `just gen-sqlx` (bare `cargo sqlx prepare` drops leaf-crate queries from the four `.sqlx/` caches). It needs `DATABASE_URL` pointing at a migrated SQLite DB — see `src-tauri/.env.example`. Commit `src/lib/bindings.ts` and every `.sqlx/` file in the same PR.
 
 ## Cross-references

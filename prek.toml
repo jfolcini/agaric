@@ -808,8 +808,10 @@ types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
 # ipc-error-path-coverage: every `src/components/**/*.tsx` (recursive,
-# excluding `ui/` and `__tests__/`) that imports from `@/lib/tauri` (or
-# pulls `invoke` directly from `@tauri-apps/api/core`) must have at
+# excluding `ui/` and `__tests__/`) that imports a runtime value from
+# `@/lib/ipc-helpers`, `commands` from `@/lib/bindings`, a
+# `@/lib/platform/<domain>` shim (or pulls `invoke` directly from
+# `@tauri-apps/api/core`) must have at
 # least one error-path test in either its sibling `__tests__/<name>.test.tsx`
 # or the top-level `src/components/__tests__/<name>.test.tsx` fallback.
 # Catches the silent-`.catch` / missing-toast class of regression that
@@ -832,7 +834,7 @@ stages = ["pre-commit"]
 # no-raw-invoke: app code must call Tauri commands through the typed
 # `commands.*` bindings in src/lib/bindings.ts, not the stringly-typed
 # `invoke('snake_case')` bypass (which sidesteps arg/return typing and
-# only fails at runtime). Exemptions (bindings.ts, tauri.ts,
+# only fails at runtime). Exemptions (bindings.ts, ipc-helpers.ts,
 # observability/, tauri-mock) live in the script. pass_filenames=false —
 # the script does its own scoped walk of src/. Keyed to the shared scanner
 # the guard delegates its comment-stripping to (#3993) as well as its own
@@ -911,37 +913,6 @@ language = "system"
 pass_filenames = false
 files = "^scripts/(check-wdio-driver-gate|lib/js-scanner)\\.mjs$"
 stages = ["manual"]
-
-# tauri-import-baseline (#2927): `src/lib/tauri.ts` is a hand-written IPC
-# wrapper layer being retired in favor of the generated `commands.*`
-# bindings. This ratchet forbids NEW non-test importers of `@/lib/tauri`
-# (keyed to scripts/tauri-import-baseline.json) AND fails on a stale
-# baseline entry, so the importer count can only shrink as call sites are
-# migrated. pass_filenames=false — the script does its own scoped walk of
-# src/. Triggers on any src .ts/.tsx change or a baseline edit, and on the
-# guard script itself or the shared scanner it delegates its
-# comment-stripping to (#3993), so neither side can be edited without the
-# check running.
-#
-# (#3218) This is now the ONLY guard governing the wrapper layer. The
-# sibling `tauri-bindings-parity` hook (one wrapper per command) was
-# retired: it pulled in the opposite direction from this ratchet (adopting
-# a wrapper satisfies parity but fails the ratchet; migrating off one
-# satisfies the ratchet but orphans the wrapper) and, per #2927's own end
-# state, "every command has a wrapper" was never the target — a small,
-# permanently-sanctioned residual (see tauri-sanctioned-symbols.json) is.
-# This guard's own completion criterion (baseline == [], mod sanctioned
-# symbols) already IS the "are we done yet" check the other guard was
-# trying to become.
-# WHY: new importers of the retired @/lib/tauri wrapper layer — #2927 ratchet
-[[repos.hooks]]
-id = "tauri-import-baseline"
-name = "No new @/lib/tauri importers (ratchet)"
-entry = "node scripts/check-tauri-import-baseline.mjs"
-language = "system"
-pass_filenames = false
-files = "^(src/.*\\.(ts|tsx)|scripts/(tauri-import-baseline\\.json|check-tauri-import-baseline\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
 
 # json-parse-cast ratchet (#3881): `JSON.parse(...) as T` type-ASSERTS the
 # shape of a value fresh out of storage instead of checking it — a stale

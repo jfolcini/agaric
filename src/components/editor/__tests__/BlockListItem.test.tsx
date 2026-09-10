@@ -40,7 +40,7 @@ vi.mock('@/hooks/useIsTouch', () => ({
 // Mock the IPC commands used by handleDateSelect.
 //
 // #2927 — `useBlockReschedule` calls the generated bindings directly, so the
-// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// seam this suite stubs is `commands.*`, not the retired hand-written
 // wrapper. Spreading `actual.commands` keeps every other command real, and
 // the stubs resolve the `{ status, data }` envelope so the production
 // `unwrap` runs for real instead of being bypassed by a wrapper-level mock.

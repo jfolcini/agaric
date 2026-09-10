@@ -23,13 +23,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
+import type { PeerRef } from '@/lib/bindings'
 // #4084 (review): `comparePeers` moved to `@/lib/peer-sync-activity` so the
 // pairing dialog's list can apply the same order without importing
 // `DeviceManagement` (which imports `PairingDialog`, which renders
 // `PairingPeersList` — a cycle).
 import { comparePeers } from '@/lib/peer-sync-activity'
 import { PREFERENCES } from '@/lib/preferences'
-import type { PeerRef } from '@/lib/tauri'
 
 // #2506: DeviceManagement now mounts `useMdnsStatus`, which registers a
 // `sync:mdns_disabled` listener via `useTauriEventListener` → `listen()`.

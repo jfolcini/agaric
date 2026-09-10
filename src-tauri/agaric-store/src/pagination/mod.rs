@@ -62,9 +62,8 @@ pub const MAX_PAGE_SIZE: i64 = 200;
 /// writing thousands of op_log rows. 1000 covers every realistic UI
 /// multi-select gesture (TrashView caps its own table to a few hundred rows;
 /// the page editor's multi-select fans the same way). Callers exceeding the
-/// cap should chunk client-side — the FE wrappers in `src/lib/tauri.ts`
-/// deliberately pass the input through unchanged so the backend's cap is the
-/// single authority.
+/// cap should chunk client-side — the FE call sites deliberately pass the
+/// input through unchanged so the backend's cap is the single authority.
 ///
 /// This is the single source of truth for the limit across the whole
 /// `*_by_ids` / batch family — both the write-batch commands

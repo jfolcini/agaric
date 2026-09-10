@@ -65,7 +65,7 @@ vi.mock('@/stores/tabs', () => ({
   },
 }))
 
-// #4411 — `getBlock` retired its `@/lib/tauri` wrapper; the router calls
+// #4411 — `getBlock` retired its hand-written wrapper; the router calls
 // `commands.getBlock` and unwraps the `Result` envelope, so the spy
 // resolves/rejects with the bare `BlockRow` and the shim adds the envelope.
 vi.mock('@/lib/bindings', async (importOriginal) => {

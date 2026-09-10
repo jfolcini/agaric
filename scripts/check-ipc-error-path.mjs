@@ -48,20 +48,26 @@
 //
 // ─── Detection ──────────────────────────────────────────────────────
 //
-// A component is considered to call IPC if its source contains either:
-//   - `from '@/lib/tauri'` (or double-quoted equivalent), AND the
-//     import is NOT `import type` (i.e. brings in a runtime function);
+// A component is considered to call IPC if its source contains any of:
+//   - `from '@/lib/ipc-helpers'` (or double-quoted equivalent), AND the
+//     import is NOT `import type` (i.e. brings in a runtime function) —
+//     the hand-written IPC floor (`createBlock`, `searchBlocks`,
+//     `importMarkdown`, `readAttachment`, the trash drains, …). This is the
+//     successor to the hand-written wrapper layer #2927 deleted, and it is
+//     the arm that keeps this guard from selecting nothing once that layer
+//     is gone;
+//   - `import { commands } from '@/lib/bindings'` — the generated binding
+//     surface every migrated call site uses;
 //   - `from '@/lib/platform/<domain>'` — the plugin-shim layer split out
 //     of the IPC wrappers in #3202. These wrappers (autostart,
 //     global-shortcut, deep-link, window, notifications) do exactly the
 //     rejecting async plugin round-trips this guard exists for, so a
-//     component calling them needs the same error-path coverage as one
-//     calling `@/lib/tauri`. The bare `@/lib/platform` barrel is
-//     deliberately NOT matched — it exports only synchronous capability
-//     detection (`isMac`, `modKey`, `isMobilePlatform`), which cannot
-//     reject;
+//     component calling them needs the same error-path coverage. The bare
+//     `@/lib/platform` barrel is deliberately NOT matched — it exports only
+//     synchronous capability detection (`isMac`, `modKey`,
+//     `isMobilePlatform`), which cannot reject;
 //   - `import { invoke } from '@tauri-apps/api/core'` — direct IPC
-//     bypass of the typed wrapper layer.
+//     bypass of the typed binding surface.
 //
 // Components that only `import { listen } from '@tauri-apps/api/event'`
 // are NOT in scope: `listen` is a one-way event subscription, not an
@@ -186,41 +192,39 @@ function resolveTestPath(componentPath, testsDir = TESTS_DIR) {
 }
 
 /**
- * True if the source file imports a runtime value from `@/lib/tauri`
- * or directly from `@tauri-apps/api/core`. Type-only imports are
- * excluded (they don't generate any `invoke` call site).
+ * True if the source file imports a runtime value from `@/lib/ipc-helpers`,
+ * `@/lib/bindings`' `commands`, a `@/lib/platform/<domain>` shim, or
+ * directly from `@tauri-apps/api/core`. Type-only imports are excluded (they
+ * don't generate any `invoke` call site).
  */
 function callsIpc(src) {
   // Strip type-only imports (`import type { ... } from '...'`) so a
-  // file that only pulls in TS types from `@/lib/tauri` doesn't get
+  // file that only pulls in TS types from these modules doesn't get
   // flagged. We only care about value imports.
   const withoutTypeImports = src.replace(
     /^\s*import\s+type\s+\{[^}]*\}\s+from\s+['"][^'"]+['"]\s*;?\s*$/gm,
     '',
   )
 
-  // Match `from '@/lib/tauri'` (single or double quotes).
-  if (/from\s+['"]@\/lib\/tauri['"]/.test(withoutTypeImports)) return true
-
-  // Match `from '@/lib/ipc-helpers'` — the migration floor (#4413):
+  // Match `from '@/lib/ipc-helpers'` — the IPC floor (#2927):
+  // `createBlock`, `searchBlocks`, `searchBlocksPartitioned`, `logFrontend`,
   // `readAttachment`, `startSync`, `importMarkdown`,
   // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` all reject exactly
-  // like the wrapper layer they moved out of, and need the same
-  // error-path coverage.
+  // like the wrapper layer they replaced, and need the same error-path
+  // coverage.
   if (/from\s+['"]@\/lib\/ipc-helpers['"]/.test(withoutTypeImports)) return true
 
   // Match a plugin-shim submodule import (`from '@/lib/platform/<domain>'`),
-  // the layer split out of `@/lib/tauri/{system,notifications}` in #3202.
+  // the layer split out of the IPC wrappers in #3202.
   // The `/<domain>` segment is REQUIRED so the bare `@/lib/platform` barrel
   // — synchronous capability detection that cannot reject — is not matched.
   if (/from\s+['"]@\/lib\/platform\/[\w-]+['"]/.test(withoutTypeImports)) return true
 
   // Match a runtime `commands` import from the generated tauri-specta
-  // bindings (`import { commands } from '@/lib/bindings'`). The #2927
-  // migration moves callers off the hand-written `@/lib/tauri` wrappers
-  // onto `commands.*` on the typed bindings — those are `invoke` call
-  // sites exactly like the wrapper layer, so a component using them needs
-  // the same error-path coverage. Type-only imports from bindings bring
+  // bindings (`import { commands } from '@/lib/bindings'`). #2927 moved
+  // callers off the hand-written wrappers onto `commands.*` on the typed
+  // bindings — those are `invoke` call sites exactly like the wrapper layer,
+  // so a component using them needs the same error-path coverage. Type-only imports from bindings bring
   // in no runtime value and are excluded two ways: full-line `import type
   // { … }` is stripped above, and inline-type imports (`import { type
   // Block } from '@/lib/bindings'`) never carry a bare `commands`

@@ -97,7 +97,7 @@ vi.mock('@/components/editor/StaticBlock', () => ({
 
 // Mock Tauri draft functions. EditableBlock's programmatic-unmount path
 // (`saveDraft`/`deleteDraft`) and its child `useDraftAutosave` both call
-// `commands.*` from `@/lib/bindings` directly (the `@/lib/tauri` wrappers were
+// `commands.*` from `@/lib/bindings` directly (the hand-written wrappers were
 // retired, #4411) and unwrap the `Result` envelope — so the same spies back
 // the `commands.*` mock below and resolve the `{ status: 'ok', data }` shape.
 const mockSaveDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })

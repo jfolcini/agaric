@@ -31,7 +31,7 @@ const mockSetDueDate = vi.hoisted(() => vi.fn())
 const mockGetBlock = vi.hoisted(() => vi.fn())
 const mockSetScheduledDate = vi.hoisted(() => vi.fn())
 // #2927 — `useBlockReschedule` calls the generated bindings directly, so the
-// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// seam this suite stubs is `commands.*`, not the retired hand-written
 // wrapper. Spreading `actual.commands` keeps every other command real, and
 // the stubs resolve the `{ status, data }` envelope so the production
 // `unwrap` runs for real instead of being bypassed by a wrapper-level mock.

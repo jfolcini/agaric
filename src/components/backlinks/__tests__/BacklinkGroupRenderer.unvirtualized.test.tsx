@@ -21,7 +21,7 @@ import { render, screen } from '@testing-library/react'
 import type React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BacklinkGroup, BlockRow } from '@/lib/tauri'
+import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 
 vi.mock('@/components/common/CollapsibleGroupList', () => ({
   CollapsibleGroupList: ({

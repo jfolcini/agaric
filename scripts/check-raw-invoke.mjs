@@ -31,11 +31,7 @@
 //
 //   - `src/lib/bindings.ts`        generated typed-binding layer (uses
 //                                  the aliased `__TAURI_INVOKE`).
-//   - `src/lib/tauri.ts`           the hand-written wrapper layer that
-//   - `src/lib/tauri/`             the bindings migration funnels
-//                                  through (`unwrap(await commands.*)`);
-//                                  split into per-domain modules in #2902.
-//   - `src/lib/ipc-helpers.ts`     the migration floor (#4413): holds the
+//   - `src/lib/ipc-helpers.ts`     the IPC floor (#2927): holds the
 //                                  ONE sanctioned raw invoke, `readAttachment`
 //                                  (#2654 — a raw-response command can't
 //                                  carry a `specta::Type`, so it has no
@@ -64,19 +60,13 @@ const SRC_DIR = path.join(ROOT, 'src')
 const EXEMPT_FILES = Object.freeze(
   new Set([
     'src/lib/bindings.ts',
-    'src/lib/tauri.ts',
     'src/lib/tauri-mock.ts',
-    // The sanctioned raw-invoke seam (`readAttachment`, #2654) moved here
-    // from `src/lib/tauri/attachments.ts` when the migration floor got a
-    // real home (#4413) — see the module doc comment in ipc-helpers.ts.
+    // The sanctioned raw-invoke seam (`readAttachment`, #2654) — see the
+    // module doc comment in ipc-helpers.ts.
     'src/lib/ipc-helpers.ts',
   ]),
 )
-const EXEMPT_DIR_PREFIXES = Object.freeze([
-  'src/lib/observability/',
-  'src/lib/tauri-mock/',
-  'src/lib/tauri/',
-])
+const EXEMPT_DIR_PREFIXES = Object.freeze(['src/lib/observability/', 'src/lib/tauri-mock/'])
 
 // `invoke(` or `invoke<T>(` followed by a string literal whose first
 // char is a lowercase letter (a Tauri command name).
@@ -202,10 +192,10 @@ function runGuard() {
     console.error('Call the typed binding from `src/lib/bindings.ts` instead of raw invoke().')
     console.error('Every command has a `commands.<camelCase>()` binding that carries the')
     console.error('argument/return types and the AppError result shape. Unwrap it with the')
-    console.error('`unwrap` helper from `@/lib/tauri`, matching the other call sites:')
+    console.error('`unwrap` helper from `@/lib/app-error`, matching the other call sites:')
     console.error('')
+    console.error("    import { unwrap } from '@/lib/app-error'")
     console.error("    import { commands } from '@/lib/bindings'")
-    console.error("    import { unwrap } from '@/lib/tauri'")
     console.error('    unwrap(await commands.mcpSetEnabled(enabled))')
     console.error('')
     console.error('If a raw invoke is genuinely required (a new low-level seam), add the file')

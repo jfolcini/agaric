@@ -44,7 +44,7 @@ Swapping `<div role="status">` for `<output>` removes the literal attribute a te
 - A fresh worktree lacks `node_modules`, `src-tauri/.env`, and `src-tauri/dev.db`, all of which the pre-push hook needs. Run `bash scripts/seed-worktree.sh` from inside it (or push from the main checkout).
 - The pre-commit clippy runs sqlx online against `dev.db`, so the DB must match the branch's migrations. When switching between migration-divergent branches: `cd src-tauri && set -a && . ./.env && set +a && sqlx database drop -y && sqlx database create && sqlx migrate run --source migrations`.
 - Before migrating a timestamp or enum column, grep the column name for cross-table `> ?` / `< ?` predicates and for values copied from one column into another; migrate a coupled cluster in one PR. Backfill with `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`, NULL-guarded.
-- Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`, `tauri-import-baseline.json`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
+- Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`, `lib-layering-baseline.json`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
 - Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook). Fix the link; links in a `mod x;` declaration resolve in the parent's scope.
 
 ## Delegation

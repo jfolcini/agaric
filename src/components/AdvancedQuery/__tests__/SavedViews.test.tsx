@@ -15,8 +15,8 @@ import {
   SavedViews,
   VIEW_TYPE_KEY,
 } from '@/components/AdvancedQuery/SavedViews'
+import type { BlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import type { BlockRow } from '@/lib/tauri'
 import {
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,

@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { SpaceTopStripe } from '@/components/layout/SpaceTopStripe'
-import type { SpaceRow } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 const PERSONAL: SpaceRow = {

@@ -350,8 +350,8 @@ if (typeof window.matchMedia !== 'function') {
 // Individual tests can override via vi.mocked(invoke).mockResolvedValueOnce(...)
 //
 // A minimal `Channel<T>` stub is exported alongside `invoke` because
-// `src/lib/tauri.ts::startSync` constructs a `new Channel(...)` at module
-// load time. Without a stub, every test that imports `tauri.ts` trips
+// `startSync` in `src/lib/ipc-helpers.ts` constructs a `new Channel(...)`.
+// Without a stub, every test that imports that module trips
 // vitest's "no Channel export on mock" guard at import time. The stub
 // supports the `onmessage` setter and the `(payload) => void` callable shape
 // used by `tauri-specta`'s generated bindings; tests that need to assert on

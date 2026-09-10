@@ -43,8 +43,8 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { paginationLimit } from '@/lib/safe-limit'
 import type { FilterToken } from '@/lib/search-query'
-import { paginationLimit } from '@/lib/tauri'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors

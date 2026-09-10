@@ -61,13 +61,9 @@ const mockGetProperties = vi.fn().mockResolvedValue([])
 const mockGetBatchProperties = vi.fn().mockResolvedValue({})
 const mockBatchResolve = vi.fn().mockResolvedValue([])
 
-vi.mock('@/lib/tauri', () => ({
-  batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
-}))
-
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`)
 // now calls `commands.getBatchProperties` from `@/lib/bindings` directly
-// instead of the `@/lib/tauri` wrapper. Route the same spy through both
+// instead of the hand-written wrapper. Route the same spy through both
 // surfaces, wrapping the resolved value in the `{status:'ok', data}`
 // envelope that `unwrap` expects.
 // #2927 phase 6 — `DependencyIndicator` moved its blocking-task title lookup

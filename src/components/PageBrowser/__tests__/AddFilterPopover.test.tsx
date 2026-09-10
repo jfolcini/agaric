@@ -24,12 +24,12 @@ import {
   type HasParentMatchingEditorProps,
 } from '@/components/AdvancedQuery/HasParentMatchingEditor'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
+import type { FilterPrimitive } from '@/lib/bindings'
 import {
   __resetPriorityLevelsForTests,
   DEFAULT_PRIORITY_LEVELS,
   setPriorityLevels,
 } from '@/lib/priority-levels'
-import type { FilterPrimitive } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 

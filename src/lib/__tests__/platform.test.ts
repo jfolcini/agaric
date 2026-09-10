@@ -199,8 +199,7 @@ describe('platform', () => {
 
   // Dedup guard (#742, LOW): `isMobilePlatform` must live in ONE place.
   // The three former-duplicate sites must import it from `lib/platform`
-  // and must NOT re-declare a local copy or carry the stale
-  // `src/lib/tauri.ts:1871` doc anchor.
+  // and must NOT re-declare a local copy.
   describe('isMobilePlatform dedup — single export, three import sites', () => {
     const sites = [
       {
@@ -233,11 +232,6 @@ describe('platform', () => {
     it.each(sites)('$name no longer declares a local isMobilePlatform', ({ path }) => {
       const src = readSite(path)
       expect(src).not.toMatch(/function\s+isMobilePlatform\s*\(/)
-    })
-
-    it.each(sites)('$name no longer carries the stale tauri.ts:1871 doc anchor', ({ path }) => {
-      const src = readSite(path)
-      expect(src).not.toContain('tauri.ts:1871')
     })
   })
 

@@ -30,7 +30,7 @@ import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
 // #2675 tests drive the real `commitInlineProperties`, which now calls
 // `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
 // `saveDraft`/`deleteDraft`/`getPropertyDef` (#4411) and `setProperty` (#4412)
-// retired their `@/lib/tauri` wrappers, so only `commands.*` is mocked — assert
+// retired their hand-written wrappers, so only `commands.*` is mocked — assert
 // on the bare `mockSaveDraft`/`mockDeleteDraft`/`mockGetPropertyDef`/
 // `mockSetProperty` spies.
 // All spies resolve the `{ status: 'ok', data }` shape.

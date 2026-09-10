@@ -32,7 +32,7 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 import { makeBlock } from '@/__tests__/fixtures'
 import { BacklinkGroupRenderer } from '@/components/backlinks/BacklinkGroupRenderer'
 import { renderRichContent } from '@/components/RichContentRenderer'
-import type { BacklinkGroup, BlockRow } from '@/lib/tauri'
+import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 
 vi.mock('@/components/pages/PageLink', () => ({
   PageLink: ({

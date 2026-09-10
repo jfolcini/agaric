@@ -89,7 +89,7 @@ vi.mock('@/stores/page-blocks', () => ({
 }))
 
 // #2927 phase 5 — `refreshAfterUndoRedo` now calls the generated
-// `commands.getBlock`, so mocking only the `@/lib/tauri` wrapper no longer
+// `commands.getBlock`, so mocking only the hand-written wrapper no longer
 // intercepts. Back the generated surface instead, resolving the same
 // typed-result envelope `unwrap` expects.
 vi.mock('@/lib/bindings', async (importOriginal) => {

@@ -30,12 +30,6 @@ import { axe } from 'vitest-axe'
 import '@/lib/i18n'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
-// lib/tauri is imported transitively (BlockListItem → useBlockReschedule);
-// stub the IPC surface so the module loads under happy-dom.
-vi.mock('@/lib/tauri', () => ({
-  reschedule: vi.fn(),
-}))
-
 // DateChipEditor pulls in tauri-backed reschedule hooks; stub it to a sentinel
 // so the date-chip surface tests focus on the Sheet-vs-Popover wrapper.
 vi.mock('@/components/properties/DateChipEditor', () => ({

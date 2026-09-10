@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { FilterPrimitive } from '@/lib/bindings'
 import { PREFERENCES } from '@/lib/preferences'
 import {
   deleteSavedPagesView,
@@ -23,7 +24,6 @@ import {
   savePagesView,
   viewMatchesTuple,
 } from '@/lib/saved-pages-views'
-import type { FilterPrimitive } from '@/lib/tauri'
 
 const STORAGE_KEY = 'agaric:pages:savedViews:v1'
 

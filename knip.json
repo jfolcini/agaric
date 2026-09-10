@@ -2,7 +2,6 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
     "src/App.tsx",
-    "src/lib/tauri.ts",
     "src/lib/search-query/index.ts",
     "src/components/EmojiPicker/index.ts",
     "src/editor/markdown-parse.ts",

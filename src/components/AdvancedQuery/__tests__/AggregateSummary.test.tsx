@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
-import type { AggregateResult, AggregateSpec } from '@/lib/tauri'
+import type { AggregateResult, AggregateSpec } from '@/lib/bindings'
 
 describe('AggregateSummary', () => {
   it('renders each result chip with no specs supplied (unchanged legacy behaviour)', () => {

@@ -30,7 +30,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { paginationLimit } from '@/lib/tauri'
+import { paginationLimit } from '@/lib/safe-limit'
 
 export interface TagResolution {
   /** Ids for the names that resolved. One entry per resolved input name. */

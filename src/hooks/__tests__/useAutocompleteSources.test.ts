@@ -25,11 +25,11 @@ import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 // source resolves through `propertyValuesQueryFn`
 // (`@/lib/property-values-cache`, #2927 phase 4), which calls
 // `commands.listPropertyValues` directly. `listPropertyKeys` /
-// `listPropertyValues` no longer exist on `@/lib/tauri` (dead wrappers,
+// `listPropertyValues` no longer exist as hand-written wrappers (dead,
 // #4410) — the hoisted mocks below back the `commands.*` surface only, and
-// are used directly (not via `vi.mocked(...)` on a `@/lib/tauri` import) for
+// are used directly (not via `vi.mocked(...)` on a wrapper import) for
 // the assertions further down. `listTagsByPrefix` and `getPropertyDef` retired
-// their `@/lib/tauri` wrappers too (#4411) — their mocks resolve the
+// their hand-written wrappers too (#4411) — their mocks resolve the
 // `{ status: 'ok', data }` envelope the real `unwrap` at the call site expects.
 const { mockListPropertyKeys, mockListPropertyValues, mockListTagsByPrefix, mockGetPropertyDef } =
   vi.hoisted(() => ({

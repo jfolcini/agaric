@@ -430,12 +430,10 @@ jobs:
   # This is therefore the first thing in this repo's CI that verifies a
   # merge RESULT rather than a branch. It is deliberately narrow: no Rust
   # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs the
-  # six whole-tree ratchet guards against a disposable worktree: the
-  # stdlib-only Python trio that shares the five-crate-root scan (#3107),
-  # two bash guards (unsafe-allowlist, migrations-immutable) and one node
-  # guard (tauri-import-baseline, which imports nothing beyond the stdlib
-  # and its sibling scripts/lib/js-scanner.mjs, so it needs no
-  # node_modules either) — #3978. Running the FULL `prek
+  # five whole-tree ratchet guards against a disposable worktree: the
+  # stdlib-only Python trio that shares the five-crate-root scan (#3107) and
+  # two bash guards (unsafe-allowlist, migrations-immutable) — #3978.
+  # Running the FULL `prek
   # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
   # toolchain this lane deliberately does not carry; see that script's own
   # header for the scoping rationale and how to extend it.

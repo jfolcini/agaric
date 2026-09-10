@@ -23,7 +23,7 @@ import { logger } from '@/lib/logger'
 import type { PageBlockState } from '@/stores/page-blocks'
 
 // #2927 — the hook calls the generated bindings directly, so the seam this
-// suite stubs is `commands.*` rather than the retired `@/lib/tauri` wrapper.
+// suite stubs is `commands.*` rather than the retired hand-written wrapper.
 // Spreading `actual.commands` keeps every other command real, and stubbing at
 // the envelope level means the production `unwrap` runs for real.
 vi.mock('@/lib/bindings', async () => {
@@ -110,7 +110,7 @@ describe('useCheckboxSyntax', () => {
   })
 
   it('treats a { status: "error" } envelope as a failure, not a silent success (#2927)', async () => {
-    // The retired `@/lib/tauri` wrapper owned the `unwrap`; the call site now
+    // The retired hand-written wrapper owned the `unwrap`; the call site now
     // does. `commands.*` RESOLVES a `{ status: 'error' }` envelope instead of
     // rejecting, so a call site that dropped `unwrap` would run the SUCCESS
     // branch on a backend failure. No rejection-based test can see that — a

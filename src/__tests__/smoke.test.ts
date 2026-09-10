@@ -37,10 +37,10 @@ describe('module smoke tests', () => {
     expect(typeof mod.useBootStore.getState).toBe('function')
   })
 
-  // ── Tauri wrappers ──────────────────────────────────────────────────
+  // ── IPC floor ───────────────────────────────────────────────────────
 
-  it('tauri wrapper exports key command functions', async () => {
-    const mod = await import('@/lib/tauri')
+  it('ipc-helpers exports key command functions', async () => {
+    const mod = await import('@/lib/ipc-helpers')
     expect(typeof mod.createBlock).toBe('function')
     expect(typeof mod.searchBlocks).toBe('function')
   })

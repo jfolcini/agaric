@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { FilterPrimitive } from '@/lib/tauri'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 

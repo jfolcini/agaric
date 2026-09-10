@@ -99,8 +99,8 @@ export const commands = {
 	 *  the agenda knobs `date` / `date_range` / `source`) live together as
 	 *  fields of the request; the grouping reflects the request, not the
 	 *  `tauri-specta` 10-arg transport limit, and a new filter is added as a
-	 *  field there. The hand-written TS wrapper in `src/lib/tauri.ts` keeps
-	 *  its flat public API and builds the request only at the IPC boundary.
+	 *  field there. The TS call site keeps its own flat shape and builds the
+	 *  request only at the IPC boundary.
 	 * 
 	 *  # Scope (#2248)
 	 * 
@@ -187,8 +187,8 @@ export const commands = {
 	 *  into [`SearchFilter`] so the wrapper stays well under the
 	 *  `tauri-specta` 10-arg ceiling as follow-up plans append filter
 	 *  fields (`#[serde(default)]` keeps wire compat). The hand-written
-	 *  TS wrapper in `src/lib/tauri.ts` keeps the public API at
-	 *  `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
+	 *  `searchBlocks` helper in `src/lib/ipc-helpers.ts` keeps the public API
+	 *  at `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
 	 *  into the struct only at the IPC boundary, mirroring the
 	 *  [`QueryByPropertyRequest`] precedent on [`query_by_property`].
 	 */
@@ -229,7 +229,7 @@ export const commands = {
 	 *  together as fields of the request; the grouping reflects the request,
 	 *  not the `tauri-specta` 10-arg transport limit, and a new filter is
 	 *  added as a field there. The hand-written TS wrapper in
-	 *  `src/lib/tauri.ts` keeps its flat public API at
+	 *  TS call site keeps its own flat shape at
 	 *  `queryByProperty({ blockType, valueTextIn, ... })` and builds the
 	 *  request only at the IPC boundary.
 	 * 
@@ -2531,9 +2531,9 @@ export type LinkMetadata = {
  *  filter is optional; `None` means "no filter applies" (the common case).
  * 
  *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
- *  convention (camelCase keys on the IPC boundary), so the hand-written
- *  TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
- *  keys without an extra translation layer.
+ *  convention (camelCase keys on the IPC boundary), so the
+ *  TS call site can build the request with camelCase keys without an
+ *  extra translation layer.
  */
 export type ListBlocksRequest = {
 	/**  Restrict to children of this parent block. */
@@ -3284,9 +3284,9 @@ export type PurgeResponse = {
  *  parameter — the request shape is the IPC boundary concern only.
  * 
  *  Serde `rename_all = "camelCase"` matches the Tauri command-arg
- *  convention (camelCase keys on the IPC boundary), so the hand-written
- *  TS wrapper in `src/lib/tauri.ts` can build the request with camelCase
- *  keys without an extra translation layer.
+ *  convention (camelCase keys on the IPC boundary), so the
+ *  TS call site can build the request with camelCase keys without an
+ *  extra translation layer.
  */
 export type QueryByPropertyRequest = {
 	/**  Property key to match (required). */

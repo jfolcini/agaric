@@ -19,7 +19,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { DiffSpan } from '@/lib/tauri'
+import type { DiffSpan } from '@/lib/bindings'
 
 // Return STABLE callback identities across renders (the real hooks use
 // `useCallback` with empty deps), so the component's span memo only recomputes

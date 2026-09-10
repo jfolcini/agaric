@@ -218,7 +218,7 @@ describe('usePageBrowserSort', () => {
 // PageWithMetadataRow shape is camelCase; the sortPages discriminator
 // looks for `lastModifiedAt` to detect it. The returned object is cast
 // to the type the production wrapper would produce, via the import.
-import type { PageWithMetadataRow } from '@/lib/tauri'
+import type { PageWithMetadataRow } from '@/lib/bindings'
 
 function makeMetaRow(
   id: string,

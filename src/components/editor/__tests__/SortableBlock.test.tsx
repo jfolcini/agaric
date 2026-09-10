@@ -221,14 +221,9 @@ const mockDeleteProperty = vi.fn().mockResolvedValue({})
 // `undoPageOp` / `redoPageOp` mocked here. `loadPageSubtree` is still needed
 // for the `PageBlockStoreProvider` mount below.
 const mockLoadPageSubtree = vi.fn().mockResolvedValue({ blocks: [] })
-vi.mock('@/lib/tauri', () => ({
-  setProperty: (...args: unknown[]) => mockSetProperty(...args),
-  listBlocks: (...args: unknown[]) => mockListBlocks(...args),
-}))
-
 // #2927 phase 4 — the real (unmocked) `BlockPropertyEditor` rendered inside
 // `SortableBlock` now calls `commands.setProperty` from `@/lib/bindings`
-// directly instead of the `@/lib/tauri` wrapper. Route the same spy through
+// directly instead of the hand-written wrapper. Route the same spy through
 // the bindings surface, wrapped in the `{status:'ok', data}` envelope.
 // #2927 phase 6 — same for `usePropertyDefForEdit` (also rendered for real
 // here), which now calls `commands.getPropertyDef` / `commands.listBlocks`.

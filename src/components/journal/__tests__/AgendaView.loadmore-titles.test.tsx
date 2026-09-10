@@ -54,12 +54,6 @@ const { mockGetProperties, mockGetBatchProperties, mockBatchResolve } = vi.hoist
   mockBatchResolve: vi.fn(),
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
-  queryByProperty: vi.fn(),
-  paginationLimit: (n: number) => n,
-}))
-
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {

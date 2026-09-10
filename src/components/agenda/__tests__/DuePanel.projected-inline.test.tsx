@@ -23,7 +23,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearProjectedCache } from '@/hooks/useDuePanelData'
 
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
-// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
 const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
   vi.hoisted(() => ({

@@ -14,7 +14,9 @@ import { resolveLocale } from '@/lib/i18n/locales'
 // order here does not matter — every module that resolves a string imports
 // it too, so its body has run before any of them evaluate.
 import { setLocale } from '@/lib/i18n/set-locale'
+import { logFrontend } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
+import { setLogBackendSink } from '@/lib/logger-transport'
 import { initFrontendObservability } from '@/lib/observability'
 import { PREFERENCES, pruneImageCollapse, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
@@ -99,6 +101,12 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 async function main() {
+  // Wire the IPC log call into the logger's backend-transport seam (#761).
+  // Explicit, and first: it used to ride on an import-time side effect in the
+  // wrapper layer #2927 deleted, so nothing but this call keeps frontend
+  // warn/error entries reaching the Rust log file.
+  setLogBackendSink(logFrontend)
+
   // When running in a regular browser (not Tauri webview), activate IPC mocks
   // so the UI renders for visual development/debugging.
   //

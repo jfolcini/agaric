@@ -552,8 +552,8 @@ pub async fn get_status(
 /// into [`SearchFilter`] so the wrapper stays well under the
 /// `tauri-specta` 10-arg ceiling as follow-up plans append filter
 /// fields (`#[serde(default)]` keeps wire compat). The hand-written
-/// TS wrapper in `src/lib/tauri.ts` keeps the public API at
-/// `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
+/// `searchBlocks` helper in `src/lib/ipc-helpers.ts` keeps the public API
+/// at `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
 /// into the struct only at the IPC boundary, mirroring the
 /// [`QueryByPropertyRequest`] precedent on [`query_by_property`].
 #[tauri::command]
@@ -903,7 +903,7 @@ mod join_error_tests {
 /// together as fields of the request; the grouping reflects the request,
 /// not the `tauri-specta` 10-arg transport limit, and a new filter is
 /// added as a field there. The hand-written TS wrapper in
-/// `src/lib/tauri.ts` keeps its flat public API at
+/// TS call site keeps its own flat shape at
 /// `queryByProperty({ blockType, valueTextIn, ... })` and builds the
 /// request only at the IPC boundary.
 ///

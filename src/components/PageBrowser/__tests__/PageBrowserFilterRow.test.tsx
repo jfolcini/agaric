@@ -24,8 +24,8 @@ import {
   pageFilterSummary,
 } from '@/components/PageBrowser/PageBrowserFilterRow'
 import type { PropertyPredicate } from '@/lib/bindings'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import type { FilterPrimitive } from '@/lib/tauri'
 
 vi.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: React.ReactNode }) => (

@@ -27,7 +27,7 @@ import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
-// `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
+// hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
 const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
   vi.hoisted(() => ({

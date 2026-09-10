@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import type { HistoryEntry } from '@/lib/bindings'
 import { getPayloadRawContent, getPropertyPayload } from '@/lib/history-utils'
-import type { HistoryEntry } from '@/lib/tauri'
 
 function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
   return {

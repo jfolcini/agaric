@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 
 interface Opts {
   filteredBlocks: BlockRow[]

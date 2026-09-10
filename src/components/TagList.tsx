@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { isConflict, unwrap } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import {
   invalidateNameCaches,
@@ -41,7 +42,6 @@ import {
   TAG_COLOR_PRESETS,
   tagColorForeground,
 } from '@/lib/tag-colors'
-import { createBlock } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'

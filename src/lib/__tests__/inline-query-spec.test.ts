@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import type { FilterExpr } from '@/lib/bindings'
 import {
   type InlineQuerySpec,
   countFilterLeaves,
@@ -14,7 +15,6 @@ import {
   INLINE_QUERY_V2_PREFIX,
   isInlineQueryV2,
 } from '@/lib/inline-query-spec'
-import type { FilterExpr } from '@/lib/tauri'
 
 const NESTED: FilterExpr = {
   type: 'Or',

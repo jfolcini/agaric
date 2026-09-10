@@ -28,7 +28,7 @@ import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 
 // Mock @tauri-apps/plugin-autostart so the AutostartRow's
-// dynamic import (via @/lib/tauri's wrappers) hits a controllable stub.
+// dynamic import (via @/lib/platform/autostart) hits a controllable stub.
 // Per-test `mockResolvedValueOnce` / `mockRejectedValueOnce` overrides
 // drive the desktop-available / mobile-unavailable / IPC-error paths.
 const mockEnable = vi.fn()

@@ -5,8 +5,13 @@
  * sensible defaults, following the Partial<T> pattern.
  */
 
-import type { HistoryEntry, PageHeading, PageWithMetadataRow, WithOps } from '@/lib/bindings'
-import type { BlockRow } from '@/lib/tauri'
+import type {
+  BlockRow,
+  HistoryEntry,
+  PageHeading,
+  PageWithMetadataRow,
+  WithOps,
+} from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /** Create a FlatBlock (block + depth) with sensible defaults. */

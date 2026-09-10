@@ -29,7 +29,7 @@ import { useSpaceStore } from '@/stores/space'
 /**
  * #1454 — outcome of a bibliography import, rendered by its own result
  * panel. camelCase mirror of the backend `ImportBibliographyResult` wire
- * shape (see `importBibliography` in `src/lib/tauri.ts`); a bibliography
+ * shape (see `commands.importBibliography`); a bibliography
  * import is a single-IPC run with page/entry counts, not the markdown
  * importer's per-file block loop.
  */

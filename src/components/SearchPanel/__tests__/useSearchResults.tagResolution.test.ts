@@ -19,16 +19,15 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    getBlock: vi.fn(),
   }
 })
 
-// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411) — `useTagResolution`
+// `listTagsByPrefix` retired its hand-written wrapper (#4411) — `useTagResolution`
 // now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
 // envelope, so the mock backs the `commands.*` surface and resolves the
 // `{ status: 'ok', data }` shape.
@@ -49,8 +48,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 import { UNRESOLVED_TAG_SENTINEL } from '@/components/SearchPanel/searchFilterParams'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
+import type { TagCacheRow } from '@/lib/bindings'
+import { searchBlocks } from '@/lib/ipc-helpers'
 import { parse } from '@/lib/search-query'
-import { searchBlocks, type TagCacheRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 

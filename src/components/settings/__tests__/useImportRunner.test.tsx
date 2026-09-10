@@ -14,9 +14,10 @@ import { useImportRunner } from '@/components/settings/useImportRunner'
 import type { ImportUnit } from '@/lib/vault-import'
 
 const mockImportMarkdown = vi.fn()
-vi.mock('@/lib/tauri', () => ({
-  importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args),
-}))
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc-helpers')>()
+  return { ...actual, importMarkdown: (...args: unknown[]) => mockImportMarkdown(...args) }
+})
 
 // Post-import navigation resolves the title through `commands.resolvePageByAlias`;
 // nothing matches here.

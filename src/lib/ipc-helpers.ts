@@ -1,8 +1,9 @@
 /**
- * The floor of the `@/lib/tauri` → `bindings.ts` migration (#2927, #4413).
+ * The permanent floor under the generated `@/lib/bindings` surface (#2927).
  *
- * `src/lib/tauri/` exists to be deleted. These functions can't move to a
- * bare `commands.*` call site because each carries real logic the generated
+ * `bindings.ts` is the IPC surface and the destination for every call site;
+ * the hand-written wrapper layer that used to sit on top of it is gone. These
+ * functions stay hand-written because each carries real logic the generated
  * binding does not (and, for two of them, cannot) express on its own:
  *
  *  - `cancelledError` / `withAbort` — no IPC at all; a client-side
@@ -12,12 +13,14 @@
  *    genuine logic (see their doc comments below).
  *  - `importMarkdown` / `startSync` — channel-based (`Channel<T>` progress
  *    plumbing), not simple request/response.
+ *  - `createBlock` — the six-positional-argument `?? null` coercion Tauri's
+ *    explicit-null-over-the-wire contract needs.
+ *  - `searchBlocks` / `searchBlocksPartitioned` — a scope default that is the
+ *    opposite of the wire's; see their doc comments.
+ *  - `logFrontend` — the backend log sink `src/main.tsx` registers at boot.
  *  - `readAttachment` — the sanctioned raw-`invoke` seam: a raw-response
  *    Tauri command can't carry a `specta::Type`, so it has no generated
  *    `commands.*` binding at all.
- *
- * They live here, not in `src/lib/tauri/`, so the directory whose entire
- * purpose is to be deleted doesn't end up permanently un-deletable.
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core'
@@ -28,15 +31,22 @@ import type {
   AppError,
   BlockRow,
   BulkTrashResponse,
+  DateFilter,
+  DateOp,
   ImportProgressUpdate,
   ImportResult,
+  NamedDateRange,
   PageResponse,
+  PartitionedSearchResponse,
+  SearchBlockRow,
   SyncProgressUpdate,
   SyncSessionInfo,
   VaultFile,
+  WithOps,
 } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
-import { toSpaceScope } from '@/lib/space-scope'
+import type { SafeLimit } from '@/lib/safe-limit'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 
 // ---------------------------------------------------------------------------
 // Client-side abort plumbing (no IPC)
@@ -311,4 +321,280 @@ export async function startSync(
 export async function readAttachment(attachmentId: string): Promise<Uint8Array> {
   const buffer = await invoke<ArrayBuffer>('read_attachment', { attachmentId })
   return new Uint8Array(buffer)
+}
+
+// ---------------------------------------------------------------------------
+// Block creation (explicit-null coercion)
+// ---------------------------------------------------------------------------
+
+/** Create a new block. Returns the created block with its generated ID.
+ *
+ * When `blockType === 'page'`, `spaceId` is REQUIRED. The backend rejects
+ * page-typed creates without a space ULID with `AppError::Validation`. For
+ * page creation, prefer the explicit `commands.createPageInSpace` IPC — it
+ * makes the invariant readable at the callsite. The optional `spaceId` here
+ * exists so callers stuck on `createBlock` can still satisfy the invariant
+ * (and so the specta-bound IPC parameter list matches the Rust signature).
+ *
+ * Other block types (`content`, `tag`) ignore `spaceId`.
+ */
+export async function createBlock(params: {
+  blockType: string
+  content: string
+  parentId?: string | undefined
+  /** #400: 0-based sibling slot among `parentId`'s children; omit to append. */
+  index?: number | undefined
+  spaceId?: string | undefined
+  /**
+   * #2849 PR2 — optional client-generated ULID for optimistic create. When
+   * supplied it MUST be a well-formed ULID (see `newBlockId`): the backend uses
+   * it verbatim and rejects a malformed or already-existing id. Omit to let the
+   * backend mint a server id (all legacy callers).
+   */
+  blockId?: string | undefined
+}): Promise<WithOps<BlockRow>> {
+  return unwrap(
+    await commands.createBlock(
+      params.blockType,
+      params.content,
+      params.parentId ?? null,
+      params.index ?? null,
+      toSpaceScope(params.spaceId),
+      params.blockId ?? null,
+    ),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Search (scope default is the safety)
+// ---------------------------------------------------------------------------
+
+/** Full-text search across all blocks, paginated by relevance.
+ *
+ * KEPT (#4412). `SearchFilter.scope` is `#[serde(default)]` over a
+ * `SpaceScope` whose `Default` is `Global`
+ * (`src-tauri/agaric-store/src/space.rs:216-223`), so an omitted `scope` silently
+ * searches EVERY space; this wrapper's default is `requireActiveScope`, the
+ * opposite. Deleting it would make the cross-space leak a missing object key
+ * rather than a compile error.
+ *
+ * `spaceId` — required. Restricts matches to blocks whose owning page carries
+ * `space = <spaceId>`. Callers must resolve the active `currentSpaceId` (from
+ * `useSpaceStore`) before invoking; pre-bootstrap callers should pass `''`
+ * (empty string), which the backend treats as a no-match (returns an empty
+ * page) rather than crashing on a runtime null deref.
+ *
+ * `parentId`, `tagIds`, `spaceId` and the filter flags are marshalled into
+ * the backend's `SearchFilter` struct at the IPC boundary, so the public API
+ * stays flat for call sites like `SearchPanel.tsx`.
+ */
+export async function searchBlocks(
+  params: {
+    query: string
+    parentId?: string | undefined
+    tagIds?: string[] | undefined
+    cursor?: string | undefined
+    limit?: SafeLimit | undefined
+    spaceId: string
+    /** page-name glob include list. See `SearchFilter`. */
+    includePageGlobs?: string[] | undefined
+    /** page-name glob exclude list. See `SearchFilter`. */
+    excludePageGlobs?: string[] | undefined
+    /** case-sensitive post-FTS filter. See `SearchFilter`. */
+    caseSensitive?: boolean | undefined
+    /** ASCII whole-word post-FTS filter. See `SearchFilter`. */
+    wholeWord?: boolean | undefined
+    /** regex-mode (bypasses FTS5). See `SearchFilter`. */
+    isRegex?: boolean | undefined
+    /**
+     * Restrict to a specific `blocks.block_type` (e.g. `'page'`).
+     * The Cmd+K palette fires a page-only query in parallel with an
+     * unrestricted blocks query so the FE only has to merge by `page_id`.
+     * `undefined` preserves the pre-existing "all block types" behaviour.
+     * See `SearchFilter.block_type_filter`.
+     */
+    blockTypeFilter?: string | undefined
+    /** `blocks.todo_state IN (...)`. See `SearchFilter`. */
+    stateFilter?: string[] | undefined
+    /** `blocks.priority IN (...)`. See `SearchFilter`. */
+    priorityFilter?: string[] | undefined
+    /**
+     * Date predicate on `blocks.due_date`. The frontend AST
+     * carries `DateFilterValue` with operators `< <= = >= >`; this
+     * wrapper translates to the wire shape `{ named: ... } | { op: {
+     * op: 'lt' | 'lte' | 'eq' | 'gte' | 'gt', date } }`.
+     */
+    dueFilter?: DateFilterValueInput | null | undefined
+    /** same shape as `dueFilter` but on `blocks.scheduled_date`. */
+    scheduledFilter?: DateFilterValueInput | null | undefined
+    /** AND-joined property filters; see `SearchPropertyFilter`. */
+    propertyFilters?: { key: string; value: string }[] | undefined
+    /** AND-joined property exclusions. */
+    excludedPropertyFilters?: { key: string; value: string }[] | undefined
+    /**
+     * `not-state:` projection. Backend emits
+     * `(todo_state IS NULL OR todo_state NOT IN (...))` — NULL-inclusive
+     * inversion. Literal `'none'` flips to `todo_state IS NOT NULL`.
+     */
+    excludedStateFilter?: string[] | undefined
+    /** `not-priority:` projection. Symmetric to `excludedStateFilter`. */
+    excludedPriorityFilter?: string[] | undefined
+  },
+  /**
+   * Optional client-side abort. When the supplied
+   * `AbortSignal` fires the returned promise rejects with a
+   * `cancelled`-kind `AppError` (see {@link withAbort}), which
+   * `isCancellation()` discriminates so superseded searches are
+   * swallowed silently by the caller. The underlying IPC is NOT
+   * cancelled server-side (Tauri 2 limitation); this is a
+   * stop-waiting primitive that lets a newer search drop the prior
+   * in-flight one. Omit for the pre-existing fire-and-forget shape.
+   */
+  signal?: AbortSignal,
+): Promise<PageResponse<SearchBlockRow>> {
+  return unwrap(
+    await withAbort(
+      commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
+        parentId: params.parentId ?? null,
+        tagIds: params.tagIds ?? [],
+        scope: requireActiveScope(params.spaceId),
+        includePageGlobs: params.includePageGlobs ?? [],
+        excludePageGlobs: params.excludePageGlobs ?? [],
+        caseSensitive: params.caseSensitive ?? false,
+        wholeWord: params.wholeWord ?? false,
+        isRegex: params.isRegex ?? false,
+        blockTypeFilter: params.blockTypeFilter ?? null,
+        stateFilter: params.stateFilter ?? [],
+        priorityFilter: params.priorityFilter ?? [],
+        dueFilter: marshalDateFilter(params.dueFilter ?? null),
+        scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
+        propertyFilters: params.propertyFilters ?? [],
+        excludedPropertyFilters: params.excludedPropertyFilters ?? [],
+        excludedStateFilter: params.excludedStateFilter ?? [],
+        excludedPriorityFilter: params.excludedPriorityFilter ?? [],
+      }),
+      signal,
+    ),
+  )
+}
+
+/**
+ * Partitioned full-text search.
+ *
+ * KEPT (#4412) for the same `SearchFilter.scope` reason as
+ * {@link searchBlocks}: the wire default is `Global`, this wrapper's is
+ * `requireActiveScope`.
+ *
+ * Returns `pages` (rows where `block_type='page'`) and `blocks`
+ * (unrestricted rank-ordered set; may include pages alongside content)
+ * In **one** FTS5 scan. Replaces the palette pattern of firing
+ * two parallel `searchBlocks` calls.
+ *
+ * `filter.blockTypeFilter` is ignored — the partitioning IS the
+ * block-type split. The field stays on the wire for `SearchFilter` compat.
+ */
+export async function searchBlocksPartitioned(params: {
+  query: string
+  pageLimit: SafeLimit
+  blockLimit: SafeLimit
+  parentId?: string | undefined
+  tagIds?: string[] | undefined
+  spaceId: string
+  includePageGlobs?: string[] | undefined
+  excludePageGlobs?: string[] | undefined
+  caseSensitive?: boolean | undefined
+  wholeWord?: boolean | undefined
+  isRegex?: boolean | undefined
+  stateFilter?: string[] | undefined
+  priorityFilter?: string[] | undefined
+  dueFilter?: DateFilterValueInput | null | undefined
+  scheduledFilter?: DateFilterValueInput | null | undefined
+  propertyFilters?: { key: string; value: string }[] | undefined
+  excludedPropertyFilters?: { key: string; value: string }[] | undefined
+  excludedStateFilter?: string[] | undefined
+  excludedPriorityFilter?: string[] | undefined
+}): Promise<PartitionedSearchResponse> {
+  return unwrap(
+    await commands.searchBlocksPartitioned(params.query, params.pageLimit, params.blockLimit, {
+      parentId: params.parentId ?? null,
+      tagIds: params.tagIds ?? [],
+      scope: requireActiveScope(params.spaceId),
+      includePageGlobs: params.includePageGlobs ?? [],
+      excludePageGlobs: params.excludePageGlobs ?? [],
+      caseSensitive: params.caseSensitive ?? false,
+      wholeWord: params.wholeWord ?? false,
+      isRegex: params.isRegex ?? false,
+      blockTypeFilter: null,
+      stateFilter: params.stateFilter ?? [],
+      priorityFilter: params.priorityFilter ?? [],
+      dueFilter: marshalDateFilter(params.dueFilter ?? null),
+      scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
+      propertyFilters: params.propertyFilters ?? [],
+      excludedPropertyFilters: params.excludedPropertyFilters ?? [],
+      excludedStateFilter: params.excludedStateFilter ?? [],
+      excludedPriorityFilter: params.excludedPriorityFilter ?? [],
+    }),
+  )
+}
+
+/**
+ * Frontend-side `DateFilter` input shape. Mirrors the
+ * `DateFilterValue` union in `src/lib/search-query/types.ts` (the
+ * shape the AST projection emits). {@link marshalDateFilter} translates this
+ * to the wire shape (`DateFilter`) at the IPC boundary so the rest
+ * of the frontend doesn't need to know about specta's `lt`/`lte`/…
+ * string codes.
+ */
+export type DateFilterValueInput =
+  | { kind: 'named'; name: string }
+  | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
+
+/** Translate a frontend `DateFilterValueInput` to the wire shape. */
+function marshalDateFilter(v: DateFilterValueInput | null): DateFilter | null {
+  if (v == null) return null
+  if (v.kind === 'named') {
+    // The wire shape uses kebab-case for the `NamedDateRange` enum;
+    // the input shape already matches.
+    return { named: v.name as NamedDateRange }
+  }
+  const opMap: Record<'<' | '<=' | '=' | '>=' | '>', DateOp> = {
+    '<': 'lt',
+    '<=': 'lte',
+    '=': 'eq',
+    '>=': 'gte',
+    '>': 'gt',
+  }
+  return { op: { op: opMap[v.op], date: v.date } }
+}
+
+// ---------------------------------------------------------------------------
+// Backend log sink
+// ---------------------------------------------------------------------------
+
+/**
+ * Log a frontend message to the backend's daily-rolling log file.
+ * Fire-and-forget.
+ *
+ * Registered as the logger's backend sink by `src/main.tsx`'s bootstrap
+ * (`setLogBackendSink`); `logger.ts` itself depends only on the leaf
+ * `logger-transport.ts`, so there is no logger↔IPC import cycle.
+ */
+export async function logFrontend(
+  level: string,
+  module: string,
+  message: string,
+  stack?: string | null,
+  context?: string | null,
+  data?: string | null,
+): Promise<void> {
+  unwrap(
+    await commands.logFrontend(
+      level,
+      module,
+      message,
+      stack ?? null,
+      context ?? null,
+      data ?? null,
+    ),
+  )
 }
