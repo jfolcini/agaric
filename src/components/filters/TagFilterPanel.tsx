@@ -209,22 +209,26 @@ function InheritedToggle({
   const id = useId()
   return (
     <div className="flex items-center gap-2">
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        data-testid="tag-filter-include-inherited"
+      />
+      {/* The tooltip hangs off the LABEL: a `TooltipTrigger asChild` around the
+          switch hands it the trigger's own `data-state` ("closed"), which the
+          switch spreads over its "checked"/"unchecked" — and the track's fill
+          is keyed on exactly that attribute. */}
       <Tooltip>
         <TooltipTrigger asChild>
-          <Switch
-            id={id}
-            checked={checked}
-            onCheckedChange={onCheckedChange}
-            data-testid="tag-filter-include-inherited"
-          />
+          <Label htmlFor={id} className="font-normal">
+            {t('tagFilter.includeInherited')}
+          </Label>
         </TooltipTrigger>
         <TooltipContent>
           <p className="max-w-xs">{t('tagFilter.includeInheritedTooltip')}</p>
         </TooltipContent>
       </Tooltip>
-      <Label htmlFor={id} className="font-normal">
-        {t('tagFilter.includeInherited')}
-      </Label>
     </div>
   )
 }

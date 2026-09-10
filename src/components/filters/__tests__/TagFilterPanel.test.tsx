@@ -1548,6 +1548,9 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'true')
+    // The track's fill is keyed on `data-state`; a tooltip trigger wrapped
+    // around the switch overwrote it with its own.
+    expect(inheritedSwitch()).toHaveAttribute('data-state', 'checked')
     await waitFor(() => {
       expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], includeInherited: true })
     })
@@ -1564,6 +1567,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'false')
+    expect(inheritedSwitch()).toHaveAttribute('data-state', 'unchecked')
     // The `false` key is still cached (`staleTime: Infinity`), so no second IPC:
     // the visible set snaps back to the direct-only page.
     await waitFor(() => {

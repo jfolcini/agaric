@@ -70,3 +70,13 @@ pointed away from the case it warns about: an inline `@` chip lands in
 now say "an inline `@` tag chip". The "(including inherited tags)" fragment is
 also gated on `!loading`, so the previous key's count is never shown under the
 new label during the switch's round trip.
+
+## Round five
+
+Wrapping the `Switch` in `TooltipTrigger asChild` handed it the trigger's own
+`data-state` ("closed"), which the switch spread over its "checked" /
+"unchecked" — the attribute the track's fill is keyed on, so the switch had no
+visible on/off state. The tooltip now hangs off the label; the test asserts
+`data-state` on the switch in both positions, and reddens with the trigger
+back around the switch. The doc sentence is scoped to the Tags view, where
+the switch lives.
