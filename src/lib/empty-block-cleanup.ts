@@ -50,6 +50,7 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { paginationLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 
@@ -134,7 +135,7 @@ async function carriesNothing(blockId: string): Promise<boolean> {
       commands.getProperties(blockId).then(unwrap),
       commands.listTagsForBlock(blockId).then(unwrap),
       // limit 1 — presence is the whole question.
-      commands.getBacklinks(blockId, null, 1, toSpaceScope(null)).then(unwrap),
+      commands.getBacklinks(blockId, null, paginationLimit(1), toSpaceScope(null)).then(unwrap),
     ])
     return properties.length === 0 && tags.length === 0 && backlinks.items.length === 0
   } catch (err: unknown) {
