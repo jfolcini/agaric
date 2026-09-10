@@ -182,6 +182,20 @@ async fn insert_seed_block(pool: &SqlitePool, b: &Value) {
         position,
     )
     .await;
+    // `page_id` is the ROOT page, as production stamps it and as the TS
+    // loader's `resolveRootPageId` does; `insert_block` writes the parent id,
+    // which only agrees for a depth-one block. The seed array is parent-first,
+    // so the parent's own `page_id` is already the root (#4667).
+    if block_type != "page" {
+        sqlx::query(
+            "UPDATE blocks SET page_id = (SELECT page_id FROM blocks WHERE id = ?1) WHERE id = ?2",
+        )
+        .bind(parent_id.as_deref())
+        .bind(&id)
+        .execute(pool)
+        .await
+        .expect("seed block page_id");
+    }
 }
 
 /// Seed one block into the per-space Loro ENGINE tree (#891), mirroring the

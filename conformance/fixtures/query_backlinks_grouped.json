@@ -1,0 +1,406 @@
+{
+  "description": "#4667 — READ-command differential over the two GROUPED backlink readers, `list_backlinks_grouped` and `list_unlinked_references`. Both answer with a `GroupedBacklinkResponse` (`agaric-store/src/backlink/types.rs`), which the harness projects through `backlink_groups_result` / `backlinkGroupTokens`: one `<page_id>#page_title=…#truncated=…` head per group, one `<page_id>-><block>` per member, and a `filtered#count=…#truncated=…` trailer for the envelope. Four backend decisions are pinned that the mock used to get wrong, each by a seed that exists for it alone: (1) groups are keyed by the source's ROOT page, not its parent — B4 is nested under B3 and still lands in page B2's group (the Rust seed loader used to stamp a nested seed's `page_id` with its parent, where the TS loader resolves the root; this is the first fixture with a nested seed that no op moves, and it reddened the SNAPSHOT leg before the reader was even reached); (2) groups sort alphabetically by `page_title` then `page_id` (`cmp_group`), not by creation — page B5 'Alpha' was created after page B2 'Zulu' and is served first; (3) a source on the target's OWN root page is a self-reference and is excluded from both the groups and the counts — B7 links to B1 from inside B1; (4) pagination is a keyset over GROUPS (`Cursor::for_group`, `v1:{deleted_at,id}`), and the two counts are first-page-only — the backend answers `total_count: 0` / `filtered_count: 0` on a cursor page (#2201 item 1b) and the UI keeps the first page's numbers. The unlinked half pins the FTS needle set: B8 mentions 'Target' in plain text and is the one unlinked reference; B6 mentions it AND links, so it is a backlink, not an unlinked one; and a `pageId` naming a CONTENT block (B3) contributes no title term and answers empty (#4159 item 3). NOT pinned, and deliberately: `filters` and `sort` — both go through the same `applyBacklinkFilters` / `sort_ids` the flat `get_backlinks` path does not exercise either, and the space filter, for the reason `query_backlinks.json` gives. Every linking block is a SEED block edited by an op so its id is byte-identical on both stacks, and the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer. Derivation in `session-1668`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Zulu",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "links to [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "nested link to [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Target is linked here [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "self page link [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain Target mention without a link",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "source_id": "B3",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B4",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B6",
+        "source_page_id": "B5",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B7",
+        "source_page_id": "B1",
+        "target_id": "B1"
+      }
+    ],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "grouped_all",
+      "rows": [
+        "B5#page_title=Alpha#truncated=false",
+        "B5->B6#parent_id=B5#page_id=B5#position=1#deleted_at=null",
+        "B2#page_title=Zulu#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 3
+    },
+    {
+      "cursor": "v1:{deleted_at,id}",
+      "error": null,
+      "has_more": true,
+      "name": "grouped_page_1",
+      "rows": [
+        "B5#page_title=Alpha#truncated=false",
+        "B5->B6#parent_id=B5#page_id=B5#position=1#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "grouped_page_2",
+      "rows": [
+        "B2#page_title=Zulu#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B3#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=0#truncated=false"
+      ],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "grouped_none_for_unlinked_page",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "unlinked_all",
+      "rows": [
+        "B2#page_title=Zulu#truncated=false",
+        "B2->B8#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "unlinked_none_for_content_block_id",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 0
+    }
+  ],
+  "name": "query_backlinks_grouped",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "links to [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "nested link to [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "Target is linked here [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "toText": "self page link [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "plain Target mention without a link"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Two groups, alphabetical: 'Alpha' (page B5, created LAST) before 'Zulu' (page B2). B4 is nested under B3 and is still a member of page B2's group — grouping is by root page. B7 links to B1 from B1's own page and is a self-reference: absent from the groups AND from both counts, which are 3, not 4. Members keep the default `Created { Asc }` order: B3 before B4.",
+      "name": "grouped_all"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 1,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`limit` counts GROUPS, not blocks: one group, 'Alpha', `has_more` true, and the minted cursor is `Cursor::for_group` — `page_id` in `id`, `page_title` in the `deleted_at` slot. The first page carries the full counts.",
+      "name": "grouped_page_1"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 1,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Resumes on `(page_title, page_id) > cursor`: 'Zulu' with both members, and the listing ends. Both counts are 0 on a cursor page — the backend skips the two COUNT round-trips after the first page (#2201 item 1b) and the UI keeps the first page's numbers; a mock that recounts here diverges from what the app is built against.",
+      "cursor_from": "grouped_page_1",
+      "name": "grouped_page_2"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Nothing links to page B5: no groups, and the trailer is the whole answer — both counts 0. It is that trailer, not an `expect_empty`, that keeps an empty grouped answer comparable. Without this step a handler that ignored `blockId` would pass every other one here.",
+      "name": "grouped_none_for_unlinked_page"
+    },
+    {
+      "args": {
+        "limit": 10,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_unlinked_references",
+      "comment": "The needle is the page title 'Target'. B8 mentions it in plain text and is the one unlinked reference, grouped under its root page 'Zulu'. B6 mentions it AND carries a `[[link]]`, so it is a backlink, not an unlinked one; B7 links from B1's own page; B1's title block is a page and never a candidate. `total_count` is the post-exclusion count: 1.",
+      "name": "unlinked_all"
+    },
+    {
+      "args": {
+        "limit": 10,
+        "pageId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_unlinked_references",
+      "comment": "A `pageId` naming a CONTENT block resolves no title (`block_type = 'page' AND deleted_at IS NULL` guards the lookup, #4159 item 3), so the needle set is empty and only the trailer is recorded — not a search on that block's own text, which links to B1 and would match the resolved title 'Target' in the FTS index.",
+      "name": "unlinked_none_for_content_block_id"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Zulu",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S5",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S8",
+        "parent_id": "S2",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

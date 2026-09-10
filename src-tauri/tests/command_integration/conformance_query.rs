@@ -111,7 +111,8 @@ use super::common::tags::{
 use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
-use agaric_core::ulid::BlockId;
+use agaric_core::ulid::{BlockId, PageId};
+use agaric_store::backlink::{BacklinkFilter, BacklinkSort};
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 use agaric_store::tag_query::TagExpr;
 use serde_json::{Value, json};
@@ -923,6 +924,38 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // attributes on every token because a backlink row IS the source
         // block: served under the wrong `page_id` it would still carry the
         // right id.
+        // The two GROUPED siblings of `get_backlinks` (#4667): both answer
+        // with a `GroupedBacklinkResponse`, so they share one projection.
+        "list_backlinks_grouped" => {
+            let resp = list_backlinks_grouped_inner(
+                pool,
+                arg_req::<BlockId>(args, "blockId"),
+                opt_arg_as::<Vec<BacklinkFilter>>(args, "filters"),
+                opt_arg_as::<BacklinkSort>(args, "sort"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            backlink_groups_result(
+                &serde_json::to_value(&resp).expect("serialize GroupedBacklinkResponse"),
+            )
+        }
+        "list_unlinked_references" => {
+            let resp = list_unlinked_references_inner(
+                pool,
+                &arg_req::<PageId>(args, "pageId"),
+                opt_arg_as::<Vec<BacklinkFilter>>(args, "filters"),
+                opt_arg_as::<BacklinkSort>(args, "sort"),
+                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
+                opt_arg(args, "limit").and_then(|v| v.as_i64()),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            backlink_groups_result(
+                &serde_json::to_value(&resp).expect("serialize GroupedBacklinkResponse"),
+            )
+        }
         "get_backlinks" => {
             let resp = get_backlinks_inner(
                 pool,
@@ -1340,6 +1373,85 @@ fn partitioned_result(v: &Value, keys: &[&str]) -> RawResult {
         has_more: None,
         total_count: None,
         next_cursor: None,
+    }
+}
+
+/// Project a serialized `GroupedBacklinkResponse` — the shape
+/// `list_backlinks_grouped` and `list_unlinked_references` share (#4667): a
+/// `groups[]` of `BacklinkGroup` and no flat row list, so neither
+/// [`page_result_with`] nor [`group_tokens`] (which binds
+/// `run_advanced_query`'s `key`/`count`/`members` bucket) can read it. Mirror
+/// of `backlinkGroupTokens` in the TS twin.
+///
+/// Each group contributes
+///
+///   * `<page_id>#page_title=<title>#truncated=<bool>` — the head. `page_title`
+///     is bound because it is the group SORT key (`cmp_group` in
+///     `backlink/grouped.rs`: alphabetical, then `page_id`), so a mock that
+///     orders groups by insertion reddens on the first fixture whose creation
+///     order differs from its alphabetical one; `truncated` because it is the
+///     #380 per-group cap flag and a field of the thing projected (see
+///     [`group_tokens`] on why a projection with a hole is the invisible kind).
+///   * one `<page_id>-><block token>` per member, with [`BLOCK_ATTRS`] like
+///     every other block listing, or `<page_id>->(none)` for a group served
+///     with no rows — the [`map_rows_tokens`] rule: it must be visible rather
+///     than collapse into its head.
+///
+/// The envelope's two extra scalars close the list as
+/// `filtered#count=<n>#truncated=<bool>`, the way a partition closes with its
+/// `has_more`: [`RawResult`] carries `total_count` only, and both are
+/// load-bearing — `filtered_count` is the "Showing N of M" number, and the
+/// response-level `truncated` is the FTS row cap only the unlinked scan sets.
+fn backlink_groups_result(v: &Value) -> RawResult {
+    let mut rows: Vec<String> =
+        v.get("groups")
+            .and_then(Value::as_array)
+            .map_or_else(Vec::new, |groups| {
+                groups
+                    .iter()
+                    .flat_map(|g| {
+                        let head = token_head(
+                            "group page_id",
+                            g.get("page_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<missing-id>"),
+                        );
+                        let mut out = vec![format!(
+                            "{head}#page_title={}#truncated={}",
+                            attr_value("page_title", g.get("page_title")),
+                            attr_value("truncated", g.get("truncated"))
+                        )];
+                        let blocks = g
+                            .get("blocks")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        if blocks.is_empty() {
+                            out.push(format!("{head}->(none)"));
+                        } else {
+                            out.extend(
+                                blocks.iter().map(|b| {
+                                    format!("{head}->{}", row_token(b, "id", BLOCK_ATTRS))
+                                }),
+                            );
+                        }
+                        out
+                    })
+                    .collect()
+            });
+    rows.push(format!(
+        "filtered#count={}#truncated={}",
+        attr_value("filtered_count", v.get("filtered_count")),
+        attr_value("truncated", v.get("truncated"))
+    ));
+    RawResult {
+        rows,
+        has_more: v.get("has_more").and_then(Value::as_bool),
+        total_count: v.get("total_count").and_then(Value::as_i64),
+        next_cursor: v
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 
@@ -2015,7 +2127,13 @@ mod reader_delegation_tests {
     // `build_page_response` (`pagination::list_page_history` /
     // `pagination::list_block_history`). op_log is append-only and neither
     // reader appends; writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 33;
+    // #4667 wired `list_backlinks_grouped` and `list_unlinked_references`:
+    // `eval_backlink_query_grouped` / `eval_unlinked_references`
+    // (`agaric-store/src/backlink/grouped.rs`) are COUNT and SELECT
+    // round-trips over `block_links`, `blocks` and `fts_blocks` — the
+    // unlinked scan reads the FTS index, it never rebuilds it. Writer set
+    // unchanged.
+    const SWEPT_ARM_COUNT: usize = 35;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
@@ -2834,6 +2952,76 @@ mod group_token_tests {
 /// #3833 items 2, 5 and 8 — the three properties that need a real backend
 /// under them: the grouped arm's call site, the fixture-naming of an accessor
 /// failure, and the read-phase purity guard.
+/// #4667 — the `GroupedBacklinkResponse` projection, Rust half. The TS twin
+/// runs the same cases in `conformance-query-backlink-groups.test.ts`; the
+/// grammar is the half that has to agree byte-for-byte.
+#[cfg(test)]
+mod backlink_group_token_tests {
+    use super::*;
+
+    #[test]
+    fn projects_a_head_per_group_and_a_member_token_per_block() {
+        let out = backlink_groups_result(&json!({
+            "groups": [
+                { "page_id": "P2", "page_title": "Alpha", "truncated": false,
+                  "blocks": [{ "id": "B1", "parent_id": "P2", "page_id": "P2", "position": 1, "deleted_at": null }] },
+                { "page_id": "P1", "page_title": "Zulu", "truncated": true,
+                  "blocks": [
+                      { "id": "B2", "parent_id": "P1", "page_id": "P1", "position": 1, "deleted_at": null },
+                      { "id": "B3", "parent_id": "B2", "page_id": "P1", "position": 1, "deleted_at": null }
+                  ] }
+            ],
+            "next_cursor": "abc", "has_more": true, "total_count": 3, "filtered_count": 2, "truncated": false
+        }));
+        assert_eq!(
+            out.rows,
+            [
+                "P2#page_title=Alpha#truncated=false",
+                "P2->B1#parent_id=P2#page_id=P2#position=1#deleted_at=null",
+                "P1#page_title=Zulu#truncated=true",
+                "P1->B2#parent_id=P1#page_id=P1#position=1#deleted_at=null",
+                "P1->B3#parent_id=B2#page_id=P1#position=1#deleted_at=null",
+                "filtered#count=2#truncated=false",
+            ]
+        );
+        assert_eq!(out.has_more, Some(true));
+        assert_eq!(out.total_count, Some(3));
+        assert_eq!(out.next_cursor.as_deref(), Some("abc"));
+    }
+
+    /// The trailer is what keeps an empty answer comparable: without it an
+    /// empty `groups` and an absent one would both project to `[]`.
+    #[test]
+    fn an_empty_answer_still_records_its_counts() {
+        let out = backlink_groups_result(&json!({
+            "groups": [], "next_cursor": null, "has_more": false,
+            "total_count": 0, "filtered_count": 0, "truncated": true
+        }));
+        assert_eq!(out.rows, ["filtered#count=0#truncated=true"]);
+        assert_eq!(out.total_count, Some(0));
+        assert_eq!(out.next_cursor, None);
+    }
+
+    /// A group served with no rows stays visible, as in `map_rows_tokens`,
+    /// and a missing `page_title` renders the shared `null`.
+    #[test]
+    fn a_group_with_no_blocks_projects_none() {
+        let out = backlink_groups_result(&json!({
+            "groups": [{ "page_id": "P1", "page_title": null, "truncated": false, "blocks": [] }],
+            "filtered_count": 0, "truncated": false
+        }));
+        assert_eq!(
+            out.rows,
+            [
+                "P1#page_title=null#truncated=false",
+                "P1->(none)",
+                "filtered#count=0#truncated=false",
+            ]
+        );
+        assert_eq!(out.has_more, None);
+    }
+}
+
 mod query_runner_context_tests {
     use super::super::common::{TEST_SPACE_ID, assign_all_to_test_space, insert_block, test_pool};
     use super::{derived_cache_digest, run_query_steps};

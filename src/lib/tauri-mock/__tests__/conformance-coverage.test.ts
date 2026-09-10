@@ -427,23 +427,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   count_backlinks_batch:
     'returns `HashMap<page_id, count>` — a keyed count map, not the canonical ' +
     'block-id rows the query projection binds',
-  // NOT "fixture candidate"s (#4667). Both answer with `GroupedBacklinkResponse`
-  // — `groups[]` of `{page_id, page_title, blocks, truncated}` with no flat row
-  // list — and the harness's one grouped projector (`groupTokens` /
-  // `group_tokens`) reads `run_advanced_query`'s bucket shape instead:
-  // `key`, `count`, `members`, `aggregates`. Pointed at a `BacklinkGroup` it
-  // emits `<missing-key>#count=null` and drops every member, so these need a
-  // projection EXTENSION before a step can say anything — the same blocker
-  // `count_backlinks_batch` above carries, not a fixture nobody wrote.
-  list_backlinks_grouped:
-    'answers under `groups[].blocks` — ' +
-    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); the harness ' +
-    "grouped projector binds `run_advanced_query`'s `key`/`count`/`members` bucket, so " +
-    'binding this one needs a projection extension, not just a query step',
-  list_unlinked_references:
-    'answers under `groups[].blocks` — ' +
-    'src-tauri/agaric-store/src/backlink/types.rs (via GroupedBacklinkResponse); same projection ' +
-    'extension `list_backlinks_grouped` needs — the FTS scan behind it is not the blocker',
+  // `list_backlinks_grouped` / `list_unlinked_references` are NOT waived
+  // either: their `GroupedBacklinkResponse` is bound by the `backlink-groups`
+  // row location and driven by `query_backlinks_grouped.json` (#4667).
   // `search_blocks_partitioned` is NOT waived: its two-partition envelope is
   // bound by the `partitions` row location (#3823) and driven by
   // `query_search_blocks_partitioned.json`.
@@ -742,14 +728,12 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'get_reminder_settings',
   'list_attachments',
   'list_attachments_batch',
-  'list_backlinks_grouped',
   'list_drafts',
   'list_page_aliases_by_prefix',
   'list_peer_refs',
   'list_projected_agenda',
   'list_property_defs',
   'list_spaces',
-  'list_unlinked_references',
   'read_attachment_meta',
   'resolve_page_by_alias',
   'trash_descendant_counts',

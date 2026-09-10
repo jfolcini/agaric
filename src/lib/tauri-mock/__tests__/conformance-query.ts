@@ -218,6 +218,14 @@ type RowsLocation =
    * a real difference a flattened projection would hide.
    */
   | { readonly kind: 'map-of-rows' }
+  /**
+   * #4667 — the response is a `GroupedBacklinkResponse`: `groups[]` of
+   * `{ page_id, page_title, blocks, truncated }` and no flat row list. Each
+   * group projects a head, one `page_id-><row>` per member (or `->(none)`), and
+   * the envelope closes with a `filtered#…` trailer — see
+   * {@link backlinkGroupTokens}.
+   */
+  | { readonly kind: 'backlink-groups' }
 
 /**
  * How one row becomes a token.
@@ -368,6 +376,20 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // renders by) must not compare equal (#4667).
   get_backlinks: {
     rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  // #4667 — the two GROUPED siblings answer with a `GroupedBacklinkResponse`;
+  // `backlinkGroupTokens` mirrors `backlink_groups_result` in the Rust twin.
+  list_backlinks_grouped: {
+    rows: { kind: 'backlink-groups' },
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  list_unlinked_references: {
+    rows: { kind: 'backlink-groups' },
     token: BLOCK_TOKEN,
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
@@ -963,7 +985,8 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
     }
     case 'map-of-row':
     case 'map-of-rows':
-    case 'partitions': {
+    case 'partitions':
+    case 'backlink-groups': {
       // Handled by `rawRows` — the map KEY / partition is part of every token,
       // so the entries cannot be flattened into a bare row array first.
       return response
@@ -1035,9 +1058,50 @@ export function groupTokens(response: unknown): string[] {
   return out
 }
 
+/**
+ * #4667 — project a `GroupedBacklinkResponse` (`list_backlinks_grouped`,
+ * `list_unlinked_references`). Mirror of `backlink_groups_result` in the Rust
+ * twin, which carries the rationale: every `BacklinkGroup` field is bound
+ * (`page_title` is the group SORT key, `truncated` the #380 cap flag), a group
+ * served with no rows stays visible as `->(none)`, and the envelope's
+ * `filtered_count` and `truncated` close the list as a trailer because the
+ * recorded shape has a slot for `total_count` only.
+ *
+ * Exported so the grammar has a test of its own, as {@link groupTokens} does.
+ */
+export function backlinkGroupTokens(response: unknown, token: TokenSpec): string[] {
+  const envelope = (response ?? {}) as Record<string, unknown>
+  const groups = Array.isArray(envelope['groups']) ? envelope['groups'] : []
+  const out: string[] = []
+  for (const raw of groups) {
+    const g = (raw ?? {}) as Record<string, unknown>
+    const head = (g['page_id'] as string | undefined) ?? '<missing-id>'
+    out.push(
+      `${head}#page_title=${attrValue('page_title', g['page_title'])}` +
+        `#truncated=${attrValue('truncated', g['truncated'])}`,
+    )
+    const members = Array.isArray(g['blocks']) ? g['blocks'] : []
+    if (members.length === 0) {
+      out.push(`${head}->(none)`)
+      continue
+    }
+    for (const m of members) {
+      out.push(`${head}->${rowToken(m, token)}`)
+    }
+  }
+  out.push(
+    `filtered#count=${attrValue('filtered_count', envelope['filtered_count'])}` +
+      `#truncated=${attrValue('truncated', envelope['truncated'])}`,
+  )
+  return out
+}
+
 function rawRows(response: unknown, shape: WireShape): string[] {
   if (shape.rows.kind === 'partitions') {
     return partitionRows(response, shape.rows.keys, shape.token)
+  }
+  if (shape.rows.kind === 'backlink-groups') {
+    return backlinkGroupTokens(response, shape.token)
   }
   if (shape.rows.kind === 'map-of-row' || shape.rows.kind === 'map-of-rows') {
     const map = (response ?? {}) as Record<string, unknown>
