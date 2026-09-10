@@ -478,6 +478,30 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
     Ok(())
 }
 
+/// Diff the source's recorded link targets against the ones its current
+/// content names. A pair whose kind changed lands in `to_insert` too: the
+/// callers' INSERT upserts `kind`, so a second run over unchanged content
+/// still writes nothing.
+fn diff_link_targets<'a>(
+    old_targets: &'a HashMap<String, String>,
+    new_targets: &'a HashMap<String, &'static str>,
+) -> (Vec<&'a String>, Vec<(&'a String, &'static str)>) {
+    let to_delete: Vec<&String> = old_targets
+        .keys()
+        .filter(|t| !new_targets.contains_key(*t))
+        .collect();
+    let to_insert: Vec<(&String, &'static str)> = new_targets
+        .iter()
+        .map(|(t, kind)| (t, *kind))
+        .filter(|(t, kind)| {
+            old_targets
+                .get(t.as_str())
+                .is_none_or(|old| old.as_str() != *kind)
+        })
+        .collect();
+    (to_delete, to_insert)
+}
+
 /// Connection-scoped core of [`reindex_block_links`]: runs the
 /// read → diff → DELETE/INSERT of a single block's outbound `block_links`
 /// edges against an already-open connection/transaction, WITHOUT opening or
@@ -577,22 +601,8 @@ pub async fn reindex_block_links_conn(
         }
     }
 
-    // 4. Diff. A pair whose kind changed is written too: the INSERT below
-    //    upserts `kind`, so a second run over unchanged content still writes
-    //    nothing.
-    let to_delete: Vec<&String> = old_targets
-        .keys()
-        .filter(|t| !new_targets.contains_key(*t))
-        .collect();
-    let to_insert: Vec<(&String, &'static str)> = new_targets
-        .iter()
-        .map(|(t, kind)| (t, *kind))
-        .filter(|(t, kind)| {
-            old_targets
-                .get(t.as_str())
-                .is_none_or(|old| old.as_str() != *kind)
-        })
-        .collect();
+    // 4. Diff — see [`diff_link_targets`].
+    let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
 
     // Phase 3 — filter out cross-space targets before inserting.
     // The write-time enforcement gate (Phase 2) rejects new cross-space
@@ -784,22 +794,8 @@ pub async fn reindex_block_links_split(
         }
     }
 
-    // 4. Diff. A pair whose kind changed is written too: the INSERT below
-    //    upserts `kind`, so a second run over unchanged content still writes
-    //    nothing.
-    let to_delete: Vec<&String> = old_targets
-        .keys()
-        .filter(|t| !new_targets.contains_key(*t))
-        .collect();
-    let to_insert: Vec<(&String, &'static str)> = new_targets
-        .iter()
-        .map(|(t, kind)| (t, *kind))
-        .filter(|(t, kind)| {
-            old_targets
-                .get(t.as_str())
-                .is_none_or(|old| old.as_str() != *kind)
-        })
-        .collect();
+    // 4. Diff — see [`diff_link_targets`].
+    let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
 
     // #375: resolve the source space so the INSERT below can exclude
     // cross-space targets, identically to the single-pool `reindex_block_links`

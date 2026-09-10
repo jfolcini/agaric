@@ -17,12 +17,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  mockInvokeCommands,
-  strictInvokeFallback,
-  type TypedInvokeHandlers,
-} from '@/__tests__/helpers/invoke'
+import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow, TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { GLOBAL_SPACE_ID, keyFor, useResolveStore } from '@/stores/resolve'
@@ -60,15 +55,6 @@ function tagRow(tagId: string, name: string, usageCount = 1): TagCacheRow {
   return { tag_id: tagId, name, usage_count: usageCount, updated_at: '2025-01-01' }
 }
 
-/**
- * Install this test's command-keyed `invoke` handlers. The `return null` tails
- * these switches used to carry absorbed any command nobody modelled; anything
- * unlisted now hits `strictInvokeFallback` and fails the test by name.
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
-}
-
 beforeEach(async () => {
   // Flush any pending microtasks from previous test (e.g., debounced version bumps)
   await new Promise<void>((r) => queueMicrotask(r))
@@ -102,7 +88,7 @@ describe('preload', () => {
     const pageTwo = pageRow('PAGE_2', 'Page Two')
     const mockTags = [tagRow('TAG_1', 'tag-one', 5), tagRow('TAG_2', 'tag-two', 3)]
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: (args) => {
         // #2277 item 7 — list_blocks params (including `cursor`) now nest under
         // the single `request` DTO; `scope` stays a separate top-level arg.
@@ -152,7 +138,7 @@ describe('preload', () => {
     const TAG_COUNT = 250
     const mockTags = Array.from({ length: TAG_COUNT }, (_, i) => tagRow(`TAG_${i}`, `tag-${i}`))
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([]),
       list_all_tags_in_space: () => mockTags,
     })
@@ -188,7 +174,7 @@ describe('preload', () => {
   })
 
   it('uses "Untitled" for pages with null content', async () => {
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_NULL', null)]),
       list_all_tags_in_space: () => [],
     })
@@ -200,7 +186,7 @@ describe('preload', () => {
   })
 
   it('marks deleted pages', async () => {
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_DEL', 'Deleted Page', 1_748_736_000_000)]),
       list_all_tags_in_space: () => [],
     })
@@ -213,7 +199,7 @@ describe('preload', () => {
 
   it('does not set _preloaded on error so retry is possible', async () => {
     const down = (): Promise<never> => Promise.reject(new Error('network failure'))
-    stubInvoke({ list_blocks: down, list_all_tags_in_space: down })
+    stubInvoke(mockedInvoke, { list_blocks: down, list_all_tags_in_space: down })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
@@ -225,7 +211,7 @@ describe('preload', () => {
   it('logs a warning when listBlocks rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_blocks boom')
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => {
         throw fetchErr
       },
@@ -248,7 +234,7 @@ describe('preload', () => {
   it('logs a warning when listAllTagsInSpace rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_tags boom')
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([]),
       list_all_tags_in_space: () => {
         throw fetchErr
@@ -269,7 +255,7 @@ describe('preload', () => {
   })
 
   it('bumps version when the scan actually changes something', async () => {
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One')]),
       list_all_tags_in_space: () => [],
     })
@@ -290,7 +276,7 @@ describe('preload', () => {
   // `BlockListItem`, so an unconditional bump re-parsed markdown for every
   // mounted row for zero gain.
   it('does not bump version when every fetched row already matches the cache', async () => {
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One'), pageRow('PAGE_2', 'Page Two')]),
       list_all_tags_in_space: () => [tagRow('TAG_1', 'tag-one', 5)],
     })
@@ -320,7 +306,7 @@ describe('preload', () => {
 
   it('bumps version once when a single fetched row changed', async () => {
     let title = 'Page One'
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_1', title), pageRow('PAGE_2', 'Page Two')]),
       list_all_tags_in_space: () => [],
     })
@@ -336,7 +322,7 @@ describe('preload', () => {
   })
 
   it('marks _preloaded even when an empty space fetches nothing', async () => {
-    stubInvoke({ list_blocks: () => blockPage([]), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, { list_blocks: () => blockPage([]), list_all_tags_in_space: () => [] })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
@@ -355,7 +341,7 @@ describe('preload', () => {
     const cacheBefore = useResolveStore.getState().cache
     const versionBefore = useResolveStore.getState().version
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One')]),
       list_all_tags_in_space: () => [],
     })
@@ -382,7 +368,7 @@ describe('preload', () => {
     // Simulate a set() call that lands before preload finishes
     useResolveStore.getState().set('NEW_PAGE', 'Created During Preload', false)
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () =>
         blockPage([
           pageRow('PAGE_1', 'Page One'),
@@ -415,7 +401,10 @@ describe('preload', () => {
 
     const mockPages = [pageRow('PAGE_1', 'Page One')]
 
-    stubInvoke({ list_blocks: () => blockPage(mockPages), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage(mockPages),
+      list_all_tags_in_space: () => [],
+    })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
@@ -441,7 +430,10 @@ describe('preload', () => {
     // Backend now returns the renamed page
     const mockPages = [pageRow('PAGE_RENAMED', 'New Title After Rename')]
 
-    stubInvoke({ list_blocks: () => blockPage(mockPages), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage(mockPages),
+      list_all_tags_in_space: () => [],
+    })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID, true)
 
@@ -461,7 +453,10 @@ describe('preload', () => {
     // Backend returns the latest version of the same page
     const mockPages = [pageRow('PAGE_EDITED', 'Fresh Backend Title')]
 
-    stubInvoke({ list_blocks: () => blockPage(mockPages), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage(mockPages),
+      list_all_tags_in_space: () => [],
+    })
 
     // Default preload (forceRefresh=false) — fetched data wins
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -482,7 +477,10 @@ describe('preload', () => {
     // After sync, backend returns a DIFFERENT title for the same ID
     const mockPages = [pageRow('PAGE_SYNC', 'Renamed Title After Sync')]
 
-    stubInvoke({ list_blocks: () => blockPage(mockPages), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage(mockPages),
+      list_all_tags_in_space: () => [],
+    })
 
     // Normal preload (forceRefresh=false)
     await useResolveStore.getState().preload(TEST_SPACE_ID, false)
@@ -535,7 +533,7 @@ describe('preload in-flight coalescing (#753)', () => {
     calls: () => number
   } {
     const deferred: Array<(v: CommandReturns['list_blocks']) => void> = []
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: () =>
         new Promise<CommandReturns['list_blocks']>((resolve) => deferred.push(resolve)),
       list_all_tags_in_space: () => [],
@@ -592,7 +590,7 @@ describe('preload in-flight coalescing (#753)', () => {
   })
 
   it('a preload after the previous one settled starts a fresh scan', async () => {
-    stubInvoke({ list_blocks: () => blockPage([]), list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, { list_blocks: () => blockPage([]), list_all_tags_in_space: () => [] })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -657,7 +655,7 @@ describe('preload targeted rescan (#3321)', () => {
     const tagRows = tags.map((t) => tagRow(t.tag_id, t.name))
     for (let i = 0; i < pageCount; i++) titles.set(`PAGE_${i}`, `Page ${i}`)
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       list_blocks: (args) => {
         // #2277 item 7 — list_blocks params nest under the `request` DTO.
         const req = (args['request'] as Record<string, unknown> | undefined) ?? args
@@ -850,7 +848,7 @@ describe('preload targeted rescan (#3321)', () => {
     await useResolveStore.getState().preload(TEST_SPACE_ID)
     mockedInvoke.mockClear()
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       batch_resolve: () => {
         throw new Error('transport failure')
       },
@@ -874,7 +872,7 @@ describe('preload targeted rescan (#3321)', () => {
     await useResolveStore.getState().preload(TEST_SPACE_ID)
     mockedInvoke.mockClear()
 
-    stubInvoke({
+    stubInvoke(mockedInvoke, {
       batch_resolve: () => [
         { id: 'PAGE_1', title: 'Renamed by peer', block_type: 'page', deleted: false },
       ],
@@ -902,7 +900,11 @@ describe('preload targeted rescan (#3321)', () => {
     const down = (): never => {
       throw new Error('transport failure')
     }
-    stubInvoke({ batch_resolve: down, list_blocks: down, list_all_tags_in_space: () => [] })
+    stubInvoke(mockedInvoke, {
+      batch_resolve: down,
+      list_blocks: down,
+      list_all_tags_in_space: () => [],
+    })
 
     // targeted (fails) → ONE full walk (fails) → stop. A test timeout here
     // means the escalation loops forever against a down backend.
@@ -922,7 +924,7 @@ describe('preload targeted rescan (#3321)', () => {
     function deferBatchResolve() {
       const deferred: Array<(v: CommandReturns['batch_resolve']) => void> = []
       const batchIds: string[][] = []
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         batch_resolve: (args) => {
           batchIds.push((args['ids'] as string[] | undefined) ?? [])
           return new Promise<CommandReturns['batch_resolve']>((resolve) => deferred.push(resolve))
@@ -1033,7 +1035,7 @@ describe('preload targeted rescan (#3321)', () => {
       // space renders `[[ULID]]`.
       const listDeferred: Array<(v: CommandReturns['list_blocks']) => void> = []
       const batchDeferred: Array<(v: CommandReturns['batch_resolve']) => void> = []
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         list_blocks: () =>
           new Promise<CommandReturns['list_blocks']>((resolve) => listDeferred.push(resolve)),
         batch_resolve: () =>

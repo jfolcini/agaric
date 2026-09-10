@@ -7,9 +7,12 @@ import type { StoreApi } from 'zustand'
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
-  mockInvokeCommands,
+  deferred,
+  deleteResp,
+  echoEditBlock,
+  moveResp,
   strictInvokeFallback,
-  type TypedInvokeHandlers,
+  stubInvoke,
 } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
@@ -28,64 +31,6 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
 function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
-}
-
-/**
- * Install this test's command-keyed `invoke` handlers. Anything the store
- * fires that is not listed hits `strictInvokeFallback` and fails by name
- * instead of stealing a positional slot (#3217).
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
-}
-
-/** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
-function moveResp(
-  blockId: string,
-  newParentId: string | null,
-  newPosition: number,
-): CommandReturns['move_block'] {
-  return withOps({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
-}
-
-/** The `edit_block` echo: the row the backend just wrote, `WithOps`-wrapped. */
-function echoEditBlock(args: Record<string, unknown>): CommandReturns['edit_block'] {
-  return withOps(
-    makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string, position: 0 }),
-  )
-}
-
-/**
- * A successful `delete_block`: `WithOps<DeleteResponse>`, whose `deleted_at` is
- * epoch-ms (migration 0080) and which carries the cascade's `affected_page_ids`.
- */
-function deleteResp(blockId: string, descendantsAffected: number): CommandReturns['delete_block'] {
-  return withOps({
-    block_id: blockId,
-    deleted_at: 1_735_689_600_000,
-    descendants_affected: descendantsAffected,
-    affected_page_ids: [],
-  })
-}
-
-/**
- * A promise the test settles by hand, so one command's response can be parked
- * while the flow's OTHER commands (an interleaved edit, the reconciling load)
- * keep answering. A positional `…Once` could not model that: those interleaved
- * IPCs consume queue slots the parked command was meant to own (#3217).
- */
-function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (err: Error) => void
-} {
-  let resolve!: (value: T) => void
-  let reject!: (err: Error) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -176,7 +121,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => moveResp('B', 'A', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'A', 0) })
 
       await store.getState().moveToParent('B', 'A', 0)
 
@@ -202,7 +147,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [blockA, blockB] })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise })
 
       const p = store.getState().moveToParent('B', 'A', 0)
       // Applied synchronously — no await needed for B to already sit under A.
@@ -226,7 +171,7 @@ describe('PageBlockStore', () => {
       const c = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 })
       store.setState({ blocks: [p, c, x] })
 
-      stubInvoke({ move_block: () => moveResp('P', 'X', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('P', 'X', 1) })
 
       await store.getState().moveToParent('P', 'X', 0)
 
@@ -252,7 +197,7 @@ describe('PageBlockStore', () => {
       const u = makeBlock({ id: 'U', position: 0, parent_id: 'T', depth: 3 })
       store.setState({ blocks: [g, m, d, e, r, s, t, u] })
 
-      stubInvoke({ move_block: () => moveResp('D', 'U', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('D', 'U', 0) })
 
       // D goes from depth 2 to depth 4 (U's depth 3 + 1) — a delta of +2, not
       // the fixed +/-1 shift indent/dedent always apply.
@@ -280,7 +225,7 @@ describe('PageBlockStore', () => {
       const x = makeBlock({ id: 'X', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [g, m, d, e, x] })
 
-      stubInvoke({ move_block: () => moveResp('D', null, 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('D', null, 1) })
 
       // newIndex 1 among root siblings-remaining ([G, X]) anchors on X, so D
       // (+ E) lands between G and X.
@@ -306,7 +251,7 @@ describe('PageBlockStore', () => {
       const sBlock = makeBlock({ id: 'S', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [tp, t1, t2, t3, sBlock] })
 
-      stubInvoke({ move_block: () => moveResp('S', 'T', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('S', 'T', 1) })
 
       await store.getState().moveToParent('S', 'T', 1)
 
@@ -331,7 +276,7 @@ describe('PageBlockStore', () => {
       const cRefBefore = store.getState().blocksById.get('C')
       const pRefBefore = store.getState().blocksById.get('P')
 
-      stubInvoke({ move_block: () => moveResp('P', 'B', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('P', 'B', 0) })
 
       await store.getState().moveToParent('P', 'B', 0)
 
@@ -371,7 +316,7 @@ describe('PageBlockStore', () => {
       const e = makeBlock({ id: 'E', position: 0, parent_id: 'D', depth: 3 })
       store.setState({ blocks: [g, m, d, e] })
 
-      stubInvoke({ move_block: () => moveResp('D', 'G', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('D', 'G', 1) })
 
       // D moves from M up to G: depth 2 -> 1, so the subtree rides a -1 delta
       // and E goes 3 -> 2. Both are re-allocated, D because its own parent
@@ -403,7 +348,7 @@ describe('PageBlockStore', () => {
       const c = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 })
       store.setState({ blocks: [p, c] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('P', 'C', 0),
         load_page_subtree: () =>
           subtreeResp([
@@ -426,7 +371,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('B', 'UNEXPECTED', 0),
         load_page_subtree: () =>
           subtreeResp([
@@ -454,7 +399,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('B', 'UNEXPECTED', 0),
         load_page_subtree: () =>
           subtreeResp([
@@ -478,7 +423,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().moveToParent('B', 'A', 0)
 
@@ -495,7 +440,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().moveToParent('B', 'A', 0)
 
@@ -507,7 +452,7 @@ describe('PageBlockStore', () => {
       // block id the store has not loaded yet (defensive fallback path).
       store.setState({ blocks: [] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('GHOST', 'A', 0),
         load_page_subtree: () => subtreeResp([]),
       })
@@ -529,7 +474,7 @@ describe('PageBlockStore', () => {
 
       // Deferred promise for move_block so we can mutate state mid-flight.
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise })
 
       const promise = store.getState().moveToParent('B', 'A', 0)
 
@@ -564,7 +509,7 @@ describe('PageBlockStore', () => {
       })
 
       const create = deferred<CommandReturns['create_block']>()
-      stubInvoke({ create_block: () => create.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { create_block: () => create.promise, edit_block: echoEditBlock })
       const createPromise = store.getState().createBelow('A', 'new content')
       // #2849 PR2 — the provisional block is spliced in SYNCHRONOUSLY, before
       // the IPC resolves, under the client id `CID_1`.
@@ -594,7 +539,7 @@ describe('PageBlockStore', () => {
       })
 
       const create = deferred<CommandReturns['create_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () => create.promise,
         // The fallback load() will hit load_page_subtree — give it the backend
         // truth (the backend committed CID_1 verbatim).
@@ -635,7 +580,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise, edit_block: echoEditBlock })
       const reorderPromise = store.getState().reorder('C', 0)
 
       await store.getState().edit('B', 'edited mid-flight')
@@ -659,7 +604,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise, edit_block: echoEditBlock })
       const movePromise = store.getState().moveUp('B')
 
       await store.getState().edit('A', 'edited mid-flight')
@@ -684,26 +629,26 @@ describe('PageBlockStore', () => {
       })
 
       // createBelow: A,CID_1,B,C (client id CID_1)
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () => withOps(makeBlockRow({ id: 'CID_1', content: 'x', position: 1 })),
       })
       await store.getState().createBelow('A', 'x')
       expectMapMatchesArray(store.getState())
 
       // reorder: C,A,CID_1,B
-      stubInvoke({ move_block: () => moveResp('C', null, 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', null, 0) })
       await store.getState().reorder('C', 0)
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'CID_1', 'B'])
 
       // moveUp: C,A,B,CID_1
-      stubInvoke({ move_block: () => moveResp('B', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', null, 2) })
       await store.getState().moveUp('B')
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B', 'CID_1'])
 
       // moveDown: C,B,A,CID_1
-      stubInvoke({ move_block: () => moveResp('A', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 2) })
       await store.getState().moveDown('A')
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'CID_1'])
@@ -711,14 +656,14 @@ describe('PageBlockStore', () => {
       // indent: A becomes child of B. #774 — indent now checks the backend
       // parent echo, so the mock must echo the requested parent ('B') to
       // exercise the local-splice path (an unexpected/absent parent reloads).
-      stubInvoke({ move_block: () => moveResp('A', 'B', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', 'B', 0) })
       await store.getState().indent('A')
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocksById.get('A')?.parent_id).toBe('B')
       expect(store.getState().blocksById.get('A')?.depth).toBe(1)
 
       // dedent: A back to root, after B
-      stubInvoke({ move_block: () => moveResp('A', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 2) })
       await store.getState().dedent('A')
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocksById.get('A')?.parent_id).toBe(null)
@@ -735,7 +680,7 @@ describe('PageBlockStore', () => {
       })
 
       const create = deferred<CommandReturns['create_block']>()
-      stubInvoke({ create_block: () => create.promise })
+      stubInvoke(mockedInvoke, { create_block: () => create.promise })
       const createPromise = store.getState().createBelow('A', 'x')
 
       // A sync:complete load() landed mid-flight whose snapshot already contains
@@ -769,7 +714,7 @@ describe('PageBlockStore', () => {
       })
 
       const create = deferred<CommandReturns['create_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () => create.promise,
         load_page_subtree: () =>
           subtreeResp([
@@ -810,7 +755,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         load_page_subtree: () =>
           subtreeResp([
@@ -855,7 +800,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise, edit_block: echoEditBlock })
       const movePromise = store.getState().moveDown('A')
 
       await store.getState().edit('B', 'edited mid-flight')
@@ -879,7 +824,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         load_page_subtree: () =>
           subtreeResp([
@@ -923,7 +868,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise, edit_block: echoEditBlock })
       const dedentPromise = store.getState().dedent('C')
 
       await store.getState().edit('P', 'edited mid-flight')
@@ -949,7 +894,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         load_page_subtree: () =>
           subtreeResp([
@@ -1000,7 +945,7 @@ describe('PageBlockStore', () => {
       })
 
       const del = deferred<CommandReturns['delete_block']>()
-      stubInvoke({ delete_block: () => del.promise })
+      stubInvoke(mockedInvoke, { delete_block: () => del.promise })
       const removePromise = store.getState().remove('B')
 
       // X is dedented OUT of B's subtree mid-flight (simulating a
@@ -1013,7 +958,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      del.resolve(deleteResp('B', 1))
+      del.resolve(deleteResp('B'))
       await removePromise
 
       const s = store.getState()
@@ -1032,7 +977,7 @@ describe('PageBlockStore', () => {
       })
 
       const del = deferred<CommandReturns['delete_block']>()
-      stubInvoke({ delete_block: () => del.promise })
+      stubInvoke(mockedInvoke, { delete_block: () => del.promise })
       const removePromise = store.getState().remove('B')
 
       // Y is indented UNDER B mid-flight (simulating a completed indent
@@ -1044,7 +989,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      del.resolve(deleteResp('B', 2))
+      del.resolve(deleteResp('B'))
       await removePromise
 
       const s = store.getState()
@@ -1150,7 +1095,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise, edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise, edit_block: echoEditBlock })
       const reorderPromise = store.getState().reorder('C', 0)
       // Provisional splice: C is now the FIRST row (flat index 0), still a
       // child of PAGE_1.
@@ -1183,7 +1128,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         load_page_subtree: () =>
           subtreeResp([
@@ -1228,7 +1173,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         load_page_subtree: () =>
           subtreeResp([makeBlock({ id: 'D', parent_id: 'PAGE_1', position: 1 })]),
@@ -1267,7 +1212,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise })
       const reorderPromise = store.getState().reorder('C', 2)
       const provBlocks = store.getState().blocks
       const provC = store.getState().blocksById.get('C')
@@ -1297,7 +1242,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({ move_block: () => move.promise })
+      stubInvoke(mockedInvoke, { move_block: () => move.promise })
       const reorderPromise = store.getState().reorder('C', 0)
       const provBlocks = store.getState().blocks
       const provC = provBlocks[0]
@@ -1328,7 +1273,7 @@ describe('PageBlockStore', () => {
       // assigned the provisional `position: 1` (#400 — the real dense rank is
       // the backend's and is not threaded through here). Null must be a
       // no-op, not a heal that writes null over the provisional rank.
-      stubInvoke({ move_block: () => moveResp('B', 'A', 4) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'A', 4) })
 
       await expect(store.getState().indent('B')).resolves.toBe(true)
 
@@ -1348,7 +1293,7 @@ describe('PageBlockStore', () => {
       })
 
       const move = deferred<CommandReturns['move_block']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => move.promise,
         edit_block: echoEditBlock,
         load_page_subtree: () =>

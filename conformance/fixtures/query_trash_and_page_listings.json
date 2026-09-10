@@ -211,6 +211,14 @@
     },
     {
       "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "trash_count_rejects_global_scope",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
       "error": null,
       "has_more": null,
       "name": "pages_all_in_space",
@@ -356,6 +364,17 @@
       "command": "count_trash",
       "comment": "Five, not the four ROOTS the listing above returns: `count_trash_inner` counts every soft-deleted ROW in the space. S3, S4, S5, S6 and S7 are all tombstoned (S7 through S6's cascade); S1, S2 and S8 are live. A mock that counted roots instead of rows, or that lost the cascade child, differs here.",
       "name": "trash_count_is_every_tombstone"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "count_trash",
+      "comment": "Mirrors `trash_rejects_global_scope` one command over: `count_trash` refuses `Global` through the same `require_active`, so the badge's count has no cross-space form either.",
+      "expect_error": "validation",
+      "name": "trash_count_rejects_global_scope"
     },
     {
       "args": {
