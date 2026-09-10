@@ -4,10 +4,10 @@
 //! [`WifiManager.createMulticastLock()`] and `acquire()` before the
 //! kernel will deliver UDP multicast packets to its sockets — even when
 //! the app has `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_WIFI_STATE`
-//! permissions in its manifest. The `mdns-sd` crate uses raw UDP
-//! multicast for service discovery, so without the lock the daemon
-//! appears to start (`MdnsService::new()` succeeds) but never resolves
-//! any peers.
+//! permissions in its manifest. The discovery crate (`swarm-discovery`,
+//! under `iroh-mdns-address-lookup`) uses raw UDP multicast, so without
+//! the lock the daemon appears to start (`mdns::attach` succeeds) but
+//! never resolves any peers.
 //!
 //! The JNI machinery here is compiled only on Android; the guard in front of
 //! it, [`MulticastLock::acquire`]'s "is there an Android context at all?"

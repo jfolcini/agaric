@@ -6,7 +6,7 @@
 //! the `ndk_context` process-global:
 //!
 //! - `crate::sync_daemon::android_multicast` — `WifiManager.MulticastLock`,
-//!   without which `mdns-sd`'s UDP multicast sockets receive nothing.
+//!   without which the discovery crate's UDP multicast sockets receive nothing.
 //! - `hickory-resolver`, via `iroh` → `iroh-dns` — reads the device's
 //!   configured nameservers through `LinkProperties.getDnsServers()`.
 //!

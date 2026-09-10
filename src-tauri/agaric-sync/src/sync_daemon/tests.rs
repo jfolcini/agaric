@@ -3001,105 +3001,47 @@ fn format_peer_addresses_preserves_within_tier_order() {
 }
 
 // ======================================================================
-// ServiceRemoved eviction
+// Expiry eviction
 // ======================================================================
 
-/// `process_service_removed` drops the entry from the discovered
-/// HashMap immediately and reports `true` so the caller can branch on
-/// whether anything actually changed.
+/// An expiry names a key, and the map is keyed by device id, so eviction has to find
+/// the row holding that key. Two rows, one expiry: exactly the right one goes and the
+/// call returns `None` (no peer to sync with — eviction is the side effect). Without
+/// this the swap would have kept the old key-by-device-id removal, which evicts
+/// nothing, and reintroduced the 5-minute stale-entry window the enum exists to close.
 #[test]
-fn process_service_removed_drops_entry() {
+fn an_expired_event_evicts_the_row_holding_that_endpoint_id() {
     let mut discovered = HashMap::new();
-    let peer = mdns::DiscoveredPeer {
-        device_id: "REMOVED_PEER".into(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.20".parse().unwrap()],
-        port: 9443,
-    };
-    discovered.insert(
-        "REMOVED_PEER".to_string(),
-        (peer, tokio::time::Instant::now()),
+    for name in ["GONE", "STAYS"] {
+        let event = make_resolved_event(name, 9443);
+        assert!(
+            process_discovery_event(event, "LOCAL", &mut discovered, &[], false).is_none(),
+            "fixture: an unpaired peer is recorded, not synced"
+        );
+    }
+    assert_eq!(discovered.len(), 2, "fixture: both peers are in the map");
+
+    let result = process_discovery_event(
+        mdns::ServiceEventKind::Removed {
+            endpoint_id: mdns::test_endpoint_id("GONE"),
+        },
+        "LOCAL",
+        &mut discovered,
+        &[],
+        false,
     );
-    assert!(
-        discovered.contains_key("REMOVED_PEER"),
-        "fixture: discovered map starts with the peer present"
-    );
-
-    let removed = process_service_removed("REMOVED_PEER", "LOCAL", &mut discovered);
-
-    assert!(removed, "must report the entry as removed");
-    assert!(
-        !discovered.contains_key("REMOVED_PEER"),
-        "discovered map must drop the peer immediately on ServiceRemoved"
-    );
-}
-
-/// A `ServiceRemoved` for a peer we never saw is a no-op.
-#[test]
-fn process_service_removed_ignores_unknown_peer() {
-    let mut discovered = HashMap::new();
-    let removed = process_service_removed("NEVER_SEEN", "LOCAL", &mut discovered);
-    assert!(!removed, "removal of unknown peer must report false");
-    assert!(discovered.is_empty(), "discovered map must remain empty");
-}
-
-/// A removal of the local device must not touch the map (we never
-/// insert ourselves in the discovered HashMap to begin with).
-#[test]
-fn process_service_removed_ignores_self() {
-    let mut discovered = HashMap::new();
-    let peer = mdns::DiscoveredPeer {
-        device_id: "OTHER_PEER".into(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.20".parse().unwrap()],
-        port: 9443,
-    };
-    discovered.insert(
-        "OTHER_PEER".to_string(),
-        (peer, tokio::time::Instant::now()),
-    );
-
-    let removed = process_service_removed("LOCAL_DEV", "LOCAL_DEV", &mut discovered);
-
-    assert!(!removed, "self-removal must be a no-op");
-    assert!(
-        discovered.contains_key("OTHER_PEER"),
-        "peers belonging to other devices must not be touched"
-    );
-}
-
-/// A `ServiceRemoved` event flowing through `process_discovery_event`
-/// must remove the peer from the discovered HashMap and return `None`
-/// (no peer to sync with — eviction is the side effect).
-#[test]
-fn process_discovery_event_evicts_on_service_removed() {
-    let mut discovered = HashMap::new();
-    let peer = mdns::DiscoveredPeer {
-        device_id: "REMOVED".into(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.42".parse().unwrap()],
-        port: 9443,
-    };
-    discovered.insert("REMOVED".to_string(), (peer, tokio::time::Instant::now()));
-
-    let event = mdns_sd::ServiceEvent::ServiceRemoved(
-        mdns::MDNS_SERVICE_TYPE.to_string(),
-        format!(
-            "{name}_REMOVED.{ty}",
-            name = mdns::MDNS_SERVICE_NAME,
-            ty = mdns::MDNS_SERVICE_TYPE,
-        ),
-    );
-
-    let result = process_discovery_event(event, "LOCAL", &mut discovered, &[], false);
 
     assert!(
         result.is_none(),
-        "ServiceRemoved must not return a peer to sync with"
+        "an expiry must not return a peer to sync with"
     );
     assert!(
-        !discovered.contains_key("REMOVED"),
-        "discovered HashMap must no longer contain the removed peer"
+        !discovered.contains_key("GONE"),
+        "the row holding the expired key must be gone"
+    );
+    assert!(
+        discovered.contains_key("STAYS"),
+        "the other peer's row must be untouched"
     );
 }
 
@@ -3646,50 +3588,17 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
 // T-16g — process_discovery_event (Branch A extraction)
 // ======================================================================
 
-/// Helper to construct a `ServiceEvent::ServiceResolved` event with the
-/// given device_id and port, suitable for unit-testing `process_discovery_event`.
-///
-/// The TXT record carries an `endpoint_id` as well as a `device_id` because
-/// `crate::mdns::parse_service_event` refuses an announcement it cannot dial
-/// (#3488) — a record with only a `device_id` resolves to `None`, and every test
-/// below that expects a peer would then be asserting on the wrong thing. The key is
-/// derived from `device_id` so distinct devices get distinct identities.
-fn make_resolved_event(device_id: &str, port: u16) -> mdns_sd::ServiceEvent {
-    let mut props = HashMap::new();
-    props.insert("device_id".to_string(), device_id.to_string());
-    props.insert(
-        "endpoint_id".to_string(),
-        mdns::test_endpoint_id(device_id).to_string(),
+/// The `Resolved` kind the daemon would see for `device_id` announcing on `port`,
+/// driven through `mdns::discovery_event_to_kind` so the tests below exercise the same
+/// narrowing production does. The key is derived from `device_id` so distinct devices
+/// get distinct identities.
+fn make_resolved_event(device_id: &str, port: u16) -> mdns::ServiceEventKind {
+    let event = mdns::test_discovered_event(
+        mdns::test_endpoint_id(device_id),
+        Some(device_id),
+        std::net::SocketAddr::from(([127, 0, 0, 1], port)),
     );
-
-    let info = mdns_sd::ServiceInfo::new(
-        mdns::MDNS_SERVICE_TYPE,
-        device_id,
-        &format!("{device_id}.local."),
-        "127.0.0.1",
-        port,
-        Some(props),
-    )
-    .unwrap();
-
-    mdns_sd::ServiceEvent::ServiceResolved(Box::new(info.as_resolved_service()))
-}
-
-#[test]
-fn process_discovery_non_resolved_returns_none() {
-    let event = mdns_sd::ServiceEvent::ServiceFound(
-        mdns::MDNS_SERVICE_TYPE.into(),
-        format!("test.{}", mdns::MDNS_SERVICE_TYPE),
-    );
-    let mut discovered = HashMap::new();
-    assert!(
-        process_discovery_event(event, "LOCAL", &mut discovered, &[], false).is_none(),
-        "non-resolved event must return None"
-    );
-    assert!(
-        discovered.is_empty(),
-        "discovered map must remain empty for non-resolved event"
-    );
+    mdns::discovery_event_to_kind(&event).expect("a named discovery resolves")
 }
 
 #[test]
@@ -10422,7 +10331,7 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
 /// answer does not depend on the key, and wrong here: the `DiscoveredPeer` this
 /// produces is handed to `try_sync_with_peer`, which dials the key and reaches
 /// nothing unless it is the one the service is listening on.
-fn resolved_event_for_service(device_id: &str, harness: &ServiceHarness) -> mdns_sd::ServiceEvent {
+fn resolved_event_for_service(device_id: &str, harness: &ServiceHarness) -> mdns::ServiceEventKind {
     let sa = harness
         .service
         .addr()
@@ -10430,22 +10339,9 @@ fn resolved_event_for_service(device_id: &str, harness: &ServiceHarness) -> mdns
         .copied()
         .find(|sa: &std::net::SocketAddr| sa.ip().is_loopback())
         .expect("a loopback-bound service publishes its loopback socket address");
-    let mut props = HashMap::new();
-    props.insert("device_id".to_string(), device_id.to_string());
-    props.insert(
-        "endpoint_id".to_string(),
-        harness.service.endpoint_id().to_string(),
-    );
-    let info = mdns_sd::ServiceInfo::new(
-        mdns::MDNS_SERVICE_TYPE,
-        device_id,
-        &format!("{device_id}.local."),
-        sa.ip().to_string().as_str(),
-        sa.port(),
-        Some(props),
-    )
-    .expect("a well-formed announcement for a loopback service");
-    mdns_sd::ServiceEvent::ServiceResolved(Box::new(info.as_resolved_service()))
+    let event = mdns::test_discovered_event(harness.service.endpoint_id(), Some(device_id), sa);
+    mdns::discovery_event_to_kind(&event)
+        .expect("a well-formed announcement for a loopback service")
 }
 
 const HOST_DEV_3507: &str = "HOST3507";

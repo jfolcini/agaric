@@ -66,6 +66,12 @@ iroh = "=1.1.0"
 # incompatible `n0-error` copies, at which point the `e!` macro stops
 # type-checking. That cost a build cycle during the spike.
 iroh-dns = "=1.1.0"
+# `iroh-mdns-address-lookup` — LAN discovery (`swarm-discovery` mDNS) as an iroh
+# address lookup; `mdns::attach` adds it to the bound endpoint (#3464). A caret
+# range, not a pin: it is a satellite of the pinned `iroh`, resolved against
+# whatever that pin allows, and must be re-resolved in the same commit whenever
+# `iroh` moves (AGENTS.md § Coupled Dependency Updates).
+iroh-mdns-address-lookup = "0.4"
 # `n0-error` / `n0-future` — iroh's error and future plumbing, needed to
 # implement the `Resolver` trait (`BoxFuture`, the `e!` macro). Left as caret
 # ranges deliberately: they must agree with whatever the pinned iroh resolves,
@@ -110,8 +116,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # tokio-tungstenite, rcgen, x509-parser) went with `sync_net` / `sync_cert` in
 # the iroh cutover (#3464), as did `base64` (PEM decoding) and `sha2` (cert
 # fingerprints). QUIC brings its own crypto via the pinned `iroh`.
-# LAN discovery: mDNS announce/browse + private-interface enumeration.
-mdns-sd = "0.21"
+# Interface enumeration for the bind decision (sync_daemon/lan_interface.rs).
 if-addrs = "0.15"
 # device-pairing QR code rendering (pairing.rs).
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
@@ -125,8 +130,8 @@ ignored = [
     "ndk-context", # Android-only: NDK runtime context handle for the JNI calls.
 ]
 
-# Android-only: acquire WifiManager.MulticastLock so mdns-sd's UDP multicast
-# sockets receive packets (sync_daemon/android_multicast.rs). Gated on
+# Android-only: acquire WifiManager.MulticastLock so the discovery crate's UDP
+# multicast sockets receive packets (sync_daemon/android_multicast.rs). Gated on
 # target_os = "android" so desktop builds do not pull these transitive deps.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
@@ -136,12 +141,6 @@ ndk-context = "0.1"
 # `device`'s tests build config-dir fixtures under a `TempDir`; the snapshot /
 # protocol tests use temp DBs. Version mirrors the app crate.
 tempfile = "3.27.0"
-# `mdns`'s tests spell an `EndpointId` the *other* way iroh's `FromStr` accepts
-# (52-char base32) to pin that parsing normalises both spellings onto one key.
-# iroh-base already builds against this exact crate for its own `HEXLOWER`/
-# `BASE32_NOPAD` codecs, so this pulls in nothing new — it only names a
-# transitive dependency so a test can reach it.
-data-encoding = "2.11"
 # The moved inline tests drive async flows under `#[tokio::test]` with paused
 # time (`test-util`). Version/features mirror the app crate's `[dev-dependencies]`.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }

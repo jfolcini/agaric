@@ -237,13 +237,13 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 # suites into `agaric-sync` (#3120).
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-# #3852 — `log`→`tracing` bridge. Several deps in the sync path (notably
-# `mdns-sd`) report their diagnostics through the `log` facade, not `tracing`.
-# With no `log` logger installed, every one of those records — socket bind
-# failures, `sendto` failures, interface misses — is a compiled-in no-op, which
-# is one of the three silences that hid #3852. Already in the lockfile as a
-# `tracing-subscriber` default feature; named here because `init_logging` now
-# calls `LogTracer::init` directly.
+# #3852 — `log`→`tracing` bridge. With no `log` logger installed, every record a
+# `log`-facade dependency emits is a compiled-in no-op, which is one of the three
+# silences that hid #3852 in `mdns-sd`. That crate is gone (#3464; its
+# replacement reports through `tracing`), and the bridge stays so no other
+# `log`-facade dep can go silent the same way. Already in the lockfile as a
+# `tracing-subscriber` default feature; named here because `init_logging` calls
+# `LogTracer::init` directly.
 tracing-log = "0.2.0"
 
 # OpenTelemetry stack (issue #2110). The `opentelemetry`, `opentelemetry_sdk`,
@@ -262,11 +262,11 @@ tracing-opentelemetry = "0.33"
 # `qrcode`, `x509-parser`). What remains here is used by app *production* code
 # outside the sync cluster (or is a shared TLS/crypto dep): `rustls`,
 # `futures-util`, `sha2`, `rand`. `rustls` stays because the app installs the
-# ring `CryptoProvider` at startup, which iroh's QUIC handshake needs. Only
-# `mdns-sd` is still referenced by the app's hosted sync *tests* and therefore
-# sits in `[dev-dependencies]`; the mTLS-era test deps (`tokio-tungstenite`,
-# `rcgen`, `x509-parser`) went with `src/sync_net/tests.rs` in #3464, and
-# `tokio-rustls` / `if-addrs` / `qrcode` had already been dropped.
+# ring `CryptoProvider` at startup, which iroh's QUIC handshake needs. The
+# mTLS-era test deps (`tokio-tungstenite`, `rcgen`, `x509-parser`) went with
+# `src/sync_net/tests.rs` in #3464, `mdns-sd` with the swap to
+# `iroh-mdns-address-lookup` (#3464), and `tokio-rustls` / `if-addrs` / `qrcode`
+# had already been dropped.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 sha2 = "0.11"
@@ -344,12 +344,6 @@ agaric-engine = { path = "agaric-engine", version = "0.1.0", features = ["test-u
 # (`transport::test_support::quic_pair`, `sync_events::RecordingEventSink`).
 # Only enabled for test builds.
 agaric-sync = { path = "agaric-sync", version = "0.1.0", features = ["test-util"] }
-# #2621 Sync-D: sync-only crate moved to `agaric-sync` for production; the only
-# remaining app use sites are the hosted sync tests, so it is dev-only here
-# (unified with agaric-sync's production copy by cargo). The mTLS-era siblings
-# (tokio-tungstenite, rcgen, x509-parser) went with `src/sync_net/tests.rs` in
-# the iroh cutover (#3464).
-mdns-sd = "0.21"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 # The `opentelemetry_sdk` `testing` dev-dep (InMemory{Span,Log,Metric}Exporter)
 # moved to `agaric-observability` with the pipeline tests it backed (#2878); no

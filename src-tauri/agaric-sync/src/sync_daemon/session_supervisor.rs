@@ -53,13 +53,15 @@ use tracing::instrument;
 
 use crate::apply_host::ApplyHost;
 use crate::foreground::LifecycleHooks;
-use crate::mdns::{DiscoveredPeer, MdnsDaemonSignal, MdnsService};
+use crate::mdns::DiscoveredPeer;
 use crate::sync_constants::CONNECT_TIMEOUT;
 use crate::sync_daemon::lan_interface::BindDecision;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, SecretKey};
 use iroh_dns::dns::DnsResolver;
+use iroh_mdns_address_lookup::{DiscoveryEvent, MdnsAddressLookup};
+use n0_future::StreamExt;
 
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
 use crate::sync_scheduler::{PeerMembership, SyncScheduler};
@@ -159,7 +161,7 @@ pub struct SyncDaemonContext {
 ///
 /// `discovered` is the loop's live view of peers seen on the network. It is
 /// a *parameter* rather than a local (#3533) because Branch A — a real
-/// `mdns_rx.recv()` — is its only writer, and Branch B's pairing-window round
+/// `mdns_events.next()` — is its only writer, and Branch B's pairing-window round
 /// is a reader: with no way to seed the map, the one production call site of
 /// [`peers_for_change_round`] could not be reached from a test at all, so
 /// deleting it turned nothing red. Production always passes an empty map; the
@@ -193,7 +195,7 @@ pub(crate) async fn daemon_loop(
         "sync daemon starting"
     );
     // Acquire WifiManager.MulticastLock on Android so the
-    // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
+    // discovery crate's UDP multicast sockets receive packets. Held in
     // a local binding so `Drop` releases it on function exit (graceful
     // shutdown or error return). On non-Android targets this is a no-op.
     // A missing context degrades to `Err` HERE, and the daemon carries on
@@ -223,24 +225,7 @@ pub(crate) async fn daemon_loop(
     super::android_network_block::install_event_sink(event_sink.clone());
     super::android_network_block::start_monitor();
 
-    // 1. Start mDNS service (graceful fallback — BUG-38, session-log session 406)
-    //
-    // The citation used to read "#522", which is a merged PR about batch delete /
-    // restore and an AppImage `Exec=` line — nothing to do with mDNS. Corrected while
-    // passing (#3853); it predates this work.
-    //
-    // mDNS may fail on platforms where raw UDP sockets are blocked (e.g. iOS)
-    // or when the Android multicast lock is missing. When this happens we
-    // log a warning, emit `SyncEvent::MdnsDisabled` so the frontend can
-    // surface the reason, and continue without peer discovery. There is no
-    // fallback for a peer that has never paired: a first pair needs an mDNS
-    // resolve to learn the peer's `endpoint_id` (see
-    // `sync_daemon::discovery::resolve_peer_address`). Already-paired peers
-    // can still be dialed via their cached `peer_refs.last_address`, once
-    // bound; the mDNS branch in the select! loop is simply never triggered.
-    let mdns = handle_mdns_init_result(MdnsService::new(), &event_sink);
-
-    // 2. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
+    // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
     //
     // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
     // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
@@ -294,12 +279,12 @@ pub(crate) async fn daemon_loop(
         .next()
         .map_or(0, std::net::SocketAddr::port);
 
-    // 2b. Tell the user, not just the log, when that bind is internet-facing
+    // 1b. Tell the user, not just the log, when that bind is internet-facing
     //     (#3864). Emitted here rather than beside the decision because the port
     //     only exists once the endpoint is up — the bind requests port 0.
     handle_internet_facing_bind(&bind_decision, port, &event_sink);
 
-    // 2c. Publish where a peer can dial us, so the pairing QR can carry it and a
+    // 1c. Publish where a peer can dial us, so the pairing QR can carry it and a
     //     first-ever pair stops depending on multicast (#4037).
     //
     //     Same sourcing rule as the mDNS announce below, for the same reason:
@@ -385,92 +370,50 @@ pub(crate) async fn daemon_loop(
         }
     });
 
-    // 3. Announce over mDNS.
+    // 2. LAN discovery over mDNS (graceful fallback — BUG-38, session-log session 406).
     //
-    // Restored by this cutover. The announce was deferred while `transport` had no
-    // production caller, because `MdnsService::announce` requires the `EndpointId` a
-    // peer would dial and the daemon had none: discovery that yields only a `device_id`
-    // yields a name and no address, which nothing in an iroh world can act on.
+    // Installed on the bound endpoint, not in the builder, so `lan_only`'s
+    // `clear_address_lookup()` keeps meaning "nothing a preset installed"; the `mdns`
+    // module docs carry the argument. The record it publishes is the endpoint's own:
+    // `service.endpoint_id()` as the instance name — the key that is actually
+    // accepting, so a peer never dials a key nobody listens on — and the one bound
+    // socket as the address, which is #3853's other half (the old announce enumerated
+    // interfaces independently of the bind and advertised three bridge addresses
+    // nothing was listening on). `device_id` rides as iroh `UserData`.
     //
-    // The key announced is `service.endpoint_id()` — read back from the service that is
-    // actually accepting, not from the secret we handed it and not from any other
-    // derivation. A record advertising a key nobody is listening on is worse than no
-    // record: peers spend a dial budget on it and cannot tell that outcome from a peer
-    // that is merely asleep.
+    // mDNS may fail where raw UDP multicast sockets are refused (iOS) or the Android
+    // multicast lock is missing. Then `handle_mdns_init_result` warns, emits
+    // `SyncEvent::MdnsDisabled` so the frontend can surface the reason, and the daemon
+    // continues without LAN discovery: a first-ever pair still has the QR path (#4037)
+    // and already-paired peers their cached `peer_refs.last_address`. The event stream
+    // is then one that never yields, so Branch A simply never fires.
     //
-    // `lan_ip` is the address the endpoint actually bound. Announcing exactly that (and
-    // nothing else) is #3853's other half: the old announce independently enumerated
-    // every RFC 1918 interface, so on the maintainer's desktop it advertised three
-    // bridge addresses and not the one the endpoint was listening on. A record naming an
-    // address nothing is bound to is indistinguishable, from the peer's side, from a
-    // device that is merely asleep.
-    //
-    // #3852 — "announced" is no longer claimed here. `announce()` returns as soon as a
-    // register *command* is queued (see its docs); on the reporting Pixel 8 this line
-    // read `SyncDaemon started; announced over mDNS port=59553 bind=Some(192.160.160.102)`
-    // while the device answered neither multicast nor unicast queries, because Android
-    // 15+'s per-uid `FIREWALL_CHAIN_BACKGROUND` was dropping every packet at the
-    // cgroup-BPF hook. That single over-claiming line is what hid the bug for three days.
-    //
-    // So the submit is `debug!` and says only what happened, and the `info!` that says
-    // "announced" is emitted from the monitor task below, on the daemon's own
-    // `DaemonEvent::Announce` — after a socket was actually written to. `monitor()` is
-    // subscribed BEFORE the register command is queued, because the daemon processes
-    // commands in order: subscribing afterwards would race the very event we want.
-    if let Some(ref mdns) = mdns {
-        spawn_mdns_monitor(mdns, &event_sink);
-        match mdns.announce(&device_id, endpoint_id, port, lan_ip) {
-            Ok(_) => tracing::debug!(
-                port,
-                %endpoint_id,
-                bind = ?lan_ip,
-                "mDNS announce submitted to the daemon's command queue (not yet on the wire)"
-            ),
-            Err(e) => tracing::warn!(
-                error = %e,
-                "mDNS announce could not be queued; peers must discover this device another way"
-            ),
+    // #3852 — nothing here claims "announced". `swarm-discovery` has no send-side
+    // event, so the only signals are its own `tracing` output and Android's
+    // `onBlockedStatusChanged` above.
+    let mdns = handle_mdns_init_result(
+        crate::mdns::attach(service.endpoint(), &device_id),
+        &event_sink,
+    );
+    let mut mdns_events: n0_future::boxed::BoxStream<DiscoveryEvent> = match &mdns {
+        Some(lookup) => {
+            tracing::debug!(port, %endpoint_id, bind = ?lan_ip, "mDNS discovery attached");
+            Box::pin(lookup.subscribe().await)
         }
-    } else {
-        tracing::info!(
-            port,
-            "SyncDaemon started (mDNS unavailable, no announcement)"
-        );
-    }
-
-    // 4. Start mDNS browse (skipped when mDNS is unavailable)
-    let browse_rx = match mdns {
-        Some(ref mdns) => match mdns.browse() {
-            Ok(rx) => Some(rx),
-            Err(e) => {
-                tracing::warn!(error = %e, "mDNS browse failed (peer discovery disabled)");
-                None
-            }
-        },
-        None => None,
+        None => {
+            tracing::info!(
+                port,
+                "SyncDaemon started (mDNS unavailable, no announcement)"
+            );
+            Box::pin(n0_future::stream::pending())
+        }
     };
 
-    // Bridge mDNS browse events to a tokio mpsc channel so we can use
-    // them inside `tokio::select!` without polling.  flume's blocking
-    // `recv()` runs on a dedicated thread via `spawn_blocking`.
-    // When mDNS is unavailable, mdns_rx will never yield items and the
-    // select! branch is effectively disabled.
-    let (mdns_tx, mut mdns_rx) = tokio::sync::mpsc::channel::<mdns_sd::ServiceEvent>(32);
-    if let Some(browse_rx) = browse_rx {
-        tokio::task::spawn_blocking(move || {
-            while let Ok(event) = browse_rx.recv() {
-                if mdns_tx.blocking_send(event).is_err() {
-                    break; // Channel closed, daemon shutting down
-                }
-            }
-        });
-    }
-
-    // 5. Discovered peers (device_id → (DiscoveredPeer, last_seen)) arrive as a
+    // 3. Discovered peers (device_id → (DiscoveredPeer, last_seen)) arrive as a
     //    parameter; see this function's docs for why. Branch A still owns every
     //    write to it.
 
-    // 6. Periodic resync interval (replaces the former 500ms poll cadence).
+    // 4. Periodic resync interval (replaces the former 500ms poll cadence).
     //    `RESYNC_TICK`, not a literal: `peer_pulled_from_us_recently` derives
     //    its freshness window from this cadence and asserts against it (#4120).
     let mut resync_interval = tokio::time::interval(RESYNC_TICK);
@@ -480,11 +423,14 @@ pub(crate) async fn daemon_loop(
     // `maybe_gc_peer_locks` and `RESYNC_TICKS_PER_GC`.
     let mut resync_ticks_since_gc: u64 = 0;
 
-    // 7. Main event-driven loop
+    // 5. Main event-driven loop
     loop {
         tokio::select! {
             // Branch A: mDNS peer-discovery event (event-driven, no polling)
-            Some(event) = mdns_rx.recv() => {
+            Some(event) = mdns_events.next() => {
+                let Some(event) = crate::mdns::discovery_event_to_kind(&event) else {
+                    continue;
+                };
                 let refs = list_peer_refs_or_empty(&pool, "mdns_discovery").await;
                 // #2008: while a pairing is pending, an unpaired discovered
                 // peer is a valid initiation target (initiator-side TOFU pins
@@ -723,14 +669,11 @@ pub(crate) async fn daemon_loop(
         }
     }
 
-    // Cleanup
+    // Cleanup. Dropping the lookup (here and with the closed endpoint's services)
+    // stops the discoverer; there is no shutdown call.
     accept_task.abort();
     service.close().await;
-    if let Some(mdns) = mdns
-        && let Err(e) = mdns.shutdown()
-    {
-        tracing::warn!(error = %e, "mDNS shutdown error");
-    }
+    drop(mdns);
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())
 }
@@ -760,9 +703,9 @@ pub(crate) async fn daemon_loop(
 /// `192.160.160.0/24` is not RFC 1918. That module carries the policy, the rationale and
 /// the table of cases; this function only turns its answer into `lan_only`'s arguments.
 ///
-/// The returned `lan_ip` is `None` for the loopback fallback, and is threaded into the
-/// mDNS announce so the address we advertise is by construction the address we bound —
-/// advertising a different one is exactly how #3853 stayed invisible.
+/// The returned `lan_ip` is `None` for the loopback fallback. The address mDNS
+/// advertises is iroh's own bound socket, so it is by construction the address we bound
+/// — advertising a different one is exactly how #3853 stayed invisible.
 ///
 /// # The narrowing this leaves, stated rather than hidden
 ///
@@ -870,16 +813,20 @@ fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
 // handle_mdns_init_result — emit SyncEvent on mDNS init failure
 // ---------------------------------------------------------------------------
 
-/// Translate the outcome of [`MdnsService::new`] into an optional service
-/// Handle, emitting [`SyncEvent::MdnsDisabled`] on failure.
+/// Translate the outcome of [`crate::mdns::attach`] into an optional lookup, emitting
+/// [`SyncEvent::MdnsDisabled`] on failure.
 ///
-/// Extracted as a separate function so a unit test can exercise the
-/// failure path without actually creating a real `MdnsService` (which
-/// depends on the host OS allowing UDP multicast).
+/// `MdnsDisabled` is a **latching** claim: `TauriEventSink` writes
+/// `MdnsStatus { disabled: true }` and nothing writes it back, so only a failure that
+/// proves discovery is dead for the whole session may emit it. `attach` failing is such
+/// a proof — there is no discoverer at all.
+///
+/// Extracted so a unit test can exercise the failure path without opening multicast
+/// sockets.
 pub(crate) fn handle_mdns_init_result(
-    result: Result<MdnsService, AppError>,
+    result: Result<MdnsAddressLookup, AppError>,
     event_sink: &Arc<dyn SyncEventSink>,
-) -> Option<MdnsService> {
+) -> Option<MdnsAddressLookup> {
     match result {
         Ok(m) => Some(m),
         Err(e) => {
@@ -898,111 +845,6 @@ pub(crate) fn handle_mdns_init_result(
             None
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// mDNS daemon monitor (#3852) — the failures `register()` cannot report
-// ---------------------------------------------------------------------------
-
-/// React to one classified `mdns-sd` daemon event.
-///
-/// Split from the reader task so the reaction is a pure function of the signal and can
-/// be tested without a live `ServiceDaemon`, a multicast-capable runner, or a network.
-///
-/// * [`MdnsDaemonSignal::Announced`] is the **only** thing that logs "announced over
-///   mDNS", and it comes from the daemon thread after it wrote to a socket — not from
-///   `announce()`'s `Ok`, which means only that a command reached a queue.
-/// * [`MdnsDaemonSignal::Degraded`] is a failure that `announce()` had already returned
-///   `Ok` for. It is logged at `warn!` and reported to the user **not at all** — see
-///   below.
-/// * [`MdnsDaemonSignal::Ignored`] must emit nothing at all.
-///
-/// # Why no daemon event may emit [`SyncEvent::MdnsDisabled`]
-///
-/// `MdnsDisabled` is a **latching** claim. `TauriEventSink` writes
-/// `MdnsStatus { disabled: true }` into `MdnsStatusState` and nothing anywhere ever
-/// writes it back to `false`; `useMdnsStatus` has no reset path either. So the event may
-/// only be emitted by something that proves mDNS is dead *for the whole session*.
-///
-/// [`MdnsService::new`] failing is such a proof — there is no daemon at all — which is
-/// why [`handle_mdns_init_result`] still emits it. A `DaemonEvent::Error` is not:
-/// `mdns::classify_daemon_event` documents the audit, but the short version is that it
-/// reports one failed daemon-side operation and cannot distinguish "no mDNS on this
-/// device" from "one interface of several misbehaved". Latching the permanent banner
-/// "mDNS disabled: no first-ever pair is possible" on that would over-claim to the user
-/// on a device whose discovery works — the same failure this whole change exists to
-/// remove, pointed the other way.
-///
-/// The diagnostic is not lost: the `warn!` below carries the daemon's own message, is in
-/// `commands::bug_report`'s `STABLE_MESSAGES`, and so reaches both `agaric.log` and any
-/// submitted bug report. Strictly more than the pre-#3852 behaviour, where `monitor()`
-/// had no call sites and the failure was observable nowhere at all — but without
-/// claiming, in the UI, something that is not known.
-///
-/// `_event_sink` is retained rather than deleted so that "a daemon signal reaches the
-/// user" stays a property tests assert against a real sink, instead of an absence no
-/// test can observe.
-pub(crate) fn handle_mdns_daemon_signal(
-    signal: MdnsDaemonSignal,
-    _event_sink: &Arc<dyn SyncEventSink>,
-) {
-    match signal {
-        MdnsDaemonSignal::Announced { service, on } => {
-            // Deliberately "sent", not "reachable": an Android per-uid firewall drop
-            // happens after `sendto` succeeds and is invisible from in-process. See
-            // `mdns::classify_daemon_event` for exactly how much this proves.
-            tracing::info!(
-                service = %service,
-                interface = %on,
-                "mDNS announcement sent on the wire"
-            );
-        }
-        MdnsDaemonSignal::Degraded(reason) => {
-            // Kept on ONE line and byte-identical to its `STABLE_MESSAGES` entry in
-            // `commands::bug_report`, for the reason spelled out at
-            // `handle_mdns_init_result`: the #700 drift guard scans for the quoted
-            // literal, and a `\`-continued literal would not match — so the one line
-            // that names a real mDNS failure would be redacted out of every bug report.
-            //
-            // "degraded", not "disabled", and no `SyncEvent`: this is the whole of what
-            // is known. See the fn doc above.
-            tracing::warn!(
-                reason = %reason,
-                "mDNS daemon reported an error after the announce was accepted; peer discovery is degraded"
-            );
-        }
-        MdnsDaemonSignal::Ignored => {}
-    }
-}
-
-/// Subscribe to the mDNS daemon's own event stream and drain it for the daemon's life.
-///
-/// `mdns-sd`'s monitor channel is a `flume::Receiver` with a blocking `recv()`, so it is
-/// drained on a `spawn_blocking` thread exactly like the browse channel below it. The
-/// task ends when the daemon shuts down and closes the channel.
-///
-/// A monitor subscription that cannot be created is itself only `warn!`-worthy: it
-/// leaves discovery no worse off than before #3852, it just leaves it unobservable
-/// again.
-fn spawn_mdns_monitor(mdns: &MdnsService, event_sink: &Arc<dyn SyncEventSink>) {
-    let monitor_rx = match mdns.monitor() {
-        Ok(rx) => rx,
-        Err(e) => {
-            // One line, same #700 drift-guard reason as above.
-            tracing::warn!(
-                error = %e,
-                "could not subscribe to the mDNS daemon monitor; announce failures will not be observable"
-            );
-            return;
-        }
-    };
-    let event_sink = event_sink.clone();
-    tokio::task::spawn_blocking(move || {
-        while let Ok(event) = monitor_rx.recv() {
-            handle_mdns_daemon_signal(crate::mdns::classify_daemon_event(&event), &event_sink);
-        }
-        tracing::debug!("mDNS daemon monitor channel closed");
-    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1905,7 +1747,7 @@ pub async fn try_sync_with_peer(
 
     // 0. A peer with no name is not a peer.
     //
-    // `mdns::parse_service_event` refuses an empty `device_id` where announcements
+    // `mdns::discovery_event_to_kind` refuses an empty `device_id` where announcements
     // enter, and this is a second, independent refusal because an announcement is not
     // the only way a `DiscoveredPeer` is built: `build_fallback_peer` synthesises one
     // from a `peer_refs` row, and nothing stops a future caller synthesising another.
@@ -1947,9 +1789,9 @@ pub async fn try_sync_with_peer(
     // 2. The peer's key. Under iroh this is what a dial names; addresses are only
     //    candidate paths to an already-named endpoint.
     //
-    //    A discovered peer without one cannot be dialled at all, which is why
-    //    `mdns::parse_service_event` refuses an announcement whose TXT record has no
-    //    parseable `endpoint_id`: "we discovered a peer" and "we can attempt a session"
+    //    A discovered peer without one cannot be dialled at all, which is why the mDNS
+    //    instance name *is* the key and the discovery crate drops a record whose name
+    //    does not parse as one: "we discovered a peer" and "we can attempt a session"
     //    have to stay the same statement.
     //
     //    This resolution used to sit *after* the per-peer lock. It reads a field off an
@@ -2621,7 +2463,7 @@ mod tests {
     fn handle_mdns_init_result_emits_event_on_err() {
         let typed = Arc::new(RecordingEventSink::new());
         let sink: Arc<dyn SyncEventSink> = typed.clone();
-        let simulated_err: Result<MdnsService, AppError> = Err(AppError::InvalidOperation(
+        let simulated_err: Result<MdnsAddressLookup, AppError> = Err(AppError::InvalidOperation(
             "simulated multicast blocked".into(),
         ));
 
@@ -2655,10 +2497,11 @@ mod tests {
     fn handle_mdns_init_result_event_reason_captures_error_details() {
         let typed = Arc::new(RecordingEventSink::new());
         let sink: Arc<dyn SyncEventSink> = typed.clone();
-        let simulated_err: Result<MdnsService, AppError> = Err(AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "raw socket blocked by sandbox",
-        )));
+        let simulated_err: Result<MdnsAddressLookup, AppError> =
+            Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "raw socket blocked by sandbox",
+            )));
 
         let _ = handle_mdns_init_result(simulated_err, &sink);
         let events = typed.events();
@@ -2672,140 +2515,6 @@ mod tests {
             }
             other => panic!("expected MdnsDisabled, got {other:?}"),
         }
-    }
-
-    // -- #3852: the daemon monitor, i.e. the failures `register()` cannot report --
-
-    /// The non-latching arm of the pair below: a daemon-side error must NOT put
-    /// the permanent "mDNS disabled" banner in front of the user.
-    ///
-    /// `MdnsStatusState` and `useMdnsStatus` both latch `disabled` to `true` with
-    /// no reset anywhere, so an `MdnsDisabled` emitted here is permanent for the
-    /// session. A `DaemonEvent::Error` on a VPN tun or docker bridge, on a device
-    /// whose `wlan0` discovery works fine, would therefore leave a false
-    /// "no first-ever pair is possible" banner up until the app restarts.
-    #[test]
-    fn a_degraded_daemon_signal_does_not_latch_the_mdns_disabled_banner() {
-        let typed = Arc::new(RecordingEventSink::new());
-        let sink: Arc<dyn SyncEventSink> = typed.clone();
-
-        handle_mdns_daemon_signal(
-            MdnsDaemonSignal::Degraded("failed to create IPv4 socket".into()),
-            &sink,
-        );
-
-        assert!(
-            typed.events().is_empty(),
-            "a daemon-side error proves one operation failed, not that the device has no \
-             mDNS; emitting anything here latches an unresettable banner, got {:?}",
-            typed.events()
-        );
-    }
-
-    /// The fatal arm of the same pair — pinned together with the one above so the
-    /// fix cannot be "read" as "mDNS failures no longer reach the user at all".
-    ///
-    /// `MdnsService::new` failing IS terminal for the session: there is no daemon,
-    /// so no announce can ever go out. That, and only that, may latch the banner.
-    #[test]
-    fn a_fatal_mdns_init_failure_still_reaches_the_user_when_a_degraded_one_does_not() {
-        let typed = Arc::new(RecordingEventSink::new());
-        let sink: Arc<dyn SyncEventSink> = typed.clone();
-
-        // Non-fatal first: it must contribute nothing.
-        handle_mdns_daemon_signal(
-            MdnsDaemonSignal::Degraded("failed to create IPv4 socket".into()),
-            &sink,
-        );
-        // Then the genuinely terminal one.
-        handle_mdns_init_result(
-            Err(AppError::InvalidOperation("multicast unavailable".into())),
-            &sink,
-        );
-
-        let events = typed.events();
-        assert_eq!(
-            events.len(),
-            1,
-            "exactly one of the two failures is terminal, so exactly one event may be \
-             emitted, got {events:?}"
-        );
-        match &events[0] {
-            SyncEvent::MdnsDisabled { reason } => assert!(
-                reason.contains("multicast unavailable"),
-                "the surviving event must be the init failure's, not the daemon error's, \
-                 got {reason:?}"
-            ),
-            other => panic!("expected MdnsDisabled, got {other:?}"),
-        }
-    }
-
-    /// A successful announcement is NOT an error, and must not be reported as
-    /// one. Emitting `MdnsDisabled` on every announce would put a permanent
-    /// "mDNS is unavailable" banner in front of a device whose mDNS works.
-    #[test]
-    fn an_announced_signal_emits_no_sync_event() {
-        let typed = Arc::new(RecordingEventSink::new());
-        let sink: Arc<dyn SyncEventSink> = typed.clone();
-
-        handle_mdns_daemon_signal(
-            MdnsDaemonSignal::Announced {
-                service: "Agaric_dev-1._agaric._udp.local.".into(),
-                on: "dev-1.local.:wlan0".into(),
-            },
-            &sink,
-        );
-
-        assert!(
-            typed.events().is_empty(),
-            "an announcement is not a failure and must emit no SyncEvent, got {:?}",
-            typed.events()
-        );
-    }
-
-    /// Housekeeping (interface add/remove, per-query responses) fires
-    /// routinely on a healthy device. It must emit nothing.
-    #[test]
-    fn an_ignored_signal_emits_no_sync_event() {
-        let typed = Arc::new(RecordingEventSink::new());
-        let sink: Arc<dyn SyncEventSink> = typed.clone();
-
-        handle_mdns_daemon_signal(MdnsDaemonSignal::Ignored, &sink);
-
-        assert!(
-            typed.events().is_empty(),
-            "daemon housekeeping must emit no SyncEvent, got {:?}",
-            typed.events()
-        );
-    }
-
-    /// End-to-end over the seam the production reader task uses: a raw
-    /// `mdns_sd::DaemonEvent` off the monitor channel must classify as `Degraded`
-    /// and reach the sink as nothing at all. Asserting on `MdnsDaemonSignal` alone
-    /// would leave the `classify_daemon_event` → `handle_mdns_daemon_signal` join
-    /// untested, and that join is the whole wiring #3852 asks for — including the
-    /// part that decides the user is not told.
-    #[test]
-    fn a_raw_daemon_event_error_travels_the_full_classify_then_handle_path() {
-        let typed = Arc::new(RecordingEventSink::new());
-        let sink: Arc<dyn SyncEventSink> = typed.clone();
-
-        let raw = mdns_sd::DaemonEvent::Error(mdns_sd::Error::Msg(
-            "multicast not permitted on this interface".into(),
-        ));
-        assert_eq!(
-            crate::mdns::classify_daemon_event(&raw),
-            MdnsDaemonSignal::Degraded("multicast not permitted on this interface".into()),
-            "the raw daemon error must classify as Degraded before it is handled"
-        );
-        handle_mdns_daemon_signal(crate::mdns::classify_daemon_event(&raw), &sink);
-
-        assert!(
-            typed.events().is_empty(),
-            "the full production path must not latch a permanent banner off one daemon \
-             error, got {:?}",
-            typed.events()
-        );
     }
 
     /// The production cadence gate (`maybe_gc_peer_locks`, the exact
@@ -2865,23 +2574,6 @@ mod tests {
             "a held peer lock must NOT be reclaimed by GC"
         );
         assert_eq!(ticks_since_gc, 0);
-    }
-
-    /// The helper must not emit any event on the happy path. We can't
-    /// construct a real `MdnsService` without networking in a unit test,
-    /// so this asserts by construction: the `Ok` arm of the match never
-    /// touches `event_sink`. A future refactor that changes this contract
-    /// would have to alter the signature and this test would fail to
-    /// compile.
-    #[test]
-    fn handle_mdns_init_result_no_event_path_is_ok_only() {
-        let typed = Arc::new(RecordingEventSink::new());
-        assert!(
-            typed.events().is_empty(),
-            "baseline: fresh sink starts with zero events"
-        );
-        // (Ok path cannot be exercised without real networking; the Err
-        // path is the contract surface we care about.)
     }
 
     // ── handle_internet_facing_bind (#3864) ──────────────────────────────────

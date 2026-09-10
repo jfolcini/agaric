@@ -596,36 +596,37 @@ fn running_under_flatpak() -> bool {
 /// set the production subscriber is built from.
 const BASE_LOG_LAYER_DEFAULTS: &[(&str, &str)] = &[("agaric", "info"), ("frontend", "info")];
 
-/// The `mdns-sd` diagnostic directive, added to the defaults only where the
+/// The discovery diagnostic directive, added to the defaults only where the
 /// user has no other way to switch it on: see [`MDNS_DEBUG_BY_DEFAULT`].
-const MDNS_DIAGNOSTIC_DEFAULT: (&str, &str) = ("mdns_sd", "debug");
+/// `swarm-discovery` is the mDNS engine under `iroh-mdns-address-lookup`
+/// (`agaric-sync/src/mdns.rs`), and it reports through `tracing` natively.
+const MDNS_DIAGNOSTIC_DEFAULT: (&str, &str) = ("swarm_discovery", "debug");
 
-/// Whether `mdns_sd=debug` is a **default**, as opposed to something an
+/// Whether `swarm_discovery=debug` is a **default**, as opposed to something an
 /// operator opts into with `RUST_LOG`.
 ///
 /// # Why this is gated at all
 ///
-/// `mdns-sd` logs a lot at `debug`, and not only at startup: `handle_read`,
-/// `dns_parser`, and the cache log per *incoming packet*, and on a busy LAN
-/// (printers, casts, phones, every `_services._dns-sd._udp` sweep) that is
-/// continuous. It flows into the JSON file layer, and `tracing-appender` has no
-/// per-file size cap — daily rotation with 14 retained files bounds the file
-/// *count*, not the bytes in the current day (#157 sub-item D). An
-/// unconditional default therefore charges that to every Agaric install on
-/// every platform, forever, to answer a question almost none of them are asking.
+/// `swarm-discovery` logs per *incoming packet* at `debug` (`received mDNS
+/// query for …`, `received mDNS response for …`), and on a busy LAN (printers,
+/// casts, phones, every `_services._dns-sd._udp` sweep) that is continuous. It
+/// flows into the JSON file layer, and `tracing-appender` has no per-file size
+/// cap — daily rotation with 14 retained files bounds the file *count*, not the
+/// bytes in the current day (#157 sub-item D). An unconditional default
+/// therefore charges that to every Agaric install on every platform, forever,
+/// to answer a question almost none of them are asking.
 ///
 /// # Why Android, and why not the alternatives
 ///
-/// * Not `cfg(debug_assertions)`. The whole point of the bridge is on-device
-///   diagnosis of a **release** build — #3852 was found on a shipped APK on a
-///   Pixel 8, and a debug-build gate would have hidden it from the one build
-///   that had the bug.
-/// * Not a narrower target filter. The diagnostics that matter
-///   (`failed to create IPv4 socket`, `failed to join multicast`,
-///   `Failed to send unicast …`) and the per-packet chatter are emitted from
-///   the *same* module path, `mdns_sd::service_daemon`. `log` records take
-///   `module_path!()` as their target, so no target prefix separates signal
-///   from volume — the filter cannot express the distinction.
+/// * Not `cfg(debug_assertions)`. The whole point is on-device diagnosis of a
+///   **release** build — #3852 was found on a shipped APK on a Pixel 8, and a
+///   debug-build gate would have hidden it from the one build that had the bug.
+/// * Not a narrower target filter. The socket diagnostics (`could not join
+///   multicast group`, `error sending mDNS`) sit in `swarm_discovery::socket`
+///   and the per-packet lines in `swarm_discovery::receiver`, but the question
+///   #3852 asks — "did anything arrive at all?" — is answered by the per-packet
+///   lines, so scoping the default to the socket module would keep the volume
+///   down by discarding the evidence.
 /// * Not a user-facing runtime toggle. A switch the user must find and flip
 ///   *before* reproducing is a switch that is off during the failure it exists
 ///   to catch, and 0.9.7 ships no settings surface for it.
@@ -634,7 +635,7 @@ const MDNS_DIAGNOSTIC_DEFAULT: (&str, &str) = ("mdns_sd", "debug");
 /// `RUST_LOG` is the toggle everywhere it can be set, and Android is precisely
 /// the platform where it cannot. So the default exists exactly where the
 /// alternative is nothing, and everywhere else the operator asks for it by name
-/// (`RUST_LOG=mdns_sd=debug`), which `build_log_directives` honours.
+/// (`RUST_LOG=swarm_discovery=debug`), which `build_log_directives` honours.
 ///
 /// `cfg!` rather than `#[cfg]` so both shapes stay compiled and the tests below
 /// can assert on the Android shape from a CI runner that is not Android.
@@ -652,14 +653,13 @@ fn log_layer_defaults(mdns_debug: bool) -> Vec<(&'static str, &'static str)> {
     defaults
 }
 
-/// Does the final directive string admit `mdns-sd`'s `log`-facade records at
-/// `debug`?
+/// Does the final directive string admit discovery diagnostics at `debug`?
 ///
-/// This is the question [`init_log_bridge`] needs answered: bridging a record
-/// that the layers' `EnvFilter` will reject still costs its construction and
-/// dispatch, once per packet. Returns `true` for a `debug` or `trace` directive
-/// on `mdns_sd` or any of its submodules, whether it came from the defaults or
-/// from the operator's `RUST_LOG`.
+/// This is the question [`init_log_bridge`] needs answered: the `log` bridge's
+/// ceiling follows the layers' filter, because bridging a record the `EnvFilter`
+/// will reject still costs its construction and dispatch. Returns `true` for a
+/// `debug` or `trace` directive on `swarm_discovery` or any of its submodules,
+/// whether it came from the defaults or from the operator's `RUST_LOG`.
 fn directives_admit_mdns_debug(directives: &str) -> bool {
     directives
         .split(',')
@@ -667,7 +667,7 @@ fn directives_admit_mdns_debug(directives: &str) -> bool {
         .filter_map(|piece| piece.split('[').next().unwrap_or(piece).split_once('='))
         .any(|(target, level)| {
             let target = target.trim();
-            (target == "mdns_sd" || target.starts_with("mdns_sd::"))
+            (target == "swarm_discovery" || target.starts_with("swarm_discovery::"))
                 && matches!(
                     level.trim().to_ascii_lowercase().as_str(),
                     "debug" | "trace"
@@ -679,24 +679,22 @@ fn directives_admit_mdns_debug(directives: &str) -> bool {
 ///
 /// # This is a bug fix, not a nicety
 ///
-/// Agaric logs through `tracing`. Several of its dependencies do not — most
-/// consequentially `mdns-sd`, which is the **only** peer discovery Agaric has
-/// and which reports every one of its network-level diagnostics through the
-/// `log` facade: `failed to create IPv4 socket`, `Failed to send unicast …`,
-/// the interface misses.
+/// Agaric logs through `tracing`. The `log` crate discards every record until
+/// some process installs a global logger, and Agaric installed none, so every
+/// `log`-facade dependency was a silent no-op: records emitted and dropped with
+/// no logger, no error, and nothing for an operator to notice. That was one of
+/// the three silences that made #3852 invisible for three days, when the
+/// discovery crate was `mdns-sd` and reported every socket failure through
+/// `log`.
 ///
-/// The `log` crate discards every record until some process installs a global
-/// logger. Agaric installed none, so all of that was a no-op: the records were
-/// emitted and dropped on the floor with no logger, no error, and nothing for
-/// an operator to notice. That was one of the three silences that made #3852
-/// invisible for three days — the other two being `register()` returning `Ok`
-/// for a queued command, and `ServiceDaemon::monitor()` having no call sites.
-///
-/// `LogTracer::init` fixes the first half by installing a logger that forwards
-/// into `tracing`; the `mdns_sd` directive in [`init_logging`] fixes the second
-/// half by letting the forwarded records past the subscriber's filter — by
-/// default on Android, and on request (`RUST_LOG=mdns_sd=debug`) everywhere
-/// else. See [`MDNS_DEBUG_BY_DEFAULT`] for why that split.
+/// `mdns-sd` is gone (#3464): `swarm-discovery` and `iroh-mdns-address-lookup`
+/// report through `tracing` natively, so the bridge is no longer on the
+/// discovery path. It stays because the silence it fixes is a property of the
+/// `log` facade, not of one crate — any remaining `log`-facade dependency would
+/// go quiet the same way. The `swarm_discovery` directive in [`init_logging`]
+/// is the other half: letting discovery records past the subscriber's filter —
+/// by default on Android, and on request (`RUST_LOG=swarm_discovery=debug`)
+/// everywhere else. See [`MDNS_DEBUG_BY_DEFAULT`] for why that split.
 ///
 /// # Why the failure is swallowed
 ///
@@ -714,12 +712,13 @@ fn directives_admit_mdns_debug(directives: &str) -> bool {
 /// gate there is — it is what lets the `log` macros short-circuit before a
 /// record is built — so it should never sit above what the layers will accept.
 ///
-/// Hence `max_level`: `Debug` when the log layers admit `mdns_sd` at debug (the
-/// records this bridge exists for), `Info` otherwise. On a desktop build, where
-/// `mdns_sd=debug` is no longer a default (see [`MDNS_DEBUG_BY_DEFAULT`]),
-/// `Info` means mdns-sd's per-packet `debug!` calls short-circuit inside the
-/// macro instead of being formatted once per packet and then thrown away by the
-/// filter. An operator's `RUST_LOG=mdns_sd=debug` raises both together.
+/// Hence `max_level`: `Debug` when the log layers admit discovery at debug,
+/// `Info` otherwise, so the two ceilings move together — on a desktop build,
+/// where `swarm_discovery=debug` is not a default (see
+/// [`MDNS_DEBUG_BY_DEFAULT`]), a `log`-facade dependency's `debug!` calls
+/// short-circuit inside the macro instead of being formatted and then thrown
+/// away by the filter. An operator's `RUST_LOG=swarm_discovery=debug` raises
+/// both.
 fn init_log_bridge(max_level: tracing_log::log::LevelFilter) {
     if let Err(e) = tracing_log::LogTracer::builder()
         .with_max_level(max_level)
@@ -751,18 +750,17 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // fresh filter per layer (each layer now carries its OWN filter — see the
     // registry composition below — instead of one global filter).
     //
-    // #3852 adds `mdns_sd` at `debug`, and PR #4034 scoped it to the platform
-    // that has no other way to ask for it. `mdns-sd` is the only discovery
-    // Agaric has, it reports through the `log` facade (hence `init_log_bridge`
-    // below), and every diagnostic that distinguishes "the LAN is quiet" from
-    // "this device cannot open a multicast socket" — `failed to create IPv4
-    // socket`, `Failed to send unicast …`, the interface misses — is emitted at
-    // `debug`. On Android, where #3852 was found on a release build, there is no
-    // practical way for a user to set `RUST_LOG`, so a default that hides those
-    // lines hides them on the one platform that needs them. Everywhere else
-    // `RUST_LOG=mdns_sd=debug` is available and the default is not paid for.
-    // `MDNS_DEBUG_BY_DEFAULT` carries the full argument, including why the other
-    // three ways of scoping it were rejected.
+    // #3852 adds the discovery crate at `debug`, and PR #4034 scoped it to the
+    // platform that has no other way to ask for it. `swarm_discovery` is the only
+    // discovery Agaric has, and every diagnostic that distinguishes "the LAN is
+    // quiet" from "this device cannot open a multicast socket" — `could not join
+    // multicast group`, `error sending mDNS`, the per-packet receive lines — is
+    // emitted at `debug`. On Android, where #3852 was found on a release build,
+    // there is no practical way for a user to set `RUST_LOG`, so a default that
+    // hides those lines hides them on the one platform that needs them.
+    // Everywhere else `RUST_LOG=swarm_discovery=debug` is available and the
+    // default is not paid for. `MDNS_DEBUG_BY_DEFAULT` carries the full
+    // argument, including why the other three ways of scoping it were rejected.
     //
     // The cost where it IS on, stated plainly because the M2b note below is
     // about exactly this: a `debug` directive on ANY target raises the
@@ -770,7 +768,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // `agaric` start evaluating their (per-layer, rejecting) filter instead of
     // being skipped at the callsite. That is the same level the OTel layer
     // already asks for whenever observability is enabled. An operator who wants
-    // the quieter shape can set `RUST_LOG=mdns_sd=warn`, which
+    // the quieter shape can set `RUST_LOG=swarm_discovery=warn`, which
     // `build_log_directives` honours — a user directive for a target always
     // wins over the default.
     let defaults = log_layer_defaults(MDNS_DEBUG_BY_DEFAULT);
@@ -2964,7 +2962,9 @@ mod log_bridge_tests {
     /// EVERY `log::debug!` in every dependency short-circuits inside the macro
     /// — the record is never even constructed. That is the state Agaric shipped
     /// in, and it is why `mdns-sd`'s socket/send diagnostics were unreachable
-    /// no matter what filter was configured.
+    /// no matter what filter was configured (#3852). The discovery crate now
+    /// reports through `tracing`; the bridge stays for any other `log`-facade
+    /// dependency.
     ///
     /// nextest runs each test in its own process, so the pre-init reading below
     /// is the real boot-time state and not another test's leftovers.
@@ -2978,7 +2978,7 @@ mod log_bridge_tests {
 
         assert!(
             after >= LevelFilter::Debug,
-            "after init_log_bridge, `mdns_sd`'s `log::debug!` records must at least be \
+            "after init_log_bridge, a dependency's `log::debug!` records must at least be \
              constructed and offered to `tracing`; max_level was {before:?} before and \
              {after:?} after"
         );
@@ -3027,19 +3027,18 @@ mod log_bridge_tests {
         );
     }
 
-    /// The bridge alone is not enough: a forwarded record still has to pass the
-    /// subscriber's `EnvFilter`. With only `agaric` / `frontend` directives,
-    /// every `mdns_sd` event is rejected for having no matching directive, so
-    /// bridging them would change nothing observable. This is the shape Android
+    /// A record still has to pass the subscriber's `EnvFilter`. With only
+    /// `agaric` / `frontend` directives, every `swarm_discovery` event is
+    /// rejected for having no matching directive. This is the shape Android
     /// boots with, asserted from any host because the gate is a parameter.
     #[test]
-    fn the_android_default_log_filter_admits_mdns_sd_at_debug() {
+    fn the_android_default_log_filter_admits_swarm_discovery_at_debug() {
         let directives = build_log_directives("", &log_layer_defaults(true));
         assert!(
-            directives.contains("mdns_sd=debug"),
-            "on the platform with no RUST_LOG, the default directives must admit mdns-sd's \
-             debug diagnostics (socket-create and send failures are all emitted at debug), \
-             got: {directives}"
+            directives.contains("swarm_discovery=debug"),
+            "on the platform with no RUST_LOG, the default directives must admit the \
+             discovery crate's debug diagnostics (multicast-join and send failures are all \
+             emitted at debug), got: {directives}"
         );
         assert!(
             tracing_subscriber::EnvFilter::try_new(&directives).is_ok(),
@@ -3053,9 +3052,9 @@ mod log_bridge_tests {
     }
 
     /// The scoping this whole gate exists for (PR #4034 note 5): off Android,
-    /// `mdns_sd=debug` is NOT a default, so it does not stream into a JSON log
-    /// file that has no per-file size cap (#157 sub-item D) on every desktop
-    /// install that never asked for it.
+    /// `swarm_discovery=debug` is NOT a default, so it does not stream into a
+    /// JSON log file that has no per-file size cap (#157 sub-item D) on every
+    /// desktop install that never asked for it.
     ///
     /// Asserted through the constant the production path actually reads, so a
     /// widened `cfg!` — say back to an unconditional `true` — reddens here on
@@ -3071,13 +3070,13 @@ mod log_bridge_tests {
         // what the production subscriber is handed.
         let directives = build_log_directives("", &log_layer_defaults(MDNS_DEBUG_BY_DEFAULT));
         assert!(
-            !directives.contains("mdns_sd"),
-            "no mdns-sd directive may be shipped by default off Android, got: {directives}"
+            !directives.contains("swarm_discovery"),
+            "no discovery directive may be shipped by default off Android, got: {directives}"
         );
         assert!(
             !directives_admit_mdns_debug(&directives),
-            "and the log bridge must therefore stay below Debug, so mdns-sd's per-packet \
-             `log::debug!` calls short-circuit instead of being built and dropped, \
+            "and the log bridge must therefore stay below Debug, so a `log`-facade \
+             dependency's `debug!` calls short-circuit instead of being built and dropped, \
              got: {directives}"
         );
     }
@@ -3087,10 +3086,11 @@ mod log_bridge_tests {
     /// works, and the bridge ceiling rises with the filter.
     #[test]
     fn an_operator_can_still_opt_in_off_android() {
-        let directives = build_log_directives("mdns_sd=debug", &log_layer_defaults(false));
+        let directives = build_log_directives("swarm_discovery=debug", &log_layer_defaults(false));
         assert!(
-            directives.contains("mdns_sd=debug"),
-            "RUST_LOG=mdns_sd=debug must survive into the layer filter, got: {directives}"
+            directives.contains("swarm_discovery=debug"),
+            "RUST_LOG=swarm_discovery=debug must survive into the layer filter, got: \
+             {directives}"
         );
         assert!(
             directives_admit_mdns_debug(&directives),
@@ -3099,21 +3099,21 @@ mod log_bridge_tests {
         );
     }
 
-    /// Submodule directives count too — `log` records take `module_path!()` as
-    /// their target, so an operator naming `mdns_sd::service_daemon` is asking
-    /// for exactly the records the bridge carries.
+    /// Submodule directives count too — `tracing` targets are module paths, so
+    /// an operator naming `swarm_discovery::socket` is asking for discovery
+    /// diagnostics.
     #[test]
     fn a_submodule_directive_raises_the_bridge_ceiling() {
         assert!(
-            directives_admit_mdns_debug("agaric=info,mdns_sd::service_daemon=debug"),
+            directives_admit_mdns_debug("agaric=info,swarm_discovery::socket=debug"),
             "a submodule directive must be recognised"
         );
         assert!(
-            !directives_admit_mdns_debug("agaric=debug,frontend=info,mdns_sd_helper=debug"),
+            !directives_admit_mdns_debug("agaric=debug,frontend=info,swarm_discovery_helper=debug"),
             "a target that merely starts with the same letters must not"
         );
         assert!(
-            !directives_admit_mdns_debug("mdns_sd=warn"),
+            !directives_admit_mdns_debug("swarm_discovery=warn"),
             "a directive that rejects debug must not raise the ceiling"
         );
     }
@@ -3124,13 +3124,13 @@ mod log_bridge_tests {
     /// quiet it.
     #[test]
     fn a_user_rust_log_directive_still_overrides_the_mdns_default() {
-        let directives = build_log_directives("mdns_sd=warn", &log_layer_defaults(true));
+        let directives = build_log_directives("swarm_discovery=warn", &log_layer_defaults(true));
         assert!(
-            directives.contains("mdns_sd=warn"),
+            directives.contains("swarm_discovery=warn"),
             "the operator's directive must be preserved, got: {directives}"
         );
         assert!(
-            !directives.contains("mdns_sd=debug"),
+            !directives.contains("swarm_discovery=debug"),
             "the default must NOT be appended alongside the operator's, got: {directives}"
         );
     }
