@@ -515,11 +515,9 @@ function enmlToMarkdown(
 
   const doc = new DOMParser().parseFromString(trimmed, 'application/xml')
   if (doc.querySelector('parsererror') !== null) return ''
+  // A rootless `<content>` falls back to the document element, which a parse
+  // without a `<parsererror>` always has.
   const enNote = doc.querySelector('en-note') ?? doc.documentElement
-  // A document that parsed without a `<parsererror>` always has a root
-  // element, so no input reaches this (#4815) — it is one line that keeps a
-  // rootless `<content>` from throwing away the whole import.
-  if (enNote == null) return ''
 
   // Round-trip through an HTML document so the custom/void tags serialize
   // with explicit close tags (see the doc comment). Reading the en-note's
