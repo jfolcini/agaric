@@ -34,17 +34,20 @@
  * `ScanError` on undecidable input, so the test reddens rather than skipping.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
 // @ts-expect-error -- untyped JS helper, the repo's sanctioned tokenizer (#3991)
 import * as scanner from '../../scripts/lib/js-scanner.mjs'
+import { walkFiles } from './helpers/walk-files'
 
 /** `limit`'s positional index in each generated binding that takes one. */
 function limitIndexByCommand(): Map<string, number> {
-  const bindings = readFileSync('src/lib/bindings.ts', 'utf8')
+  // Through the scanner first: a parameter list carrying doc-comment parens
+  // (`filteredBlocksQuery`'s does) is invisible to the `[^)]*` match below,
+  // and a command the map silently lacks is a command the guard never checks.
+  const bindings = scanner.stripComments(readFileSync('src/lib/bindings.ts', 'utf8')) as string
   const out = new Map<string, number>()
   for (const m of bindings.matchAll(/^\t(\w+): \(([^)]*)\) =>/gm)) {
     const params = (scanner.splitTopLevelCommas(m[2] ?? '') as string[]).map((p) =>
@@ -56,24 +59,29 @@ function limitIndexByCommand(): Map<string, number> {
   return out
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.tsx?$/.test(p) && !p.endsWith('.d.ts')) out.push(p)
-  }
-  return out
-}
-
 describe('#4918 limit-literal guard', () => {
   it('no call site passes a bare number where a command takes a limit', () => {
     const limitIndex = limitIndexByCommand()
-    // Fails closed: a bindings file this cannot read means no command is
-    // checked, which would look identical to a clean tree.
-    expect(limitIndex.size).toBeGreaterThan(0)
+    // Fails closed, per command rather than per file: every generated binding
+    // that names a `limit` parameter must be in the map, or it is a command
+    // the guard silently never checks — and that looks identical to a clean
+    // tree. (The raw bindings are the source of truth for "names a limit".)
+    const raw = readFileSync('src/lib/bindings.ts', 'utf8')
+    const namesALimit = [...raw.matchAll(/^\t(\w+): \(/gm)]
+      .map((m) => m[1] as string)
+      .filter((name) => {
+        const start = raw.indexOf(`\t${name}: (`)
+        const open = raw.indexOf('(', start)
+        const close = scanner.findMatchingBracket(raw, open) as number
+        return /\blimit\b/.test(scanner.stripComments(raw.slice(open, close)) as string)
+      })
+    expect([...limitIndex.keys()].toSorted()).toEqual(namesALimit.toSorted())
 
     const offenders: string[] = []
-    for (const file of walk('src')) {
+    for (const file of walkFiles(
+      'src',
+      (name) => /\.tsx?$/.test(name) && !name.endsWith('.d.ts'),
+    )) {
       // Tests may pass a raw limit on purpose — they are asserting what the
       // backend does with one.
       if (/__tests__|\.test\.tsx?$/.test(file)) continue
