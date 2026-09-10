@@ -8,6 +8,8 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
+import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
@@ -31,20 +33,39 @@ afterEach(() => {
   })
 })
 
+/**
+ * The commands this module's handlers can reach, each answering what its
+ * binding declares; a test overrides the one it is about, and anything else
+ * fails by name.
+ *
+ * #2468 — the migrated property mutations resolve `WithOps` envelopes
+ * (`op_refs` carries the appended op-log refs), so the undo-ref capture path
+ * is exercised with the seq values the assertions below pin.
+ */
+function stubPropertySlashInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    set_property: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 1 }],
+      ...makeBlockRow({ id: args['blockId'] as string }),
+    }),
+    delete_property: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 2 }],
+      block_id: args['blockId'] as string,
+      key: args['key'] as string,
+    }),
+    set_todo_state: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+    set_priority: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
+    // The F-37 `blocked_by` probe /done fires; "no such property" by default.
+    get_property: () => null,
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  // #2468 — the migrated property mutations resolve `WithOps` envelopes
-  // (`op_refs` carries the appended op-log refs); give them wire-faithful
-  // defaults so the handlers' undo-ref capture path is exercised.
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'set_property') {
-      return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 1 }] }
-    }
-    if (cmd === 'delete_property') {
-      return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [{ device_id: 'dev1', seq: 2 }] }
-    }
-    return undefined
-  })
+  stubPropertySlashInvoke()
 })
 
 describe('useSlashCommandProperty — TODO state', () => {
@@ -75,9 +96,15 @@ describe('useSlashCommandProperty — TODO state', () => {
   })
 
   it('warns about unresolved dependencies on /done (F-37)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_property') return { value_ref: 'BLK_OTHER' }
-      return undefined
+    stubPropertySlashInvoke({
+      get_property: (args) => ({
+        key: args['key'] as string,
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: 'BLK_OTHER',
+        value_bool: null,
+      }),
     })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
@@ -93,7 +120,11 @@ describe('useSlashCommandProperty — TODO state', () => {
   })
 
   it('toasts on TODO failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubPropertySlashInvoke({
+      set_todo_state: () => {
+        throw new Error('fail')
+      },
+    })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
 
@@ -116,7 +147,11 @@ describe('useSlashCommandProperty — priority', () => {
   })
 
   it('toasts on priority failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubPropertySlashInvoke({
+      set_priority: () => {
+        throw new Error('fail')
+      },
+    })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
     await result.current.exact['priority-high']?.(ctx, { id: 'priority-high', label: 'PRIORITY' })
@@ -242,18 +277,15 @@ describe('useSlashCommandProperty — effort', () => {
   // instance): it is the same `registerActiveDraftFlush` bridge, committing
   // through the page store's `edit` as the real one does.
   it('flushes the pending in-editor content before writing the property (#4577)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'edit_block') {
-        return {
-          id: 'BLOCK_1',
-          content: (args as { toText: string }).toText,
-          op_refs: [{ device_id: 'dev1', seq: 4 }],
-        }
-      }
-      if (cmd === 'set_property') {
-        return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 5 }] }
-      }
-      return undefined
+    stubPropertySlashInvoke({
+      edit_block: (args) => ({
+        op_refs: [{ device_id: 'dev1', seq: 4 }],
+        ...makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string }),
+      }),
+      set_property: (args) => ({
+        op_refs: [{ device_id: 'dev1', seq: 5 }],
+        ...makeBlockRow({ id: args['blockId'] as string }),
+      }),
     })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx, pageStore } = makeSyntheticCtx()
@@ -282,7 +314,11 @@ describe('useSlashCommandProperty — effort', () => {
   })
 
   it('toasts on effort failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubPropertySlashInvoke({
+      set_property: () => {
+        throw new Error('fail')
+      },
+    })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
@@ -395,12 +431,13 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
   it('repeat-remove of an ABSENT property (empty op_refs) pushes no undo entry (#2468)', async () => {
     const onNewAction = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'delete_property') {
-        // Idempotent no-op: nothing was appended, nothing to undo.
-        return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [] }
-      }
-      return undefined
+    stubPropertySlashInvoke({
+      // Idempotent no-op: nothing was appended, nothing to undo.
+      delete_property: (args) => ({
+        op_refs: [],
+        block_id: args['blockId'] as string,
+        key: args['key'] as string,
+      }),
     })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
@@ -414,14 +451,18 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
   it('repeat-limit-remove combines both delete_property op_refs into ONE notification (#2468)', async () => {
     const onNewAction = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+    // One ref per delete, numbered in call order — the coalescing assertion
+    // below is about which refs land together, so the handler counts.
     let seq = 20
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'delete_property') {
-        const key = (args as { key?: string })?.key ?? ''
+    stubPropertySlashInvoke({
+      delete_property: (args) => {
         seq += 1
-        return { block_id: 'BLOCK_1', key, op_refs: [{ device_id: 'dev1', seq }] }
-      }
-      return undefined
+        return {
+          op_refs: [{ device_id: 'dev1', seq }],
+          block_id: args['blockId'] as string,
+          key: args['key'] as string,
+        }
+      },
     })
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
@@ -460,14 +501,18 @@ describe('useSlashCommandProperty — attach', () => {
   }
 
   it('ships file bytes via add_attachment_with_bytes for an allowed file', async () => {
-    mockedInvoke.mockResolvedValue({
-      id: 'att-1',
-      block_id: 'BLOCK_1',
-      filename: 'photo.png',
-      mime_type: 'image/png',
-      size_bytes: 4,
-      fs_path: 'attachments/att-1',
-      created_at: '2025-01-01',
+    stubPropertySlashInvoke({
+      // `created_at` is epoch-ms (attachments.created_at is INTEGER since
+      // migration 0081), not the ISO string the old literal carried.
+      add_attachment_with_bytes: (args) => ({
+        id: 'att-1',
+        block_id: args['blockId'] as string,
+        filename: args['filename'] as string,
+        mime_type: args['mimeType'] as string,
+        size_bytes: 4,
+        fs_path: 'attachments/att-1',
+        created_at: 1_735_689_600_000,
+      }),
     })
     const input = interceptFileInput()
     try {

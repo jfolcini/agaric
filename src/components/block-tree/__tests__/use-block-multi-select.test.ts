@@ -6,8 +6,13 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { makeBlock, makeBlockRow, makePageHeading } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
@@ -52,25 +57,35 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSe
   }
 }
 
+/** The ids one batch IPC was handed. */
+function batchIds(args: Record<string, unknown>): string[] {
+  return (args['blockIds'] as string[]) ?? []
+}
+
+/**
+ * The two batch commands this hook fires, defaulting to "all input ids
+ * handled"; a test overrides the one it is about. Per-test overrides return
+ * specific counts to exercise the affected-count branch in the toast logic,
+ * and anything else the hook reaches for fails by name.
+ *
+ * #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`, not a
+ * bare count. The default fixtures are content blocks, so the page cohort is
+ * empty.
+ */
+function stubMultiSelectInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    set_todo_state_batch: (args) => batchIds(args).length,
+    delete_blocks_by_ids: (args) => ({
+      deleted_count: batchIds(args).length,
+      affected_page_ids: [],
+    }),
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  // Default mock: every batch IPC reports "all input ids handled".
-  // Per-test overrides return specific counts to exercise the
-  // affected-count branch in the toast logic.
-  mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
-    const a = args as Record<string, unknown>
-    const ids = (a['blockIds'] as string[]) ?? []
-    if (cmd === 'set_todo_state_batch') {
-      return Promise.resolve(ids.length)
-    }
-    // #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`, not
-    // a bare count. These fixtures are content blocks, so the page cohort is
-    // empty.
-    if (cmd === 'delete_blocks_by_ids') {
-      return Promise.resolve({ deleted_count: ids.length, affected_page_ids: [] })
-    }
-    return strictInvokeFallback(cmd)
-  })
+  stubMultiSelectInvoke()
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
     blocks: [
@@ -138,7 +153,11 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
   })
 
   it('shows error toast when the batch IPC fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubMultiSelectInvoke({
+      set_todo_state_batch: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -153,10 +172,7 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
     // Backend returns affected_count < ids.length when some ids are
     // missing or already-deleted. The hook surfaces that as a partial
     // failure so the user sees an honest summary.
-    mockedInvoke.mockImplementationOnce((cmd: string) => {
-      if (cmd === 'set_todo_state_batch') return Promise.resolve(1) // 1 of 2
-      return strictInvokeFallback(cmd)
-    })
+    stubMultiSelectInvoke({ set_todo_state_batch: () => 1 }) // 1 of 2
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -352,7 +368,11 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
   })
 
   it('shows error toast on failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -465,7 +485,11 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
   })
 
   it('does not mutate the store when the batch delete IPC fails (no partial splice)', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: () => {
+        throw new Error('fail')
+      },
+    })
     pageStore.setState({
       blocks: [
         makeBlock({ id: 'P', depth: 0 }),
@@ -558,7 +582,11 @@ describe('useBlockMultiSelect undo notifications', () => {
   })
 
   it('does not call onNewAction after a failed batch delete', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -572,19 +600,9 @@ describe('useBlockMultiSelect undo notifications', () => {
 
 describe('useBlockMultiSelect reentrancy guard (#)', () => {
   it('rejects a concurrent handleBatchSetTodo call while another is in flight', async () => {
-    // Hold the first invoke open so we can fire a second call during it.
-    // Non-nullable declarations with same-shaped placeholders — see the long
-    // note-4 comment in the `#4524` describe below for why `T | null` here
-    // leaves `await firstDone` type-checked as `await null`.
-    let releaseFirst: () => void = () => {
-      throw new Error('the batch IPC was never invoked — nothing to release')
-    }
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseFirst = () => resolve()
-        }),
-    )
+    // Hold the batch IPC open so we can fire a second call during it.
+    const first = deferred<CommandReturns['set_todo_state_batch']>()
+    stubMultiSelectInvoke({ set_todo_state_batch: () => first.promise })
 
     const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
@@ -612,21 +630,14 @@ describe('useBlockMultiSelect reentrancy guard (#)', () => {
 
     // Release the first call and await its completion.
     await act(async () => {
-      releaseFirst()
+      first.resolve(1)
       await firstDone
     })
   })
 
   it('rejects a concurrent handleBatchDelete call while another is in flight', async () => {
-    let releaseFirst: () => void = () => {
-      throw new Error('the batch IPC was never invoked — nothing to release')
-    }
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseFirst = () => resolve()
-        }),
-    )
+    const first = deferred<CommandReturns['delete_blocks_by_ids']>()
+    stubMultiSelectInvoke({ delete_blocks_by_ids: () => first.promise })
 
     const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
@@ -645,7 +656,7 @@ describe('useBlockMultiSelect reentrancy guard (#)', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      releaseFirst()
+      first.resolve({ deleted_count: 1, affected_page_ids: [] })
       await firstDone
     })
   })
@@ -687,13 +698,8 @@ describe('useBlockMultiSelect callback stability (#)', () => {
     // Hold invoke open so the batch op stays mid-flight; we can then observe
     // callback identity while batchInProgressRef is true. A state-based guard
     // would flip a React state and force a rerender with a new callback.
-    let releaseFirst: (() => void) | null = null
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseFirst = () => resolve()
-        }),
-    )
+    const first = deferred<CommandReturns['set_todo_state_batch']>()
+    stubMultiSelectInvoke({ set_todo_state_batch: () => first.promise })
 
     const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
@@ -716,7 +722,7 @@ describe('useBlockMultiSelect callback stability (#)', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      releaseFirst?.()
+      first.resolve(1)
       await firstDone
     })
 
@@ -750,25 +756,17 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   }
 
   /** One `list_all_pages_in_space` row, in the shape the IPC returns. */
-  function pageRow(id: string, content: string) {
-    return {
-      id,
-      content,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-    }
+  function pageRow(id: string, content: string): CommandReturns['list_all_pages_in_space'][number] {
+    return makePageHeading({ id, content })
   }
 
   /** Make `delete_blocks_by_ids` reply with an explicit page cohort. */
   function replyWithCohort(cohort: string[]): void {
-    mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'delete_blocks_by_ids') {
-        const ids = ((args as Record<string, unknown>)['blockIds'] as string[]) ?? []
-        return Promise.resolve({ deleted_count: ids.length, affected_page_ids: cohort })
-      }
-      return strictInvokeFallback(cmd)
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: (args) => ({
+        deleted_count: batchIds(args).length,
+        affected_page_ids: cohort,
+      }),
     })
   }
 
@@ -936,30 +934,18 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
     pageStore.setState({
       blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
     })
-    // #4534 review note 4 — neither of these may be declared as `T | null`.
-    // Both are assigned only inside a callback, and TypeScript's control-flow
+    // #4534 review note 4 — `done` below may not be declared as `T | null`.
+    // It is assigned only inside a callback, and TypeScript's control-flow
     // analysis does not see an assignment made in a nested function: at the
-    // use sites below it would still hold the initializer's `null`, so
-    // `await done` would type-check as `await null` and `releaseFirst?.(...)`
-    // as a no-op optional call on `null`. Runtime behaviour is right either
-    // way, which is precisely the problem — neither line is checked against
-    // the shape it actually carries, so a refactor that stopped returning the
-    // promise (or changed the resolver's arity) would sail through `tsc`.
-    // A non-nullable declaration with a same-shaped placeholder keeps the
-    // narrowed type equal to the declared one. The placeholder THROWS rather
-    // than no-op'ing so a mock that is never invoked fails loudly instead of
-    // silently releasing nothing.
-    let releaseFirst: (value: unknown) => void = () => {
-      throw new Error('delete_blocks_by_ids was never invoked — nothing to release')
-    }
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'delete_blocks_by_ids') {
-        return new Promise((resolve) => {
-          releaseFirst = resolve
-        })
-      }
-      return strictInvokeFallback(cmd)
-    })
+    // use site it would still hold the initializer's `null`, so `await done`
+    // would type-check as `await null`. Runtime behaviour is right either way,
+    // which is precisely the problem — the line is not checked against the
+    // shape it actually carries, so a refactor that stopped returning the
+    // promise would sail through `tsc`. A non-nullable declaration with a
+    // same-shaped placeholder keeps the narrowed type equal to the declared
+    // one. The parked `delete_blocks_by_ids` promise is settled by hand below.
+    const inFlight = deferred<CommandReturns['delete_blocks_by_ids']>()
+    stubMultiSelectInvoke({ delete_blocks_by_ids: () => inFlight.promise })
     const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -984,7 +970,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       })
 
       await act(async () => {
-        releaseFirst({ deleted_count: 1, affected_page_ids: [] })
+        inFlight.resolve({ deleted_count: 1, affected_page_ids: [] })
         await done
       })
 
@@ -1071,7 +1057,11 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
     pageStore.setState({
       blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
     })
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -1099,19 +1089,17 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   // `list_all_pages_in_space` mock and brings everything back. Narrowness is
   // pinned by the event-count tests above. Keep both.
   it('a deleted page stops being offered by the [[ cache, with no space switch', async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([
-          pageRow('P_ROOT', 'Root Page'),
-          pageRow('P_NESTED', 'Nested Page'),
-          pageRow('P_STAYS', 'Stays Page'),
-        ])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        // The user selected P_ROOT; the cascade also took its page child.
-        return Promise.resolve({ deleted_count: 2, affected_page_ids: ['P_ROOT', 'P_NESTED'] })
-      }
-      return strictInvokeFallback(cmd)
+    stubMultiSelectInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_ROOT', 'Root Page'),
+        pageRow('P_NESTED', 'Nested Page'),
+        pageRow('P_STAYS', 'Stays Page'),
+      ],
+      // The user selected P_ROOT; the cascade also took its page child.
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: ['P_ROOT', 'P_NESTED'],
+      }),
     })
 
     const { result: resolveResult } = renderHook(() => useBlockResolve())
@@ -1152,17 +1140,15 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       ],
       isReady: true,
     })
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([
-          pageRow('P_MOVED', 'Moved Page'),
-          pageRow('P_STAYS_OTHER', 'Stays Page'),
-        ])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        return Promise.resolve({ deleted_count: 2, affected_page_ids: ['P_ROOT', 'P_MOVED'] })
-      }
-      return strictInvokeFallback(cmd)
+    stubMultiSelectInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_MOVED', 'Moved Page'),
+        pageRow('P_STAYS_OTHER', 'Stays Page'),
+      ],
+      delete_blocks_by_ids: () => ({
+        deleted_count: 2,
+        affected_page_ids: ['P_ROOT', 'P_MOVED'],
+      }),
     })
 
     const { result: resolveResult } = renderHook(() => useBlockResolve())
@@ -1219,20 +1205,18 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   // `P_STAYS` is what keeps it non-empty here. Delete every page in the
   // fixture instead and the assertion passes over the live bug.
   it('offers an undone page again on the ≤2-char cache path', async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([pageRow('P_ROOT', 'Root Page'), pageRow('P_STAYS', 'Stays Page')])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        return Promise.resolve({ deleted_count: 1, affected_page_ids: ['P_ROOT'] })
-      }
-      // `refreshAfterUndoRedo`'s best-effort title refresh. `null` keeps the
-      // bus stream to the invalidation alone: with no content there is no
-      // `renamePage` fan-out, so a passing assertion cannot be crediting a
-      // 'renamed' event for the restore (it could not carry it anyway —
+    stubMultiSelectInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_ROOT', 'Root Page'),
+        pageRow('P_STAYS', 'Stays Page'),
+      ],
+      delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_ROOT'] }),
+      // `refreshAfterUndoRedo`'s best-effort title refresh. A CONTENTLESS row
+      // keeps the bus stream to the invalidation alone: with no content there
+      // is no `renamePage` fan-out, so a passing assertion cannot be crediting
+      // a 'renamed' event for the restore (it could not carry it anyway —
       // `applyPageNameChange` bails on an id absent from the list).
-      if (cmd === 'get_block') return Promise.resolve(null)
-      return strictInvokeFallback(cmd)
+      get_block: (args) => makeBlockRow({ id: args['blockId'] as string, block_type: 'page' }),
     })
     useUndoStore.setState({
       ...useUndoStore.getState(),
@@ -1281,23 +1265,27 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   // the live defect. If it ever goes red the FTS route has changed and the
   // ≤2-char test above is no longer the only cache-path guard.
   it('would have found the undone page anyway once the query is long enough (FTS, not the cache)', async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return Promise.resolve([pageRow('P_ROOT', 'Root Page'), pageRow('P_STAYS', 'Stays Page')])
-      }
-      if (cmd === 'delete_blocks_by_ids') {
-        return Promise.resolve({ deleted_count: 1, affected_page_ids: ['P_ROOT'] })
-      }
-      if (cmd === 'get_block') return Promise.resolve(null)
+    stubMultiSelectInvoke({
+      list_all_pages_in_space: () => [
+        pageRow('P_ROOT', 'Root Page'),
+        pageRow('P_STAYS', 'Stays Page'),
+      ],
+      delete_blocks_by_ids: () => ({ deleted_count: 1, affected_page_ids: ['P_ROOT'] }),
+      get_block: (args) => makeBlockRow({ id: args['blockId'] as string, block_type: 'page' }),
       // The backend still knows the page: the undo restored the row, which is
       // exactly why this path cannot see the cache bug.
-      if (cmd === 'search_blocks') {
-        return Promise.resolve({
-          items: [{ id: 'P_ROOT', block_type: 'page', content: 'Root Page' }],
-        })
-      }
-      if (cmd === 'list_page_aliases_by_prefix') return Promise.resolve([])
-      return strictInvokeFallback(cmd)
+      search_blocks: () => ({
+        items: [
+          {
+            ...makeBlockRow({ id: 'P_ROOT', block_type: 'page', content: 'Root Page' }),
+            offsets: [],
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      list_page_aliases_by_prefix: () => [],
     })
     useUndoStore.setState({
       ...useUndoStore.getState(),

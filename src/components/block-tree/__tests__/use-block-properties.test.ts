@@ -18,8 +18,13 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  deferred,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
@@ -37,9 +42,40 @@ const wrapper = ({ children }: { children: ReactNode }) =>
 
 const originalOnNewAction = useUndoStore.getState().onNewAction
 
+/** The row `set_todo_state` echoes back: the block as it now stands. */
+function todoRow(args: Record<string, unknown>): CommandReturns['set_todo_state'] {
+  return makeBlockRow({
+    id: args['blockId'] as string,
+    todo_state: args['state'] as string | null,
+  })
+}
+
+/** The row `set_priority` echoes back. */
+function priorityRow(args: Record<string, unknown>): CommandReturns['set_priority'] {
+  return makeBlockRow({
+    id: args['blockId'] as string,
+    priority: args['level'] as string | null,
+  })
+}
+
+/**
+ * The three commands this hook can fire, each answering what its binding
+ * declares; a test overrides the one it is about. `get_property` is the F-37
+ * `blocked_by` probe that runs when a task cycles to DONE, and answers "no
+ * such property" unless a test says otherwise.
+ */
+function stubPropertiesInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    set_todo_state: todoRow,
+    set_priority: priorityRow,
+    get_property: () => null,
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(undefined)
+  stubPropertiesInvoke()
   pageStore = createPageBlockStore('PAGE_1')
   __resetPriorityLevelsForTests()
 })
@@ -171,7 +207,11 @@ describe('useBlockProperties handleToggleTodo', () => {
 
   it('reverts optimistic update on IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -291,7 +331,11 @@ describe('useBlockProperties handleTogglePriority', () => {
 
   it('reverts optimistic update on IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_priority: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -400,7 +444,11 @@ const mockedAnnounce = vi.mocked(announce)
 describe('useBlockProperties handleToggleTodo toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -460,7 +508,11 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
 
   it('does not announce on IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -475,7 +527,11 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
 describe('useBlockProperties handleTogglePriority toast and announcer', () => {
   it('shows toast error on IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_priority: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -546,7 +602,11 @@ describe('useBlockProperties undo notifications', () => {
       blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })],
       rootParentId: 'PAGE_1',
     })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -562,7 +622,11 @@ describe('useBlockProperties undo notifications', () => {
       blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })],
       rootParentId: 'PAGE_1',
     })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_priority: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -593,10 +657,9 @@ describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
    * so this helper simulates that one row directly.
    */
   function mockInvokeWithProperties(props: Array<Partial<{ key: string; value_ref: string }>>) {
-    mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-      if (cmd === 'get_property') {
-        const requestedKey = (args as { key: string } | undefined)?.key
-        const match = props.find((p) => (p.key ?? '') === requestedKey)
+    stubPropertiesInvoke({
+      get_property: (args) => {
+        const match = props.find((p) => (p.key ?? '') === args['key'])
         if (!match) return null
         return {
           key: match.key ?? '',
@@ -604,9 +667,9 @@ describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
           value_num: null,
           value_date: null,
           value_ref: match.value_ref ?? null,
+          value_bool: null,
         }
-      }
-      return undefined
+      },
     })
   }
 
@@ -702,11 +765,15 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
   it('serializes rapid double toggle: the second IPC does not start until the first settles, and reads the settled state', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
 
-    let resolveFirst!: () => void
-    const firstIpc = new Promise<undefined>((resolve) => {
-      resolveFirst = () => resolve(undefined)
+    // The FIRST write parks; the ordering IS the subject, so the handler counts.
+    const first = deferred<CommandReturns['set_todo_state']>()
+    let writes = 0
+    stubPropertiesInvoke({
+      set_todo_state: (args) => {
+        writes += 1
+        return writes === 1 ? first.promise : todoRow(args)
+      },
     })
-    mockedInvoke.mockImplementationOnce(() => firstIpc)
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -732,7 +799,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
 
     await act(async () => {
-      resolveFirst()
+      first.resolve(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' }))
       await secondToggle
     })
 
@@ -749,11 +816,8 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
   it('does not revert on IPC failure once a newer state has superseded this call’s write', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
 
-    let rejectFirst!: (err: Error) => void
-    const firstIpc = new Promise<undefined>((_resolve, reject) => {
-      rejectFirst = reject
-    })
-    mockedInvoke.mockImplementationOnce(() => firstIpc)
+    const first = deferred<CommandReturns['set_todo_state']>()
+    stubPropertiesInvoke({ set_todo_state: () => first.promise })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -775,7 +839,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     })
 
     await act(async () => {
-      rejectFirst(new Error('IPC failed'))
+      first.reject(new Error('IPC failed'))
       await toggle
     })
 
@@ -787,7 +851,11 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
 
   it('still reverts a normal, unsuperseded single toggle on its own IPC failure', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+    stubPropertiesInvoke({
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -802,11 +870,15 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
   it('serializes rapid double priority toggle the same way as todo toggling', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
 
-    let resolveFirst!: () => void
-    const firstIpc = new Promise<undefined>((resolve) => {
-      resolveFirst = () => resolve(undefined)
+    // The FIRST write parks; the ordering IS the subject, so the handler counts.
+    const first = deferred<CommandReturns['set_priority']>()
+    let writes = 0
+    stubPropertiesInvoke({
+      set_priority: (args) => {
+        writes += 1
+        return writes === 1 ? first.promise : priorityRow(args)
+      },
     })
-    mockedInvoke.mockImplementationOnce(() => firstIpc)
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -825,7 +897,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     })
 
     await act(async () => {
-      resolveFirst()
+      first.resolve(makeBlockRow({ id: 'BLOCK_1', priority: '2' }))
       await secondToggle
     })
 
@@ -839,11 +911,8 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
   it('does not revert a failed priority IPC once a newer priority has superseded it', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
 
-    let rejectFirst!: (err: Error) => void
-    const firstIpc = new Promise<undefined>((_resolve, reject) => {
-      rejectFirst = reject
-    })
-    mockedInvoke.mockImplementationOnce(() => firstIpc)
+    const first = deferred<CommandReturns['set_priority']>()
+    stubPropertiesInvoke({ set_priority: () => first.promise })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
 
@@ -859,7 +928,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     })
 
     await act(async () => {
-      rejectFirst(new Error('IPC failed'))
+      first.reject(new Error('IPC failed'))
       await toggle
     })
 
@@ -875,21 +944,14 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
       ],
     })
 
-    let resolveBlock1!: () => void
-    const block1Ipc = new Promise<undefined>((resolve) => {
-      resolveBlock1 = () => resolve(undefined)
-    })
-    mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
-      const blockId = (args as { blockId?: string } | undefined)?.blockId
-      if (cmd === 'set_todo_state') {
-        // BLOCK_1's write stays in flight; BLOCK_2's settles immediately —
-        // that contrast is the whole point of the test. BLOCK_2's arm used to
-        // be served by the silent `undefined` fallback (#3225), i.e. the
-        // "independent queue" half of the assertion rested on an unstubbed
-        // command reading as success.
-        return blockId === 'BLOCK_1' ? block1Ipc : Promise.resolve(undefined)
-      }
-      return strictInvokeFallback(cmd)
+    const block1 = deferred<CommandReturns['set_todo_state']>()
+    stubPropertiesInvoke({
+      // BLOCK_1's write stays in flight; BLOCK_2's settles immediately —
+      // that contrast is the whole point of the test. BLOCK_2's arm used to
+      // be served by the silent `undefined` fallback (#3225), i.e. the
+      // "independent queue" half of the assertion rested on an unstubbed
+      // command reading as success.
+      set_todo_state: (args) => (args['blockId'] === 'BLOCK_1' ? block1.promise : todoRow(args)),
     })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -909,7 +971,7 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')?.todo_state).toBe('DOING')
 
     await act(async () => {
-      resolveBlock1()
+      block1.resolve(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' }))
     })
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
   })

@@ -6,7 +6,8 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePageHeading } from '@/__tests__/fixtures'
+import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockDatePicker } from '@/components/block-tree/use-block-date-picker'
 import { announce } from '@/lib/announcer'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -52,16 +53,31 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePic
   }
 }
 
+/**
+ * The five commands the four mode handlers can reach, each answering what its
+ * binding declares; a test overrides the one it is about. Anything else the
+ * hook fires fails by name instead of resolving `undefined`.
+ *
+ * #2468 — `set_property` (repeat-until mode) resolves a `WithOps` envelope, so
+ * the default carries refs and the undo-ref capture path is exercised.
+ */
+function stubDatePickerInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    set_due_date: (args) => makeBlockRow({ id: args['blockId'] as string }),
+    set_scheduled_date: (args) => makeBlockRow({ id: args['blockId'] as string }),
+    set_property: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 11 }],
+      ...makeBlockRow({ id: args['blockId'] as string }),
+    }),
+    list_all_pages_in_space: () => [],
+    create_page_in_space: () => 'DATE_PAGE_1',
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  // #2468 — `set_property` (repeat-until mode) resolves a `WithOps` envelope;
-  // give it a wire-faithful default so the undo-ref capture path is exercised.
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'set_property') {
-      return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 11 }] }
-    }
-    return undefined
-  })
+  stubDatePickerInvoke()
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
   // / H-3b — `handleDateMode` now routes through `createPageInSpace`,
@@ -181,7 +197,11 @@ describe('useBlockDatePicker handleDatePick — due mode', () => {
   })
 
   it('shows error toast on failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubDatePickerInvoke({
+      set_due_date: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -288,13 +308,10 @@ describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
 
 describe('useBlockDatePicker handleDatePick — date mode', () => {
   it('creates date page when none exists', async () => {
-    // 1st invoke = list_all_pages_in_space (no existing page); 2nd =
-    // create_page_in_space (returns the new page's ULID as a plain
-    // String contract). limit-clamp-followup —
-    // `listAllPagesInSpace` returns a flat `PageHeading[]`, no
-    // `.items` wrapper, no pagination clamp.
-    mockedInvoke.mockResolvedValueOnce([])
-    mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
+    // The defaults are the "no existing page" case: `list_all_pages_in_space`
+    // answers an empty `PageHeading[]` (a flat array — no `.items` wrapper, no
+    // pagination clamp) and `create_page_in_space` the new page's ULID as a
+    // plain String contract.
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -326,7 +343,11 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   })
 
   it('uses existing date page if found', async () => {
-    mockedInvoke.mockResolvedValueOnce([{ id: 'EXISTING_PAGE', content: '2025-01-15' }])
+    stubDatePickerInvoke({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'EXISTING_PAGE', content: '2025-01-15' }),
+      ],
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -343,7 +364,11 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   // unhandled promise rejection with the picker silently closed. It now owns
   // its error path like the other mode handlers.
   it('shows error toast when listing pages fails (no unhandled rejection)', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('list failed'))
+    stubDatePickerInvoke({
+      list_all_pages_in_space: () => {
+        throw new Error('list failed')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -356,8 +381,11 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   })
 
   it('shows error toast when creating the date page fails', async () => {
-    mockedInvoke.mockResolvedValueOnce([]) // list_all_pages_in_space
-    mockedInvoke.mockRejectedValueOnce(new Error('create failed')) // create_page_in_space
+    stubDatePickerInvoke({
+      create_page_in_space: () => {
+        throw new Error('create failed')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
@@ -386,8 +414,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   // the empty-cache guard. It reports the create instead; everything that
   // makes the append correct is `recordCreatedRow`'s.
   it('hands the created date page to registerCreatedPage (#4319)', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-    mockedInvoke.mockResolvedValueOnce('NEW_PAGE')
+    stubDatePickerInvoke({ create_page_in_space: () => 'NEW_PAGE' })
     const registerCreatedPage = vi.fn()
     const params = makeDefaultParams({ registerCreatedPage })
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
@@ -408,7 +435,11 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   // aborting whatever page or tag fill was in flight and blanking that
   // picker (see `nameChangeGenerationRef`'s #4337 item 5 note).
   it('does not call registerCreatedPage when an existing date page is reused (#4319)', async () => {
-    mockedInvoke.mockResolvedValueOnce([{ id: 'EXISTING_PAGE', content: '2025-06-01' }])
+    stubDatePickerInvoke({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'EXISTING_PAGE', content: '2025-06-01' }),
+      ],
+    })
     const registerCreatedPage = vi.fn()
     const params = makeDefaultParams({ registerCreatedPage })
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
