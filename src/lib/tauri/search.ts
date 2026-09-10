@@ -3,7 +3,7 @@ import { commands } from '@/lib/bindings'
 import type { PageResponse, PartitionedSearchResponse, SearchBlockRow } from '@/lib/bindings'
 import { withAbort } from '@/lib/ipc-helpers'
 import type { SafeLimit } from '@/lib/safe-limit'
-import { requireActiveScope } from '@/lib/tauri/_shared'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /** Full-text search across all blocks, paginated by relevance.
  *

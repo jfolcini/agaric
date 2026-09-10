@@ -44,9 +44,9 @@ export { unwrap } from '@/lib/app-error'
 // ---------------------------------------------------------------------------
 // Domain re-export barrel (#2902). The IPC facade was split into per-domain
 // modules under `./tauri/`; this file re-exports their full public surface so
-// every existing `@/lib/tauri` import keeps working unchanged. Internal helpers
-// (`toSpaceScope`, `requireActiveScope`) live in `./tauri/_shared` and are
-// intentionally NOT re-exported (they were never public).
+// every existing `@/lib/tauri` import keeps working unchanged. The scope
+// helpers (`toSpaceScope`, `requireActiveScope`) live in `@/lib/space-scope`
+// and are intentionally NOT re-exported here (they were never public).
 // ---------------------------------------------------------------------------
 export * from '@/lib/tauri/blocks'
 export * from '@/lib/tauri/search'

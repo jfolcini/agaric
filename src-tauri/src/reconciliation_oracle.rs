@@ -574,7 +574,7 @@ pub async fn rebuild_pages_cache_counts_from_base(
         let Some(page) = target.page_id.as_deref() else {
             continue;
         };
-        if target.deleted_at.is_some() || !out.contains_key(page) {
+        if target.deleted_at.is_some() {
             continue;
         }
         // Source must be live, page-owned, and on a DIFFERENT page.
@@ -593,10 +593,9 @@ pub async fn rebuild_pages_cache_counts_from_base(
         sources.entry(page).or_default().insert(source_id.as_str());
     }
     for (page, distinct) in sources {
-        let counts = out
-            .get_mut(page)
-            .expect("`sources` is keyed only by pages the `out.contains_key` gate above admitted");
-        counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
+        if let Some(counts) = out.get_mut(page) {
+            counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
+        }
     }
     Ok(out)
 }

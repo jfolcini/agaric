@@ -125,11 +125,10 @@
 // `__tests__/`, `/tests/`) and `.d.ts`. The wrapper layer itself —
 // `src/lib/tauri.ts` and everything under `src/lib/tauri/` — is also
 // excluded from the scan. Without this exclusion, the wrapper's own
-// internal cross-submodule imports (e.g. `src/lib/tauri/search.ts`
-// importing `@/lib/tauri/_shared`) would start counting as
-// soon as submodule detection
-// was widened, even though they are not app code depending on the
-// wrapper — they ARE the wrapper.
+// internal cross-submodule imports (e.g. the barrel `src/lib/tauri.ts`
+// re-exporting `@/lib/tauri/blocks`) would start counting as soon as
+// submodule detection was widened, even though they are not app code
+// depending on the wrapper — they ARE the wrapper.
 //
 // Usage: node scripts/check-tauri-import-baseline.mjs
 //        node scripts/check-tauri-import-baseline.mjs --update-baseline
