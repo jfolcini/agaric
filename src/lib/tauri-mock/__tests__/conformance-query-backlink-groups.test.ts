@@ -119,6 +119,7 @@ describe('runQuerySteps records the grouped backlink payload', () => {
   const C3 = id('C3')
   const C4 = id('C4')
   const C5 = id('C5')
+  const C6 = id('C6')
   const scope = { kind: 'active', space_id: CONFORMANCE_SPACE_ID }
 
   beforeEach(() => {
@@ -134,6 +135,7 @@ describe('runQuerySteps records the grouped backlink payload', () => {
     blocks.set(C2, makeBlock(C2, 'content', `[[${TARGET}]]`, ALPHA, 1))
     blocks.set(C4, makeBlock(C4, 'content', `self [[${TARGET}]]`, TARGET, 1))
     blocks.set(C5, makeBlock(C5, 'content', 'plain Target mention', ZULU, 2))
+    blocks.set(C6, makeBlock(C6, 'content', 'another plain Target mention', ALPHA, 2))
     stampMockSpace()
   })
 
@@ -197,7 +199,50 @@ describe('runQuerySteps records the grouped backlink payload', () => {
     })
   })
 
-  it('serves the plain mention as the one unlinked reference, and none for a content-block id', async () => {
+  // `blocks.content` is nullable and `cmp_group` sorts a `None` title LAST; a
+  // cursor slot minted as `null` would decode to `''` and sort FIRST, re-serving
+  // the group. The sentinel has to survive the round trip.
+  it('sorts a titleless source page last and pages past it', async () => {
+    const NAMELESS = id('NON')
+    const C7 = id('C7')
+    blocks.set(NAMELESS, makeBlock(NAMELESS, 'page', null, null, 4))
+    blocks.set(C7, makeBlock(C7, 'content', 'a third Target mention', NAMELESS, 1))
+    stampMockSpace()
+
+    const out = await runQuerySteps(
+      [
+        {
+          name: 'page_1',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 2, scope },
+        },
+        {
+          name: 'page_2',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 2, scope },
+          cursor_from: 'page_1',
+        },
+      ],
+      new Map(),
+    )
+
+    expect(out[0]?.rows.filter((r) => !r.includes('->'))).toEqual([
+      `${ALPHA}#page_title=Alpha#truncated=false`,
+      `${ZULU}#page_title=Zulu#truncated=false`,
+      'filtered#count=3#truncated=false',
+    ])
+    expect(out[0]).toMatchObject({ has_more: true, cursor: 'v1:{deleted_at,id}' })
+    expect(out[1]).toMatchObject({
+      rows: [
+        `${NAMELESS}#page_title=null#truncated=false`,
+        `${NAMELESS}->${C7}#parent_id=${NAMELESS}#page_id=${NAMELESS}#position=1#deleted_at=null`,
+        'filtered#count=3#truncated=false',
+      ],
+      has_more: false,
+    })
+  })
+
+  it('serves the plain mentions as unlinked references, recounting on every page, and none for a content-block id', async () => {
     const out = await runQuerySteps(
       [
         {
@@ -206,24 +251,52 @@ describe('runQuerySteps records the grouped backlink payload', () => {
           args: { pageId: TARGET, limit: 10, scope },
         },
         {
+          name: 'page_1',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 1, scope },
+        },
+        {
+          name: 'page_2',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 1, scope },
+          cursor_from: 'page_1',
+        },
+        {
           name: 'not_a_page',
           command: 'list_unlinked_references',
           args: { pageId: C1, limit: 10, scope },
-          expect_empty: true,
         },
       ],
       new Map(),
     )
 
+    const alpha = [
+      `${ALPHA}#page_title=Alpha#truncated=false`,
+      `${ALPHA}->${C6}#parent_id=${ALPHA}#page_id=${ALPHA}#position=2#deleted_at=null`,
+    ]
+    const zulu = [
+      `${ZULU}#page_title=Zulu#truncated=false`,
+      `${ZULU}->${C5}#parent_id=${ZULU}#page_id=${ZULU}#position=2#deleted_at=null`,
+    ]
     expect(out[0]).toMatchObject({
-      rows: [
-        `${ZULU}#page_title=Zulu#truncated=false`,
-        `${ZULU}->${C5}#parent_id=${ZULU}#page_id=${ZULU}#position=2#deleted_at=null`,
-        'filtered#count=1#truncated=false',
-      ],
+      rows: [...alpha, ...zulu, 'filtered#count=2#truncated=false'],
       has_more: false,
-      total_count: 1,
+      total_count: 2,
     })
-    expect(out[1]).toMatchObject({ rows: ['filtered#count=0#truncated=false'], total_count: 0 })
+    expect(out[1]).toMatchObject({
+      rows: [...alpha, 'filtered#count=2#truncated=false'],
+      has_more: true,
+      total_count: 2,
+      cursor: 'v1:{deleted_at,id}',
+    })
+    // Unlike the backlink reader, the unlinked one recounts on a cursor page —
+    // `useUnlinkedReferences` reads both counts from the LAST page.
+    expect(out[2]).toMatchObject({
+      rows: [...zulu, 'filtered#count=2#truncated=false'],
+      has_more: false,
+      total_count: 2,
+      cursor: null,
+    })
+    expect(out[3]).toMatchObject({ rows: ['filtered#count=0#truncated=false'], total_count: 0 })
   })
 })

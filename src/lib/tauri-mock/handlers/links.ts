@@ -139,19 +139,31 @@ function applyBacklinkFilters(
  *     is ULID order, so the id compare below;
  *   * counts `limit` in GROUPS and mints `Cursor::for_group`: `page_id` in
  *     `id`, `page_title` in the `deleted_at` slot;
- *   * answers `total_count: 0` / `filtered_count: 0` on a cursor page (#2201
- *     item 1b — the two COUNTs run on the first page only, and the UI keeps
- *     that page's numbers).
+ *   * for the backlink reader only, answers `total_count: 0` /
+ *     `filtered_count: 0` on a cursor page (#2201 item 1b — its two COUNTs
+ *     run on the first page, and the UI keeps that page's numbers). The
+ *     unlinked reader recomputes both on every page, and
+ *     `useUnlinkedReferences` reads them from the LAST page.
  *
  * `sources` is the base set BEFORE the user's `filters` (the `total_count`
  * universe); `filters` narrow it to the `filtered_count` one. `truncated` is
  * the `MAX_BLOCKS_PER_GROUP` cap per group and the FTS row cap on the
  * envelope; neither is reachable from a mock fixture.
  */
+/**
+ * `cmp_group` sorts a `None` title LAST. A sort key cannot hold `null`, and a
+ * cursor slot minted as `null` decodes back to the `''` sentinel, which sorts
+ * FIRST and would re-serve the group on the next page — so a titleless group
+ * carries a string above every title instead, and the same keyset compare
+ * orders it last and round-trips it through the cursor.
+ */
+const TITLELESS_SORTS_LAST = '\uFFFF'
+
 function groupedBacklinkResponse(
   sources: Record<string, unknown>[],
   targetPageId: string,
   a: Record<string, unknown>,
+  counts: 'first-page-only' | 'every-page',
 ): {
   groups: Record<string, unknown>[]
   next_cursor: string | null
@@ -177,27 +189,27 @@ function groupedBacklinkResponse(
   }
   const groups = [...byPage].map(([page_id, items]) => ({
     page_id,
-    // `base` already requires the root page to exist, and `content` is
-    // `NOT NULL` on the backend.
-    page_title: blocks.get(page_id)?.['content'] as string,
+    // `base` already requires the root page to exist; `blocks.content` is
+    // nullable, so the title can still be null.
+    page_title: (blocks.get(page_id)?.['content'] as string | null | undefined) ?? null,
     blocks: items,
     truncated: false,
   }))
   const page = paginateKeyset(
     groups,
-    (g) => [g['page_title'] as string, g['page_id'] as string],
+    (g) => [(g['page_title'] as string | null) ?? TITLELESS_SORTS_LAST, g['page_id'] as string],
     pageRequestLimit(a['limit']),
     a['cursor'],
     null,
     ['deleted_at'],
   )
-  const firstPage = a['cursor'] == null
+  const recount = counts === 'every-page' || a['cursor'] == null
   return {
     groups: page.items,
     next_cursor: page.next_cursor,
     has_more: page.has_more,
-    total_count: firstPage ? base.length : 0,
-    filtered_count: firstPage ? filtered.length : 0,
+    total_count: recount ? base.length : 0,
+    filtered_count: recount ? filtered.length : 0,
     truncated: false,
   }
 }
@@ -272,7 +284,7 @@ export const linksHandlers = {
     // `COALESCE(tgt.page_id, tgt.id)` — the target's root page, whose own
     // blocks are self-references.
     const targetPageId = (blocks.get(targetId)?.['page_id'] as string | null) ?? targetId
-    return groupedBacklinkResponse(sources, targetPageId, a)
+    return groupedBacklinkResponse(sources, targetPageId, a, 'first-page-only')
   },
 
   list_unlinked_references: (args) => {
@@ -360,7 +372,7 @@ export const linksHandlers = {
       // Exclude if it already has a [[link]] to this page.
       return !contentLinksTo(content, pageId)
     })
-    return groupedBacklinkResponse(unlinked, pageId, a)
+    return groupedBacklinkResponse(unlinked, pageId, a, 'every-page')
   },
 
   // ---------------------------------------------------------------------------

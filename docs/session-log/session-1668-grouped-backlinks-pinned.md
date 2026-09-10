@@ -71,3 +71,27 @@ rebuilds.
   dropping the trailer reddened all three grammar tests.
 - Not run locally: the full vitest and nextest suites (CI carries them; the
   laptop is in use).
+
+## Round two
+
+The reviewer caught a rule I had generalised one reader too far: the
+first-page-only counts belong to `eval_backlink_query_grouped` alone.
+`eval_unlinked_references` recomputes both on every page, and
+`useUnlinkedReferences` reads them from the LAST page, so the shared helper
+zeroing them on a cursor page would have flipped the panel header to 0 on
+Load more in mock mode — a regression the old handler could not have, since
+it never minted a cursor. The helper now takes the count rule from its caller,
+and the fixture holds it: a second unlinked mention on the "Alpha" page makes
+the unlinked listing page too, and `unlinked_page_2` records both counts as 2.
+
+Also from the review: my comment claimed `blocks.content` is `NOT NULL`; it is
+nullable (that is why `cmp_group` has a `None`-sorts-last arm). The mock now
+carries a null title and sorts it last through a sentinel that survives the
+cursor round trip.
+
+Verified for round two: the re-author pass moved only this fixture's
+`expected`; `conformance.test.ts`, `conformance-coverage.test.ts` and the
+backlink-groups tests — 103 passed. Falsified against a copy: zeroing the
+unlinked counts on a cursor page reddened `unlinked_page_2` in the fixture
+runner and the two call-site tests; an empty sentinel for a titleless page
+reddened the new titleless test. Both restored and `cmp`-verified.

@@ -1,5 +1,5 @@
 {
-  "description": "#4667 — READ-command differential over the two GROUPED backlink readers, `list_backlinks_grouped` and `list_unlinked_references`. Both answer with a `GroupedBacklinkResponse` (`agaric-store/src/backlink/types.rs`), which the harness projects through `backlink_groups_result` / `backlinkGroupTokens`: one `<page_id>#page_title=…#truncated=…` head per group, one `<page_id>-><block>` per member, and a `filtered#count=…#truncated=…` trailer for the envelope. Four backend decisions are pinned that the mock used to get wrong, each by a seed that exists for it alone: (1) groups are keyed by the source's ROOT page, not its parent — B4 is nested under B3 and still lands in page B2's group (the Rust seed loader used to stamp a nested seed's `page_id` with its parent, where the TS loader resolves the root; this is the first fixture with a nested seed that no op moves, and it reddened the SNAPSHOT leg before the reader was even reached); (2) groups sort alphabetically by `page_title` then `page_id` (`cmp_group`), not by creation — page B5 'Alpha' was created after page B2 'Zulu' and is served first; (3) a source on the target's OWN root page is a self-reference and is excluded from both the groups and the counts — B7 links to B1 from inside B1; (4) pagination is a keyset over GROUPS (`Cursor::for_group`, `v1:{deleted_at,id}`), and the two counts are first-page-only — the backend answers `total_count: 0` / `filtered_count: 0` on a cursor page (#2201 item 1b) and the UI keeps the first page's numbers. The unlinked half pins the FTS needle set: B8 mentions 'Target' in plain text and is the one unlinked reference; B6 mentions it AND links, so it is a backlink, not an unlinked one; and a `pageId` naming a CONTENT block (B3) contributes no title term and answers empty (#4159 item 3). NOT pinned, and deliberately: `filters` and `sort` — both go through the same `applyBacklinkFilters` / `sort_ids` the flat `get_backlinks` path does not exercise either, and the space filter, for the reason `query_backlinks.json` gives. Every linking block is a SEED block edited by an op so its id is byte-identical on both stacks, and the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer. Derivation in `session-1668`.",
+  "description": "#4667 — READ-command differential over the two GROUPED backlink readers, `list_backlinks_grouped` and `list_unlinked_references`. Both answer with a `GroupedBacklinkResponse` (`agaric-store/src/backlink/types.rs`), which the harness projects through `backlink_groups_result` / `backlinkGroupTokens`: one `<page_id>#page_title=…#truncated=…` head per group, one `<page_id>-><block>` per member, and a `filtered#count=…#truncated=…` trailer for the envelope. Four backend decisions are pinned that the mock used to get wrong, each by a seed that exists for it alone: (1) groups are keyed by the source's ROOT page, not its parent — B4 is nested under B3 and still lands in page B2's group (the Rust seed loader used to stamp a nested seed's `page_id` with its parent, where the TS loader resolves the root; this is the first fixture with a nested seed that no op moves, and it reddened the SNAPSHOT leg before the reader was even reached); (2) groups sort alphabetically by `page_title` then `page_id` (`cmp_group`), not by creation — page B5 'Alpha' was created after page B2 'Zulu' and is served first; (3) a source on the target's OWN root page is a self-reference and is excluded from both the groups and the counts — B7 links to B1 from inside B1; (4) pagination is a keyset over GROUPS (`Cursor::for_group`, `v1:{deleted_at,id}`), and for the backlink reader the two counts are first-page-only — it answers `total_count: 0` / `filtered_count: 0` on a cursor page (#2201 item 1b) and the UI keeps the first page's numbers — while the unlinked reader recomputes both on every page (`unlinked_page_2`), which `useUnlinkedReferences` relies on by reading the LAST page's. The unlinked half pins the FTS needle set: B8 and B9 mention 'Target' in plain text and are the two unlinked references, one per source page so the unlinked listing pages too; B6 mentions it AND links, so it is a backlink, not an unlinked one; and a `pageId` naming a CONTENT block (B3) contributes no title term and answers empty (#4159 item 3). NOT pinned, and deliberately: `filters` and `sort` — both go through the same `applyBacklinkFilters` / `sort_ids` the flat `get_backlinks` path does not exercise either, and the space filter, for the reason `query_backlinks.json` gives. Every linking block is a SEED block edited by an op so its id is byte-identical on both stacks, and the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer. Derivation in `session-1668`.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -106,11 +106,27 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "another plain Target mention",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 6,
       "ops": [
+        {
+          "op_type": "edit_block"
+        },
         {
           "op_type": "edit_block"
         },
@@ -207,11 +223,37 @@
       "has_more": false,
       "name": "unlinked_all",
       "rows": [
+        "B5#page_title=Alpha#truncated=false",
+        "B5->B9#parent_id=B5#page_id=B5#position=2#deleted_at=null",
         "B2#page_title=Zulu#truncated=false",
         "B2->B8#parent_id=B2#page_id=B2#position=2#deleted_at=null",
-        "filtered#count=1#truncated=false"
+        "filtered#count=2#truncated=false"
       ],
-      "total_count": 1
+      "total_count": 2
+    },
+    {
+      "cursor": "v1:{deleted_at,id}",
+      "error": null,
+      "has_more": true,
+      "name": "unlinked_page_1",
+      "rows": [
+        "B5#page_title=Alpha#truncated=false",
+        "B5->B9#parent_id=B5#page_id=B5#position=2#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "unlinked_page_2",
+      "rows": [
+        "B2#page_title=Zulu#truncated=false",
+        "B2->B8#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 2
     },
     {
       "cursor": null,
@@ -256,6 +298,13 @@
       "args": {
         "blockId": "S8",
         "toText": "plain Target mention without a link"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "toText": "another plain Target mention"
       },
       "command": "edit_block"
     }
@@ -324,8 +373,35 @@
         }
       },
       "command": "list_unlinked_references",
-      "comment": "The needle is the page title 'Target'. B8 mentions it in plain text and is the one unlinked reference, grouped under its root page 'Zulu'. B6 mentions it AND carries a `[[link]]`, so it is a backlink, not an unlinked one; B7 links from B1's own page; B1's title block is a page and never a candidate. `total_count` is the post-exclusion count: 1.",
+      "comment": "The needle is the page title 'Target'. B8 and B9 mention it in plain text and are the two unlinked references, grouped under their root pages alphabetically — 'Alpha' (B9) before 'Zulu' (B8). B6 mentions it AND carries a `[[link]]`, so it is a backlink, not an unlinked one; B7 links from B1's own page; B1's title block is a page and never a candidate. `total_count` is the post-exclusion count: 2.",
       "name": "unlinked_all"
+    },
+    {
+      "args": {
+        "limit": 1,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_unlinked_references",
+      "comment": "One group per page, 'Alpha' first, `has_more` true, the same `Cursor::for_group` keyset as the backlink reader.",
+      "name": "unlinked_page_1"
+    },
+    {
+      "args": {
+        "limit": 1,
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_unlinked_references",
+      "comment": "'Zulu', and the listing ends — with BOTH counts still 2. Unlike `eval_backlink_query_grouped`, `eval_unlinked_references` recomputes `total_count` and `filtered_count` on every page, and `useUnlinkedReferences` reads them from the LAST page, so a mock that zeroed them here would flip the panel header to 0 on Load more.",
+      "cursor_from": "unlinked_page_1",
+      "name": "unlinked_page_2"
     },
     {
       "args": {
@@ -397,6 +473,13 @@
         "content": "placeholder",
         "id": "S8",
         "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S9",
+        "parent_id": "S5",
         "position": 2
       }
     ],
