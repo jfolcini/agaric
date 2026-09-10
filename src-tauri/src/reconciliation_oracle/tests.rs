@@ -4280,9 +4280,8 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     );
     assert_eq!(
         got, want,
-        "the sweep must report exactly these, in this order"
+        "the sweep must report exactly these twenty, in this order"
     );
-    assert_eq!(divergences.len(), 20, "twenty divergences");
 
     let ownership = &divergences[0];
     assert_eq!(

@@ -1,7 +1,7 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { BlockRow, WithOps } from '@/lib/bindings'
-import { toSpaceScope } from '@/lib/tauri/_shared'
+import { toSpaceScope } from '@/lib/space-scope'
 
 /** Create a new block. Returns the created block with its generated ID.
  *
