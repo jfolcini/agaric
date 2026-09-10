@@ -93,3 +93,22 @@ survivor (counted once; three caught, none missed, four outcomes for three
 mutants plus the baseline), and a confirm with a `Timeout` baseline (not
 assembled). The other four cases hold. Guard and self-test green, shellcheck
 clean on all four blocks, zizmor clean.
+
+## Round three
+
+Two more from the same reviewer, both real. The failed-confirm-baseline
+branch refused to assemble but left the confirm's own `mutants.out/` in
+place, whose `outcomes.json` satisfied the guard's existence check — a shard
+that would have gone green publishing nothing of its survivors. And the
+confirm, selecting by site without `--shard`, re-tests the sibling variant
+that round-robin assigned to ANOTHER shard, so two shards published one
+mutant and the merge summary double-counted it, one level above the
+intra-shard count round two fixed.
+
+The assemble step is rebuilt around one source: the confirm's outcomes are
+filtered to this shard's `mutants.json` first, replace the scan's outcome
+mutant-by-mutant (a key of file, line, column and replacement — site alone
+cannot tell the two variants apart), and the four `.txt` lists are derived
+from the assembled outcomes, so a mutant appears in exactly one of them. Both
+refusal branches now remove `mutants.out/`. The harness gained the cross-shard
+case and asserts the directory is gone on both refusals.

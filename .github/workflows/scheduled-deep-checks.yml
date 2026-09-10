@@ -1313,19 +1313,24 @@ jobs:
           echo "CONFIRM_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
 
       - name: Assemble the shard's mutants.out from the two phases (#4872)
-        # The final `mutants.out/` keeps every downstream reader unchanged:
+        # The final `mutants.out/` keeps every downstream reader unchanged, and
+        # is built from ONE source: the assembled `outcomes.json`. Its
         # `mutants.json` and `total_mutants` are the scan's (the confirm
-        # re-tests, it does not generate); `caught`/`unviable`/`timeout` are
-        # both phases'; `missed.txt` is the confirm's, plus any scan survivor
-        # the confirm did not reach — a survivor is never dropped, and the
-        # count of carried ones is in `two-phase.json` and the log. The confirm
-        # selects by SITE, so it re-tests every variant at a surviving site,
-        # the ones the scan already caught included: the scan's outcome for
-        # any re-tested site is dropped, and the `.txt` lists are unioned, so
-        # nothing is counted twice. When the scan left no survivors the scan IS
-        # the result. When the confirm was needed and wrote nothing usable — no
-        # `outcomes.json`, or a baseline that did not succeed — nothing is
-        # assembled: the guard below reds the shard rather than publish
+        # re-tests, it does not generate). The confirm selects by SITE and
+        # without `--shard`, so it re-tests every variant at a surviving site —
+        # including variants that round-robin assigned to OTHER shards; its
+        # outcomes are filtered to the mutants in this shard's `mutants.json`
+        # first, so no mutant is published by two shards. For every mutant the
+        # confirm did test, the confirm's outcome replaces the scan's (it ran
+        # the full suite); every other mutant keeps the scan's, which is how a
+        # survivor the confirm did not reach stays a survivor — carried, never
+        # dropped, and counted as `unconfirmed` in `two-phase.json`. The four
+        # `.txt` lists are then derived from the assembled outcomes, named via
+        # `mutants.json`, so a mutant appears in exactly one of them. When the
+        # scan left no survivors the scan IS the result. When the confirm was
+        # needed and wrote nothing usable — no `outcomes.json`, or a baseline
+        # that did not succeed — its directory is removed and nothing is
+        # assembled, so the guard below reds the shard rather than publish
         # narrowed-suite survivors as confirmed.
         working-directory: src-tauri
         env:
@@ -1336,62 +1341,60 @@ jobs:
             echo "::error::the scan wrote no outcomes.json — nothing to assemble; the guard below reds this shard (#3057)."
             exit 0
           fi
-          site_of='.outcomes[]? | select((.scenario|type) == "object") | .scenario.Mutant | "\(.file):\(.span.start.line):\(.span.start.column):"'
           final=$(mktemp -d)
           cp scan.out/mutants.json "$final/mutants.json"
           scan_survivors=$(grep -c . scan.out/missed.txt 2>/dev/null || true)
           if [ "${scan_survivors:-0}" -eq 0 ]; then
             cp scan.out/*.txt "$final/" 2>/dev/null || true
             cp scan.out/outcomes.json "$final/outcomes.json"
-            confirmed_missed=0; unconfirmed=0
           elif [ ! -f mutants.out/outcomes.json ]; then
             echo "::error::the scan left $scan_survivors survivor(s) but the confirm phase wrote no outcomes.json — not assembling, so unconfirmed survivors are not published as confirmed. The guard below reds this shard."
-            rm -rf "$final"
+            rm -rf "$final" mutants.out
             exit 0
           elif [ "$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' mutants.out/outcomes.json)" != "Success" ]; then
             echo "::error::the scan left $scan_survivors survivor(s) but the confirm phase's baseline did not succeed — its outcomes.json says nothing about them. Not assembling; the guard below reds this shard."
-            rm -rf "$final"
+            rm -rf "$final" mutants.out
             exit 0
           else
-            for f in caught unviable timeout; do
-              cat "scan.out/$f.txt" "mutants.out/$f.txt" 2>/dev/null | sort -u > "$final/$f.txt" || true
+            jq -s '
+              def mkey: "\(.file):\(.span.start.line):\(.span.start.column):\(.replacement)";
+              (.[2] | map(mkey)) as $shard
+              | ([.[1].outcomes[]? | select((.scenario|type) == "object") | select((.scenario.Mutant | mkey) as $k | ($shard | index($k)) != null)]) as $confirmed
+              | ($confirmed | map(.scenario.Mutant | mkey)) as $tested
+              | {
+                  cargo_mutants_version: .[0].cargo_mutants_version,
+                  total_mutants: .[0].total_mutants,
+                  outcomes: ([.[0].outcomes[]? | select((.scenario|type) != "object" or ((.scenario.Mutant | mkey) as $k | ($tested | index($k)) == null))] + $confirmed),
+                }' scan.out/outcomes.json mutants.out/outcomes.json scan.out/mutants.json > "$final/outcomes.json"
+            for pair in CaughtMutant:caught MissedMutant:missed Unviable:unviable Timeout:timeout; do
+              jq -rs --arg s "${pair%%:*}" '
+                def mkey: "\(.file):\(.span.start.line):\(.span.start.column):\(.replacement)";
+                (.[1] | map({key: mkey, value: .name}) | from_entries) as $names
+                | .[0].outcomes[]? | select((.scenario|type) == "object" and .summary == $s)
+                | $names[.scenario.Mutant | mkey] // empty' "$final/outcomes.json" scan.out/mutants.json > "$final/${pair##*:}.txt"
             done
-            jq -r "$site_of" mutants.out/outcomes.json | sort -u > "$final/confirmed-sites.txt"
-            sed -E 's/^([^:]+:[0-9]+:[0-9]+:).*$/\1/' scan.out/missed.txt | sort -u > "$final/scan-sites.txt"
-            comm -23 "$final/scan-sites.txt" "$final/confirmed-sites.txt" > "$final/unconfirmed-sites.txt"
-            grep -F -f "$final/unconfirmed-sites.txt" scan.out/missed.txt > "$final/unconfirmed.txt" 2>/dev/null || true
-            cat mutants.out/missed.txt "$final/unconfirmed.txt" 2>/dev/null | sort -u > "$final/missed.txt"
-            # Every variant at a re-tested site takes the confirm's outcome; the
-            # scan's is dropped so a site with one caught and one surviving
-            # variant is counted once, not once and a half.
-            confirmed_sites=$(jq -R -s 'split("\n") | map(select(length > 0))' "$final/confirmed-sites.txt")
-            jq -s --argjson sites "$confirmed_sites" '
-              def site: "\(.scenario.Mutant.file):\(.scenario.Mutant.span.start.line):\(.scenario.Mutant.span.start.column):";
-              {
-                cargo_mutants_version: .[0].cargo_mutants_version,
-                total_mutants: .[0].total_mutants,
-                outcomes: ([.[0].outcomes[]? | select((.scenario|type) != "object" or ((site) as $s | ($sites | index($s)) == null))]
-                  + [.[1].outcomes[]? | select((.scenario|type) == "object")]),
-              }' scan.out/outcomes.json mutants.out/outcomes.json > "$final/outcomes.json"
-            confirmed_missed=$(grep -c . mutants.out/missed.txt 2>/dev/null || true)
-            unconfirmed=$(grep -c . "$final/unconfirmed.txt" 2>/dev/null || true)
-            rm -f "$final/confirmed-sites.txt" "$final/scan-sites.txt" "$final/unconfirmed-sites.txt"
-            if [ "${unconfirmed:-0}" -gt 0 ]; then
-              echo "::notice::$unconfirmed of $scan_survivors scan survivor(s) were not reached by the confirm phase within the wall budget; they are carried into missed.txt UNCONFIRMED (a full-suite run may still catch them)."
-            fi
+          fi
+          confirmed_missed=$(jq -rs '
+            def mkey: "\(.file):\(.span.start.line):\(.span.start.column):\(.replacement)";
+            (.[1] | map(mkey)) as $shard
+            | [.[0].outcomes[]? | select((.scenario|type) == "object" and .summary == "MissedMutant") | select((.scenario.Mutant | mkey) as $k | ($shard | index($k)) != null)] | length' mutants.out/outcomes.json scan.out/mutants.json 2>/dev/null || echo 0)
+          final_missed=$(grep -c . "$final/missed.txt" 2>/dev/null || true)
+          unconfirmed=$(( ${final_missed:-0} - ${confirmed_missed:-0} ))
+          if [ "$unconfirmed" -gt 0 ]; then
+            echo "::notice::$unconfirmed of $scan_survivors scan survivor(s) were not reached by the confirm phase within the wall budget; they are carried into missed.txt UNCONFIRMED (a full-suite run may still catch them)."
           fi
           jq -n --arg pkg "$PACKAGE" \
             --argjson scanned "$(jq -r '.total_mutants // 0' scan.out/outcomes.json)" \
             --argjson survivors "${scan_survivors:-0}" \
             --argjson confirmed_missed "${confirmed_missed:-0}" \
-            --argjson unconfirmed "${unconfirmed:-0}" \
+            --argjson unconfirmed "$unconfirmed" \
             --argjson scan_seconds "${SCAN_SECONDS:-0}" \
             --argjson confirm_seconds "${CONFIRM_SECONDS:-0}" \
             '{package: $pkg, scanned: $scanned, scan_survivors: $survivors, confirmed_missed: $confirmed_missed, unconfirmed: $unconfirmed, scan_seconds: $scan_seconds, confirm_seconds: $confirm_seconds}' \
             > "$final/two-phase.json"
           rm -rf mutants.out
           mv "$final" mutants.out
-          echo "assembled: scanned $(jq -r .scanned mutants.out/two-phase.json), scan survivors ${scan_survivors:-0}, confirmed missed ${confirmed_missed:-0}, unconfirmed ${unconfirmed:-0}, scan ${SCAN_SECONDS:-0}s, confirm ${CONFIRM_SECONDS:-0}s"
+          echo "assembled: scanned $(jq -r .scanned mutants.out/two-phase.json), scan survivors ${scan_survivors:-0}, confirmed missed ${confirmed_missed:-0}, unconfirmed $unconfirmed, scan ${SCAN_SECONDS:-0}s, confirm ${CONFIRM_SECONDS:-0}s"
 
       - name: Zero-coverage guard (#3057) — the load-bearing acceptance item
         # Deliberately OUTSIDE the `|| true` above: a baseline that times out
@@ -1652,8 +1655,9 @@ jobs:
               echo "shards merged: ${MERGED:-?} of ${EXPECTED:-?}"
               # #4872 — the two phases, summed over the shards that wrote a
               # two-phase.json: the before/after the issue asks for, on the lane.
-              if compgen -G "shards/*/two-phase.json" >/dev/null; then
-                jq -rs 'group_by(.package)[] | "two-phase \(.[0].package): scanned \(map(.scanned)|add), survivors \(map(.scan_survivors)|add) → confirmed missed \(map(.confirmed_missed)|add), unconfirmed \(map(.unconfirmed)|add); scan \(map(.scan_seconds)|add)s, confirm \(map(.confirm_seconds)|add)s"' shards/*/two-phase.json || true
+              mapfile -t two_phase < <(find shards -type f -name two-phase.json | sort)
+              if [ "${#two_phase[@]}" -gt 0 ]; then
+                jq -rs 'group_by(.package)[] | "two-phase \(.[0].package): scanned \(map(.scanned)|add), survivors \(map(.scan_survivors)|add) → confirmed missed \(map(.confirmed_missed)|add), unconfirmed \(map(.unconfirmed)|add); scan \(map(.scan_seconds)|add)s, confirm \(map(.confirm_seconds)|add)s"' "${two_phase[@]}" || true
               fi
               # …then the same split PER PACKAGE (#3386 review). Since #3393
               # each package has its own shard count derived from its own
