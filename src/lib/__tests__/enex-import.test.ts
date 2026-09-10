@@ -701,9 +701,8 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     expect(lines[1]).toBe('| --- | --- |')
     // The two-line cell is one run of single spaces, the `|` became a `/` so it
     // opens no column in the outer row, and neither the EMPTY row nor the
-    // WHITESPACE-ONLY one adds a ` ; ` slot. The latter is what the cell trim
-    // is for: `flattenNestedTable` keeps a row on `line.length > 0`, so
-    // untrimmed cells of blanks survive as `' / '` and emit a stray slot.
+    // WHITESPACE-ONLY one adds a ` ; ` slot — the latter pins both the cell
+    // trim and `flattenNestedTable`'s row filter.
     expect(lines[2]).toBe('| a | N 1 / N2 ; x y / p/q |')
     // Exactly the three table lines — the nested table did not leak extra
     // rows/pipes into the document.

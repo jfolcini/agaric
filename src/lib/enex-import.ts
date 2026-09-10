@@ -460,10 +460,8 @@ function findLeafNestedTable(root: Element): Element | null {
 function normalizeInlineCell(text: string): string {
   // Collapse all whitespace (incl. newlines) to single spaces and neutralize
   // `|` (which would otherwise open a spurious column in the OUTER pipe row).
-  // The trim is load-bearing: `flattenNestedTable` keeps a row when any CELL
-  // has content, so an untrimmed cell of blanks is `' '` — length 1 — and the
-  // row survives to emit a stray ` ; ` slot in the outer cell. Only the run
-  // WIDTH is unobservable, because Turndown re-collapses what it emits (#4815).
+  // The trim is load-bearing — see `flattenNestedTable`'s row filter. Only the
+  // run WIDTH is unobservable, because Turndown re-collapses what it emits.
   return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 }
 
