@@ -268,6 +268,9 @@ describe('BlockRefPeek', () => {
 
     await hoverOpen(user, TARGET)
     expect(chip.hasAttribute('title')).toBe(false)
+    // The marker the editor NodeView reads so its next `update()` does not
+    // put the native tooltip back over the open popover.
+    expect(chip.hasAttribute('data-peek-title-parked')).toBe(true)
     expect(chip.getAttribute('aria-expanded')).toBe('true')
 
     await user.unhover(chip)
@@ -275,7 +278,26 @@ describe('BlockRefPeek', () => {
       expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
     })
     expect(chip.getAttribute('title')).toBe(originalTitle)
+    expect(chip.hasAttribute('data-peek-title-parked')).toBe(false)
     expect(chip.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  // The first commit is the spinner. A peek placed below a chip near the
+  // bottom of the window while 40 px tall grows past the viewport when the
+  // payload lands, so the placement has to run again with the full box.
+  it('re-places itself once the payload lands', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    vi.mocked(computePosition).mockClear()
+    const user = userEvent.setup()
+    render(<Chips ids={[TARGET]} />)
+
+    const peek = await hoverOpen(user, TARGET)
+    await waitFor(() => {
+      expect(within(peek).getByText(LONG_CONTENT)).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(vi.mocked(computePosition).mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
   })
 
   // "Open" borrows the chip's own navigation rather than growing a second

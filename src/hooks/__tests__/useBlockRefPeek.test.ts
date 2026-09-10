@@ -147,7 +147,6 @@ describe('useBlockRefPeek', () => {
 
     expect(chip.getAttribute('title')).toBe(CHIP_TITLE)
     expect(chip.getAttribute('aria-expanded')).toBe('false')
-    expect(chip.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('ignores a touch pointer — coarse pointers keep the native title', () => {

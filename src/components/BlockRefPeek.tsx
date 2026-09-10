@@ -168,7 +168,10 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
     return () => {
       cancelled = true
     }
-  }, [anchorRect, peekRef])
+    // `data` is a dep on purpose: the first commit is the spinner, and a peek that
+    // was placed below the chip while 40 px tall can grow past the viewport
+    // once the payload lands; `flip()` has to see the full box.
+  }, [anchorRect, peekRef, data])
 
   // A keyboard open moves focus INTO the peek; Escape puts it back on the chip.
   useEffect(() => {
@@ -188,7 +191,10 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
       data-testid="ref-peek"
       // Keeps the roving editor mounted when the peek takes focus
       // (`EDITOR_PORTAL_SELECTOR`, `@/hooks/useEditorBlur`).
-      data-editor-portal=""
+      // Only a keyboard-opened peek takes focus, so only that one needs the
+      // editor-blur exemption; on a hover peek the attribute would abort the
+      // blur save for a click landing during the close grace.
+      data-editor-portal={fromKeyboard ? '' : undefined}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <dialog> is modal (focus trap + inert background), which is wrong for a popover the pointer leaves by moving off it, and its non-modal form needs an imperative show() plus UA styles that fight floating-ui's placement
       role="dialog"
       aria-label={

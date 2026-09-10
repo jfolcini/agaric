@@ -97,6 +97,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     // role-less `<span>` inside the contenteditable, and ARIA states are
     // prohibited there.
     if (chip.hasAttribute('aria-expanded')) chip.setAttribute('aria-expanded', 'false')
+    chip.removeAttribute('data-peek-title-parked')
     if (parkedTitleRef.current !== null) chip.setAttribute('title', parkedTitleRef.current)
     parkedTitleRef.current = null
     chipRef.current = null
@@ -124,6 +125,9 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
         releaseChip()
         parkedTitleRef.current = chip.getAttribute('title')
         chip.removeAttribute('title')
+        // The editor NodeView re-applies `title` on every `update()`; the marker
+        // tells it not to while the peek is open.
+        chip.setAttribute('data-peek-title-parked', '')
         if (chip.hasAttribute('aria-expanded')) chip.setAttribute('aria-expanded', 'true')
         chipRef.current = chip
       }

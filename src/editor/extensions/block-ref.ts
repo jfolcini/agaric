@@ -117,8 +117,10 @@ export const BlockRef = Node.create<BlockRefOptions>({
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
         // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`,
-        // matching what `renderBlockRef` puts on the read-only chip.
-        dom.setAttribute('title', content)
+        // matching what `renderBlockRef` puts on the read-only chip. Left off
+        // while `useBlockRefPeek` has parked it, or an `update()` mid-peek puts
+        // the native tooltip back over the open popover.
+        if (!dom.hasAttribute('data-peek-title-parked')) dom.setAttribute('title', content)
       }
 
       render(currentId)
