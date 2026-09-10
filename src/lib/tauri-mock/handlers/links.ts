@@ -122,6 +122,98 @@ function applyBacklinkFilters(
   return backlinkItems
 }
 
+/**
+ * The `GroupedBacklinkResponse` both grouped readers answer with, built the
+ * way `eval_backlink_query_grouped` and `eval_unlinked_references` build
+ * theirs (`agaric-store/src/backlink/grouped.rs`).
+ *
+ * #4667 — found by `query_backlinks_grouped.json`. This used to be two copies
+ * that grouped by `parent_id`, kept the target page's own blocks, listed
+ * groups in insertion order and ignored `limit` and `cursor`. The backend:
+ *
+ *   * keys a group by the source's ROOT page (`blocks.page_id`) and drops a
+ *     source on the TARGET's root page as a self-reference — from the groups
+ *     and from both counts;
+ *   * orders groups by `(page_title, page_id)` (`cmp_group`) whatever the
+ *     user's sort, which orders MEMBERS only — the default `Created { Asc }`
+ *     is ULID order, so the id compare below;
+ *   * counts `limit` in GROUPS and mints `Cursor::for_group`: `page_id` in
+ *     `id`, `page_title` in the `deleted_at` slot;
+ *   * for the backlink reader only, answers `total_count: 0` /
+ *     `filtered_count: 0` on a cursor page (#2201 item 1b — its two COUNTs
+ *     run on the first page, and the UI keeps that page's numbers). The
+ *     unlinked reader recomputes both on every page, and
+ *     `useUnlinkedReferences` reads them from the LAST page.
+ *
+ * `sources` is the base set BEFORE the user's `filters` (the `total_count`
+ * universe); `filters` narrow it to the `filtered_count` one. `truncated` is
+ * the `MAX_BLOCKS_PER_GROUP` cap per group and the FTS row cap on the
+ * envelope; neither is reachable from a mock fixture.
+ */
+/**
+ * `cmp_group` sorts a `None` title LAST. A sort key cannot hold `null`, and a
+ * cursor slot minted as `null` decodes back to the `''` sentinel, which sorts
+ * FIRST and would re-serve the group on the next page — so a titleless group
+ * carries a string above every title instead, and the same keyset compare
+ * orders it last and round-trips it through the cursor.
+ */
+const TITLELESS_SORTS_LAST = '\uFFFF'
+
+function groupedBacklinkResponse(
+  sources: Record<string, unknown>[],
+  targetPageId: string,
+  a: Record<string, unknown>,
+  counts: 'first-page-only' | 'every-page',
+): {
+  groups: Record<string, unknown>[]
+  next_cursor: string | null
+  has_more: boolean
+  total_count: number
+  filtered_count: number
+  truncated: boolean
+} {
+  const base = sources.filter((b) => {
+    const pid = b['page_id'] as string | null
+    return pid !== null && pid !== targetPageId && blocks.has(pid)
+  })
+  const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
+  const filtered = applyBacklinkFilters(base, filterList)
+  const byPage = new Map<string, Record<string, unknown>[]>()
+  for (const b of filtered.toSorted((x, y) =>
+    (x['id'] as string) < (y['id'] as string) ? -1 : 1,
+  )) {
+    const pid = b['page_id'] as string
+    const group = byPage.get(pid)
+    if (group === undefined) byPage.set(pid, [b])
+    else group.push(b)
+  }
+  const groups = [...byPage].map(([page_id, items]) => ({
+    page_id,
+    // `base` already requires the root page to exist; `blocks.content` is
+    // nullable, so the title can still be null.
+    page_title: (blocks.get(page_id)?.['content'] as string | null | undefined) ?? null,
+    blocks: items,
+    truncated: false,
+  }))
+  const page = paginateKeyset(
+    groups,
+    (g) => [(g['page_title'] as string | null) ?? TITLELESS_SORTS_LAST, g['page_id'] as string],
+    pageRequestLimit(a['limit']),
+    a['cursor'],
+    null,
+    ['deleted_at'],
+  )
+  const recount = counts === 'every-page' || a['cursor'] == null
+  return {
+    groups: page.items,
+    next_cursor: page.next_cursor,
+    has_more: page.has_more,
+    total_count: recount ? base.length : 0,
+    filtered_count: recount ? filtered.length : 0,
+    truncated: false,
+  }
+}
+
 export const linksHandlers = {
   get_backlinks: (args) => {
     const a = args as Record<string, unknown>
@@ -179,44 +271,20 @@ export const linksHandlers = {
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
-    const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
     // Honour `scope: SpaceScope` (mirrors
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // `total_count` is the unfiltered base set and `filtered_count` the
-    // narrowed one — two separate COUNTs on the backend
-    // (`eval_backlink_query_grouped`), and the "Showing N of M" copy.
-    const unfiltered = [...blocks.values()].filter(
+    const sources = [...blocks.values()].filter(
       (b) =>
         !b['deleted_at'] &&
         inSpaceScope(b, spaceId) &&
         contentLinksTo(b['content'] as string | null, targetId),
     )
-    const backlinkItems = applyBacklinkFilters(unfiltered, filterList)
-    // Group by parent_id (source page)
-    const groupMap = new Map<string, Record<string, unknown>[]>()
-    for (const item of backlinkItems) {
-      const pid = (item['parent_id'] as string) ?? '__orphan__'
-      if (!groupMap.has(pid)) groupMap.set(pid, [])
-      groupMap.get(pid)?.push(item)
-    }
-    const groups = [...groupMap.entries()].map(([pageId, items]) => {
-      const page = blocks.get(pageId)
-      return {
-        page_id: pageId,
-        page_title: page ? ((page['content'] as string) ?? null) : null,
-        blocks: items,
-      }
-    })
-    return {
-      groups,
-      next_cursor: null,
-      has_more: false,
-      total_count: unfiltered.length,
-      filtered_count: backlinkItems.length,
-      truncated: false,
-    }
+    // `COALESCE(tgt.page_id, tgt.id)` — the target's root page, whose own
+    // blocks are self-references.
+    const targetPageId = (blocks.get(targetId)?.['page_id'] as string | null) ?? targetId
+    return groupedBacklinkResponse(sources, targetPageId, a, 'first-page-only')
   },
 
   list_unlinked_references: (args) => {
@@ -289,8 +357,6 @@ export const linksHandlers = {
     // resolved `[[ULID]]` title.
     const unlinked = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
-      if (b['id'] === pageId) return false
-      if (b['parent_id'] === pageId) return false
       // `AND b.block_type != 'page'` (grouped.rs:688) — title blocks are
       // dropped from the base set GLOBALLY, not just for descendants of this
       // page. The trigram tokenizer is substring-based, so a child page
@@ -306,28 +372,7 @@ export const linksHandlers = {
       // Exclude if it already has a [[link]] to this page.
       return !contentLinksTo(content, pageId)
     })
-    const groupMap = new Map<string, Record<string, unknown>[]>()
-    for (const item of unlinked) {
-      const pid = (item['parent_id'] as string) ?? '__orphan__'
-      if (!groupMap.has(pid)) groupMap.set(pid, [])
-      groupMap.get(pid)?.push(item)
-    }
-    const groups = [...groupMap.entries()].map(([pid, items]) => {
-      const p = blocks.get(pid)
-      return {
-        page_id: pid,
-        page_title: p ? ((p['content'] as string) ?? null) : null,
-        blocks: items,
-      }
-    })
-    return {
-      groups,
-      next_cursor: null,
-      has_more: false,
-      total_count: unlinked.length,
-      filtered_count: unlinked.length,
-      truncated: false,
-    }
+    return groupedBacklinkResponse(unlinked, pageId, a, 'every-page')
   },
 
   // ---------------------------------------------------------------------------
