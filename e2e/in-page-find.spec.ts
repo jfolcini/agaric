@@ -69,16 +69,18 @@ test.describe('In-page find (Ctrl+F)', () => {
 
     await input.fill('block')
 
-    // 4 case-insensitive matches ("blocks"+"block" in GS_3, "blocks" in
-    // GS_4, and the "Add block" button below the block tree).
-    await expect(counter).toHaveText('1 of 4')
+    // 5 case-insensitive matches ("blocks"+"block" in GS_3, "blocks" in
+    // GS_4, the "Add block" button below the block tree, and the "Block refs"
+    // toggle in Linked References (#4551) — chrome counts, as the button
+    // already did).
+    await expect(counter).toHaveText('1 of 5')
 
     // The matcher paints via `CSS.highlights`. `paint()`
     // (`src/lib/in-page-find/highlighter.ts`) pulls the ACTIVE match out of
     // `find-match` into its own `find-match-current` overlay rather than
-    // double-painting it, so of the 4 total matches, 3 land in `find-match`
+    // double-painting it, so of the 5 total matches, 4 land in `find-match`
     // and exactly 1 (the active one) lands in `find-match-current`.
-    await expect.poll(() => highlightSize(page, 'find-match')).toBe(3)
+    await expect.poll(() => highlightSize(page, 'find-match')).toBe(4)
     await expect.poll(() => highlightSize(page, 'find-match-current')).toBe(1)
   })
 
@@ -90,28 +92,30 @@ test.describe('In-page find (Ctrl+F)', () => {
     const previous = page.getByTestId('in-page-find-previous')
 
     await input.fill('block')
-    await expect(counter).toHaveText('1 of 4')
+    await expect(counter).toHaveText('1 of 5')
 
     await next.click()
-    await expect(counter).toHaveText('2 of 4')
+    await expect(counter).toHaveText('2 of 5')
     await next.click()
-    await expect(counter).toHaveText('3 of 4')
+    await expect(counter).toHaveText('3 of 5')
     await next.click()
-    await expect(counter).toHaveText('4 of 4')
+    await expect(counter).toHaveText('4 of 5')
+    await next.click()
+    await expect(counter).toHaveText('5 of 5')
     // Next from the last match wraps back to the first.
     await next.click()
-    await expect(counter).toHaveText('1 of 4')
+    await expect(counter).toHaveText('1 of 5')
 
     // Previous from the first match wraps to the last.
     await previous.click()
-    await expect(counter).toHaveText('4 of 4')
+    await expect(counter).toHaveText('5 of 5')
     await previous.click()
-    await expect(counter).toHaveText('3 of 4')
+    await expect(counter).toHaveText('4 of 5')
 
     // The "current" highlight always stays a singleton as the index moves;
     // `find-match` holds the other 3 (see the painting note above).
     await expect.poll(() => highlightSize(page, 'find-match-current')).toBe(1)
-    await expect.poll(() => highlightSize(page, 'find-match')).toBe(3)
+    await expect.poll(() => highlightSize(page, 'find-match')).toBe(4)
   })
 
   test('Enter/Shift+Enter in the input also cycle matches', async ({ page }) => {
@@ -120,21 +124,21 @@ test.describe('In-page find (Ctrl+F)', () => {
     const counter = page.getByTestId('in-page-find-counter')
 
     await input.fill('block')
-    await expect(counter).toHaveText('1 of 4')
+    await expect(counter).toHaveText('1 of 5')
 
     await input.press('Enter')
-    await expect(counter).toHaveText('2 of 4')
+    await expect(counter).toHaveText('2 of 5')
 
     await input.press('Shift+Enter')
-    await expect(counter).toHaveText('1 of 4')
+    await expect(counter).toHaveText('1 of 5')
   })
 
   test('Escape closes the toolbar and clears highlights', async ({ page }) => {
     await openFind(page)
     const input = page.getByTestId('in-page-find-input')
     await input.fill('block')
-    await expect(page.getByTestId('in-page-find-counter')).toHaveText('1 of 4')
-    await expect.poll(() => highlightSize(page, 'find-match')).toBe(3)
+    await expect(page.getByTestId('in-page-find-counter')).toHaveText('1 of 5')
+    await expect.poll(() => highlightSize(page, 'find-match')).toBe(4)
 
     await input.press('Escape')
 
@@ -147,7 +151,7 @@ test.describe('In-page find (Ctrl+F)', () => {
   test('the close button also closes the toolbar and clears highlights', async ({ page }) => {
     await openFind(page)
     await page.getByTestId('in-page-find-input').fill('block')
-    await expect(page.getByTestId('in-page-find-counter')).toHaveText('1 of 4')
+    await expect(page.getByTestId('in-page-find-counter')).toHaveText('1 of 5')
 
     await page.getByTestId('in-page-find-close').click()
 
