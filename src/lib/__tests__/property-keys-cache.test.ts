@@ -18,6 +18,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { queryClient } from '@/lib/query-client'
 
 const eventListeners = new Map<string, (event: unknown) => void>()
@@ -50,11 +51,15 @@ import {
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** What `list_property_keys` currently answers; a test that refetches moves it. */
+let storedKeys: string[] = []
+
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
   _resetPropertyKeysCacheForTest()
-  mockedInvoke.mockResolvedValue(['project', 'effort'])
+  storedKeys = ['project', 'effort']
+  mockedInvoke.mockImplementation(mockInvokeCommands({ list_property_keys: () => storedKeys }))
 })
 
 afterEach(() => {
@@ -97,11 +102,13 @@ describe('property-keys-cache', () => {
   // ------------------------------------------------------------------
   it('two concurrent fetchPropertyKeysOnce() calls share a single IPC', async () => {
     let resolveIpc: ((keys: string[]) => void) | null = null
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<string[]>((resolve) => {
-          resolveIpc = resolve
-        }),
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_keys: () =>
+          new Promise<string[]>((resolve) => {
+            resolveIpc = resolve
+          }),
+      }),
     )
 
     const p1 = fetchPropertyKeysOnce('SPACE_A')
@@ -135,8 +142,8 @@ describe('property-keys-cache', () => {
     // The query is marked stale/invalidated.
     expect(queryClient.getQueryState(propertyKeysQueryKey('SPACE_A'))?.isInvalidated).toBe(true)
 
-    // Next fetch fires a fresh IPC.
-    mockedInvoke.mockResolvedValueOnce(['project', 'effort', 'assignee'])
+    // Next fetch fires a fresh IPC, and the backend now has the new key.
+    storedKeys = ['project', 'effort', 'assignee']
     const refreshed = await fetchPropertyKeysOnce('SPACE_A')
     expect(refreshed).toEqual(['project', 'effort', 'assignee'])
     expect(listPropertyKeysInvocationCount()).toBe(2)
@@ -183,7 +190,11 @@ describe('property-keys-cache', () => {
   //     (matches the pre-migration behaviour of caching `[]` on failure).
   // ------------------------------------------------------------------
   it('falls back to an empty array when listPropertyKeys rejects and caches it', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_keys: () => Promise.reject(new Error('IPC failure')),
+      }),
+    )
     const result = await fetchPropertyKeysOnce('SPACE_A')
     expect(result).toEqual([])
     expect(listPropertyKeysInvocationCount()).toBe(1)

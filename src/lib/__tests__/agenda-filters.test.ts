@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   AGENDA_QUERY_LIMIT,
   executeAgendaFilters,
@@ -18,14 +19,36 @@ import {
   toFutureDatePreset,
   toPastDatePreset,
 } from '@/lib/agenda-filters'
+import type { TagCacheRow } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
+/**
+ * Install the three commands `agenda-filters` can fire, each defaulted to an
+ * empty page so a test only names the one it is about. Anything else still
+ * goes to `strictInvokeFallback` and fails by name.
+ */
+function stubAgenda(handlers: TypedInvokeHandlers = {}): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      filtered_blocks_query: () => emptyPage,
+      query_by_property: () => emptyPage,
+      list_undated_tasks: () => emptyPage,
+      ...handlers,
+    }),
+  )
+}
+
+/** A `TagCacheRow`. The switches this file used to install omitted `updated_at`. */
+function tagRow(tagId: string, name: string): TagCacheRow {
+  return { tag_id: tagId, name, usage_count: 1, updated_at: '2025-03-01T00:00:00Z' }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mockedInvoke.mockResolvedValue(emptyPage)
+  stubAgenda()
 })
 
 afterEach(() => {
@@ -94,18 +117,18 @@ describe('executeAgendaFilters', () => {
       const dueBlock = makeBlock({ id: 'due-1', due_date: '2025-01-15' })
       const schedBlock = makeBlock({ id: 'sched-1', scheduled_date: '2025-01-16' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        // #2277 item 7 — query_by_property params now nest under `request`.
-        const req = (a['request'] as Record<string, unknown>) ?? a
-        if (cmd === 'list_undated_tasks') return emptyPage
-        if (req['key'] === 'due_date') {
-          return { items: [dueBlock], next_cursor: null, has_more: false }
-        }
-        if (req['key'] === 'scheduled_date') {
-          return { items: [schedBlock], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        // #2277 item 7 — query_by_property params nest under `request`.
+        query_by_property: (args) => {
+          const req = args['request'] as Record<string, unknown>
+          if (req['key'] === 'due_date') {
+            return { items: [dueBlock], next_cursor: null, has_more: false, total_count: null }
+          }
+          if (req['key'] === 'scheduled_date') {
+            return { items: [schedBlock], next_cursor: null, has_more: false, total_count: null }
+          }
+          return emptyPage
+        },
       })
 
       const result = await executeAgendaFilters([], null)
@@ -128,11 +151,15 @@ describe('executeAgendaFilters', () => {
         scheduled_date: '2025-01-14',
       })
 
-      mockedInvoke.mockResolvedValue({
-        items: [block],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      // Both dated sources answer with the SAME block — the duplicate the
+      // merge has to collapse.
+      stubAgenda({
+        query_by_property: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters([], null)
@@ -156,19 +183,20 @@ describe('executeAgendaFilters', () => {
         page_id: 'PAGE1',
       })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        const req = (a['request'] as Record<string, unknown>) ?? a
-        if (cmd === 'list_undated_tasks') {
-          return { items: [undatedBlock], next_cursor: null, has_more: false }
-        }
-        if (req['key'] === 'due_date') {
-          return { items: [dueBlock], next_cursor: null, has_more: false }
-        }
-        if (req['key'] === 'scheduled_date') {
+      stubAgenda({
+        list_undated_tasks: () => ({
+          items: [undatedBlock],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+        query_by_property: (args) => {
+          const req = args['request'] as Record<string, unknown>
+          if (req['key'] === 'due_date') {
+            return { items: [dueBlock], next_cursor: null, has_more: false, total_count: null }
+          }
           return emptyPage
-        }
-        return emptyPage
+        },
       })
 
       const result = await executeAgendaFilters([], null)
@@ -186,11 +214,17 @@ describe('executeAgendaFilters', () => {
       const undatedPage1 = makeBlock({ id: 'undated-page-1', todo_state: 'TODO' })
 
       let undatedCallCount = 0
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        if (cmd !== 'list_undated_tasks') return emptyPage
-        undatedCallCount++
-        expect((args as Record<string, unknown>)['cursor']).toBeNull()
-        return { items: [undatedPage1], next_cursor: 'CURSOR_PAGE_2', has_more: true }
+      stubAgenda({
+        list_undated_tasks: (args) => {
+          undatedCallCount++
+          expect(args['cursor']).toBeNull()
+          return {
+            items: [undatedPage1],
+            next_cursor: 'CURSOR_PAGE_2',
+            has_more: true,
+            total_count: null,
+          }
+        },
       })
 
       const result = await executeAgendaFilters([], null)
@@ -208,20 +242,25 @@ describe('executeAgendaFilters', () => {
       const duePage2 = makeBlock({ id: 'due-2', due_date: '2025-02-15' })
       const schedPage1 = makeBlock({ id: 'sched-1', scheduled_date: '2025-01-16' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        const req = (a['request'] as Record<string, unknown>) ?? a
-        if (cmd === 'list_undated_tasks') return emptyPage
-        if (req['key'] === 'due_date') {
-          if (req['cursor'] === 'DUE_CURSOR_2') {
-            return { items: [duePage2], next_cursor: null, has_more: false }
+      stubAgenda({
+        query_by_property: (args) => {
+          const req = args['request'] as Record<string, unknown>
+          if (req['key'] === 'due_date') {
+            if (req['cursor'] === 'DUE_CURSOR_2') {
+              return { items: [duePage2], next_cursor: null, has_more: false, total_count: null }
+            }
+            return {
+              items: [duePage1],
+              next_cursor: 'DUE_CURSOR_2',
+              has_more: true,
+              total_count: null,
+            }
           }
-          return { items: [duePage1], next_cursor: 'DUE_CURSOR_2', has_more: true }
-        }
-        if (req['key'] === 'scheduled_date') {
-          return { items: [schedPage1], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+          if (req['key'] === 'scheduled_date') {
+            return { items: [schedPage1], next_cursor: null, has_more: false, total_count: null }
+          }
+          return emptyPage
+        },
       })
 
       const page1 = await executeAgendaFilters([], null)
@@ -277,11 +316,13 @@ describe('executeAgendaFilters', () => {
   describe('active filters dispatch a single filtered_blocks_query IPC', () => {
     it('does not call listUndatedTasks / queryByProperty / listBlocks when filters are active', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -300,11 +341,13 @@ describe('executeAgendaFilters', () => {
       const todoBlock = makeBlock({ id: 'todo-1', todo_state: 'TODO' })
       const doingBlock = makeBlock({ id: 'doing-1', todo_state: 'DOING' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [todoBlock, doingBlock], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [todoBlock, doingBlock],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -345,11 +388,13 @@ describe('executeAgendaFilters', () => {
       const p1Block = makeBlock({ id: 'p1-1', priority: '1' })
       const p2Block = makeBlock({ id: 'p2-1', priority: '2' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [p1Block, p2Block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [p1Block, p2Block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -386,11 +431,13 @@ describe('executeAgendaFilters', () => {
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'due-today', due_date: '2025-03-15' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
@@ -435,11 +482,13 @@ describe('executeAgendaFilters', () => {
         due_date: '2025-03-10',
         todo_state: 'TODO',
       })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [overdueBlock], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [overdueBlock],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -497,15 +546,13 @@ describe('executeAgendaFilters', () => {
       const todayDone = makeBlock({ id: 'today-done', due_date: '2025-03-15', todo_state: 'DONE' })
       const todayTodo = makeBlock({ id: 'today-todo', due_date: '2025-03-15', todo_state: 'TODO' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return {
-            items: [overdueTodo, overdueDone, todayDone, todayTodo],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [overdueTodo, overdueDone, todayDone, todayTodo],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -562,11 +609,13 @@ describe('executeAgendaFilters', () => {
         scheduled_date: '2025-03-15',
         todo_state: 'DONE',
       })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [overdueDone, inRangeDone], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [overdueDone, inRangeDone],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -601,15 +650,13 @@ describe('executeAgendaFilters', () => {
         todo_state: null,
       })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return {
-            items: [nullStateOverdue, nullStateToday],
-            next_cursor: null,
-            has_more: false,
-          }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [nullStateOverdue, nullStateToday],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -635,15 +682,13 @@ describe('executeAgendaFilters', () => {
       })
       const survivor = makeBlock({ id: 'survivor', due_date: '2025-03-15', todo_state: 'DONE' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'filtered_blocks_query') {
-          const cursor = (args as Record<string, unknown>)['cursor']
-          if (cursor === 'PAGE_2') {
-            return { items: [survivor], next_cursor: 'PAGE_3', has_more: true }
+      stubAgenda({
+        filtered_blocks_query: (args) => {
+          if (args['cursor'] === 'PAGE_2') {
+            return { items: [survivor], next_cursor: 'PAGE_3', has_more: true, total_count: null }
           }
-          return { items: [overdueDone], next_cursor: 'PAGE_2', has_more: true }
-        }
-        return emptyPage
+          return { items: [overdueDone], next_cursor: 'PAGE_2', has_more: true, total_count: null }
+        },
       })
 
       const result = await executeAgendaFilters(
@@ -755,11 +800,13 @@ describe('executeAgendaFilters', () => {
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'sched-today', scheduled_date: '2025-03-15' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -810,11 +857,13 @@ describe('executeAgendaFilters', () => {
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'completed-1', todo_state: 'DONE' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -876,11 +925,13 @@ describe('executeAgendaFilters', () => {
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
       const block = makeBlock({ id: 'created-1' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -902,15 +953,15 @@ describe('executeAgendaFilters', () => {
     it('resolves a tag name to tagIds via listTagsByPrefix and rides through tagFilters', async () => {
       const block = makeBlock({ id: 'tagged-1' })
 
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-abc') {
-          return [{ tag_id: 'TAG_ID_ABC', name: 'tag-abc', usage_count: 1 }]
-        }
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        list_tags_by_prefix: (args) =>
+          args['prefix'] === 'tag-abc' ? [tagRow('TAG_ID_ABC', 'tag-abc')] : [],
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'tag', values: ['tag-abc'] }], null)
@@ -934,14 +985,12 @@ describe('executeAgendaFilters', () => {
     // H3 — pin the exactly-once tag-resolution path. Each prefix should
     // round-trip listTagsByPrefix exactly once, not per-call-site.
     it('resolves each tag name exactly once', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix') {
-          if (a['prefix'] === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
-          if (a['prefix'] === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
+      stubAgenda({
+        list_tags_by_prefix: (args) => {
+          if (args['prefix'] === 'tag-1') return [tagRow('TID_1', 'tag-1')]
+          if (args['prefix'] === 'tag-2') return [tagRow('TID_2', 'tag-2')]
           return []
-        }
-        return emptyPage
+        },
       })
 
       await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
@@ -956,14 +1005,12 @@ describe('executeAgendaFilters', () => {
     })
 
     it('combines multiple tag values into a single tagFilters payload with mode=or', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix') {
-          if (a['prefix'] === 'tag-1') return [{ tag_id: 'TID_1', name: 'tag-1', usage_count: 1 }]
-          if (a['prefix'] === 'tag-2') return [{ tag_id: 'TID_2', name: 'tag-2', usage_count: 1 }]
+      stubAgenda({
+        list_tags_by_prefix: (args) => {
+          if (args['prefix'] === 'tag-1') return [tagRow('TID_1', 'tag-1')]
+          if (args['prefix'] === 'tag-2') return [tagRow('TID_2', 'tag-2')]
           return []
-        }
-        return emptyPage
+        },
       })
 
       await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
@@ -976,10 +1023,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('returns empty (no filtered_blocks_query) when tag resolution yields nothing', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        return emptyPage
-      })
+      stubAgenda({ list_tags_by_prefix: () => [] })
 
       const result = await executeAgendaFilters(
         [{ dimension: 'tag', values: ['nonexistent-tag'] }],
@@ -999,14 +1043,16 @@ describe('executeAgendaFilters', () => {
     // status superset (a strict widening of the intended status-AND-tag set).
     it('#1594: status + unresolved tag → empty result, NOT the status-only superset', async () => {
       const statusOnlyBlock = makeBlock({ id: 'status-superset', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
+      stubAgenda({
         // Tag never resolves.
-        if (cmd === 'list_tags_by_prefix') return []
+        list_tags_by_prefix: () => [],
         // If the bug were present, the status-only IPC would return this.
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [statusOnlyBlock], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+        filtered_blocks_query: () => ({
+          items: [statusOnlyBlock],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1027,15 +1073,15 @@ describe('executeAgendaFilters', () => {
     // correctly with a surviving status dimension (no regression).
     it('#1594: status + resolved tag → correct AND-intersection IPC', async () => {
       const block = makeBlock({ id: 'intersection-1', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-ok') {
-          return [{ tag_id: 'TID_OK', name: 'tag-ok', usage_count: 1 }]
-        }
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        list_tags_by_prefix: (args) =>
+          args['prefix'] === 'tag-ok' ? [tagRow('TID_OK', 'tag-ok')] : [],
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1061,11 +1107,13 @@ describe('executeAgendaFilters', () => {
     // "had no values"). list_tags_by_prefix must not even be called.
     it('#1594: tag dimension with no values leaves the status dimension unaffected', async () => {
       const block = makeBlock({ id: 'status-survives', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1092,11 +1140,13 @@ describe('executeAgendaFilters', () => {
     it('key:value → PropertyFilter with valueText', async () => {
       const block = makeBlock({ id: 'prop-1' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1117,11 +1167,13 @@ describe('executeAgendaFilters', () => {
     it('bare key (no colon) → PropertyFilter without a value field (is-set semantics)', async () => {
       const block = makeBlock({ id: 'prop-2' })
 
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1148,11 +1200,13 @@ describe('executeAgendaFilters', () => {
       const sharedBlock = makeBlock({ id: 'shared-1', todo_state: 'TODO', priority: '1' })
 
       // Backend returns the post-intersection result directly; no JS fan-out.
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [sharedBlock], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [sharedBlock],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters(
@@ -1183,15 +1237,15 @@ describe('executeAgendaFilters', () => {
 
     it('tag + property dimensions combine into one IPC with both propertyFilters and tagFilters', async () => {
       const block = makeBlock({ id: 'shared-1' })
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
-          return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
-        }
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        list_tags_by_prefix: (args) =>
+          args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : [],
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       await executeAgendaFilters(
@@ -1223,10 +1277,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('returns empty for tag filter when no blocks match', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_tags_by_prefix') return []
-        return emptyPage
-      })
+      stubAgenda({ list_tags_by_prefix: () => [] })
       const result = await executeAgendaFilters(
         [{ dimension: 'tag', values: ['nonexistent-tag'] }],
         null,
@@ -1238,11 +1289,13 @@ describe('executeAgendaFilters', () => {
   describe('pagination envelope', () => {
     it('forwards hasMore=true and the cursor from the backend response', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: 'CURSOR_NEXT', has_more: true }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: 'CURSOR_NEXT',
+          has_more: true,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -1254,11 +1307,13 @@ describe('executeAgendaFilters', () => {
 
     it('forwards hasMore=false / cursor=null when the page is exhausted', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'filtered_blocks_query') {
-          return { items: [block], next_cursor: null, has_more: false }
-        }
-        return emptyPage
+      stubAgenda({
+        filtered_blocks_query: () => ({
+          items: [block],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -1269,12 +1324,9 @@ describe('executeAgendaFilters', () => {
 
   describe('spaceId normalization at the boundary (FE-L-12)', () => {
     it('normalizes a null spaceId to "" before dispatching filtered_blocks_query', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-        const a = args as Record<string, unknown>
-        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
-          return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
-        }
-        return emptyPage
+      stubAgenda({
+        list_tags_by_prefix: (args) =>
+          args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : [],
       })
 
       await executeAgendaFilters(
@@ -1304,11 +1356,13 @@ describe('executeAgendaFilters', () => {
 describe('loadMoreAgendaFilters', () => {
   it('routes through filtered_blocks_query with the saved cursor (NOT query_by_property)', async () => {
     const page2Block = makeBlock({ id: 'b2', todo_state: 'TODO', priority: '1' })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [page2Block], next_cursor: null, has_more: false }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [page2Block],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1346,16 +1400,14 @@ describe('loadMoreAgendaFilters', () => {
   // dimension paired with a surviving status dimension collapses to empty
   // (and never dispatches a status-only IPC that would widen the page).
   it('#1594: status + unresolved tag short-circuits to empty (no widening IPC)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_tags_by_prefix') return []
-      if (cmd === 'filtered_blocks_query') {
-        return {
-          items: [makeBlock({ id: 'leak', todo_state: 'TODO' })],
-          next_cursor: null,
-          has_more: false,
-        }
-      }
-      return emptyPage
+    stubAgenda({
+      list_tags_by_prefix: () => [],
+      filtered_blocks_query: () => ({
+        items: [makeBlock({ id: 'leak', todo_state: 'TODO' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1383,11 +1435,13 @@ describe('loadMoreAgendaFilters', () => {
       makeBlock({ id: 'b11', todo_state: 'DOING', priority: '1' }),
       makeBlock({ id: 'b12', todo_state: 'TODO', priority: '1' }),
     ]
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: blocks, next_cursor: null, has_more: false }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: blocks,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     const filters: Parameters<typeof loadMoreAgendaFilters>[0] = [
@@ -1406,15 +1460,14 @@ describe('loadMoreAgendaFilters', () => {
 
   it('resolves tag filters before dispatching (mirror executeAgendaFilters)', async () => {
     const block = makeBlock({ id: 'tagged-p2' })
-    mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
-      const a = args as Record<string, unknown>
-      if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-x') {
-        return [{ tag_id: 'TID_X', name: 'tag-x', usage_count: 1 }]
-      }
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [block], next_cursor: null, has_more: false }
-      }
-      return emptyPage
+    stubAgenda({
+      list_tags_by_prefix: (args) => (args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : []),
+      filtered_blocks_query: () => ({
+        items: [block],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     await loadMoreAgendaFilters(
@@ -1436,10 +1489,7 @@ describe('loadMoreAgendaFilters', () => {
     // status with empty values + tag that resolves to nothing → no
     // property filters, no tag filters. Must not dispatch
     // filtered_blocks_query (the backend would reject empty input).
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_tags_by_prefix') return []
-      return emptyPage
-    })
+    stubAgenda({ list_tags_by_prefix: () => [] })
 
     const result = await loadMoreAgendaFilters(
       [
@@ -1464,11 +1514,13 @@ describe('loadMoreAgendaFilters', () => {
     // The clock has rolled past midnight since page 1...
     vi.setSystemTime(new Date('2025-03-16T00:30:00'))
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     // ...but the caller threads page 1's today through.
@@ -1492,11 +1544,13 @@ describe('loadMoreAgendaFilters', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: true }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [],
+        next_cursor: null,
+        has_more: true,
+        total_count: null,
+      }),
     })
 
     const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
@@ -1517,11 +1571,13 @@ describe('loadMoreAgendaFilters', () => {
       due_date: '2025-03-02',
       todo_state: 'TODO',
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [overdueDone, overdueTodo], next_cursor: null, has_more: false }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [overdueDone, overdueTodo],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1535,11 +1591,13 @@ describe('loadMoreAgendaFilters', () => {
   })
 
   it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     await loadMoreAgendaFilters([{ dimension: 'status', values: ['TODO'] }], 'CURSOR_PAGE_2', null)
@@ -1549,11 +1607,13 @@ describe('loadMoreAgendaFilters', () => {
   })
 
   it('forwards a non-null spaceId verbatim', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'filtered_blocks_query') {
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      }
-      return emptyPage
+    stubAgenda({
+      filtered_blocks_query: () => ({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
     })
 
     await loadMoreAgendaFilters(

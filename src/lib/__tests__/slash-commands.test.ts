@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async (): Promise<() => void> => () => {}),
 }))
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { i18n } from '@/lib/i18n'
 import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
 import {
@@ -32,7 +33,11 @@ const mockedInvoke = vi.mocked(invoke)
 beforeEach(() => {
   vi.clearAllMocks()
   _resetPropertyKeysCacheForTest()
-  mockedInvoke.mockResolvedValue(['project', 'effort', 'assignee', 'priority'])
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      list_property_keys: () => ['project', 'effort', 'assignee', 'priority'],
+    }),
+  )
 })
 
 afterEach(() => {
@@ -74,8 +79,11 @@ describe('searchPropertyKeys', () => {
   })
 
   it('returns empty array on IPC failure (does not throw)', async () => {
-    mockedInvoke.mockReset()
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_keys: () => Promise.reject(new Error('IPC failure')),
+      }),
+    )
     const results = await searchPropertyKeys('x')
     expect(results).toEqual([])
   })

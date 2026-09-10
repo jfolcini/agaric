@@ -2,6 +2,12 @@ import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makePageHeading } from '@/__tests__/fixtures'
+import {
+  mockInvokeCommands,
+  strictInvokeFallback,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import {
   downloadBlob,
   exportAllSpacesAsZip,
@@ -38,6 +44,28 @@ const mockedFlushActiveDraft = vi.mocked(flushActiveDraft)
 // the page fetch only runs for an active space.
 const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
+/**
+ * Install the commands an export fires.
+ *
+ * `read_attachment` is the one that cannot be a handler key: it answers a
+ * raw-byte `tauri::ipc::Response`, which carries no `specta::Type`, so it has
+ * no generated binding and is not part of `CommandReturns`. It is modelled in
+ * the FALLBACK instead — the same place `pageRowInvokeFallback` models
+ * `load_page_subtree` — and only when a test passes the bytes it expects back;
+ * #2654: `invoke` resolves that command as an ArrayBuffer, never a JSON
+ * `number[]`. Every other unstubbed command still fails by name.
+ */
+function stubExport(handlers: TypedInvokeHandlers, attachmentBytes?: Uint8Array): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(handlers, {
+      fallback: (command) =>
+        command === 'read_attachment' && attachmentBytes
+          ? Promise.resolve(attachmentBytes.buffer)
+          : strictInvokeFallback(command),
+    }),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockedFlushActiveDraft.mockResolvedValue(undefined)
@@ -46,17 +74,12 @@ beforeEach(() => {
 describe('exportGraphAsZip', () => {
   it('creates a ZIP blob with markdown files for each page', async () => {
     // Mock list_all_pages_in_space to return 2 pages
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'My Notes' },
-          { id: 'P2', content: 'Journal' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        return '# Test content'
-      }
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'My Notes' }),
+        makePageHeading({ id: 'P2', content: 'Journal' }),
+      ],
+      export_page_markdown: () => '# Test content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -73,17 +96,12 @@ describe('exportGraphAsZip', () => {
     // first 8 chars onto the duplicate filename to disambiguate.
     const ulid1 = '01HZA1B2C3D4E5F6G7H8J9K0M1'
     const ulid2 = '01HZA9X8Y7W6V5T4S3R2Q1P0N9'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: ulid1, content: 'Same Name' },
-          { id: ulid2, content: 'Same Name' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        return '# Content'
-      }
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: ulid1, content: 'Same Name' }),
+        makePageHeading({ id: ulid2, content: 'Same Name' }),
+      ],
+      export_page_markdown: () => '# Content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -111,19 +129,16 @@ describe('exportGraphAsZip', () => {
     const ulid1 = '01HZA1B2C3AAAAAAAAAAAAAAAA'
     const ulid2 = '01HZA1B2C3BBBBBBBBBBBBBBBB'
     const ulid3 = '01HZA1B2C3CCCCCCCCCCCCCCCC'
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: ulid1, content: 'Same Name' },
-          { id: ulid2, content: 'Same Name' },
-          { id: ulid3, content: 'Same Name' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: ulid1, content: 'Same Name' }),
+        makePageHeading({ id: ulid2, content: 'Same Name' }),
+        makePageHeading({ id: ulid3, content: 'Same Name' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         return `# ${id}`
-      }
-      return null
+      },
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -163,17 +178,14 @@ describe('exportGraphAsZip', () => {
     const ulid2 = '01HZA1B2BBBBBBBBBBBBBBBBBB'
     const ulid3 = '01HZA1B2CCCCCCCCCCCCCCCCCC'
     const ulid4 = '01HZA1B2DDDDDDDDDDDDDDDDDD'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: ulid1, content: 'Dup' },
-          { id: ulid2, content: 'Dup' },
-          { id: ulid3, content: 'Dup' },
-          { id: ulid4, content: 'Dup' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') return '# c'
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: ulid1, content: 'Dup' }),
+        makePageHeading({ id: ulid2, content: 'Dup' }),
+        makePageHeading({ id: ulid3, content: 'Dup' }),
+        makePageHeading({ id: ulid4, content: 'Dup' }),
+      ],
+      export_page_markdown: () => '# c',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -188,18 +200,15 @@ describe('exportGraphAsZip', () => {
   })
 
   it('tracks `seen` case-insensitively so `API` and `api` do not clash on extraction (#2723)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'API' },
-          { id: 'P2', content: 'api' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'API' }),
+        makePageHeading({ id: 'P2', content: 'api' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         return `# ${id}`
-      }
-      return null
+      },
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -215,12 +224,11 @@ describe('exportGraphAsZip', () => {
   })
 
   it('splits a namespaced title into nested folders (#1446 Part A)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Project/Backend/API' }]
-      }
-      if (cmd === 'export_page_markdown') return '# content'
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Project/Backend/API' }),
+      ],
+      export_page_markdown: () => '# content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -233,13 +241,12 @@ describe('exportGraphAsZip', () => {
   })
 
   it('sanitizes illegal chars per segment but keeps the `/` separators', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        // A namespace whose segments carry genuinely-illegal filename chars.
-        return [{ id: 'P1', content: 'Foo:bar/Baz?qux/A*PI' }]
-      }
-      if (cmd === 'export_page_markdown') return '# content'
-      return null
+    stubExport({
+      // A namespace whose segments carry genuinely-illegal filename chars.
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Foo:bar/Baz?qux/A*PI' }),
+      ],
+      export_page_markdown: () => '# content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -251,13 +258,10 @@ describe('exportGraphAsZip', () => {
   })
 
   it('neutralizes path-traversal segments in a crafted title (#1446 Part A — Zip-Slip)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        // A malicious title attempting to escape the ZIP root on extraction.
-        return [{ id: 'P1', content: '../../etc/passwd' }]
-      }
-      if (cmd === 'export_page_markdown') return '# content'
-      return null
+    stubExport({
+      // A malicious title attempting to escape the ZIP root on extraction.
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: '../../etc/passwd' })],
+      export_page_markdown: () => '# content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -282,10 +286,9 @@ describe('exportGraphAsZip', () => {
     // change `/etc/x.md`'s depth in the archive. The Zip-Slip test above does NOT
     // cover this — `../../etc/passwd` has no empty segment, it exercises the
     // dots-only branch of the sanitizer.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: '/etc/x' }]
-      if (cmd === 'export_page_markdown') return '# content'
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: '/etc/x' })],
+      export_page_markdown: () => '# content',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -302,15 +305,11 @@ describe('exportGraphAsZip', () => {
 
   it('emits inline-image attachment bytes and rewrites to a portable path (#1490)', async () => {
     const attId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Project/Notes' }]
-      }
-      if (cmd === 'export_page_markdown') {
-        return `![shot](attachment:${attId})`
-      }
-      if (cmd === 'read_attachment_meta') {
-        return {
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Project/Notes' })],
+        export_page_markdown: () => `![shot](attachment:${attId})`,
+        read_attachment_meta: () => ({
           id: attId,
           block_id: 'B1',
           filename: 'shot.png',
@@ -319,15 +318,10 @@ describe('exportGraphAsZip', () => {
           fs_path: 'x',
           created_at: 0,
           content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') {
-        // #2654: the real command returns a raw-byte `tauri::ipc::Response`,
-        // which `invoke` resolves as an ArrayBuffer (not a JSON number[]).
-        return new Uint8Array([1, 2, 3]).buffer
-      }
-      return null
-    })
+        }),
+      },
+      new Uint8Array([1, 2, 3]),
+    )
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
@@ -349,13 +343,12 @@ describe('exportGraphAsZip', () => {
 
   it('leaves an inline-image ref unchanged when its attachment cannot be read (#1490)', async () => {
     const attId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Notes' }]
-      }
-      if (cmd === 'export_page_markdown') return `![x](attachment:${attId})`
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => `![x](attachment:${attId})`,
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -373,15 +366,11 @@ describe('exportGraphAsZip', () => {
 
   it('emits a block-scoped (non-inline) file attachment link and rewrites it, keeping it a plain link (#2961)', async () => {
     const attId = 'ATT_9'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Project/Notes' }]
-      }
-      if (cmd === 'export_page_markdown') {
-        return `[report.pdf](attachment:${attId})`
-      }
-      if (cmd === 'read_attachment_meta') {
-        return {
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Project/Notes' })],
+        export_page_markdown: () => `[report.pdf](attachment:${attId})`,
+        read_attachment_meta: () => ({
           id: attId,
           block_id: 'B1',
           filename: 'report.pdf',
@@ -390,13 +379,10 @@ describe('exportGraphAsZip', () => {
           fs_path: 'x',
           created_at: 0,
           content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') {
-        return new Uint8Array([9, 8, 7]).buffer
-      }
-      return null
-    })
+        }),
+      },
+      new Uint8Array([9, 8, 7]),
+    )
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
@@ -420,13 +406,11 @@ describe('exportGraphAsZip', () => {
 
   it('collapses path separators in an attachment filename so the asset name cannot escape assets/ (#2961 Zip-Slip)', async () => {
     const attId = 'ATT_EVIL'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Notes' }]
-      }
-      if (cmd === 'export_page_markdown') return `[doc](attachment:${attId})`
-      if (cmd === 'read_attachment_meta') {
-        return {
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+        export_page_markdown: () => `[doc](attachment:${attId})`,
+        read_attachment_meta: () => ({
           id: attId,
           block_id: 'B1',
           // A traversal-shaped filename (settable via rename_attachment).
@@ -436,11 +420,10 @@ describe('exportGraphAsZip', () => {
           fs_path: 'x',
           created_at: 0,
           content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') return new Uint8Array([1]).buffer
-      return null
-    })
+        }),
+      },
+      new Uint8Array([1]),
+    )
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
@@ -458,13 +441,12 @@ describe('exportGraphAsZip', () => {
 
   it('leaves a block-scoped file link unchanged when its attachment cannot be read (#2961)', async () => {
     const attId = 'ATT_GONE'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Notes' }]
-      }
-      if (cmd === 'export_page_markdown') return `[missing.pdf](attachment:${attId})`
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => `[missing.pdf](attachment:${attId})`,
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -483,31 +465,27 @@ describe('exportGraphAsZip', () => {
   it('resolves both an inline image ref and a block-file link on the same page, keeping each form distinct (#2961)', async () => {
     const imgId = 'ATT_IMG'
     const fileId = 'ATT_FILE'
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Mixed' }]
-      }
-      if (cmd === 'export_page_markdown') {
-        return `![shot](attachment:${imgId})\n\n- [report.pdf](attachment:${fileId})`
-      }
-      if (cmd === 'read_attachment_meta') {
-        const id = (args as { attachmentId: string }).attachmentId
-        return {
-          id,
-          block_id: 'B1',
-          filename: id === imgId ? 'shot.png' : 'report.pdf',
-          mime_type: id === imgId ? 'image/png' : 'application/pdf',
-          size_bytes: 1,
-          fs_path: 'x',
-          created_at: 0,
-          content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') {
-        return new Uint8Array([1]).buffer
-      }
-      return null
-    })
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Mixed' })],
+        export_page_markdown: () =>
+          `![shot](attachment:${imgId})\n\n- [report.pdf](attachment:${fileId})`,
+        read_attachment_meta: (args) => {
+          const id = args['attachmentId'] as string
+          return {
+            id,
+            block_id: 'B1',
+            filename: id === imgId ? 'shot.png' : 'report.pdf',
+            mime_type: id === imgId ? 'image/png' : 'application/pdf',
+            size_bytes: 1,
+            fs_path: 'x',
+            created_at: 0,
+            content_hash: null,
+          }
+        },
+      },
+      new Uint8Array([1]),
+    )
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
@@ -519,7 +497,7 @@ describe('exportGraphAsZip', () => {
   })
 
   it('returns empty ZIP when no pages exist', async () => {
-    mockedInvoke.mockResolvedValue([])
+    stubExport({ list_all_pages_in_space: () => [] })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
     expect(blob).toBeInstanceOf(Blob)
@@ -529,20 +507,17 @@ describe('exportGraphAsZip', () => {
     // Pin the partial-export contract: a single per-page IPC failure
     // must not reject the whole export. The successful pages still land in the
     // ZIP and the failure is surfaced through `logger.warn` with the page id.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Good One' },
-          { id: 'P2', content: 'Broken' },
-          { id: 'P3', content: 'Good Two' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Good One' }),
+        makePageHeading({ id: 'P2', content: 'Broken' }),
+        makePageHeading({ id: 'P3', content: 'Good Two' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         if (id === 'P2') throw new Error('boom')
         return `# ${id}`
-      }
-      return null
+      },
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -566,7 +541,7 @@ describe('exportGraphAsZip', () => {
     // export must short-circuit to an empty page set (an empty but valid ZIP)
     // WITHOUT dispatching `list_all_pages_in_space` (a Global scope would be
     // rejected by the backend).
-    mockedInvoke.mockResolvedValue([])
+    stubExport({})
 
     const { blob } = await exportGraphAsZip(null)
 
@@ -581,7 +556,7 @@ describe('exportGraphAsZip', () => {
     // reported to the caller as skipped work that never existed, and would
     // additionally cause an `export-report.txt` to be written into an
     // otherwise-empty ZIP.
-    mockedInvoke.mockResolvedValue([])
+    stubExport({})
 
     const result = await exportGraphAsZip(null)
 
@@ -594,10 +569,9 @@ describe('exportGraphAsZip', () => {
   })
 
   it('falls back to an Untitled path for a page with no content', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: null }]
-      if (cmd === 'export_page_markdown') return '# untitled page'
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: null })],
+      export_page_markdown: () => '# untitled page',
     })
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
@@ -613,17 +587,15 @@ describe('exportGraphAsZip', () => {
     // are re-fetched (and the same ZIP entry re-written) once per referencing
     // page.
     const attId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'One' },
-          { id: 'P2', content: 'Two' },
-          { id: 'P3', content: 'Three' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') return `![logo](attachment:${attId})`
-      if (cmd === 'read_attachment_meta') {
-        return {
+    stubExport(
+      {
+        list_all_pages_in_space: () => [
+          makePageHeading({ id: 'P1', content: 'One' }),
+          makePageHeading({ id: 'P2', content: 'Two' }),
+          makePageHeading({ id: 'P3', content: 'Three' }),
+        ],
+        export_page_markdown: () => `![logo](attachment:${attId})`,
+        read_attachment_meta: () => ({
           id: attId,
           block_id: 'B1',
           filename: 'logo.png',
@@ -632,11 +604,10 @@ describe('exportGraphAsZip', () => {
           fs_path: 'x',
           created_at: 0,
           content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') return new Uint8Array([1, 2, 3]).buffer
-      return null
-    })
+        }),
+      },
+      new Uint8Array([1, 2, 3]),
+    )
 
     const { blob } = await exportGraphAsZip(SPACE_ID)
 
@@ -666,13 +637,11 @@ describe('exportGraphAsZip', () => {
     // whole rewrite pass is short-circuited before the per-ref callback ever
     // sees the malformed one.
     const goodId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Mixed' }]
-      if (cmd === 'export_page_markdown') {
-        return `![ok](attachment:${goodId})\n\n![bad](attachment:../../etc)`
-      }
-      if (cmd === 'read_attachment_meta') {
-        return {
+    stubExport(
+      {
+        list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Mixed' })],
+        export_page_markdown: () => `![ok](attachment:${goodId})\n\n![bad](attachment:../../etc)`,
+        read_attachment_meta: () => ({
           id: goodId,
           block_id: 'B1',
           filename: 'ok.png',
@@ -681,11 +650,10 @@ describe('exportGraphAsZip', () => {
           fs_path: 'x',
           created_at: 0,
           content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') return new Uint8Array([7]).buffer
-      return null
-    })
+        }),
+      },
+      new Uint8Array([7]),
+    )
 
     const result = await exportGraphAsZip(SPACE_ID)
 
@@ -707,15 +675,12 @@ describe('exportGraphAsZip', () => {
     mockedFlushActiveDraft.mockImplementation(async () => {
       order.push('flush')
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Notes' }]
-      }
-      if (cmd === 'export_page_markdown') {
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => {
         order.push('export')
         return '# content'
-      }
-      return null
+      },
     })
 
     await exportGraphAsZip(SPACE_ID)
@@ -726,19 +691,16 @@ describe('exportGraphAsZip', () => {
 
 describe('exportGraphAsZip skip accounting (#2965)', () => {
   it('counts a failed page export, writes export-report.txt naming it, and still returns the successful pages', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Good' },
-          { id: 'P2', content: 'Broken' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Good' }),
+        makePageHeading({ id: 'P2', content: 'Broken' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         if (id === 'P2') throw new Error('boom')
         return '# ok'
-      }
-      return null
+      },
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -757,18 +719,15 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
 
   it('counts a failed attachment ONCE even when referenced from multiple pages, and lists it in export-report.txt', async () => {
     const attId = 'ATT_GONE'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Page One' },
-          { id: 'P2', content: 'Page Two' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        return `[missing](attachment:${attId})`
-      }
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Page One' }),
+        makePageHeading({ id: 'P2', content: 'Page Two' }),
+      ],
+      export_page_markdown: () => `[missing](attachment:${attId})`,
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -794,31 +753,30 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
     // page reports the attachment as missing while another links to its bytes.
     const attId = '01HZX9P3QABCDEF0123456789'
     let metaCalls = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Page One' },
-          { id: 'P2', content: 'Page Two' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') return `[missing](attachment:${attId})`
-      if (cmd === 'read_attachment_meta') {
-        metaCalls += 1
-        if (metaCalls === 1) throw new Error('transient')
-        return {
-          id: attId,
-          block_id: 'B1',
-          filename: 'logo.png',
-          mime_type: 'image/png',
-          size_bytes: 1,
-          fs_path: 'x',
-          created_at: 0,
-          content_hash: null,
-        }
-      }
-      if (cmd === 'read_attachment') return new Uint8Array([1]).buffer
-      return null
-    })
+    stubExport(
+      {
+        list_all_pages_in_space: () => [
+          makePageHeading({ id: 'P1', content: 'Page One' }),
+          makePageHeading({ id: 'P2', content: 'Page Two' }),
+        ],
+        export_page_markdown: () => `[missing](attachment:${attId})`,
+        read_attachment_meta: () => {
+          metaCalls += 1
+          if (metaCalls === 1) throw new Error('transient')
+          return {
+            id: attId,
+            block_id: 'B1',
+            filename: 'logo.png',
+            mime_type: 'image/png',
+            size_bytes: 1,
+            fs_path: 'x',
+            created_at: 0,
+            content_hash: null,
+          }
+        },
+      },
+      new Uint8Array([1]),
+    )
 
     const result = await exportGraphAsZip(SPACE_ID)
 
@@ -835,12 +793,9 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
   })
 
   it('omits export-report.txt and reports zero skips on the happy path (behavior unchanged)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [{ id: 'P1', content: 'Fine' }]
-      }
-      if (cmd === 'export_page_markdown') return '# fine'
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Fine' })],
+      export_page_markdown: () => '# fine',
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -871,20 +826,17 @@ const REPORT_PREAMBLE =
 
 describe('export-report.txt exact format (#2965)', () => {
   it('renders the pages-only report verbatim, with no empty attachments section', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Good' },
-          { id: 'P2', content: 'Broken One' },
-          { id: 'P3', content: 'Broken Two' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Good' }),
+        makePageHeading({ id: 'P2', content: 'Broken One' }),
+        makePageHeading({ id: 'P3', content: 'Broken Two' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         if (id !== 'P1') throw new Error('boom')
         return '# ok'
-      }
-      return null
+      },
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -896,11 +848,12 @@ describe('export-report.txt exact format (#2965)', () => {
   })
 
   it('renders the attachments-only report verbatim, with no empty pages section', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Page One' }]
-      if (cmd === 'export_page_markdown') return '[missing](attachment:ATT_GONE)'
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Page One' })],
+      export_page_markdown: () => '[missing](attachment:ATT_GONE)',
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -912,20 +865,19 @@ describe('export-report.txt exact format (#2965)', () => {
   })
 
   it('renders both sections verbatim, pages first, separated by a blank line', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_all_pages_in_space') {
-        return [
-          { id: 'P1', content: 'Alpha' },
-          { id: 'P2', content: 'Beta' },
-        ]
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+    stubExport({
+      list_all_pages_in_space: () => [
+        makePageHeading({ id: 'P1', content: 'Alpha' }),
+        makePageHeading({ id: 'P2', content: 'Beta' }),
+      ],
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         if (id === 'P2') throw new Error('boom')
         return '[doc](attachment:ATT_X)'
-      }
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+      },
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const result = await exportGraphAsZip(SPACE_ID)
@@ -939,24 +891,21 @@ describe('export-report.txt exact format (#2965)', () => {
 
 describe('exportAllSpacesAsZip (#2964)', () => {
   it('iterates every space and nests each one under its own top-level folder', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_spaces') {
-        return [
-          { id: 'SPACE_A', name: 'Personal', accent_color: null },
-          { id: 'SPACE_B', name: 'Work', accent_color: null },
-        ]
-      }
-      if (cmd === 'list_all_pages_in_space') {
-        const scoped = (args as { scope: { space_id: string } }).scope.space_id
-        if (scoped === 'SPACE_A') return [{ id: 'P1', content: 'Notes' }]
-        if (scoped === 'SPACE_B') return [{ id: 'P2', content: 'Roadmap' }]
+    stubExport({
+      list_spaces: () => [
+        { id: 'SPACE_A', name: 'Personal', accent_color: null },
+        { id: 'SPACE_B', name: 'Work', accent_color: null },
+      ],
+      list_all_pages_in_space: (args) => {
+        const scoped = (args['scope'] as { space_id: string }).space_id
+        if (scoped === 'SPACE_A') return [makePageHeading({ id: 'P1', content: 'Notes' })]
+        if (scoped === 'SPACE_B') return [makePageHeading({ id: 'P2', content: 'Roadmap' })]
         return []
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+      },
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         return `# ${id}`
-      }
-      return null
+      },
     })
 
     const result = await exportAllSpacesAsZip()
@@ -980,19 +929,16 @@ describe('exportAllSpacesAsZip (#2964)', () => {
   })
 
   it('disambiguates two spaces whose names sanitize to the same folder name', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_spaces') {
-        return [
-          { id: 'SPACE_1AAAAAAA', name: 'Team', accent_color: null },
-          { id: 'SPACE_2BBBBBBB', name: 'Team', accent_color: null },
-        ]
-      }
-      if (cmd === 'list_all_pages_in_space') {
-        const scoped = (args as { scope: { space_id: string } }).scope.space_id
-        return [{ id: `P_${scoped}`, content: 'Notes' }]
-      }
-      if (cmd === 'export_page_markdown') return '# content'
-      return null
+    stubExport({
+      list_spaces: () => [
+        { id: 'SPACE_1AAAAAAA', name: 'Team', accent_color: null },
+        { id: 'SPACE_2BBBBBBB', name: 'Team', accent_color: null },
+      ],
+      list_all_pages_in_space: (args) => {
+        const scoped = (args['scope'] as { space_id: string }).space_id
+        return [makePageHeading({ id: `P_${scoped}`, content: 'Notes' })]
+      },
+      export_page_markdown: () => '# content',
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1011,9 +957,8 @@ describe('exportAllSpacesAsZip (#2964)', () => {
   })
 
   it('handles the zero-spaces case without producing a silent empty ZIP', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') return []
-      return null
+    stubExport({
+      list_spaces: () => [],
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1026,25 +971,22 @@ describe('exportAllSpacesAsZip (#2964)', () => {
   })
 
   it('sums skipped pages/attachments across spaces and writes one combined export-report.txt', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_spaces') {
-        return [
-          { id: 'SPACE_A', name: 'Personal', accent_color: null },
-          { id: 'SPACE_B', name: 'Work', accent_color: null },
-        ]
-      }
-      if (cmd === 'list_all_pages_in_space') {
-        const scoped = (args as { scope: { space_id: string } }).scope.space_id
-        if (scoped === 'SPACE_A') return [{ id: 'PA_OK', content: 'Good' }]
-        if (scoped === 'SPACE_B') return [{ id: 'PB_BAD', content: 'Broken' }]
+    stubExport({
+      list_spaces: () => [
+        { id: 'SPACE_A', name: 'Personal', accent_color: null },
+        { id: 'SPACE_B', name: 'Work', accent_color: null },
+      ],
+      list_all_pages_in_space: (args) => {
+        const scoped = (args['scope'] as { space_id: string }).space_id
+        if (scoped === 'SPACE_A') return [makePageHeading({ id: 'PA_OK', content: 'Good' })]
+        if (scoped === 'SPACE_B') return [makePageHeading({ id: 'PB_BAD', content: 'Broken' })]
         return []
-      }
-      if (cmd === 'export_page_markdown') {
-        const id = (args as { pageId: string }).pageId
+      },
+      export_page_markdown: (args) => {
+        const id = args['pageId'] as string
         if (id === 'PB_BAD') throw new Error('boom')
         return '# ok'
-      }
-      return null
+      },
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1063,13 +1005,12 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     mockedFlushActiveDraft.mockImplementation(async () => {
       order.push('flush')
     })
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') {
+    stubExport({
+      list_spaces: () => {
         order.push('list_spaces')
         return [{ id: 'SPACE_A', name: 'Personal', accent_color: null }]
-      }
-      if (cmd === 'list_all_pages_in_space') return []
-      return null
+      },
+      list_all_pages_in_space: () => [],
     })
 
     await exportAllSpacesAsZip()
@@ -1082,13 +1023,10 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     // it is part of the name — nesting on it would scatter one space's pages
     // under a folder shared with any other space whose name starts the same
     // way, and would break the "one top-level folder per space" contract.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') {
-        return [{ id: 'SPACE_A', name: 'Team/Docs', accent_color: null }]
-      }
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Notes' }]
-      if (cmd === 'export_page_markdown') return '# c'
-      return null
+    stubExport({
+      list_spaces: () => [{ id: 'SPACE_A', name: 'Team/Docs', accent_color: null }],
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => '# c',
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1098,16 +1036,13 @@ describe('exportAllSpacesAsZip (#2964)', () => {
   })
 
   it('omits export-report.txt entirely when every space exports cleanly', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') {
-        return [
-          { id: 'SPACE_A', name: 'Personal', accent_color: null },
-          { id: 'SPACE_B', name: 'Work', accent_color: null },
-        ]
-      }
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Notes' }]
-      if (cmd === 'export_page_markdown') return '# c'
-      return null
+    stubExport({
+      list_spaces: () => [
+        { id: 'SPACE_A', name: 'Personal', accent_color: null },
+        { id: 'SPACE_B', name: 'Work', accent_color: null },
+      ],
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => '# c',
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1125,14 +1060,13 @@ describe('exportAllSpacesAsZip (#2964)', () => {
     // The all-spaces report trigger is a disjunction, and this is the arm that
     // a pages-only fixture can never exercise: every page exports fine, yet an
     // attachment inside one of them could not be read.
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces') {
-        return [{ id: 'SPACE_A', name: 'Personal', accent_color: null }]
-      }
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Notes' }]
-      if (cmd === 'export_page_markdown') return '[missing](attachment:ATT_GONE)'
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      list_spaces: () => [{ id: 'SPACE_A', name: 'Personal', accent_color: null }],
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Notes' })],
+      export_page_markdown: () => '[missing](attachment:ATT_GONE)',
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const result = await exportAllSpacesAsZip()
@@ -1251,20 +1185,17 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
 
   it('rewrites an inline-image ref to the attachment filename, dropping the dead scheme', async () => {
     const attId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'read_attachment_meta') {
-        return {
-          id: attId,
-          block_id: 'B1',
-          filename: 'shot.png',
-          mime_type: 'image/png',
-          size_bytes: 3,
-          fs_path: 'x',
-          created_at: 0,
-          content_hash: null,
-        }
-      }
-      return null
+    stubExport({
+      read_attachment_meta: () => ({
+        id: attId,
+        block_id: 'B1',
+        filename: 'shot.png',
+        mime_type: 'image/png',
+        size_bytes: 3,
+        fs_path: 'x',
+        created_at: 0,
+        content_hash: null,
+      }),
     })
 
     const md = `![shot](attachment:${attId})`
@@ -1276,20 +1207,17 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
 
   it('rewrites a block-scoped file link to the attachment filename, keeping it a plain link', async () => {
     const attId = 'ATT_9'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'read_attachment_meta') {
-        return {
-          id: attId,
-          block_id: 'B1',
-          filename: 'report.pdf',
-          mime_type: 'application/pdf',
-          size_bytes: 3,
-          fs_path: 'x',
-          created_at: 0,
-          content_hash: null,
-        }
-      }
-      return null
+    stubExport({
+      read_attachment_meta: () => ({
+        id: attId,
+        block_id: 'B1',
+        filename: 'report.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 3,
+        fs_path: 'x',
+        created_at: 0,
+        content_hash: null,
+      }),
     })
 
     const md = `[report.pdf](attachment:${attId})`
@@ -1302,20 +1230,17 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
 
   it('flattens a path separator in a hostile attachment filename', async () => {
     const attId = 'ATT_EVIL'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'read_attachment_meta') {
-        return {
-          id: attId,
-          block_id: 'B1',
-          filename: '../../evil.sh',
-          mime_type: 'text/x-sh',
-          size_bytes: 1,
-          fs_path: 'x',
-          created_at: 0,
-          content_hash: null,
-        }
-      }
-      return null
+    stubExport({
+      read_attachment_meta: () => ({
+        id: attId,
+        block_id: 'B1',
+        filename: '../../evil.sh',
+        mime_type: 'text/x-sh',
+        size_bytes: 1,
+        fs_path: 'x',
+        created_at: 0,
+        content_hash: null,
+      }),
     })
 
     const md = `[doc](attachment:${attId})`
@@ -1327,9 +1252,10 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
 
   it('strips a ref down to bare alt/label text (no dead scheme) when the attachment cannot be resolved', async () => {
     const attId = '01HZX9P3QABCDEF0123456789'
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'read_attachment_meta') throw new Error('gone')
-      return null
+    stubExport({
+      read_attachment_meta: () => {
+        throw new Error('gone')
+      },
     })
 
     const md = `![x](attachment:${attId})`
@@ -1361,9 +1287,9 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
   it('resolves multiple distinct refs on the same page independently', async () => {
     const imgId = 'ATT_IMG'
     const fileId = 'ATT_FILE'
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'read_attachment_meta') {
-        const id = (args as { attachmentId: string }).attachmentId
+    stubExport({
+      read_attachment_meta: (args) => {
+        const id = args['attachmentId'] as string
         return {
           id,
           block_id: 'B1',
@@ -1374,8 +1300,7 @@ describe('resolveAttachmentRefsForCopy (#2967)', () => {
           created_at: 0,
           content_hash: null,
         }
-      }
-      return null
+      },
     })
 
     const md = `![shot](attachment:${imgId})\n\n- [report.pdf](attachment:${fileId})`

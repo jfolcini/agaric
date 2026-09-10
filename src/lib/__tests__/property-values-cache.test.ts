@@ -19,6 +19,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { queryClient } from '@/lib/query-client'
 
 const eventListeners = new Map<string, (event: unknown) => void>()
@@ -50,11 +51,15 @@ import {
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** What `list_property_values` currently answers; a test that refetches moves it. */
+let storedValues: string[] = []
+
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
   _resetPropertyValuesCacheForTest()
-  mockedInvoke.mockResolvedValue(['alpha', 'beta'])
+  storedValues = ['alpha', 'beta']
+  mockedInvoke.mockImplementation(mockInvokeCommands({ list_property_values: () => storedValues }))
 })
 
 afterEach(() => {
@@ -97,11 +102,13 @@ describe('property-values-cache', () => {
   // ------------------------------------------------------------------
   it('two concurrent fetchPropertyValuesOnce() calls share a single IPC', async () => {
     let resolveIpc: ((values: string[]) => void) | null = null
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise<string[]>((resolve) => {
-          resolveIpc = resolve
-        }),
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_values: () =>
+          new Promise<string[]>((resolve) => {
+            resolveIpc = resolve
+          }),
+      }),
     )
 
     const p1 = fetchPropertyValuesOnce('project')
@@ -132,8 +139,8 @@ describe('property-values-cache', () => {
 
     expect(queryClient.getQueryState(propertyValuesQueryKey('project'))?.isInvalidated).toBe(true)
 
-    // Next fetch fires a fresh IPC.
-    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
+    // Next fetch fires a fresh IPC, and the backend now has the new value.
+    storedValues = ['alpha', 'beta', 'gamma']
     const refreshed = await fetchPropertyValuesOnce('project')
     expect(refreshed).toEqual(['alpha', 'beta', 'gamma'])
     expect(listPropertyValuesInvocationCount()).toBe(2)
@@ -163,7 +170,7 @@ describe('property-values-cache', () => {
     expect(effortAgain).toBe(effort)
     expect(listPropertyValuesInvocationCount()).toBe(2)
 
-    mockedInvoke.mockResolvedValueOnce(['alpha', 'beta', 'gamma'])
+    storedValues = ['alpha', 'beta', 'gamma']
     const projectAgain = await fetchPropertyValuesOnce('project')
     expect(projectAgain).toEqual(['alpha', 'beta', 'gamma'])
     expect(projectAgain).not.toBe(project)
@@ -188,7 +195,11 @@ describe('property-values-cache', () => {
   // (e) Error path falls back to empty array, and the fallback is cached.
   // ------------------------------------------------------------------
   it('falls back to an empty array when listPropertyValues rejects and caches it', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_property_values: () => Promise.reject(new Error('IPC failure')),
+      }),
+    )
     const result = await fetchPropertyValuesOnce('project')
     expect(result).toEqual([])
     expect(listPropertyValuesInvocationCount()).toBe(1)
