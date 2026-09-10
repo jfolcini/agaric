@@ -631,10 +631,8 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
     const note = at(parseEnex(xml))
-    // No bullet-wrapping-a-task and no over-indented marker.
-    expect(note.markdown).not.toContain('- - [')
-    expect(note.markdown).not.toContain('-   [')
-    // Each task is its own line — assert the whole body, exactly.
+    // Exactly, so a bullet wrapping a task or an over-indented marker fails
+    // here rather than needing its own negative assertion.
     expect(note.markdown).toBe('intro\n\n- [ ] pending\n- [x] done')
   })
 
