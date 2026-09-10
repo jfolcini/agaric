@@ -5,16 +5,20 @@
  * truncated to the backend clamp) is now both a backend `AppError::
  * Validation` (Phase 1) AND a TypeScript error, but ONLY for call sites
  * that go through the hand-written wrapper layer (this module's scope).
- * Every pagination-aware IPC wrapper in `src/lib/tauri/*.ts` takes
+ * The surviving pagination-aware wrappers in `src/lib/tauri/*.ts` take
  * `SafeLimit` instead of `number`, so a plain `number` literal does
  * not assign and the caller is forced through {@link safeLimit} (or
  * one of the per-IPC cap helpers below), which runs the bounds check
  * at the call site rather than silently round-tripping a bad value
- * to the backend. The generated `src/lib/bindings.ts` carries no such
- * brand — every paginated `limit` there is typed plain `number | null`
- * — so a call made directly through `commands.*` (bypassing the wrapper)
- * is NOT caught by the type system; it relies solely on the backend's
- * runtime `AppError::Validation` rejection.
+ * to the backend.
+ *
+ * That layer is being retired (#4411), and the generated
+ * `src/lib/bindings.ts` carries no such brand — every paginated `limit`
+ * there is typed plain `number | null` — so the type system does not
+ * catch a direct `commands.*` call. What catches the literal form is
+ * `src/__tests__/limit-literal-guard.test.ts` (#4918); an unbounded
+ * VARIABLE is caught by neither, and falls back to the backend's runtime
+ * `AppError::Validation` rejection.
  *
  * Design note — single unbranded shape.  An earlier iteration of this
  * module parameterised the brand by the per-IPC cap
