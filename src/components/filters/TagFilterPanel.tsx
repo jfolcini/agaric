@@ -99,23 +99,30 @@ function FilterFeedback({
     // other visible cue, so a screen-reader user hears the new count (#4548).
     // The element stays MOUNTED across the refetch — a live region inserted
     // together with its content is not announced — so during `loading` it keeps
-    // the previous text rather than unmounting.
+    // the previous text rather than unmounting. A FIRST fetch has no previous
+    // text: `keepPreviousData` holds the prior key's rows, and the first query
+    // of a session has none, so it mounts busy and empty rather than claiming
+    // "0 blocks match" over the skeleton.
     <p
       className="text-sm text-muted-foreground"
       data-testid="tag-filter-feedback"
       aria-live="polite"
       aria-busy={loading}
     >
-      {matchText}
-      {flat && selectedCount > 0 && (
+      {resultCount > 0 && (
         <>
-          {' '}
-          {selectedCount}{' '}
-          {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
-          {mode.toUpperCase()})
+          {matchText}
+          {flat && selectedCount > 0 && (
+            <>
+              {' '}
+              {selectedCount}{' '}
+              {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
+              {mode.toUpperCase()})
+            </>
+          )}
+          {includeInherited && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}
-      {includeInherited && <> {t('tagFilter.includingInherited')}</>}
     </p>
   )
 }

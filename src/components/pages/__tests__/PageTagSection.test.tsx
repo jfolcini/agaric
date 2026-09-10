@@ -147,7 +147,6 @@ describe('PageTagSection inherited chips (#1423)', () => {
     expect(screen.getByLabelText(/inherited tag project/i)).toBeInTheDocument()
     expect(chip).toHaveAttribute('title', t('pageHeader.inheritedTagHint'))
     expect(chip).toHaveAttribute('title', expect.stringMatching(/include inherited tags/i))
-    expect(chip).not.toHaveAttribute('title', expect.stringMatching(/also matches descendants/i))
 
     // Inherited chips are NOT directly removable (the tag lives on an ancestor).
     expect(screen.queryByRole('button', { name: /remove tag project/i })).not.toBeInTheDocument()

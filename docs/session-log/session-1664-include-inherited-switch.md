@@ -49,3 +49,14 @@ content is not announced. It stays mounted across the refetch now, marked
 `aria-busy`. The "(including inherited tags)" fragment also moved to the end
 of the sentence, and a `muted` prop that was already the `Label` default is
 gone.
+
+## Round three
+
+Keeping the live region mounted across a refetch also mounted it during the
+FIRST fetch, where `keepPreviousData` has nothing to hold and `resultCount` is
+0: the panel read "0 blocks match 1 tag (AND)" over the skeleton for the whole
+round trip. The element now stays mounted and busy but says nothing until it
+has a count. A test holds the first `query_by_tags` pending and asserts no
+"match" text, then the real count after resolution; removing the gate reddens
+it. Also deleted the `not.toHaveAttribute` in `PageTagSection.test.tsx` that
+the exact-equality assertion above it made unfalsifiable.

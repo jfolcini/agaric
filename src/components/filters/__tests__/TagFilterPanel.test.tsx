@@ -459,6 +459,42 @@ describe('TagFilterPanel', () => {
     })
   })
 
+  // The first query of a session has no previous rows for `keepPreviousData`
+  // to hold, so the live region mounts with nothing to say: it must not read
+  // "0 blocks match" over the loading skeleton for the whole IPC round trip.
+  it('states no count while the first fetch is pending, then the real one', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    render(<TagFilterPanel />)
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+
+    let resolveQuery: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQuery = resolve
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    const feedback = screen.getByTestId('tag-filter-feedback')
+    expect(feedback).toHaveAttribute('aria-busy', 'true')
+    expect(feedback).not.toHaveTextContent(/match/)
+
+    await act(async () => {
+      resolveQuery({
+        items: [makeBlock({ id: 'B1', content: 'one' }), makeBlock({ id: 'B2', content: 'two' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(feedback).toHaveAttribute('aria-busy', 'false')
+    expect(feedback).toHaveTextContent('2 blocks match 1 tag (AND)')
+  })
+
   it('does not show results before any tag is selected', () => {
     render(<TagFilterPanel />)
     expect(screen.queryByText(t('tagFilter.noMatchesFound'))).not.toBeInTheDocument()
