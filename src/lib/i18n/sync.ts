@@ -142,7 +142,7 @@ export const sync: Record<string, string> = {
   //    None and try_sync_with_peer bails without an event.
   // So "may" is load-bearing — do not promote it to "can".
   'device.mdnsDisabledHint':
-    'Automatic discovery unavailable: {{reason}}. Pairing a new device needs discovery working; devices you have already paired may still sync.',
+    'Automatic discovery unavailable: {{reason}}. Pair a new device by scanning its QR code; devices you have already paired may still sync.',
   // #3864. Deliberately states only what the app can actually observe — the
   // address is outside the private ranges — and stops short of asserting the
   // device IS exposed, which it cannot know: a router handing out public

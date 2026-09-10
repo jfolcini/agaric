@@ -463,6 +463,32 @@ mod tests {
     /// each must see the other through `discovery_event_to_kind` with the key, the name
     /// and the bound port.
     ///
+    /// `lan_only` clears the address-lookup defaults in the builder; `attach` relies on the
+    /// container surviving that clear so it can add the one lookup we want. If an iroh
+    /// release dropped the container instead, `attach` would fail, `MdnsDisabled` would
+    /// latch for the session, and every device would lose discovery behind a single
+    /// `warn!` with CI green — this is the check that needs no multicast interface.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_bound_lan_only_endpoint_still_accepts_an_address_lookup() {
+        let service = SyncService::bind(
+            std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::LOCALHOST,
+                0,
+            )),
+            8,
+            &[],
+            DnsResolver::default(),
+            iroh::SecretKey::generate(),
+        )
+        .await
+        .expect("a loopback /8 sync service binds");
+        assert!(
+            service.endpoint().address_lookup().is_ok(),
+            "clear_address_lookup() must leave an empty container, not none"
+        );
+        service.endpoint().close().await;
+    }
+
     /// Ignored in the per-PR lane because it needs a multicast-capable interface with a
     /// non-loopback address: Linux `lo` carries no `MULTICAST` flag, and a loopback bind
     /// announces nothing by design (see `announce_addr_filter`). Run it by hand with
