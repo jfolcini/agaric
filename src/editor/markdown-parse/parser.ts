@@ -661,11 +661,12 @@ const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. ([^\\n]*)$`)
  * Rewrite a line's LEADING WHITESPACE RUN as the spaces it occupies in columns,
  * leaving everything from the first non-whitespace character verbatim.
  *
- * Used by `parseParagraph` alone, because a paragraph is the ONE production
- * that keeps a line's indentation as stored TEXT — every other production is
+ * Used by `parseParagraph`'s NON-nested branch alone, because that is the one
+ * place a line's indentation is kept as stored TEXT — every other production is
  * anchored at column 0 or captures its content after a marker, and a fenced
  * code block's content never reaches the dispatcher at all, so its tabs are
- * untouched (#4052 requires exactly that).
+ * untouched (#4052 requires exactly that). On a nested line the indentation is
+ * structure and goes to {@link stripLeadingIndent} instead.
  *
  * The rule this draws: leading whitespace is INDENTATION and is stored in
  * columns; everything else is CONTENT and is stored byte for byte. Without it
@@ -686,15 +687,7 @@ function expandLeadingIndent(line: string): string {
   return ' '.repeat(leadingIndent(line)) + rest
 }
 
-/**
- * Drop a line's leading whitespace run entirely — the rule for a paragraph line
- * that is a list item's NESTED content, where indentation is structure the item
- * dedent has already spent and any residue is the foreign document's, not the
- * text's (#4050: `- item` + `    continued` used to store `  continued`). The
- * serializer defuses a nested paragraph's own leading whitespace with a `\`
- * escape (`serializeBlockSequence`), so whitespace that survives to here can
- * only be indentation.
- */
+/** Drop a line's leading whitespace run entirely — see {@link parseParagraph}. */
 function stripLeadingIndent(line: string): string {
   return line.replace(/^[ \t]+/, '')
 }
@@ -840,9 +833,8 @@ function collectListItem(
   // beyond one content column belongs to the content, not to the structure —
   // and where that residue is itself a marker (a 4-space-nested import leaves
   // `  - child`), the marker-indent tolerance still reads it as a sub-list.
-  // On a PARAGRAPH line the residue is the foreign document's indentation and
-  // is dropped rather than stored as text (#4050) — see `parseParagraph`'s
-  // `indentIsStructure`.
+  // What that residue means on a PARAGRAPH line is `parseParagraph`'s
+  // `indentIsStructure` (#4050).
   const nested = nestedRaw.map((line) => dedentColumns(line, contentColumn))
   return { textLines, nested, next: j }
 }
@@ -982,7 +974,9 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
  * `indentIsStructure` marks the lines of a list item's nested content, which
  * `collectListItem` has already dedented by the item's content column: there,
  * leftover indentation is the foreign document's and is dropped rather than
- * stored (#4050). See {@link stripLeadingIndent}.
+ * stored (#4050). Safe because the serializer defuses a nested paragraph's own
+ * leading whitespace with a `\` escape (`serializeBlockSequence`), so what
+ * survives to here can only be indentation.
  */
 export function parseParagraph(
   lines: readonly string[],
@@ -993,10 +987,6 @@ export function parseParagraph(
   const inlineNodes: InlineNode[] = []
   let j = i
   for (;;) {
-    // A paragraph is the only production that would store a line's indentation
-    // as text, so it is the one place that indentation has to be dealt with:
-    // dropped where the item dedent already spent it (`stripLeadingIndent`),
-    // normalized to columns everywhere else (`expandLeadingIndent`).
     const raw = lines[j] as string
     const line = indentIsStructure ? stripLeadingIndent(raw) : expandLeadingIndent(raw)
     if (j + 1 >= lines.length || trailingBackslashRun(line) % 2 === 0) {
