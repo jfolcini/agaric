@@ -221,3 +221,87 @@ pub mod test_support {
         }
     }
 }
+
+/// #3443 — the double's contract, checked against the real host.
+///
+/// [`test_support::RecordingApplyHost`] stands in for [`Materializer`] across
+/// this crate's session and driver tests, and nothing checked that what the
+/// double promises is what the materializer delivers. A session relies on
+/// three things from its host, and each is asserted on BOTH implementations
+/// through one function, so the double cannot drift from the real impl
+/// without this reddening:
+///
+///   * `loro_state()` is one registry, not a fresh one per call — the session
+///     reads it at several points of one exchange (`session_state_machine.rs`)
+///     and would split its own engine state otherwise;
+///   * `flush()` resolves after `enqueue_inbound_sync_rebuilds`, including
+///     the #2264 empty import — the session awaits it at the end of every
+///     import, so a host whose flush waited on work nothing drains would hang
+///     the session where the double reports success;
+///   * `app_data_dir()` is `None` for a host with no registered root — the
+///     signal `sync_files::app_data_dir_from_pool` falls back on.
+///
+/// What the real host does with the rebuilds is the engine's to pin
+/// (`materializer/tests/cache_rebuild.rs`); this is the port's contract only.
+#[cfg(test)]
+mod contract_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use agaric_core::ulid::BlockId;
+    use agaric_engine::materializer::Materializer;
+    use agaric_store::test_support::init_pool;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    use super::ApplyHost;
+    use super::test_support::RecordingApplyHost;
+
+    const CHANGED: &str = "APPLY_HOST_CONTRACT_1";
+
+    async fn exercise<H: ApplyHost>(host: &H) {
+        assert!(
+            Arc::ptr_eq(&host.loro_state(), &host.loro_state()),
+            "loro_state() must hand out one registry, not a fresh one per call"
+        );
+        assert_eq!(
+            host.app_data_dir(),
+            None,
+            "no root is registered on either host"
+        );
+        host.enqueue_inbound_sync_rebuilds(&[BlockId::test_id(CHANGED)], &[])
+            .await
+            .expect("an import with one changed block is accepted");
+        host.enqueue_inbound_sync_rebuilds(&[], &[])
+            .await
+            .expect("an empty import is accepted (#2264)");
+        tokio::time::timeout(Duration::from_secs(30), host.flush())
+            .await
+            .expect("flush() resolves after the rebuilds were enqueued")
+            .expect("flush() succeeds");
+    }
+
+    async fn pool_with_changed_block() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let pool = init_pool(&dir.path().join("contract.db"))
+            .await
+            .expect("init_pool");
+        sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', 'inbound text', 1)")
+            .bind(CHANGED)
+            .execute(&pool)
+            .await
+            .expect("seed the changed block");
+        (pool, dir)
+    }
+
+    #[tokio::test]
+    async fn the_double_honours_the_contract() {
+        exercise(&RecordingApplyHost::new()).await;
+    }
+
+    #[tokio::test]
+    async fn the_materializer_honours_the_contract() {
+        let (pool, _dir) = pool_with_changed_block().await;
+        exercise(&Materializer::new(pool)).await;
+    }
+}
