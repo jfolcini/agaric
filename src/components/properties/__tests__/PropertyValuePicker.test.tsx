@@ -6,8 +6,15 @@ import { axe } from 'vitest-axe'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { PropertyValuePicker } from '@/components/properties/PropertyValuePicker'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
+
+const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -31,10 +38,7 @@ describe('PropertyValuePicker', () => {
   // Rendering
   // -----------------------------------------------------------------------
   it('renders property key select and value input', async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_keys') return ['project', 'effort']
-      return undefined
-    })
+    stubInvoke({ list_property_keys: () => ['project', 'effort'] })
 
     renderPicker()
     expect(screen.getByLabelText('Property key')).toBeInTheDocument()
@@ -42,14 +46,14 @@ describe('PropertyValuePicker', () => {
   })
 
   it('initializes key and value from selected prop with colon format', () => {
-    vi.mocked(invoke).mockResolvedValue([])
+    stubInvoke({ list_property_keys: () => [] })
     renderPicker({ selected: ['project:alpha'] })
 
     expect(screen.getByLabelText('Value (optional)')).toHaveValue('alpha')
   })
 
   it('initializes key only when no colon in selected value', () => {
-    vi.mocked(invoke).mockResolvedValue([])
+    stubInvoke({ list_property_keys: () => [] })
     renderPicker({ selected: ['custom_key'] })
 
     expect(screen.getByLabelText('Value (optional)')).toHaveValue('')
@@ -59,10 +63,7 @@ describe('PropertyValuePicker', () => {
   // Interaction
   // -----------------------------------------------------------------------
   it('calls onChange when property value is typed', async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_keys') return ['project']
-      return undefined
-    })
+    stubInvoke({ list_property_keys: () => ['project'] })
 
     const user = userEvent.setup()
     const onChange = vi.fn()
@@ -73,10 +74,7 @@ describe('PropertyValuePicker', () => {
   })
 
   it('calls onChange with key:value format', async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_keys') return ['project']
-      return undefined
-    })
+    stubInvoke({ list_property_keys: () => ['project'] })
 
     const onChange = vi.fn()
     renderPicker({ selected: ['project:alpha'], onChange })
@@ -86,7 +84,7 @@ describe('PropertyValuePicker', () => {
   })
 
   it('calls onChange with empty array when no key selected', () => {
-    vi.mocked(invoke).mockResolvedValue([])
+    stubInvoke({ list_property_keys: () => [] })
     const onChange = vi.fn()
     renderPicker({ onChange })
 
@@ -97,29 +95,32 @@ describe('PropertyValuePicker', () => {
   // A11y
   // -----------------------------------------------------------------------
   it('has no a11y violations', async () => {
-    vi.mocked(invoke).mockResolvedValue([])
+    stubInvoke({ list_property_keys: () => [] })
     const { container } = renderPicker()
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
   it('has no a11y violations with pre-filled values', async () => {
-    vi.mocked(invoke).mockResolvedValue(['project'])
+    stubInvoke({ list_property_keys: () => ['project'] })
     const { container } = renderPicker({ selected: ['project:alpha'] })
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
   // -----------------------------------------------------------------------
-  // Error-path tests (mockRejectedValueOnce)
+  // Error-path tests: `mockInvokeCommands` takes a handler that rejects, so
+  // the rejection path is typed like every other stub here.
   // -----------------------------------------------------------------------
   it('listPropertyKeys rejection falls back to empty property key list', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('DB read error'))
+    stubInvoke({
+      list_property_keys: () => Promise.reject(new Error('DB read error')),
+    })
 
     renderPicker()
 
     await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalledWith('list_property_keys')
+      expect(mockedInvoke).toHaveBeenCalledWith('list_property_keys')
     })
 
     // The select should only contain the placeholder option, no property keys
@@ -129,12 +130,14 @@ describe('PropertyValuePicker', () => {
   })
 
   it('listPropertyKeys rejection still renders labels and input', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('network timeout'))
+    stubInvoke({
+      list_property_keys: () => Promise.reject(new Error('network timeout')),
+    })
 
     renderPicker()
 
     await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalled()
+      expect(mockedInvoke).toHaveBeenCalled()
     })
 
     expect(screen.getByLabelText('Property key')).toBeInTheDocument()
@@ -142,14 +145,16 @@ describe('PropertyValuePicker', () => {
   })
 
   it('listPropertyKeys rejection does not prevent value input interaction', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('backend unavailable'))
+    stubInvoke({
+      list_property_keys: () => Promise.reject(new Error('backend unavailable')),
+    })
 
     const user = userEvent.setup()
     const onChange = vi.fn()
     renderPicker({ selected: ['effort'], onChange })
 
     await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalled()
+      expect(mockedInvoke).toHaveBeenCalled()
     })
 
     // User can still type in the value input even though property keys failed to load
@@ -158,12 +163,14 @@ describe('PropertyValuePicker', () => {
   })
 
   it('has no a11y violations when listPropertyKeys rejects', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('a11y error path'))
+    stubInvoke({
+      list_property_keys: () => Promise.reject(new Error('a11y error path')),
+    })
 
     const { container } = renderPicker()
 
     await waitFor(() => {
-      expect(vi.mocked(invoke)).toHaveBeenCalled()
+      expect(mockedInvoke).toHaveBeenCalled()
     })
 
     const results = await axe(container)

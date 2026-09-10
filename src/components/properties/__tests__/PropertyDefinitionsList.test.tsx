@@ -15,7 +15,9 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
+import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 
@@ -24,7 +26,30 @@ import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority
 
 const mockedInvoke = vi.mocked(invoke)
 
-function makePropDef(key: string, valueType = 'text', options: string | null = null) {
+/**
+ * Install command-keyed handlers, MERGING with those already installed.
+ *
+ * Tests here stub the initial `list_property_defs` load and then, once the
+ * list has rendered, the mutation the interaction is about. Merging keeps the
+ * load handler alive across that second call, so a re-fetch resolves instead
+ * of falling through to `strictInvokeFallback`.
+ */
+let handlers: TypedInvokeHandlers = {}
+function stubInvoke(next: Readonly<TypedInvokeHandlers>): void {
+  handlers = { ...handlers, ...next }
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** Stub the `list_property_defs` load with one page of definitions. */
+function stubDefs(page: PageResponse<PropertyDefinition>): void {
+  stubInvoke({ list_property_defs: () => page })
+}
+
+function makePropDef(
+  key: string,
+  valueType = 'text',
+  options: string | null = null,
+): PropertyDefinition {
   return {
     key,
     value_type: valueType,
@@ -34,23 +59,26 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
 }
 
 /**
- * `list_property_defs` is now cursor-paginated and returns a
- * `PageResponse<PropertyDefinition>` envelope instead of a flat array.
- * `pageOf` wraps the test-fixture array so `mockResolvedValueOnce(pageOf([...]))`
- * mirrors the wire shape the component actually consumes.
+ * `list_property_defs` is cursor-paginated and returns a
+ * `PageResponse<PropertyDefinition>` envelope, not a flat array.
+ *
+ * #4668 — this used to omit `total_count`, a key `PageResponse` always
+ * serialises (`bindings.ts`), so every stub here returned a shape the backend
+ * cannot send. Annotating the return type is what makes that a `tsc` failure.
  */
-function pageOf<T>(items: T[]) {
-  return { items, next_cursor: null, has_more: false }
+function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
+  return { items, next_cursor: null, has_more: false, total_count: null }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   __resetPriorityLevelsForTests()
+  handlers = {}
 })
 
 describe('PropertyDefinitionsList', () => {
   it('renders property definitions list', async () => {
-    mockedInvoke.mockResolvedValueOnce(
+    stubDefs(
       pageOf([
         makePropDef('status', 'select', '["open","closed"]'),
         makePropDef('priority', 'number'),
@@ -66,7 +94,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('shows loading state initially', () => {
-    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+    stubInvoke({ list_property_defs: () => new Promise<never>(() => {}) })
 
     const { container } = render(<PropertyDefinitionsList />)
 
@@ -75,7 +103,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('shows empty state when no definitions', async () => {
-    mockedInvoke.mockResolvedValueOnce(pageOf([]))
+    stubDefs(pageOf([]))
 
     render(<PropertyDefinitionsList />)
 
@@ -84,7 +112,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('search filters definitions by key', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
+    stubDefs(
       pageOf([
         makePropDef('status', 'select'),
         makePropDef('priority', 'number'),
@@ -109,9 +137,7 @@ describe('PropertyDefinitionsList', () => {
   // Unicode-aware fold via `matchesSearchFolded`.
   it('search matches accented property key via diacritic fold', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
-      pageOf([makePropDef('café-visits', 'number'), makePropDef('priority', 'number')]),
-    )
+    stubDefs(pageOf([makePropDef('café-visits', 'number'), makePropDef('priority', 'number')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -126,7 +152,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('create button creates a new definition', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([]))
+    stubDefs(pageOf([]))
 
     render(<PropertyDefinitionsList />)
 
@@ -134,7 +160,7 @@ describe('PropertyDefinitionsList', () => {
       expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
     })
 
-    mockedInvoke.mockResolvedValueOnce(makePropDef('my-prop', 'text'))
+    stubInvoke({ create_property_def: () => makePropDef('my-prop', 'text') })
 
     const keyInput = screen.getByPlaceholderText('Property key')
     await user.type(keyInput, 'my-prop')
@@ -156,7 +182,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('delete button shows confirmation dialog', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')]))
+    stubDefs(pageOf([makePropDef('to-delete', 'text')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -177,13 +203,13 @@ describe('PropertyDefinitionsList', () => {
 
   it('confirming delete removes the definition', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')]))
+    stubDefs(pageOf([makePropDef('to-delete', 'text')]))
 
     render(<PropertyDefinitionsList />)
 
     expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
-    mockedInvoke.mockResolvedValueOnce(undefined)
+    stubInvoke({ delete_property_def: () => null })
 
     const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
     await user.click(deleteBtn)
@@ -199,7 +225,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('shows edit options button for select-type properties', async () => {
-    mockedInvoke.mockResolvedValueOnce(
+    stubDefs(
       pageOf([
         makePropDef('status', 'select', '["open","closed"]'),
         makePropDef('priority', 'number'),
@@ -217,7 +243,7 @@ describe('PropertyDefinitionsList', () => {
   // ---------------------------------------------------------------------------
 
   it('shows toast error when loading definitions fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('DB error'))
+    stubInvoke({ list_property_defs: () => Promise.reject(new Error('DB error')) })
 
     render(<PropertyDefinitionsList />)
 
@@ -233,7 +259,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('shows toast error when creating a definition fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([])) // initial load
+    stubDefs(pageOf([])) // initial load
 
     render(<PropertyDefinitionsList />)
 
@@ -241,7 +267,7 @@ describe('PropertyDefinitionsList', () => {
       expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
     })
 
-    mockedInvoke.mockRejectedValueOnce(new Error('Duplicate key'))
+    stubInvoke({ create_property_def: () => Promise.reject(new Error('Duplicate key')) })
 
     const keyInput = screen.getByPlaceholderText('Property key')
     await user.type(keyInput, 'my-prop')
@@ -269,7 +295,7 @@ describe('PropertyDefinitionsList', () => {
   // the generic toast, so this cannot pass by showing every thrown message.
   it("shows the backend's reason when a definition would trap existing values", async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([])) // initial load
+    stubDefs(pageOf([])) // initial load
 
     render(<PropertyDefinitionsList />)
 
@@ -277,13 +303,14 @@ describe('PropertyDefinitionsList', () => {
       expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
     })
 
-    mockedInvoke.mockRejectedValueOnce({
+    const trapped: AppError = {
       kind: 'validation',
       code: null,
       message:
         "cannot declare property 'year' as 'number': 1 value(s) already stored under this key " +
         'would be rejected by that type (1 stored as text).',
-    })
+    }
+    stubInvoke({ create_property_def: () => Promise.reject(trapped) })
 
     await user.type(screen.getByPlaceholderText('Property key'), 'year')
     await user.click(screen.getByRole('button', { name: /Create/i }))
@@ -301,13 +328,13 @@ describe('PropertyDefinitionsList', () => {
 
   it('shows toast error when deleting a definition fails and keeps item', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')])) // initial load
+    stubDefs(pageOf([makePropDef('to-delete', 'text')])) // initial load
 
     render(<PropertyDefinitionsList />)
 
     expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
-    mockedInvoke.mockRejectedValueOnce(new Error('Not found'))
+    stubInvoke({ delete_property_def: () => Promise.reject(new Error('Not found')) })
 
     const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
     await user.click(deleteBtn)
@@ -327,9 +354,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('shows toast error when saving options fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
-      pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-    ) // initial load
+    stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')])) // initial load
 
     render(<PropertyDefinitionsList />)
 
@@ -339,7 +364,9 @@ describe('PropertyDefinitionsList', () => {
     const editBtn = screen.getByRole('button', { name: /Edit options/i })
     await user.click(editBtn)
 
-    mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
+    stubInvoke({
+      update_property_def_options: () => Promise.reject(new Error('Invalid JSON')),
+    })
 
     const optionsInput = screen.getByLabelText('Options JSON')
     // Client-side parse validation now disables Save on invalid
@@ -359,7 +386,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValueOnce(
+    stubDefs(
       pageOf([
         makePropDef('status', 'select', '["open","closed"]'),
         makePropDef('priority', 'number'),
@@ -375,7 +402,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('includes ref type in the create-property type dropdown', async () => {
-    mockedInvoke.mockResolvedValueOnce(pageOf([]))
+    stubDefs(pageOf([]))
 
     render(<PropertyDefinitionsList />)
 
@@ -399,7 +426,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('hides delete button on built-in properties and shows Built-in badge', async () => {
-    mockedInvoke.mockResolvedValueOnce(
+    stubDefs(
       pageOf([
         makePropDef('repeat', 'text'),
         makePropDef('completed_at', 'date'),
@@ -432,9 +459,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('search clear button clears the filter', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
-      pageOf([makePropDef('status', 'select'), makePropDef('priority', 'number')]),
-    )
+    stubDefs(pageOf([makePropDef('status', 'select'), makePropDef('priority', 'number')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -456,9 +481,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('shows empty state when filter matches nothing', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
-      pageOf([makePropDef('status', 'select'), makePropDef('priority', 'number')]),
-    )
+    stubDefs(pageOf([makePropDef('status', 'select'), makePropDef('priority', 'number')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -473,7 +496,7 @@ describe('PropertyDefinitionsList', () => {
   })
 
   it('delete button has aria-label for tooltip accessibility', async () => {
-    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('my-prop', 'text')]))
+    stubDefs(pageOf([makePropDef('my-prop', 'text')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -488,7 +511,7 @@ describe('PropertyDefinitionsList', () => {
   // the row. Pin the visibility so a future "hide-until-hover" regression
   // is caught at test time.
   it('delete button is always visible (no opacity-0 / group-hover gating)', async () => {
-    mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('my-prop', 'text')]))
+    stubDefs(pageOf([makePropDef('my-prop', 'text')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -505,9 +528,7 @@ describe('PropertyDefinitionsList', () => {
   // Options JSON placeholder resolves via t()
   it('options JSON input placeholder resolves via t()', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(
-      pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-    )
+    stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -524,7 +545,7 @@ describe('PropertyDefinitionsList', () => {
   // Todo_state's options are locked (cycle is fixed by code + migration 0029)
   describe('locked options for todo_state', () => {
     it('does NOT render the Edit options button for todo_state', async () => {
-      mockedInvoke.mockResolvedValueOnce(
+      stubDefs(
         pageOf([
           makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
           makePropDef('priority', 'select', '["1","2","3"]'),
@@ -543,9 +564,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('renders a locked indicator for todo_state with accessible tooltip copy', async () => {
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
-      )
+      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -558,9 +577,7 @@ describe('PropertyDefinitionsList', () => {
     // icon with an explicit accessible label/title so screen-reader and
     // mouse-hover users learn the property is not editable.
     it('lock indicator exposes an accessible "fixed and not editable" label', async () => {
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
-      )
+      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -572,7 +589,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('does NOT render the lock indicator on non-locked properties', async () => {
-      mockedInvoke.mockResolvedValueOnce(
+      stubDefs(
         pageOf([
           makePropDef('priority', 'select', '["1","2","3"]'),
           makePropDef('effort', 'select', '["15m","30m"]'),
@@ -592,9 +609,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('priority (not locked yet,) still shows the Edit options button', async () => {
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('priority', 'select', '["1","2","3"]')]),
-      )
+      stubDefs(pageOf([makePropDef('priority', 'select', '["1","2","3"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -603,7 +618,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('renders without a11y violations when todo_state is locked', async () => {
-      mockedInvoke.mockResolvedValueOnce(
+      stubDefs(
         pageOf([
           makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
           makePropDef('priority', 'select', '["1","2","3"]'),
@@ -622,9 +637,7 @@ describe('PropertyDefinitionsList', () => {
   // tooltip on the todo_state row only.
   describe('todo_state cycle help', () => {
     it('renders the HelpCircle on the todo_state row', async () => {
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
-      )
+      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -635,7 +648,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('does NOT render the HelpCircle on non-todo_state rows', async () => {
-      mockedInvoke.mockResolvedValueOnce(
+      stubDefs(
         pageOf([
           makePropDef('priority', 'select', '["1","2","3"]'),
           makePropDef('effort', 'select', '["15m","30m","1h"]'),
@@ -656,15 +669,15 @@ describe('PropertyDefinitionsList', () => {
   describe('priority level refresh', () => {
     it('updates getPriorityLevels() when priority options are saved', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('priority', 'select', '["1","2","3"]')]),
-      )
+      stubDefs(pageOf([makePropDef('priority', 'select', '["1","2","3"]')]))
 
       render(<PropertyDefinitionsList />)
 
       expect(await screen.findByText('Priority')).toBeInTheDocument()
 
-      mockedInvoke.mockResolvedValueOnce(makePropDef('priority', 'select', '["1","2","3","4"]'))
+      stubInvoke({
+        update_property_def_options: () => makePropDef('priority', 'select', '["1","2","3","4"]'),
+      })
 
       const editBtn = screen.getByRole('button', { name: /Edit options/i })
       await user.click(editBtn)
@@ -684,13 +697,15 @@ describe('PropertyDefinitionsList', () => {
 
     it('does NOT refresh priority levels when editing a different property', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('stage', 'select', '["a","b"]')]))
+      stubDefs(pageOf([makePropDef('stage', 'select', '["a","b"]')]))
 
       render(<PropertyDefinitionsList />)
 
       expect(await screen.findByText('Stage')).toBeInTheDocument()
 
-      mockedInvoke.mockResolvedValueOnce(makePropDef('stage', 'select', '["x","y","z"]'))
+      stubInvoke({
+        update_property_def_options: () => makePropDef('stage', 'select', '["x","y","z"]'),
+      })
 
       const editBtn = screen.getByRole('button', { name: /Edit options/i })
       await user.click(editBtn)
@@ -717,9 +732,7 @@ describe('PropertyDefinitionsList', () => {
   describe('inline options JSON validation', () => {
     it('empty input shows no error and Save is enabled', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-      )
+      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -740,9 +753,7 @@ describe('PropertyDefinitionsList', () => {
 
     it('valid JSON shows no error and Save is enabled', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-      )
+      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -763,9 +774,7 @@ describe('PropertyDefinitionsList', () => {
 
     it('invalid JSON shows inline error and disables Save', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-      )
+      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -792,9 +801,7 @@ describe('PropertyDefinitionsList', () => {
   describe('Edit options popover aria-label', () => {
     it('labels the open popover with propertiesView.editOptionsPopoverLabel', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-      )
+      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       render(<PropertyDefinitionsList />)
 
@@ -809,9 +816,7 @@ describe('PropertyDefinitionsList', () => {
 
     it('axe is clean with the Edit options popover open', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(
-        pageOf([makePropDef('status', 'select', '["open","closed"]')]),
-      )
+      stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       const { container } = render(<PropertyDefinitionsList />)
 

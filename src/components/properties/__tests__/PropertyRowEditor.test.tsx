@@ -20,11 +20,23 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
+import type {
+  BlockRow,
+  PageHeading,
+  PropertyDefinition,
+  PropertyRow,
+  WithOps,
+} from '@/lib/bindings'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
 
 vi.mock('lucide-react', () => ({
   ArrowDown: () => <svg data-testid="arrow-down-icon" />,
@@ -78,6 +90,21 @@ function makeDef(key: string, valueType: string, options?: string): PropertyDefi
     created_at: '2026-01-01T00:00:00Z',
   }
 }
+
+/**
+ * `list_all_pages_in_space` returns `PageHeading[]`. The stubs here handed it
+ * bare `{ id, content }` objects, dropping the four scheduling columns the
+ * backend always sends (#4668) — `makePageHeading` fills them in.
+ */
+function heading(id: string, content: string): PageHeading {
+  return makePageHeading({ id, content })
+}
+
+/**
+ * What `set_property` resolves with: `WithOps<BlockRow>`, not `undefined`.
+ * The stubs here returned nothing because nothing typed the seam (#4668).
+ */
+const savedRow: WithOps<BlockRow> = withOps(makeBlockRow({ id: 'BLOCK_1' }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -502,11 +529,8 @@ describe('PropertyRowEditor select options editing', () => {
   it('can add a new option and save', async () => {
     const user = userEvent.setup()
     const onDefUpdated = vi.fn()
-    mockedInvoke.mockResolvedValue({
-      key: 'stage',
-      value_type: 'select',
-      options: '["TODO","DOING","DONE"]',
-      created_at: '2026-01-01T00:00:00Z',
+    stubInvoke({
+      update_property_def_options: () => makeDef('stage', 'select', '["TODO","DOING","DONE"]'),
     })
 
     render(
@@ -541,11 +565,8 @@ describe('PropertyRowEditor select options editing', () => {
 
   it('can remove an option and save', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      key: 'stage',
-      value_type: 'select',
-      options: '["TODO","DONE"]',
-      created_at: '2026-01-01T00:00:00Z',
+    stubInvoke({
+      update_property_def_options: () => makeDef('stage', 'select', '["TODO","DONE"]'),
     })
 
     render(
@@ -583,7 +604,9 @@ describe('PropertyRowEditor select options editing', () => {
 
   it('shows error toast when saving options fails', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    stubInvoke({
+      update_property_def_options: () => Promise.reject(new Error('backend error')),
+    })
 
     render(
       <PropertyRowEditor
@@ -632,11 +655,8 @@ describe('PropertyRowEditor select options editing', () => {
 
   it(' sub-fix 5 — moves an option down via the Move Down button', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      key: 'stage',
-      value_type: 'select',
-      options: '["DOING","TODO","DONE"]',
-      created_at: '2026-01-01T00:00:00Z',
+    stubInvoke({
+      update_property_def_options: () => makeDef('stage', 'select', '["DOING","TODO","DONE"]'),
     })
 
     render(
@@ -924,13 +944,8 @@ describe('PropertyRowEditor ref picker', () => {
 
   it('loads pages when picker is opened', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space')
-        return [
-          { id: 'P1', content: 'Page One' },
-          { id: 'P2', content: 'Page Two' },
-        ]
-      return null
+    stubInvoke({
+      list_all_pages_in_space: () => [heading('P1', 'Page One'), heading('P2', 'Page Two')],
     })
 
     render(
@@ -952,13 +967,8 @@ describe('PropertyRowEditor ref picker', () => {
 
   it('filters pages by search text', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space')
-        return [
-          { id: 'P1', content: 'Alpha Page' },
-          { id: 'P2', content: 'Beta Page' },
-        ]
-      return null
+    stubInvoke({
+      list_all_pages_in_space: () => [heading('P1', 'Alpha Page'), heading('P2', 'Beta Page')],
     })
 
     render(
@@ -988,13 +998,11 @@ describe('PropertyRowEditor ref picker', () => {
   // Unicode-aware fold via `matchesSearchFolded`.
   it('ref picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space')
-        return [
-          { id: 'P1', content: 'İstanbul trip' },
-          { id: 'P2', content: 'Ankara plans' },
-        ]
-      return null
+    stubInvoke({
+      list_all_pages_in_space: () => [
+        heading('P1', 'İstanbul trip'),
+        heading('P2', 'Ankara plans'),
+      ],
     })
 
     render(
@@ -1024,10 +1032,9 @@ describe('PropertyRowEditor ref picker', () => {
   it('saves selected page via setProperty', async () => {
     const user = userEvent.setup()
     const onRefSaved = vi.fn()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
-      if (cmd === 'set_property') return undefined
-      return null
+    stubInvoke({
+      list_all_pages_in_space: () => [heading('P1', 'Target Page')],
+      set_property: () => savedRow,
     })
 
     render(
@@ -1067,10 +1074,7 @@ describe('PropertyRowEditor ref picker', () => {
 
   it('shows "No pages found" when search has no matches', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
-      return null
-    })
+    stubInvoke({ list_all_pages_in_space: () => [heading('P1', 'Only Page')] })
 
     render(
       <PropertyRowEditor
@@ -1097,7 +1101,9 @@ describe('PropertyRowEditor ref picker', () => {
 
   it('shows error toast when page list fails to load and keeps picker closed', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockRejectedValue(new Error('backend error'))
+    stubInvoke({
+      list_all_pages_in_space: () => Promise.reject(new Error('backend error')),
+    })
 
     render(
       <PropertyRowEditor
@@ -1141,10 +1147,7 @@ describe('PropertyRowEditor ref picker', () => {
   describe(' sub-fix 1 — ref picker empty state', () => {
     it('renders the EmptyState primitive when no pages match (with description)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
-        return null
-      })
+      stubInvoke({ list_all_pages_in_space: () => [heading('P1', 'Only Page')] })
 
       render(
         <PropertyRowEditor
@@ -1171,10 +1174,7 @@ describe('PropertyRowEditor ref picker', () => {
 
     it('does not show "Create new page" without onCreateNewPage callback', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Only Page' }]
-        return null
-      })
+      stubInvoke({ list_all_pages_in_space: () => [heading('P1', 'Only Page')] })
 
       render(
         <PropertyRowEditor
@@ -1198,10 +1198,7 @@ describe('PropertyRowEditor ref picker', () => {
     it('shows "Create new page" CTA when search has content and onCreateNewPage is wired', async () => {
       const user = userEvent.setup()
       const onCreateNewPage = vi.fn()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Existing' }]
-        return null
-      })
+      stubInvoke({ list_all_pages_in_space: () => [heading('P1', 'Existing')] })
 
       render(
         <PropertyRowEditor
@@ -1227,10 +1224,7 @@ describe('PropertyRowEditor ref picker', () => {
     it('does not show "Create new page" CTA when search is empty', async () => {
       const user = userEvent.setup()
       const onCreateNewPage = vi.fn()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return []
-        return null
-      })
+      stubInvoke({ list_all_pages_in_space: () => [] })
 
       render(
         <PropertyRowEditor
@@ -1260,14 +1254,12 @@ describe('PropertyRowEditor ref picker', () => {
       // Pre-initialize with a no-op so TS narrows the type without losing the
       // assignment from the async closure (where flow analysis can't track it).
       let resolveSave: () => void = () => {}
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
-        if (cmd === 'set_property') {
-          return new Promise<void>((res) => {
-            resolveSave = () => res()
-          })
-        }
-        return null
+      stubInvoke({
+        list_all_pages_in_space: () => [heading('P1', 'Target Page')],
+        set_property: () =>
+          new Promise<WithOps<BlockRow>>((res) => {
+            resolveSave = () => res(savedRow)
+          }),
       })
 
       render(
@@ -1306,18 +1298,12 @@ describe('PropertyRowEditor ref picker', () => {
     it('marks the ref-picker list container aria-busy while a save is pending', async () => {
       const user = userEvent.setup()
       let resolveSave: () => void = () => {}
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space')
-          return [
-            { id: 'P1', content: 'Page One' },
-            { id: 'P2', content: 'Page Two' },
-          ]
-        if (cmd === 'set_property') {
-          return new Promise<void>((res) => {
-            resolveSave = () => res()
-          })
-        }
-        return null
+      stubInvoke({
+        list_all_pages_in_space: () => [heading('P1', 'Page One'), heading('P2', 'Page Two')],
+        set_property: () =>
+          new Promise<WithOps<BlockRow>>((res) => {
+            resolveSave = () => res(savedRow)
+          }),
       })
 
       render(
@@ -1356,14 +1342,12 @@ describe('PropertyRowEditor ref picker', () => {
       // Pre-initialize with a no-op so TS narrows the type without losing the
       // assignment from the async closure (where flow analysis can't track it).
       let rejectSave: (err: Error) => void = () => {}
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_all_pages_in_space') return [{ id: 'P1', content: 'Target Page' }]
-        if (cmd === 'set_property') {
-          return new Promise<void>((_, rej) => {
+      stubInvoke({
+        list_all_pages_in_space: () => [heading('P1', 'Target Page')],
+        set_property: () =>
+          new Promise<WithOps<BlockRow>>((_, rej) => {
             rejectSave = (err) => rej(err)
-          })
-        }
-        return null
+          }),
       })
 
       render(
@@ -1464,7 +1448,9 @@ describe('PropertyRowEditor ref picker', () => {
   describe('priority level refresh', () => {
     it('updates getPriorityLevels() after saving new priority options', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(makeDef('priority', 'select', '["1","2","3","4"]'))
+      stubInvoke({
+        update_property_def_options: () => makeDef('priority', 'select', '["1","2","3","4"]'),
+      })
 
       render(
         <PropertyRowEditor
@@ -1491,7 +1477,9 @@ describe('PropertyRowEditor ref picker', () => {
 
     it('does not refresh priority levels when editing a non-priority key', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(makeDef('stage', 'select', '["x","y","z"]'))
+      stubInvoke({
+        update_property_def_options: () => makeDef('stage', 'select', '["x","y","z"]'),
+      })
 
       render(
         <PropertyRowEditor
