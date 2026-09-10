@@ -131,6 +131,23 @@ describe('useBlockRefPeek', () => {
     expect(chipA.getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('closes when the chip itself is clicked, since the chip navigates away', () => {
+    const { container, chip, label } = mountChip()
+    const { result } = renderHook(() => useBlockRefPeek(container))
+
+    act(() => {
+      fireEvent.pointerEnter(chip, { pointerType: 'mouse' })
+      vi.advanceTimersByTime(350)
+    })
+    expect(result.current.refId).toBe(REF)
+
+    act(() => {
+      fireEvent.click(label)
+    })
+    expect(result.current.refId).toBeNull()
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('restores the chip when the host unmounts while a peek is open', () => {
     const { container, chip } = mountChip()
     const { result, unmount } = renderHook(() => useBlockRefPeek(container))

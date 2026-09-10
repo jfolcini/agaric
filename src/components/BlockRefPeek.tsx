@@ -148,6 +148,10 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
       setPosition(null)
       return
     }
+    // A chip-to-chip hover opens the new peek without passing through the
+    // closed state; without this reset it would paint at the old chip's
+    // coordinates until `computePosition` resolves.
+    setPosition(null)
     const virtualEl = { getBoundingClientRect: () => anchorRect }
     // Same stale-placement guard as `LinkPreviewTooltip` (#2275): two peeks
     // opened in quick succession leave two promises in flight.

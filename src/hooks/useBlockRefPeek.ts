@@ -233,6 +233,17 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     [container, dismiss, open],
   )
 
+  // A click on the chip itself navigates and unmounts the subtree, so neither
+  // `pointerleave` nor `focusin` would ever close the peek it left behind.
+  const handleClick = useCallback(
+    (event: MouseEvent) => {
+      const chip = chipRef.current
+      if (chip === null || !(event.target instanceof Node) || !chip.contains(event.target)) return
+      dismiss(false)
+    },
+    [dismiss],
+  )
+
   useEffect(() => {
     if (!container) return
 
@@ -241,12 +252,14 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     // enters.
     container.addEventListener('pointerenter', handlePointerEnter, true)
     container.addEventListener('pointerleave', handlePointerLeave, true)
+    container.addEventListener('click', handleClick, true)
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('keydown', handleKeyDown)
 
     return () => {
       container.removeEventListener('pointerenter', handlePointerEnter, true)
       container.removeEventListener('pointerleave', handlePointerLeave, true)
+      container.removeEventListener('click', handleClick, true)
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('keydown', handleKeyDown)
       if (openTimerRef.current) clearTimeout(openTimerRef.current)
@@ -255,7 +268,15 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       closeTimerRef.current = null
       releaseChip()
     }
-  }, [container, handlePointerEnter, handlePointerLeave, handleFocusIn, handleKeyDown, releaseChip])
+  }, [
+    container,
+    handlePointerEnter,
+    handlePointerLeave,
+    handleClick,
+    handleFocusIn,
+    handleKeyDown,
+    releaseChip,
+  ])
 
   return {
     refId: state.refId,
