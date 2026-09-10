@@ -35,8 +35,7 @@ import { walkFiles } from './helpers/walk-files'
 /**
  * Files that hand the invoke mock a literal because they SHOULD, keyed to why.
  *
- * Zero is not the target. These do not migrate — ever — so they are named
- * here rather than sitting in the backlog below pretending to be work.
+ * Zero is not the target. These do not migrate — ever.
  * A test needing an ARBITRARY response — a malformed payload, a command with
  * no binding to be typed against — is testing a shape the typed seam exists to
  * forbid, and routing it through that seam would destroy it.
@@ -58,13 +57,6 @@ const DELIBERATE_EXCEPTIONS: readonly string[] = [
   // of `CommandReturns`. There is nothing for the typed seam to check.
   'src/lib/__tests__/ipc-helpers.test.ts',
 ]
-
-/**
- * Files still to migrate onto `mockInvokeCommands`. Not exceptions — just not
- * done yet. Delete an entry when you migrate its file; the test fails in both
- * directions, so a stale entry cannot hide a win and a new one cannot slip in.
- */
-const MIGRATION_BACKLOG: readonly string[] = []
 
 // Anchored at the alias: only a stub call that immediately follows it counts,
 // so a `.mockResolvedValue(` on a different mock nearby cannot be attributed
@@ -95,7 +87,7 @@ describe('#4668 hand-stubbed invoke ratchet', () => {
         handStubsInvoke(stripComments(readFileSync(f, 'utf8'))),
       ),
     )
-    const baseline = new Set([...DELIBERATE_EXCEPTIONS, ...MIGRATION_BACKLOG])
+    const baseline = new Set(DELIBERATE_EXCEPTIONS)
 
     const added = [...live].filter((f) => !baseline.has(f)).toSorted()
     const stale = [...baseline].filter((f) => !live.has(f)).toSorted()
@@ -110,10 +102,9 @@ describe('#4668 hand-stubbed invoke ratchet', () => {
         '(src/__tests__/helpers/invoke.ts) instead; it is typed against the generated ' +
         'command return types. If the test genuinely needs a shape the backend cannot ' +
         'produce, add it to DELIBERATE_EXCEPTIONS above WITH its reason.\n' +
-        '`stale` — baseline entr(ies) no longer hand invoke a literal. Delete them from ' +
-        'whichever list holds them — MIGRATION_BACKLOG if migrated, DELIBERATE_EXCEPTIONS ' +
-        'if the file was renamed or deleted; a stale entry lets the set drift back up and ' +
-        'hides the migration that earned it.',
+        '`stale` — DELIBERATE_EXCEPTIONS entr(ies) no longer hand invoke a literal. Delete ' +
+        'them; a stale entry lets the set drift back up and hides the migration that ' +
+        'earned it.',
     ).toEqual({ added: [], stale: [] })
   })
 })

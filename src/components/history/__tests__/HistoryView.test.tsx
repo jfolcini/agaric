@@ -26,7 +26,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makeHistoryEntry } from '@/__tests__/fixtures'
+import { emptyPage, makeHistoryEntry } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -64,8 +64,6 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
 /**
  * The three commands `HistoryView` fires. Handlers ACCUMULATE within a test,
  * so a later `stubHistory({ revert_ops: … })` refines the set the load
@@ -86,7 +84,7 @@ function stubHistory(extra: TypedInvokeHandlers = {}): void {
  */
 function stubRevertRun(
   before: CommandReturns['list_page_history'],
-  revert: () => CommandReturns['revert_ops'] | Promise<never>,
+  revert: () => CommandReturns['revert_ops'] | Promise<CommandReturns['revert_ops']>,
   after: CommandReturns['list_page_history'] = before,
 ): void {
   let reverted = false
@@ -102,7 +100,9 @@ function stubRevertRun(
 /** The same, for the restore-to-op flow. */
 function stubRestoreRun(
   before: CommandReturns['list_page_history'],
-  restore: () => CommandReturns['restore_page_to_op'] | Promise<never>,
+  restore: () =>
+    | CommandReturns['restore_page_to_op']
+    | Promise<CommandReturns['restore_page_to_op']>,
   after: CommandReturns['list_page_history'] = before,
 ): void {
   let restored = false
