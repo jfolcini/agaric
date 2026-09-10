@@ -51,10 +51,14 @@ const DELIBERATE_EXCEPTIONS: Readonly<Record<string, string>> = {
     'the case the whole design turns on. Expressing it through `mockInvokeCommands` ' +
     'would test that helper instead of the fallback it is asserting about.',
   'src/lib/__tests__/ipc-helpers.test.ts':
-    '`read_attachment` returns a raw-byte `tauri::ipc::Response`, which cannot carry ' +
-    'a `specta::Type`, so it has NO generated binding (`src/lib/ipc-helpers.ts:15-17`) ' +
-    'and is not a key of `CommandReturns`. The typed seam cannot name it, and the ' +
-    'stub is an `ArrayBuffer` no generated type would describe.',
+    'the `readAttachment` describe ONLY. `read_attachment` returns a raw-byte ' +
+    '`tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has NO ' +
+    'generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key of ' +
+    '`CommandReturns` — the typed seam cannot name it, and the stub is an ' +
+    '`ArrayBuffer` no generated type would describe. The rest of this file ' +
+    '(`startSync`, `importMarkdown`) has generated bindings and SHOULD migrate; ' +
+    'the exception is file-granular only because one stub pins the whole file in ' +
+    'the live set.',
 }
 
 /**
@@ -174,8 +178,9 @@ describe('#4668 hand-stubbed invoke ratchet', () => {
         'command return types. If the test genuinely needs a shape the backend cannot ' +
         'produce, add it to DELIBERATE_EXCEPTIONS above WITH its reason.\n' +
         '`stale` — baseline entr(ies) no longer hand invoke a literal. Delete them from ' +
-        'MIGRATION_BACKLOG above; a stale entry lets the set drift back up and hides the ' +
-        'migration that earned it.',
+        'whichever list holds them — MIGRATION_BACKLOG if migrated, DELIBERATE_EXCEPTIONS ' +
+        'if the file was renamed or deleted; a stale entry lets the set drift back up and ' +
+        'hides the migration that earned it.',
     ).toEqual({ added: [], stale: [] })
   })
 })
