@@ -94,6 +94,7 @@ Some dependencies ship as a stack. Move the whole stack in one commit, or leave 
 - **TipTap:** every `@tiptap/*` on one version line. **Radix:** every `@radix-ui/*` on one major. **StrykerJS:** `@stryker-mutator/core` and `@stryker-mutator/vitest-runner` pin each other exactly, so a split bump fails `npm ci`.
 - **SQLx + `.sqlx/` caches:** bump the crate and run `just gen-sqlx` in the same commit.
 - **specta + tauri-specta:** same exact `=2.0.0-rc.*`; `ts_bindings_up_to_date` fails on drift.
+- **iroh:** `iroh`, `iroh-base`, `iroh-dns` at one exact `=` pin across `agaric-sync` and `agaric-store`; `iroh-mdns-address-lookup` is a caret range resolved against that pin, so re-resolve it in the same commit as any `iroh` bump (its `Endpoint` trait bounds compile only against one `iroh` line).
 - **`src-tauri/fuzz/Cargo.lock`:** the fuzz crate is its own workspace that path-depends on the parent crates, so changing any `src-tauri/**/Cargo.toml` requirement invalidates it and `verify-lockfiles` reds. Refresh with `cd src-tauri/fuzz && cargo metadata --format-version 1 >/dev/null`. Never `cargo update` or `cargo generate-lockfile` there (it lifts deliberate holds). `scripts/bump-version.sh` handles this for releases.
 
 If you bump `X` and wonder whether `Y` moves too, it does, in the same commit.
