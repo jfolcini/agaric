@@ -93,7 +93,6 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
   const releaseChip = useCallback(() => {
     const chip = chipRef.current
     if (!chip) return
-    chip.removeAttribute('data-peek-open')
     // Only flipped where the render put one: the TipTap NodeView chip is a
     // role-less `<span>` inside the contenteditable, and ARIA states are
     // prohibited there.
@@ -125,7 +124,6 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
         releaseChip()
         parkedTitleRef.current = chip.getAttribute('title')
         chip.removeAttribute('title')
-        chip.setAttribute('data-peek-open', '')
         if (chip.hasAttribute('aria-expanded')) chip.setAttribute('aria-expanded', 'true')
         chipRef.current = chip
       }
@@ -183,7 +181,10 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       const to = (e as PointerEvent).relatedTarget as Node | null
       if (to !== null && chip.contains(to)) return
       clearOpenTimer()
-      if (chipRef.current === chip) scheduleClose()
+      // Any open peek, not only the one this chip owns: skimming from chip A onto
+      // B and off before B's dwell would otherwise leave A's peek open with no
+      // timer pending and nothing to close it but Escape.
+      if (chipRef.current !== null) scheduleClose()
     },
     [clearOpenTimer, scheduleClose],
   )

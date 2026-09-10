@@ -103,6 +103,34 @@ describe('useBlockRefPeek', () => {
     expect(result.current.refId).toBe(REF)
   })
 
+  it('closes when the pointer skims onto a second chip and off before its dwell', () => {
+    const { container, chip: chipA } = mountChip()
+    const chipB = document.createElement('span')
+    chipB.setAttribute('data-type', 'block-ref')
+    chipB.setAttribute('data-id', '01OTHERCHIP000000000000000')
+    chipB.setAttribute('aria-expanded', 'false')
+    container.append(chipB)
+    const { result } = renderHook(() => useBlockRefPeek(container))
+
+    act(() => {
+      fireEvent.pointerEnter(chipA, { pointerType: 'mouse' })
+      vi.advanceTimersByTime(350)
+    })
+    expect(result.current.refId).toBe(REF)
+
+    // A → B cancels A's close and arms B's open; off B before B's dwell must
+    // still close A's peek, or it floats over the page until Escape.
+    act(() => {
+      fireEvent.pointerLeave(chipA, { pointerType: 'mouse' })
+      fireEvent.pointerEnter(chipB, { pointerType: 'mouse' })
+      vi.advanceTimersByTime(100)
+      fireEvent.pointerLeave(chipB, { pointerType: 'mouse' })
+      vi.advanceTimersByTime(5000)
+    })
+    expect(result.current.refId).toBeNull()
+    expect(chipA.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('restores the chip when the host unmounts while a peek is open', () => {
     const { container, chip } = mountChip()
     const { result, unmount } = renderHook(() => useBlockRefPeek(container))
@@ -113,12 +141,12 @@ describe('useBlockRefPeek', () => {
     })
     expect(result.current.refId).toBe(REF)
     expect(chip.hasAttribute('title')).toBe(false)
-    expect(chip.hasAttribute('data-peek-open')).toBe(true)
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
 
     unmount()
 
     expect(chip.getAttribute('title')).toBe(CHIP_TITLE)
-    expect(chip.hasAttribute('data-peek-open')).toBe(false)
+    expect(chip.getAttribute('aria-expanded')).toBe('false')
     expect(chip.getAttribute('aria-expanded')).toBe('false')
   })
 
