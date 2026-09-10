@@ -24,13 +24,13 @@
  * `helpers/invoke.ts` names the expression in an error message.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
 // @ts-expect-error -- untyped JS helper, the repo's sanctioned tokenizer (#3991)
 import { stripComments } from '../../scripts/lib/js-scanner.mjs'
+import { walkFiles } from './helpers/walk-files'
 
 /**
  * Files that hand the invoke mock a literal because they SHOULD, keyed to why.
@@ -129,21 +129,6 @@ const MIGRATION_BACKLOG: readonly string[] = [
 // to invoke.
 const STUB_CALL = /^\s*\.mock(?:Resolved|Rejected)Value(?:Once)?\s*\(/
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      if (entry !== 'node_modules') walk(full, out)
-    } else if (/\.test\.tsx?$/.test(entry)) {
-      // Posix-separated, like the baseline lists below: on Windows a raw
-      // `join` result matches nothing and every entry lands in BOTH halves.
-      // Same normalisation as the sibling `check-tauri-import-baseline.mjs`.
-      out.push(full.split(sep).join('/'))
-    }
-  }
-  return out
-}
-
 /** Does this file stub the INVOKE mock specifically with a literal? */
 function handStubsInvoke(source: string): boolean {
   if (!source.includes('vi.mocked(invoke)')) return false
@@ -164,7 +149,9 @@ function handStubsInvoke(source: string): boolean {
 describe('#4668 hand-stubbed invoke ratchet', () => {
   it('the set of files handing invoke a literal only shrinks', () => {
     const live = new Set(
-      walk('src').filter((f) => handStubsInvoke(stripComments(readFileSync(f, 'utf8')))),
+      walkFiles('src', (name) => /\.test\.tsx?$/.test(name)).filter((f) =>
+        handStubsInvoke(stripComments(readFileSync(f, 'utf8'))),
+      ),
     )
     const baseline = new Set([...DELIBERATE_EXCEPTIONS, ...MIGRATION_BACKLOG])
 
