@@ -125,12 +125,9 @@ export const sync: Record<string, string> = {
   'device.syncAllLabel': 'Sync with all paired devices',
   'device.syncAllButton': 'Sync All',
   'device.noPairedDevices': 'No paired devices. Click "Pair New Device" to get started.',
-  // Shown once mDNS init has failed — the state in which a first-ever pair is
-  // impossible, since the mDNS TXT record is the only pre-session carrier of a
-  // peer's endpoint_id. It must not offer a manual address as the way out: an
-  // unpaired peer has no row, so there is no address field, and the setting is
-  // only reachable once a pair has already succeeded. See
-  // sync_daemon::discovery::resolve_peer_address.
+  // Shown once mDNS init has failed. It points at the QR because the v2 payload
+  // carries the peer's endpoint_id and ip:port (#4037), so a first-ever pair
+  // needs no multicast.
   //
   // Two reasons this stays hedged rather than reassuring:
   //  - `useMdnsStatus.disabled` is STICKY (only ever set true, no success event

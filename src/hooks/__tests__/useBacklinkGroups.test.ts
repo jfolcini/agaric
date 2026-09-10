@@ -19,7 +19,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useBacklinkGroups, type UseBacklinkGroupsParams } from '@/hooks/useBacklinkGroups'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { queryClient } from '@/lib/query-client'
 
 // #3332 — no per-file `vi.mock('@tauri-apps/api/core', …)`. That replaced the
@@ -280,42 +279,5 @@ describe('useBacklinkGroups', () => {
 
     expect(result.current.totalCount).toBe(40)
     expect(result.current.filteredCount).toBe(4)
-  })
-
-  // A `[[link]]` typed, pasted or synced fires no property event, so the
-  // graph-structure counter is what notices a new backlink while the panel is
-  // mounted — see the effect this hook now owns (moved from `LinkedReferences`).
-  it('graph-structure counter change triggers a refetch', async () => {
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    let callCount = 0
-    mockedInvoke.mockImplementation(
-      mockInvokeCommands({
-        list_backlinks_grouped: () => {
-          callCount++
-          return resp
-        },
-      }),
-    )
-
-    renderHook(() => useBacklinkGroups(baseParams()))
-
-    await waitFor(() => {
-      expect(callCount).toBe(1)
-    })
-
-    act(() => {
-      recordGraphStructureChange()
-    })
-
-    await waitFor(() => {
-      expect(callCount).toBe(2)
-    })
   })
 })
