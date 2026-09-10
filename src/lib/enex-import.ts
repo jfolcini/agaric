@@ -460,8 +460,9 @@ function findLeafNestedTable(root: Element): Element | null {
 function normalizeInlineCell(text: string): string {
   // Collapse all whitespace (incl. newlines) to single spaces and neutralize
   // `|` (which would otherwise open a spurious column in the OUTER pipe row).
-  // Only the collapse itself is observable: Turndown re-collapses the text it
-  // emits into the outer cell, so the run width and the trim are not (#4815).
+  // The `|` substitution and the collapse are both observable; the run WIDTH
+  // and the trim are not, because Turndown re-collapses the text it emits into
+  // the outer cell (#4815).
   return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 }
 

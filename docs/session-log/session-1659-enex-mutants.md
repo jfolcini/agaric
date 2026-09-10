@@ -1,9 +1,10 @@
-# Session 1659 — enex-import: 79.4% → 93.4%
+# Session 1659 — enex-import: 79.4% → 93.8%
 
 Mutation findings for `src/lib/enex-import.ts` (#4815): 8 with no coverage, 89
-survivors. After: **6 no-coverage, 24 survivors, score 93.39%** — 65 survivors
-killed, all 8 no-coverage findings resolved, and the 30 that remain are exactly
-the set judged not worth killing. Nothing is left unclassified.
+survivors. After: **5 no-coverage, 23 survivors, score 93.78%** — re-measured
+after the review deletion below rather than adjusted by arithmetic. The 28 that
+remain are exactly the set judged not worth killing; nothing is left
+unclassified.
 
 ## Three of them were killed by deleting code, not by adding tests
 
@@ -43,10 +44,18 @@ fallbacks the type system forces but the code cannot reach; fallbacks whose
 stand-in value cannot matter; MD5's high length word, non-zero only for a
 resource ≥ 512 MB; and values nothing observes.
 
-Three sites carry their own comment because the argument is local — `media.remove()`
-(Turndown renders the leftover element as nothing either way), `normalizeInlineCell`
-(Turndown re-collapses the text, so run width and trim are invisible), and the
-rootless-`<content>` guard behind the `parsererror` check.
+Two sites carry their own comment because the argument is local —
+`media.remove()` (Turndown renders the leftover element as nothing either way)
+and `normalizeInlineCell` (Turndown re-collapses the text, so the run width and
+the trim are invisible, though the `|` substitution is not).
+
+A third started as a site comment and ended as a deletion. `if (enNote == null)
+return ''` is unreachable by the same argument as the three above, and the
+comment written to excuse it was worse than the line: it said "no input reaches
+this" and then claimed the line stops a rootless `<content>` throwing away the
+whole import — but `return ''` IS throwing it away. The `?? doc.documentElement`
+before it is what saves that case. Caught in review; the figures at the top were
+re-measured after it, which is where 93.39% became 93.78%.
 
 ## Falsification, and the seven that came back
 
