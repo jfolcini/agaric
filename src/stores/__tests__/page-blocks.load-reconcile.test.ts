@@ -18,6 +18,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { createPageBlockStore, type FlatBlock, type PageBlockState } from '@/stores/page-blocks'
 import { buildBlocksById, reuseUnchangedBlocks } from '@/stores/page-blocks-map'
@@ -69,12 +70,22 @@ function makeRows(count: number, editedIndex?: number, editedContent?: string): 
   }))
 }
 
-function subtreeResp(blocks: BlockRow[]): {
-  blocks: BlockRow[]
-  truncated: boolean
-  total: number
-} {
-  return { blocks, truncated: false, total: blocks.length }
+/**
+ * Queue the successive `load_page_subtree` snapshots one test's `load()` calls
+ * consume. The ORDER is the subject here — every test loads twice and compares
+ * the second snapshot's row identities against the first — so the sequence is
+ * explicit state rather than a positional `mockResolvedValueOnce` queue.
+ */
+function stubSubtreeLoads(...snapshots: BlockRow[][]): void {
+  let next = 0
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      load_page_subtree: () => {
+        const blocks = snapshots[next++] ?? []
+        return { blocks, truncated: false, total: blocks.length }
+      },
+    }),
+  )
 }
 
 /** How many entries of `next` are the very same object as in `prev`. */
@@ -143,11 +154,11 @@ describe('load() row identity (#3321)', () => {
   })
 
   it('reuses every row object across a reload that changed nothing', async () => {
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(makeRows(1000)))
+    stubSubtreeLoads(makeRows(1000), makeRows(1000))
+
     await store.getState().load()
     const first = store.getState().blocks
 
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(makeRows(1000)))
     await store.getState().load()
     const second = store.getState().blocks
 
@@ -159,12 +170,13 @@ describe('load() row identity (#3321)', () => {
   })
 
   it('reallocates ONLY the row a remote peer edited', async () => {
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(makeRows(1000)))
+    // The second snapshot is the `sync:complete` tick: a peer edited one block
+    // on this page.
+    stubSubtreeLoads(makeRows(1000), makeRows(1000, 500, 'edited by peer'))
+
     await store.getState().load()
     const first = store.getState().blocks
 
-    // The `sync:complete` tick: a peer edited one block on this page.
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(makeRows(1000, 500, 'edited by peer')))
     await store.getState().load()
     const second = store.getState().blocks
 
@@ -175,14 +187,14 @@ describe('load() row identity (#3321)', () => {
   })
 
   it('reflects structural changes (insert shifts depth/position) as fresh rows', async () => {
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(makeRows(3)))
-    await store.getState().load()
-    const first = store.getState().blocks
-
     // B1 becomes a child of B0 → its depth changes, so it must NOT be reused.
     const rows = makeRows(3)
     for (const r of rows) if (r.id === 'B1') r.parent_id = 'B0'
-    mockedInvoke.mockResolvedValueOnce(subtreeResp(rows))
+    stubSubtreeLoads(makeRows(3), rows)
+
+    await store.getState().load()
+    const first = store.getState().blocks
+
     await store.getState().load()
     const second = store.getState().blocks
 

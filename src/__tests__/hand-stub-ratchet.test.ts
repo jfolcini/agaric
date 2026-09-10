@@ -92,15 +92,6 @@ const MIGRATION_BACKLOG: readonly string[] = [
   'src/components/query/__tests__/QueryResult.test.tsx',
   'src/components/templates/__tests__/CompactionCard.test.tsx',
   'src/components/templates/__tests__/TemplatesView.test.tsx',
-  'src/stores/__tests__/page-blocks.crud.test.ts',
-  'src/stores/__tests__/page-blocks.load-reconcile.test.ts',
-  'src/stores/__tests__/page-blocks.move-reparent.test.ts',
-  'src/stores/__tests__/page-blocks.optimistic-invariants.test.ts',
-  'src/stores/__tests__/page-blocks.paste-prefetch.test.ts',
-  'src/stores/__tests__/page-blocks.reorder.test.ts',
-  'src/stores/__tests__/page-blocks.split-indent.test.ts',
-  'src/stores/__tests__/page-blocks.undo-registry.test.ts',
-  'src/stores/__tests__/resolve.test.ts',
 ]
 
 // Anchored at the alias: only a stub call that immediately follows it counts,

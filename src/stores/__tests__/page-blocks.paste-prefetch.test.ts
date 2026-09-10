@@ -5,7 +5,14 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  strictInvokeFallback,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
+import type { BlockRow } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import {
   _resetPrefetchPageSubtreeForTest,
@@ -27,8 +34,24 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // in the un-truncated shape so the many `load()` mocks below keep their
 // intent (a full, non-truncated page load) without each spelling out the
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
-function subtreeResp<T>(blocks: T[]): { blocks: T[]; truncated: boolean; total: number } {
+function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
+}
+
+/**
+ * Install this test's command-keyed `invoke` handlers. The `return []` tails
+ * these switches used to carry absorbed any command nobody modelled; anything
+ * unlisted now hits `strictInvokeFallback` and fails the test by name.
+ */
+function stubInvoke(handlers: TypedInvokeHandlers): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** The `create_blocks_batch` specs the store sends, as the handlers read them. */
+type BatchSpecs = Array<{ content: string; parentId: string | null; position: number }>
+
+function specsOf(args: Record<string, unknown>): BatchSpecs {
+  return (args['specs'] ?? []) as BatchSpecs
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -102,6 +125,9 @@ describe('PageBlockStore', () => {
     // The pre-bootstrap no-op contract is exercised in its own test.
     useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
+    // Every test installs its own persistent implementation, so restore the
+    // strict base first — otherwise one test's handlers would serve the next.
+    mockedInvoke.mockImplementation(strictInvokeFallback)
     // #2849 PR2 — reset the client-ULID counter so each test's first
     // `createBelow` mints `CID_1` deterministically.
     resetClientIds()
@@ -116,27 +142,23 @@ describe('PageBlockStore', () => {
      * created BlockRows (one per spec, ids `NEW0..`), `load_page_subtree`
      * returns `reloadRows`. Captures every batch's specs for assertions.
      */
-    function wireBatchAndReload(reloadRows: FlatBlock[]): { batches: unknown[][] } {
-      const batches: unknown[][] = []
+    function wireBatchAndReload(reloadRows: FlatBlock[]): { batches: BatchSpecs[] } {
+      const batches: BatchSpecs[] = []
       let created = 0
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'create_blocks_batch') {
-          const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
-            content: string
-            parentId: string | null
-          }>
+      stubInvoke({
+        create_blocks_batch: (args) => {
+          const specs = specsOf(args)
           batches.push(specs)
-          return specs.map((s) => ({
-            id: `NEW${created++}`,
-            block_type: 'content',
-            content: s.content,
-            parent_id: s.parentId,
-            position: null,
-            deleted_at: null,
-          }))
-        }
-        if (cmd === 'load_page_subtree') return subtreeResp(reloadRows)
-        return []
+          return specs.map((s) =>
+            makeBlockRow({
+              id: `NEW${created++}`,
+              content: s.content,
+              parent_id: s.parentId,
+              position: null,
+            }),
+          )
+        },
+        load_page_subtree: () => subtreeResp(reloadRows),
       })
       return { batches }
     }
@@ -220,7 +242,7 @@ describe('PageBlockStore', () => {
 
     it('reloads and returns [] when the anchor vanished before paste', async () => {
       store.setState({ blocks: [] })
-      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
+      stubInvoke({ load_page_subtree: () => subtreeResp([]) })
 
       const ids = await store.getState().pasteBlocks('GONE', 'x')
 
@@ -236,10 +258,11 @@ describe('PageBlockStore', () => {
     it('reconciles with a reload when the create batch fails', async () => {
       const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
       store.setState({ blocks: [anchor] })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'create_blocks_batch') throw new Error('batch failed')
-        if (cmd === 'load_page_subtree') return subtreeResp([anchor])
-        return []
+      stubInvoke({
+        create_blocks_batch: () => {
+          throw new Error('batch failed')
+        },
+        load_page_subtree: () => subtreeResp([anchor]),
       })
 
       const ids = await store.getState().pasteBlocks('A', 'one\ntwo')
@@ -270,70 +293,57 @@ describe('PageBlockStore', () => {
       function wireWikiLinkIpc(opts: {
         pages?: Array<{ id: string; content: string }>
         tags?: Array<{ tag_id: string; name: string }>
-      }): { batches: unknown[][]; createdPages: string[]; createdTags: string[] } {
-        const batches: unknown[][] = []
+      }): { batches: BatchSpecs[]; createdPages: string[]; createdTags: string[] } {
+        const batches: BatchSpecs[] = []
         const createdPages: string[] = []
         const createdTags: string[] = []
         let createdBlocks = 0
         let createdPageN = 0
         let createdTagN = 0
-        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-          if (cmd === 'list_all_pages_in_space') return opts.pages ?? []
-          if (cmd === 'list_all_tags_in_space') {
-            return (opts.tags ?? []).map((t) => ({
+        stubInvoke({
+          list_all_pages_in_space: () =>
+            (opts.pages ?? []).map((p) => makePageHeading({ id: p.id, content: p.content })),
+          list_all_tags_in_space: () =>
+            (opts.tags ?? []).map((t) => ({
               tag_id: t.tag_id,
               name: t.name,
               usage_count: 0,
               updated_at: '',
-            }))
-          }
-          if (cmd === 'create_page_in_space') {
+            })),
+          create_page_in_space: (args) => {
             const content = (args as { content: string }).content
             createdPages.push(content)
             return `01HZ0CREATEDPAGE0000000${String(createdPageN++).padStart(3, '0')}`
-          }
-          if (cmd === 'create_block') {
+          },
+          create_block: (args) => {
             const a = args as { blockType: string; content: string }
             const id =
               a.blockType === 'tag'
                 ? `01HZ0CREATEDTAG00000000${String(createdTagN++).padStart(3, '0')}`
                 : `NEWBLOCK${createdBlocks}`
             if (a.blockType === 'tag') createdTags.push(a.content)
-            return {
-              id,
-              block_type: a.blockType,
-              content: a.content,
-              parent_id: null,
-              position: null,
-              deleted_at: null,
-            }
-          }
-          if (cmd === 'create_blocks_batch') {
-            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
-              content: string
-              parentId: string | null
-            }>
+            return withOps(makeBlockRow({ id, block_type: a.blockType, content: a.content }))
+          },
+          create_blocks_batch: (args) => {
+            const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) => ({
-              id: `NEW${createdBlocks++}`,
-              block_type: 'content',
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-              deleted_at: null,
-            }))
-          }
-          if (cmd === 'load_page_subtree') {
-            return subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })])
-          }
-          return []
+            return specs.map((s) =>
+              makeBlockRow({
+                id: `NEW${createdBlocks++}`,
+                content: s.content,
+                parent_id: s.parentId,
+                position: null,
+              }),
+            )
+          },
+          load_page_subtree: () =>
+            subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })]),
         })
         return { batches, createdPages, createdTags }
       }
 
-      function firstSpecContent(batches: unknown[][]): string {
-        const specs = batches[0] as Array<{ content: string }>
-        return specs[0]?.content ?? ''
+      function firstSpecContent(batches: BatchSpecs[]): string {
+        return batches[0]?.[0]?.content ?? ''
       }
 
       it('resolves an existing [[Page Name]] to its internal [[ULID]]', async () => {
@@ -411,10 +421,10 @@ describe('PageBlockStore', () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
         store.setState({ blocks: [anchor] })
 
-        const batches: unknown[][] = []
+        const batches: BatchSpecs[] = []
         let createdBlocks = 0
-        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-          if (cmd === 'list_all_pages_in_space') {
+        stubInvoke({
+          list_all_pages_in_space: () => {
             // Simulate a concurrent remote/MCP write inserting a new sibling
             // ABOVE the anchor while this lazy, only-when-needed IPC is in
             // flight (this is the await window `internalizeRefTokens` opens).
@@ -422,37 +432,31 @@ describe('PageBlockStore', () => {
               blocks: [makeBlock({ id: 'REMOTE', parent_id: 'PAGE_1', position: 0 }), anchor],
             })
             return []
-          }
-          if (cmd === 'list_all_tags_in_space') return []
-          if (cmd === 'create_page_in_space') return '01HZ0CREATEDPAGE0000000000'
-          if (cmd === 'create_blocks_batch') {
-            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
-              content: string
-              parentId: string | null
-              position: number
-            }>
+          },
+          list_all_tags_in_space: () => [],
+          create_page_in_space: () => '01HZ0CREATEDPAGE0000000000',
+          create_blocks_batch: (args) => {
+            const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) => ({
-              id: `NEW${createdBlocks++}`,
-              block_type: 'content',
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-              deleted_at: null,
-            }))
-          }
-          if (cmd === 'load_page_subtree') return subtreeResp(store.getState().blocks)
-          return []
+            return specs.map((s) =>
+              makeBlockRow({
+                id: `NEW${createdBlocks++}`,
+                content: s.content,
+                parent_id: s.parentId,
+                position: null,
+              }),
+            )
+          },
+          load_page_subtree: () => subtreeResp(store.getState().blocks),
         })
 
         await store.getState().pasteBlocks('A', 'link [[Fresh Page]]')
 
         expect(batches).toHaveLength(1)
-        const specs = batches[0] as Array<{ position: number }>
         // Pre-fix this would be 2 (anchor's stale pre-await slot-0 snapshot
         // + 2). The live sibling slot after the concurrent insert is 1
         // (REMOTE, then A) → wire position 3.
-        expect(specs[0]?.position).toBe(3)
+        expect(batches[0]?.[0]?.position).toBe(3)
       })
 
       // #3323 — the fix also re-derives `parentId` from the LIVE anchor, not
@@ -469,10 +473,10 @@ describe('PageBlockStore', () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, depth: 0 })
         store.setState({ blocks: [anchor] })
 
-        const batches: unknown[][] = []
+        const batches: BatchSpecs[] = []
         let createdBlocks = 0
-        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-          if (cmd === 'list_all_pages_in_space') {
+        stubInvoke({
+          list_all_pages_in_space: () => {
             // Simulate a concurrent write re-parenting the anchor itself
             // (e.g. an indent/move from another device) while the lazy
             // page-list fetch is in flight.
@@ -480,38 +484,32 @@ describe('PageBlockStore', () => {
             const movedAnchor = { ...anchor, parent_id: 'NEWPARENT', depth: 1, position: 1 }
             store.setState({ blocks: [sibling, movedAnchor] })
             return []
-          }
-          if (cmd === 'list_all_tags_in_space') return []
-          if (cmd === 'create_page_in_space') return '01HZ0CREATEDPAGE0000000000'
-          if (cmd === 'create_blocks_batch') {
-            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
-              content: string
-              parentId: string | null
-              position: number
-            }>
+          },
+          list_all_tags_in_space: () => [],
+          create_page_in_space: () => '01HZ0CREATEDPAGE0000000000',
+          create_blocks_batch: (args) => {
+            const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) => ({
-              id: `NEW${createdBlocks++}`,
-              block_type: 'content',
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-              deleted_at: null,
-            }))
-          }
-          if (cmd === 'load_page_subtree') return subtreeResp(store.getState().blocks)
-          return []
+            return specs.map((s) =>
+              makeBlockRow({
+                id: `NEW${createdBlocks++}`,
+                content: s.content,
+                parent_id: s.parentId,
+                position: null,
+              }),
+            )
+          },
+          load_page_subtree: () => subtreeResp(store.getState().blocks),
         })
 
         await store.getState().pasteBlocks('A', 'link [[Fresh Page]]')
 
         expect(batches).toHaveLength(1)
-        const specs = batches[0] as Array<{ parentId: string | null; position: number }>
         // Must land under the anchor's LIVE parent, not the stale 'PAGE_1'.
-        expect(specs[0]?.parentId).toBe('NEWPARENT')
+        expect(batches[0]?.[0]?.parentId).toBe('NEWPARENT')
         // Slot computed among NEWPARENT's children: [SIB, A] → A is index 1
         // → wire position 1 + 2 = 3.
-        expect(specs[0]?.position).toBe(3)
+        expect(batches[0]?.[0]?.position).toBe(3)
       })
     })
   })
@@ -522,7 +520,7 @@ describe('PageBlockStore', () => {
       // fired a second, fresh IPC it would find no queued response and hang
       // / reject — proving `mockedInvoke` was called exactly once is the
       // load-bearing assertion below.
-      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+      stubInvoke({ load_page_subtree: () => subtreeResp(blocks) })
 
       prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
       expect(mockedInvoke).toHaveBeenCalledTimes(1)
@@ -546,10 +544,15 @@ describe('PageBlockStore', () => {
       // reload fired precisely to show post-mutation state — otherwise Ctrl+Z
       // or a just-synced remote edit would render the pre-mutation snapshot
       // for one cycle. Consumption is gated on the first navigation load only.
-      mockedInvoke
-        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])) // load 1 (fresh)
-        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })])) // parked prefetch
-        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })])) // reload (fresh)
+      // The ORDER is the subject: call 1 is the navigation load, call 2 the
+      // prefetch parked for the same page, call 3 the reload that must NOT be
+      // served that parked snapshot.
+      const snapshots = ['A', 'STALE', 'FRESH']
+      let call = 0
+      stubInvoke({
+        load_page_subtree: () =>
+          subtreeResp([makeBlock({ id: snapshots[call++] ?? 'UNEXPECTED', parent_id: 'PAGE_1' })]),
+      })
 
       // Initial navigation load — populates the store (generation 1).
       await store.getState().load()
@@ -571,7 +574,7 @@ describe('PageBlockStore', () => {
 
     it('falls through to a fresh IPC when no prefetch is live for this page', async () => {
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
-      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+      stubInvoke({ load_page_subtree: () => subtreeResp(blocks) })
 
       // No prefetchPageSubtree call — load() has nothing to consume.
       await store.getState().load()
@@ -581,12 +584,17 @@ describe('PageBlockStore', () => {
     })
 
     it("a prefetch parked for a DIFFERENT page is not consumed by this page's load()", async () => {
-      const otherPagePromiseNeverResolves = new Promise(() => {})
-      mockedInvoke.mockReturnValueOnce(otherPagePromiseNeverResolves)
-      prefetchPageSubtree(TEST_SPACE_ID, 'SOME_OTHER_PAGE')
-
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
-      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+      // The ORDER is the subject: the first call backs the unrelated page's
+      // prefetch and never settles; the second is this page's own fetch.
+      let call = 0
+      stubInvoke({
+        load_page_subtree: () =>
+          call++ === 0
+            ? new Promise<CommandReturns['load_page_subtree']>(() => {})
+            : subtreeResp(blocks),
+      })
+      prefetchPageSubtree(TEST_SPACE_ID, 'SOME_OTHER_PAGE')
 
       await store.getState().load()
 
@@ -602,19 +610,24 @@ describe('PageBlockStore', () => {
       const staleBlocks = [makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })]
       const freshBlocks = [makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })]
 
-      let resolveStale: (v: unknown) => void = () => {}
-      mockedInvoke.mockReturnValueOnce(
-        new Promise((res) => {
-          resolveStale = res
-        }),
-      )
+      let resolveStale: (v: CommandReturns['load_page_subtree']) => void = () => {}
+      // The ORDER is the subject: call 1 backs the prefetch this test parks
+      // and holds open; call 2 is the newer load's own fetch, which wins.
+      let call = 0
+      stubInvoke({
+        load_page_subtree: () =>
+          call++ === 0
+            ? new Promise<CommandReturns['load_page_subtree']>((res) => {
+                resolveStale = res
+              })
+            : subtreeResp(freshBlocks),
+      })
       prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
 
       // Start a load() that will consume the (still-pending) prefetch.
       const stalePromise = store.getState().load()
 
       // A second, newer load() fires a fresh IPC and resolves FIRST.
-      mockedInvoke.mockResolvedValueOnce(subtreeResp(freshBlocks))
       await store.getState().load()
       expect(store.getState().blocks[0]?.id).toBe('FRESH')
 
@@ -651,7 +664,7 @@ describe('PageBlockStore', () => {
       )
       // Backs the PREFETCH's IPC — the prefetch itself is what rejects, not
       // a fresh fetch inside load().
-      mockedInvoke.mockRejectedValueOnce(membershipRejection)
+      stubInvoke({ load_page_subtree: () => Promise.reject(membershipRejection) })
 
       prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
       await store.getState().load()

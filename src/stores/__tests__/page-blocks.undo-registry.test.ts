@@ -7,7 +7,14 @@ import { createElement, type ReactElement, type ReactNode, useContext } from 're
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  strictInvokeFallback,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
+import type { BlockRow, OpRef } from '@/lib/bindings'
 import {
   _resetGraphStructureEventsForTest,
   DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
@@ -34,8 +41,34 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // in the un-truncated shape so the many `load()` mocks below keep their
 // intent (a full, non-truncated page load) without each spelling out the
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
-function subtreeResp<T>(blocks: T[]): { blocks: T[]; truncated: boolean; total: number } {
+function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
+}
+
+/**
+ * What a successful `delete_block` answers: `WithOps<DeleteResponse>`, whose
+ * `deleted_at` is epoch-ms (migration 0080) and which carries the cascade's
+ * `affected_page_ids`. The literals this replaced spelled `deleted_at` as an
+ * ISO string and omitted that array.
+ */
+function deleteResp(blockId: string, opRefs: OpRef[] = []): CommandReturns['delete_block'] {
+  return {
+    op_refs: opRefs,
+    block_id: blockId,
+    deleted_at: 1_735_689_600_000,
+    descendants_affected: 1,
+    affected_page_ids: [],
+  }
+}
+
+/**
+ * Install this test's command-keyed `invoke` handlers. Anything the store
+ * fires that is not listed hits `strictInvokeFallback` and fails by name,
+ * which is what the `return undefined` tails these switches used to have
+ * silently absorbed.
+ */
+function stubInvoke(handlers: TypedInvokeHandlers): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -109,6 +142,9 @@ describe('PageBlockStore', () => {
     // The pre-bootstrap no-op contract is exercised in its own test.
     useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
+    // Every test installs its own persistent implementation, so restore the
+    // strict base first — otherwise one test's handlers would serve the next.
+    mockedInvoke.mockImplementation(strictInvokeFallback)
     // #2849 PR2 — reset the client-ULID counter so each test's first
     // `createBelow` mints `CID_1` deterministically.
     resetClientIds()
@@ -122,58 +158,48 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0 })
       store.setState({ blocks: [block] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'NEW',
-        block_type: 'text',
-        content: '',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
+      stubInvoke({
+        create_block: () =>
+          withOps(makeBlockRow({ id: 'NEW', block_type: 'text', content: '', position: 1 })),
       })
 
       await store.getState().createBelow('A')
 
-      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      // `create_block` answers `WithOps<BlockRow>`, so the refs arm is the one
+      // that fires; the refs themselves are the subject of the #2468 block below.
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', [])
     })
 
     it('edit calls onNewAction after successful edit', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'new',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
+      stubInvoke({
+        edit_block: () =>
+          withOps(makeBlockRow({ id: 'A', block_type: 'text', content: 'new', position: 0 })),
       })
 
       await store.getState().edit('A', 'new')
 
-      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', [], 'edit:A')
     })
 
     it('remove calls onNewAction after successful delete', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A' })],
       })
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'A',
-        deleted_at: '2025-01-01T00:00:00Z',
-        descendants_affected: 0,
-      })
+      stubInvoke({ delete_block: () => deleteResp('A') })
 
       await store.getState().remove('A')
 
-      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', [])
     })
 
     it('does NOT call onNewAction when createBelow fails', async () => {
       const block = makeBlock({ id: 'A', position: 0 })
       store.setState({ blocks: [block] })
 
-      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+      stubInvoke({ create_block: () => Promise.reject(new Error('create failed')) })
 
       await store.getState().createBelow('A')
 
@@ -184,7 +210,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
 
       await store.getState().edit('A', 'new')
 
@@ -195,7 +221,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A' })],
       })
-      mockedInvoke.mockRejectedValueOnce(new Error('delete failed'))
+      stubInvoke({ delete_block: () => Promise.reject(new Error('delete failed')) })
 
       await store.getState().remove('A')
 
@@ -219,16 +245,14 @@ describe('PageBlockStore', () => {
     // silently disable undo for a real, user-initiated delete.
     // -------------------------------------------------------------------------
     describe('#4729 housekeeping deletes are not undoable', () => {
-      const DELETE_RESP = {
-        block_id: 'A',
-        deleted_at: '2025-01-01T00:00:00Z',
-        descendants_affected: 0,
-        op_refs: [{ device_id: 'dev1', seq: 7 }],
+      const DELETE_REFS: OpRef[] = [{ device_id: 'dev1', seq: 7 }]
+      const stubDelete = (): void => {
+        stubInvoke({ delete_block: () => deleteResp('A', DELETE_REFS) })
       }
 
       it('remove with { undoable: false } does NOT notify the undo store', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
-        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+        stubDelete()
 
         await store.getState().remove('A', { undoable: false })
 
@@ -237,25 +261,25 @@ describe('PageBlockStore', () => {
 
       it('remove with { undoable: true } notifies the undo store (explicit opt-in)', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
-        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+        stubDelete()
 
         await store.getState().remove('A', { undoable: true })
 
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_RESP.op_refs)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_REFS)
       })
 
       it('a user-initiated remove still notifies the undo store (no options)', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
-        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+        stubDelete()
 
         await store.getState().remove('A')
 
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_RESP.op_refs)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', DELETE_REFS)
       })
 
       it('the block is still deleted, and the delete IPC still issued', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
-        mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+        stubDelete()
 
         await store.getState().remove('A', { undoable: false })
 
@@ -268,7 +292,7 @@ describe('PageBlockStore', () => {
         try {
           _resetGraphStructureEventsForTest()
           store.setState({ blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })] })
-          mockedInvoke.mockResolvedValueOnce(DELETE_RESP)
+          stubDelete()
 
           await store.getState().remove('A', { undoable: false })
           vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
@@ -290,18 +314,15 @@ describe('PageBlockStore', () => {
     // the ref-LESS call shape (positional `undoPageGroup` fallback).
     // -------------------------------------------------------------------------
     describe('#2468 op_refs threading', () => {
-      const REFS = [{ device_id: 'dev1', seq: 42 }]
+      const REFS: OpRef[] = [{ device_id: 'dev1', seq: 42 }]
 
       it('createBelow forwards the create_block response op_refs', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'NEW',
-          block_type: 'text',
-          content: '',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          op_refs: REFS,
+        stubInvoke({
+          create_block: () => ({
+            op_refs: REFS,
+            ...makeBlockRow({ id: 'NEW', block_type: 'text', content: '', position: 1 }),
+          }),
         })
 
         await store.getState().createBelow('A')
@@ -311,14 +332,11 @@ describe('PageBlockStore', () => {
 
       it('edit forwards the edit_block response op_refs', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'A',
-          block_type: 'text',
-          content: 'new',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          op_refs: REFS,
+        stubInvoke({
+          edit_block: () => ({
+            op_refs: REFS,
+            ...makeBlockRow({ id: 'A', block_type: 'text', content: 'new', position: 0 }),
+          }),
         })
 
         await store.getState().edit('A', 'new')
@@ -331,12 +349,7 @@ describe('PageBlockStore', () => {
 
       it('remove forwards the delete_block response op_refs', async () => {
         store.setState({ blocks: [makeBlock({ id: 'A' })] })
-        mockedInvoke.mockResolvedValueOnce({
-          block_id: 'A',
-          deleted_at: '2025-01-01T00:00:00Z',
-          descendants_affected: 0,
-          op_refs: REFS,
-        })
+        stubInvoke({ delete_block: () => deleteResp('A', REFS) })
 
         await store.getState().remove('A')
 
@@ -351,11 +364,13 @@ describe('PageBlockStore', () => {
             makeBlock({ id: 'C', position: 2, parent_id: null }),
           ],
         })
-        mockedInvoke.mockResolvedValueOnce({
-          block_id: 'C',
-          new_parent_id: null,
-          new_position: 0,
-          op_refs: REFS,
+        stubInvoke({
+          move_block: () => ({
+            op_refs: REFS,
+            block_id: 'C',
+            new_parent_id: null,
+            new_position: 0,
+          }),
         })
 
         await store.getState().reorder('C', 0)
@@ -370,12 +385,9 @@ describe('PageBlockStore', () => {
             makeBlock({ id: 'B', position: 1, parent_id: null }),
           ],
         })
-        mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'move_block') {
-            return { block_id: 'A', new_parent_id: 'B', new_position: 1, op_refs: REFS }
-          }
-          if (cmd === 'load_page_subtree') return subtreeResp([])
-          return undefined
+        stubInvoke({
+          move_block: () => ({ op_refs: REFS, block_id: 'A', new_parent_id: 'B', new_position: 1 }),
+          load_page_subtree: () => subtreeResp([]),
         })
 
         await store.getState().moveToParent('A', 'B', 0)
@@ -390,12 +402,9 @@ describe('PageBlockStore', () => {
             makeBlock({ id: 'B', position: 1, parent_id: null }),
           ],
         })
-        mockedInvoke.mockImplementation(async (cmd: string) => {
-          if (cmd === 'move_blocks_batch') {
-            return [{ block_id: 'A', new_parent_id: 'B', new_position: 1 }]
-          }
-          if (cmd === 'load_page_subtree') return subtreeResp([])
-          return undefined
+        stubInvoke({
+          move_blocks_batch: () => [{ block_id: 'A', new_parent_id: 'B', new_position: 1 }],
+          load_page_subtree: () => subtreeResp([]),
         })
 
         await store.getState().moveBlocks(['A'], 'B', 0)
@@ -410,23 +419,22 @@ describe('PageBlockStore', () => {
       it('pasteBlocks (batch create) keeps the ref-less positional fallback', async () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
         store.setState({ blocks: [anchor] })
-        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-          if (cmd === 'create_blocks_batch') {
-            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+        stubInvoke({
+          create_blocks_batch: (args) => {
+            const specs = ((args as { specs?: unknown }).specs ?? []) as Array<{
               content: string
               parentId: string | null
             }>
-            return specs.map((s, i) => ({
-              id: `NEW${i}`,
-              block_type: 'content',
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-              deleted_at: null,
-            }))
-          }
-          if (cmd === 'load_page_subtree') return subtreeResp([anchor])
-          return []
+            return specs.map((s, i) =>
+              makeBlockRow({
+                id: `NEW${i}`,
+                content: s.content,
+                parent_id: s.parentId,
+                position: null,
+              }),
+            )
+          },
+          load_page_subtree: () => subtreeResp([anchor]),
         })
 
         await store.getState().pasteBlocks('A', 'one\ntwo')
