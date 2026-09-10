@@ -187,7 +187,6 @@ async fn reverse_move_preflight(
 /// and `batched_move_undo_group_redo_undo_roundtrip_engine_2274`.) The
 /// single-op call site (`apply_reverse_in_tx`) passes an empty set — the
 /// self-exclusion below is unconditional.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn reverse_move_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
@@ -240,17 +239,46 @@ async fn reverse_move_block(
 
     // #928 / #2274: settle BOTH affected sibling groups to dense 1-based
     // positions.
-    //
-    // Target group — the payload's placement is a 0-based SLOT (`new_index`;
-    // `new_position - 1` for pre-#400 payloads), so place the block at that
-    // slot among the group's OTHER live siblings and densify in that explicit
-    // order — the same interpretation the forward engine path gives the same
-    // fields. Re-densifying by `(position, id)` with the raw provisional rank
-    // (the pre-#2274 approach) is NOT faithful when that rank collides with an
-    // existing sibling's: the ULID tie-break, not the slot, would decide the
-    // order, so undoing/redoing a move could land the block on the wrong side
-    // of a same-ranked sibling (caught by the batched-move undo→redo→undo
-    // trace in `conformance.rs`).
+    let slot = settle_reverse_move_target_group(tx, p, extra_exclude).await?;
+
+    // Source group — it lost a member on a cross-parent undo and must
+    // re-densify (order unchanged, so the `(position, id)` sort is exact
+    // here). A same-parent undo touches a single group (old == new), already
+    // settled above.
+    if old_parent_id.as_deref() != new_parent_id_str {
+        reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
+    }
+
+    // #664: refresh `page_id` AND `space_id` for the moved block and its
+    // descendants synchronously, mirroring `move_block_inner`. Without this sync
+    // update, callers reading right after commit see a stale `page_id` /
+    // `space_id` (#533) for the moved subtree until the async `RebuildPageIds`
+    // materializer task lands.
+    agaric_store::block_descendants::rederive_page_and_space_ids(tx, move_block_id_str).await?;
+
+    converge_reverse_move_engine(tx, state, device_id, p, slot).await
+}
+
+/// Target group of a reverse move — the payload's placement is a 0-based SLOT
+/// (`new_index`; `new_position - 1` for pre-#400 payloads), so place the block
+/// at that slot among the group's OTHER live siblings and densify in that
+/// explicit order — the same interpretation the forward engine path gives the
+/// same fields. Re-densifying by `(position, id)` with the raw provisional rank
+/// (the pre-#2274 approach) is NOT faithful when that rank collides with an
+/// existing sibling's: the ULID tie-break, not the slot, would decide the
+/// order, so undoing/redoing a move could land the block on the wrong side
+/// of a same-ranked sibling (caught by the batched-move undo→redo→undo
+/// trace in `conformance.rs`).
+///
+/// Returns the settled 0-based live-sibling slot, which the engine
+/// convergence ([`converge_reverse_move_engine`]) must mirror.
+async fn settle_reverse_move_target_group(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    p: &agaric_store::op::MoveBlockPayload,
+    extra_exclude: &std::collections::HashSet<&str>,
+) -> Result<usize, AppError> {
+    let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
+    let move_block_id_str = p.block_id.as_str();
     // dynamic-sql: test-only fixture/verification query (differential enumeration test, #2190 review).
     // `extra_exclude` (#2305) is filtered IN RUST rather than folded into the
     // SQL `WHERE` so the caller can pass an arbitrarily large distinct-move
@@ -273,33 +301,29 @@ async fn reverse_move_block(
     let slot = usize::try_from(slot).unwrap_or(target_group.len());
     target_group.insert(slot, move_block_id_str.to_owned());
     agaric_engine::loro::projection::reproject_dense_positions(tx, &target_group).await?;
+    Ok(slot)
+}
 
-    // Source group — it lost a member on a cross-parent undo and must
-    // re-densify (order unchanged, so the `(position, id)` sort is exact
-    // here). A same-parent undo touches a single group (old == new), already
-    // settled above.
-    if old_parent_id.as_deref() != new_parent_id_str {
-        reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
-    }
-
-    // #664: refresh `page_id` AND `space_id` for the moved block and its
-    // descendants synchronously, mirroring `move_block_inner`. Without this sync
-    // update, callers reading right after commit see a stale `page_id` /
-    // `space_id` (#533) for the moved subtree until the async `RebuildPageIds`
-    // materializer task lands.
-    agaric_store::block_descendants::rederive_page_and_space_ids(tx, move_block_id_str).await?;
-
-    // Drive the SAME reverse move into the shared per-space engine so its
-    // fractional sibling order converges with the SQL settle above. The
-    // engines are session-persistent singletons reconciled only at boot
-    // replay; without this apply the engine keeps the PRE-undo order and the
-    // next forward move in either affected group reprojects that stale order
-    // over SQL — silently resurrecting the undone move. `slot` is the
-    // SQL-settled live-sibling slot, the same interpretation
-    // `apply_move_block_to` gives a forward move's `new_index`. Mirrors the
-    // forward path's engine-unavailable handling (`apply_move_block_via_loro`):
-    // an unresolved space or a block/parent missing from the engine falls back
-    // to the SQL-only result with a breadcrumb — boot replay reconciles.
+/// Drive the SAME reverse move into the shared per-space engine so its
+/// fractional sibling order converges with the SQL settle
+/// ([`settle_reverse_move_target_group`]). The engines are session-persistent
+/// singletons reconciled only at boot replay; without this apply the engine
+/// keeps the PRE-undo order and the next forward move in either affected group
+/// reprojects that stale order over SQL — silently resurrecting the undone
+/// move. `slot` is the SQL-settled live-sibling slot, the same interpretation
+/// `apply_move_block_to` gives a forward move's `new_index`. Mirrors the
+/// forward path's engine-unavailable handling (`apply_move_block_via_loro`):
+/// an unresolved space or a block/parent missing from the engine falls back
+/// to the SQL-only result with a breadcrumb — boot replay reconciles.
+async fn converge_reverse_move_engine(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::MoveBlockPayload,
+    slot: usize,
+) -> Result<(), AppError> {
+    let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
+    let move_block_id_str = p.block_id.as_str();
     let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
     if let Some(space_id) = space_id {
         // #2604 — record a rollback checkpoint (the reverse-move is the only
@@ -834,7 +858,6 @@ impl ReverseFtsFanout {
 /// (#3706 — see `require_reverse_attachment_bytes`). Pass
 /// `materializer.app_data_dir().as_deref()`; `None` skips the check, which is
 /// only reachable in a `Materializer` built without a vault root.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
@@ -865,223 +888,21 @@ pub async fn apply_reverse_in_tx(
         //   - attachment ops (AddAttachment uses INSERT OR REPLACE to recreate the
         //     row; DeleteAttachment hard-DELETEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
-            // Cascade soft-delete (same as delete_block_inner).
-            //
-            // `descendants_cte_active!()` filters `deleted_at IS NULL`
-            // so already-deleted descendants aren't re-swept; `depth
-            // < 100` bounds the walk. Shared CTE lives in
-            // `agaric_store::block_descendants`.
-            //
-            // Page_id is invariant under re-delete; the
-            // descendants keep their existing `page_id` and on next
-            // restore the M6/restore-path (`restore_block_inner` or
-            // `OpPayload::RestoreBlock` below) picks them up. No
-            // page_id work is needed here.
-            //
-            // Cohort invariant (#1549): stamp the CALLER-minted op timestamp,
-            // never a fresh `now_ms()` — `deleted_at` must equal the reverse
-            // op's `created_at` exactly or the matching redo/undo
-            // `RestoreBlock { deleted_at_ref }` finds zero rows.
-            //
-            // R27: walk depth-UNBOUNDED (batched capped CTEs) + json_each
-            // UPDATE — the same shape as `project_delete_block_to_sql` — so
-            // an undo-produced delete of a merged tree deeper than the
-            // depth-100 cap tombstones the WHOLE subtree instead of leaving
-            // a live tail stranded under tombstoned ancestors.
-            let now = op_created_at;
-            let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
-                tx,
-                p.block_id.as_str(),
-                agaric_store::block_descendants::DescendantWalkFilter::Active,
-            )
-            .await?;
-            // #2655: resolve the space from the seed BEFORE the cascade tombstones
-            // it — `resolve_block_space` filters `deleted_at IS NULL`, so a
-            // post-delete resolve returns None. Mirrors the forward delete path
-            // (`apply_delete_block_via_loro`), which likewise resolves first.
-            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-            // Borrowed serialization (`to_string(&cohort)`) so `cohort` stays
-            // alive for the engine fan-out below; `serde_json::Error` converts to
-            // `AppError::Json`.
-            let cohort_json = serde_json::to_string(&cohort)?;
-            // #2895 slice 2: the json_each cohort soft-delete UPDATE now lives
-            // behind the `blocks`-owning engine crate (byte-identical SQL).
-            agaric_engine::block_ops::write_cohort_deleted_at_json(
-                tx,
-                &cohort_json,
-                agaric_engine::block_ops::CohortDeletedAt::Stamp(now),
-            )
-            .await?;
-
-            // #2655: tombstone the SAME cohort in the per-space engine so its
-            // `live_block_ids()` no longer holds a block SQL has soft-deleted —
-            // the exact #1257 freshness-gate divergence that suspends sync. The
-            // per-id present-guard mirrors the forward path (engine
-            // `apply_delete_block` errors on an absent node); stamp the SAME
-            // `op_created_at` the SQL cascade wrote (engine `deleted_at` is a
-            // String slot, #109 Phase 2), matching `apply_delete_block_via_loro`.
-            // `cohort` was collected with the `Active` filter, so it holds only
-            // currently-live ids — identical membership to the `deleted_at IS
-            // NULL` SQL guard above.
-            let deleted_at_str = now.to_string();
-            drive_reverse_engine(state, device_id, space_id, "delete_block", |engine| {
-                for id in &cohort {
-                    if engine.read_block(id)?.is_some() {
-                        engine.apply_delete_block(id, &deleted_at_str)?;
-                    }
-                }
-                Ok(())
-            })?;
-
             // #4733: the same cohort owes an FTS removal after the commit —
             // see [`ReverseFtsFanout`]. The seed's own `RemoveFtsBlock` covers
             // only the seed.
-            fanout.deleted = cohort;
+            fanout.deleted =
+                apply_reverse_delete_block(tx, state, device_id, p, op_created_at).await?;
         }
         OpPayload::RestoreBlock(p) => {
-            // Cascade restore (same as restore_block_inner).
-            //
-            // R27: cohort-contiguous, depth-UNBOUNDED walk + json_each
-            // UPDATE — the same shape as `restore_block_inner` /
-            // `project_restore_block_to_sql` / `collect_restore_cohort` —
-            // so undo/revert restores the WHOLE cohort of a merged tree
-            // deeper than the depth-100 cap.
-            let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
-                tx,
-                p.block_id.as_str(),
-                agaric_store::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
-            )
-            .await?;
-            // #2655: borrowed serialization keeps `cohort` alive for the engine
-            // fan-out at the end of this arm.
-            let cohort_json = serde_json::to_string(&cohort)?;
-            // #2895 slice 2: the json_each cohort restore UPDATE now lives
-            // behind the `blocks`-owning engine crate (byte-identical SQL).
-            agaric_engine::block_ops::write_cohort_deleted_at_json(
-                tx,
-                &cohort_json,
-                agaric_engine::block_ops::CohortDeletedAt::ClearWhereRef(p.deleted_at_ref),
-            )
-            .await?;
-
-            // #1884: also restore UPWARD, mirroring the two other restore
-            // writers (`restore_block_inner`, `project_restore_block_to_sql`).
-            // The downward cohort UPDATE alone leaves the block LIVE under a
-            // still-tombstoned parent when that parent was deleted SEPARATELY
-            // (its cascade skipped the already-deleted block, so the block
-            // kept its own cohort): invisible in both the tree and trash, and
-            // hard-deleted by a later purge of the parent. Walk the contiguous
-            // soft-deleted ancestor chain up to the nearest live ancestor and
-            // clear it. Idempotent (an already-live chain restores nothing),
-            // preserving the batch-undo idempotency policy above.
-            // (`&mut Transaction` deref-coerces to `&mut SqliteConnection`,
-            // so pass `tx` directly — clippy::explicit_auto_deref.)
-            // #2655: keep the FULL restored chain (`chain`), not only `topmost`
-            // — the engine fan-out below re-clears `deleted_at` on every restored
-            // ancestor so the CRDT converges with the SQL UPDATE (mirrors the
-            // forward path's `dispatch_restore_ancestors`, #2017).
-            let restored_chain = agaric_store::block_descendants::restore_deleted_ancestor_chain(
-                tx,
-                p.block_id.as_str(),
-            )
-            .await?;
-            let restored_ancestor_top = restored_chain.topmost.clone();
-
-            // Idempotency guard: the reverse of a delete may target a block
-            // that was since PURGED (row gone). The cohort UPDATE above
-            // matched zero rows — fine per the idempotency policy — but the
-            // page/space re-derivation reads the seed row and errors on a
-            // missing block, so probe first.
-            let seed_id = p.block_id.as_str();
-            let seed_row = sqlx::query!(
-                "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
-                seed_id
-            )
-            .fetch_optional(&mut **tx)
-            .await?;
-            if seed_row.is_some() {
-                // #664: refresh `page_id` AND `space_id` for the restored
-                // subtree synchronously, mirroring `restore_block_inner` and
-                // ultimately `move_block_inner`. Without this sync update,
-                // callers reading right after commit can see a stale `page_id`
-                // (the moved-then-deleted descendant case described in
-                // `restore_block_inner`) or stale `space_id` (#533). Before
-                // #664 this arm open-coded the chain and had drifted to skip
-                // the `space_id` step; routing through the shared helper makes
-                // the complete behaviour structurally impossible to drift.
-                agaric_store::block_descendants::rederive_page_and_space_ids(
-                    tx,
-                    p.block_id.as_str(),
-                )
-                .await?;
-
-                // #1884: when an ancestor chain was restored above, ALSO
-                // re-derive from the TOPMOST restored ancestor so the whole
-                // reconnected subtree — not just `block_id`'s — is refreshed,
-                // mirroring `restore_block_inner`'s `inheritance_root`.
-                if let Some(ref top) = restored_ancestor_top {
-                    agaric_store::block_descendants::rederive_page_and_space_ids(tx, top).await?;
-                }
-
-                // #2655: converge the per-space engine with the SQL restore. The
-                // seed is now LIVE again (its `deleted_at` cleared above), so
-                // `resolve_block_space` — which filters tombstones — resolves it.
-                // `apply_restore_block` is idempotent and silently no-ops on an
-                // absent node, so re-clearing an already-live cohort/chain member
-                // (or one never in the engine) is harmless. Restoring the cohort
-                // clears the engine tombstones the reverse-of-restore / redo path
-                // set; restoring the ancestor chain mirrors the forward path's
-                // `dispatch_restore_ancestors` (#2017) so a later reproject does
-                // not re-delete the reconnected ancestors in SQL.
-                let space_id =
-                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-                drive_reverse_engine(state, device_id, space_id, "restore_block", |engine| {
-                    for id in cohort.iter().chain(restored_chain.chain.iter()) {
-                        engine.apply_restore_block(id)?;
-                    }
-                    Ok(())
-                })?;
-
-                // #4733: everything this arm brought back to life owes an FTS
-                // re-index after the commit — see [`ReverseFtsFanout`]. Same
-                // two sets the engine fan-out just walked, for the same
-                // reason: the seed's `UpdateFtsBlock` reaches the seed alone.
-                fanout.restored = cohort
-                    .iter()
-                    .chain(restored_chain.chain.iter())
-                    .cloned()
-                    .collect();
-            }
+            // #4733: everything this arm brought back to life owes an FTS
+            // re-index after the commit — see [`ReverseFtsFanout`]. Same
+            // two sets the engine fan-out walked, for the same reason: the
+            // seed's `UpdateFtsBlock` reaches the seed alone.
+            fanout.restored = apply_reverse_restore_block(tx, state, device_id, p).await?;
         }
         OpPayload::EditBlock(p) => {
-            let block_id_str = p.block_id.as_str();
-            // #2895 slice 2: the raw content UPDATE now lives behind the
-            // `blocks`-owning engine crate (`set_active_block_content` —
-            // byte-identical `UPDATE ... WHERE id = ? AND deleted_at IS NULL`).
-            let rows_affected =
-                agaric_engine::block_ops::set_active_block_content(tx, block_id_str, &p.to_text)
-                    .await?;
-            if rows_affected == 0 {
-                return Err(AppError::NotFound(format!(
-                    "block '{}' not found or soft-deleted during undo",
-                    p.block_id
-                )));
-            }
-
-            // #2655: splice the prior text into the per-space engine's `LoroText`
-            // so the CRDT matches the SQL content, mirroring the forward
-            // `apply_edit_block_via_loro`. `apply_edit_via_diff_splice` computes
-            // the minimal diff from the engine's CURRENT content to `to_text`,
-            // and the block is live (the UPDATE matched a row), so it resolves a
-            // space. The present-guard mirrors the forward path's block-absent
-            // fallback.
-            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-            drive_reverse_engine(state, device_id, space_id, "edit_block", |engine| {
-                if engine.read_block(block_id_str)?.is_some() {
-                    engine.apply_edit_via_diff_splice(block_id_str, &p.to_text)?;
-                }
-                Ok(())
-            })?;
+            apply_reverse_edit_block(tx, state, device_id, p).await?;
         }
         OpPayload::MoveBlock(p) => {
             // #1553: the preflight + raw write + both sibling-group reprojections
@@ -1096,114 +917,16 @@ pub async fn apply_reverse_in_tx(
         // rows_affected.  During sync replays the same undo/redo sequence can
         // be applied more than once, so both directions must be lenient.
         OpPayload::AddTag(p) => {
-            let block_id_str = p.block_id.as_str();
-            let tag_id_str = p.tag_id.as_str();
-            sqlx::query!(
-                "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
-                block_id_str,
-                tag_id_str,
-            )
-            .execute(&mut **tx)
-            .await?;
-
-            // #2655: mirror the tag association into the per-space engine's
-            // `block_tags` map (idempotent, per-key LWW), matching the forward
-            // `apply_add_tag_via_loro`, so the exported CRDT carries the tag.
-            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-            drive_reverse_engine(state, device_id, space_id, "add_tag", |engine| {
-                if engine.read_block(block_id_str)?.is_some() {
-                    engine.apply_add_tag(block_id_str, tag_id_str)?;
-                }
-                Ok(())
-            })?;
+            apply_reverse_add_tag(tx, state, device_id, p).await?;
         }
         OpPayload::RemoveTag(p) => {
-            let block_id_str = p.block_id.as_str();
-            let tag_id_str = p.tag_id.as_str();
-            sqlx::query!(
-                "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
-                block_id_str,
-                tag_id_str,
-            )
-            .execute(&mut **tx)
-            .await?;
-
-            // #2655: mirror the tag removal into the per-space engine (idempotent
-            // — no-ops when the tag is absent), matching the forward
-            // `apply_remove_tag_via_loro`.
-            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-            drive_reverse_engine(state, device_id, space_id, "remove_tag", |engine| {
-                if engine.read_block(block_id_str)?.is_some() {
-                    engine.apply_remove_tag(block_id_str, tag_id_str)?;
-                }
-                Ok(())
-            })?;
+            apply_reverse_remove_tag(tx, state, device_id, p).await?;
         }
         OpPayload::SetProperty(p) => {
-            // #604: route through the same projection as the forward paths.
-            // Column-backed keys (`todo_state` / `priority` / `due_date` /
-            // `scheduled_date` → same-named `blocks` columns; `space` →
-            // `blocks.space_id` with owning-page-group fan-out) must UPDATE
-            // the column, never INSERT a `block_properties` row — the
-            // migration-0088 `key_not_reserved` CHECK aborts such inserts.
-            // `project_set_property_to_sql` is the canonical SQL mirror of
-            // `set_property_in_tx`'s routing (incl. the per-key value_text /
-            // value_date / value_ref extraction) and stays idempotent on
-            // every branch (UPDATE / INSERT OR REPLACE), preserving the
-            // batch-undo idempotency policy documented above.
-            agaric_engine::loro::projection::project_set_property_to_sql(tx, p).await?;
-
-            // #2655: mirror the property write into the per-space engine's
-            // property map, matching the forward `apply_set_property_via_loro`.
-            // The `space` key is EXCLUDED: it is column-backed in `blocks` (not a
-            // `block_properties` row) and its forward handling is the subtree
-            // hydration special-case — the forward path NEVER stores `space` in
-            // the engine property map, so applying it here would inject a spurious
-            // property. `space`-key reverses stay SQL-only (they cannot trip the
-            // block-scoped #1257 gate). Reserved non-space keys (todo_state /
-            // priority / due_date / scheduled_date) DO enter the engine map on the
-            // forward path, so they are driven here too. `PropertyValue::from(p)`
-            // recovers the native typed value by the same precedence the forward
-            // path uses.
-            if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
-                let space_id =
-                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-                drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
-                    if engine.read_block(p.block_id.as_str())?.is_some() {
-                        let value = agaric_engine::loro::engine::PropertyValue::from(p);
-                        engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
-                    }
-                    Ok(())
-                })?;
-            }
+            apply_reverse_set_property(tx, state, device_id, p).await?;
         }
         OpPayload::DeleteProperty(p) => {
-            // #604: same routing note as SetProperty above — reserved keys
-            // NULL their `blocks` column, `space` NULLs `space_id` for the
-            // owning-page group, generic keys DELETE the `block_properties`
-            // row. All branches are idempotent (0-row UPDATE/DELETE no-ops).
-            agaric_engine::loro::projection::project_delete_property_to_sql(
-                tx,
-                p.block_id.as_str(),
-                &p.key,
-            )
-            .await?;
-
-            // #2655: clear the key from the per-space engine property map
-            // (idempotent — no-ops when the key is absent), matching the forward
-            // `apply_delete_property_via_loro`. The `space` key is EXCLUDED for
-            // the same reason as the SetProperty arm above (column-backed; never
-            // in the engine property map).
-            if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
-                let space_id =
-                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-                drive_reverse_engine(state, device_id, space_id, "delete_property", |engine| {
-                    if engine.read_block(p.block_id.as_str())?.is_some() {
-                        engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
-                    }
-                    Ok(())
-                })?;
-            }
+            apply_reverse_delete_property(tx, state, device_id, p).await?;
         }
         OpPayload::DeleteAttachment(p) => {
             // C7 (#345): hard-DELETE the row to match the runtime /
@@ -1226,110 +949,10 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::RenameAttachment(p) => {
-            // `reverse_payload` is already swapped by `reverse_rename_attachment`,
-            // so the filename to restore lives in `new_filename` (mirroring the
-            // forward materializer, which also writes `p.new_filename`). Reading
-            // `old_filename` here would re-apply the current name — a no-op undo.
-            let attachment_id_str = p.attachment_id.as_str();
-            // #4248 (SECURITY): same coercion `apply_rename_attachment_tx`
-            // runs on the forward path — see `reverse_attachment_filename`.
-            // Undoing a rename must land the byte-identical value the
-            // forward apply of that payload would have stored.
-            let new_filename = reverse_attachment_filename(
-                &p.new_filename,
-                attachment_id_str,
-                "rename_attachment",
-            );
-            sqlx::query!(
-                "UPDATE attachments SET filename = ? WHERE id = ?",
-                new_filename,
-                attachment_id_str
-            )
-            .execute(&mut **tx)
-            .await?;
+            apply_reverse_rename_attachment(tx, p).await?;
         }
         OpPayload::AddAttachment(p) => {
-            // Undo of AddAttachment: the forward delete was a hard-DELETE, so
-            // the row is gone and `original_created_at` is None in the normal
-            // case. `created_at` is regenerated via `now_ms()` then. A row
-            // may survive only via idempotency (e.g. double-undo replay), in
-            // which case we preserve its existing `created_at`.
-            // #3706: the bytes this row will name must still be on disk. The
-            // orphan GC reclaims a deleted attachment's file as a matter of
-            // course (see `require_reverse_attachment_bytes`), and committing
-            // the row anyway is what turns a taken-back delete into permanent
-            // data loss on a vault with no peer to re-request from. Checked
-            // BEFORE the INSERT so the failure rolls the whole reverse back.
-            //
-            // `revert_ops_in_tx` runs the same check as a pre-append
-            // preflight; this one covers the paths that do not go through it —
-            // `undo_page_op_inner` and `redo_page_op_inner` redoing an undone
-            // `add_attachment` after a sweep.
-            //
-            // #4247 update: `undo_page_op_inner` used to be UNREACHABLE here,
-            // and the note that stood in this spot recorded why — its
-            // target-selection query admitted a `delete_attachment` only via
-            // `EXISTS (SELECT 1 FROM attachments a WHERE a.id = ...)`, which
-            // the delete's own hard-DELETE had already falsified, while
-            // `ol.block_id IN (page_blocks)` never matched because
-            // `DeleteAttachmentPayload` carries no `block_id`. That was the
-            // #4247 bug (positional Ctrl-Z silently reversed the PREVIOUS op),
-            // and closing it makes this arm reachable from the positional path
-            // too. The intended consequence: a Ctrl-Z after the sweep now hits
-            // the refusal below instead of quietly undoing something else.
-            require_reverse_attachment_bytes(app_data_dir, p).await?;
-
-            let attachment_id_str = p.attachment_id.as_str();
-            let original_created_at: Option<i64> = sqlx::query_scalar!(
-                "SELECT created_at FROM attachments WHERE id = ?",
-                attachment_id_str,
-            )
-            .fetch_optional(&mut **tx)
-            .await?;
-
-            let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
-            let block_id_str = p.block_id.as_str();
-
-            // #3370 (SECURITY): the second payload-carried writer into
-            // `attachments.fs_path`. The reverse payload is built from the
-            // op-log record of the op being undone, which may be a *peer's*
-            // op — so the same coercion the apply path runs must run here, or
-            // undo re-introduces the value apply just refused to store.
-            //
-            // Shared with the #3706 byte-existence guard above via
-            // `reverse_add_attachment_fs_path`, so the path that is checked
-            // and the path that is stored cannot drift apart.
-            // #4248 (SECURITY): the display `filename` is the OTHER
-            // payload-carried writer into this row, and `apply_add_attachment_tx`
-            // sanitizes it on the forward path (#3029) exactly as it coerces
-            // `fs_path` (#3370). Both halves of the pair now run here too;
-            // see `reverse_attachment_filename`.
-            let filename =
-                reverse_attachment_filename(&p.filename, attachment_id_str, "add_attachment");
-            let fs_path = reverse_add_attachment_fs_path(p);
-            let fs_path_str = fs_path.as_str();
-            if fs_path_str != p.fs_path {
-                tracing::warn!(
-                    attachment_id = attachment_id_str,
-                    original = %p.fs_path,
-                    canonical = fs_path_str,
-                    "rewrote unsafe or non-canonical attachment fs_path on undo re-insert"
-                );
-            }
-
-            sqlx::query!(
-                "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-                attachment_id_str,
-                block_id_str,
-                p.mime_type,
-                filename,
-                p.size_bytes,
-                fs_path_str,
-                created_at,
-            )
-            .execute(&mut **tx)
-            .await?;
+            apply_reverse_add_attachment(tx, p, app_data_dir).await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.
@@ -1342,6 +965,493 @@ pub async fn apply_reverse_in_tx(
         }
     }
     Ok(fanout)
+}
+
+/// `DeleteBlock` arm of [`apply_reverse_in_tx`]: cascade soft-delete (same as
+/// `delete_block_inner`). Returns the tombstoned cohort.
+///
+/// `descendants_cte_active!()` filters `deleted_at IS NULL` so already-deleted
+/// descendants aren't re-swept; `depth < 100` bounds the walk. Shared CTE lives
+/// in `agaric_store::block_descendants`.
+///
+/// Page_id is invariant under re-delete; the descendants keep their existing
+/// `page_id` and on next restore the M6/restore-path (`restore_block_inner` or
+/// [`apply_reverse_restore_block`]) picks them up. No page_id work is needed
+/// here.
+///
+/// Cohort invariant (#1549): stamp the CALLER-minted op timestamp, never a
+/// fresh `now_ms()` — `deleted_at` must equal the reverse op's `created_at`
+/// exactly or the matching redo/undo `RestoreBlock { deleted_at_ref }` finds
+/// zero rows.
+///
+/// R27: walk depth-UNBOUNDED (batched capped CTEs) + json_each UPDATE — the
+/// same shape as `project_delete_block_to_sql` — so an undo-produced delete of
+/// a merged tree deeper than the depth-100 cap tombstones the WHOLE subtree
+/// instead of leaving a live tail stranded under tombstoned ancestors.
+async fn apply_reverse_delete_block(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::DeleteBlockPayload,
+    op_created_at: i64,
+) -> Result<Vec<String>, AppError> {
+    let now = op_created_at;
+    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
+        tx,
+        p.block_id.as_str(),
+        agaric_store::block_descendants::DescendantWalkFilter::Active,
+    )
+    .await?;
+    // #2655: resolve the space from the seed BEFORE the cascade tombstones
+    // it — `resolve_block_space` filters `deleted_at IS NULL`, so a
+    // post-delete resolve returns None. Mirrors the forward delete path
+    // (`apply_delete_block_via_loro`), which likewise resolves first.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    // Borrowed serialization (`to_string(&cohort)`) so `cohort` stays
+    // alive for the engine fan-out below; `serde_json::Error` converts to
+    // `AppError::Json`.
+    let cohort_json = serde_json::to_string(&cohort)?;
+    // #2895 slice 2: the json_each cohort soft-delete UPDATE now lives
+    // behind the `blocks`-owning engine crate (byte-identical SQL).
+    agaric_engine::block_ops::write_cohort_deleted_at_json(
+        tx,
+        &cohort_json,
+        agaric_engine::block_ops::CohortDeletedAt::Stamp(now),
+    )
+    .await?;
+
+    // #2655: tombstone the SAME cohort in the per-space engine so its
+    // `live_block_ids()` no longer holds a block SQL has soft-deleted —
+    // the exact #1257 freshness-gate divergence that suspends sync. The
+    // per-id present-guard mirrors the forward path (engine
+    // `apply_delete_block` errors on an absent node); stamp the SAME
+    // `op_created_at` the SQL cascade wrote (engine `deleted_at` is a
+    // String slot, #109 Phase 2), matching `apply_delete_block_via_loro`.
+    // `cohort` was collected with the `Active` filter, so it holds only
+    // currently-live ids — identical membership to the `deleted_at IS
+    // NULL` SQL guard above.
+    let deleted_at_str = now.to_string();
+    drive_reverse_engine(state, device_id, space_id, "delete_block", |engine| {
+        for id in &cohort {
+            if engine.read_block(id)?.is_some() {
+                engine.apply_delete_block(id, &deleted_at_str)?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(cohort)
+}
+
+/// `RestoreBlock` arm of [`apply_reverse_in_tx`]: cascade restore (same as
+/// `restore_block_inner`). Returns everything it brought back to life — the
+/// descendant cohort followed by the #1884 ancestor chain — or an empty list
+/// when the seed row is gone.
+///
+/// R27: cohort-contiguous, depth-UNBOUNDED walk + json_each UPDATE — the same
+/// shape as `restore_block_inner` / `project_restore_block_to_sql` /
+/// `collect_restore_cohort` — so undo/revert restores the WHOLE cohort of a
+/// merged tree deeper than the depth-100 cap.
+async fn apply_reverse_restore_block(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::RestoreBlockPayload,
+) -> Result<Vec<String>, AppError> {
+    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
+        tx,
+        p.block_id.as_str(),
+        agaric_store::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
+    )
+    .await?;
+    // #2655: borrowed serialization keeps `cohort` alive for the engine
+    // fan-out at the end of this arm.
+    let cohort_json = serde_json::to_string(&cohort)?;
+    // #2895 slice 2: the json_each cohort restore UPDATE now lives
+    // behind the `blocks`-owning engine crate (byte-identical SQL).
+    agaric_engine::block_ops::write_cohort_deleted_at_json(
+        tx,
+        &cohort_json,
+        agaric_engine::block_ops::CohortDeletedAt::ClearWhereRef(p.deleted_at_ref),
+    )
+    .await?;
+
+    // #1884: also restore UPWARD, mirroring the two other restore
+    // writers (`restore_block_inner`, `project_restore_block_to_sql`).
+    // The downward cohort UPDATE alone leaves the block LIVE under a
+    // still-tombstoned parent when that parent was deleted SEPARATELY
+    // (its cascade skipped the already-deleted block, so the block
+    // kept its own cohort): invisible in both the tree and trash, and
+    // hard-deleted by a later purge of the parent. Walk the contiguous
+    // soft-deleted ancestor chain up to the nearest live ancestor and
+    // clear it. Idempotent (an already-live chain restores nothing),
+    // preserving the batch-undo idempotency policy of `apply_reverse_in_tx`.
+    // (`&mut Transaction` deref-coerces to `&mut SqliteConnection`,
+    // so pass `tx` directly — clippy::explicit_auto_deref.)
+    // #2655: keep the FULL restored chain (`chain`), not only `topmost`
+    // — the engine fan-out below re-clears `deleted_at` on every restored
+    // ancestor so the CRDT converges with the SQL UPDATE (mirrors the
+    // forward path's `dispatch_restore_ancestors`, #2017).
+    let restored_chain =
+        agaric_store::block_descendants::restore_deleted_ancestor_chain(tx, p.block_id.as_str())
+            .await?;
+    let restored_ancestor_top = restored_chain.topmost.clone();
+
+    // Idempotency guard: the reverse of a delete may target a block
+    // that was since PURGED (row gone). The cohort UPDATE above
+    // matched zero rows — fine per the idempotency policy — but the
+    // page/space re-derivation reads the seed row and errors on a
+    // missing block, so probe first.
+    let seed_id = p.block_id.as_str();
+    let seed_row = sqlx::query!(
+        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+        seed_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if seed_row.is_none() {
+        return Ok(Vec::new());
+    }
+
+    // #664: refresh `page_id` AND `space_id` for the restored
+    // subtree synchronously, mirroring `restore_block_inner` and
+    // ultimately `move_block_inner`. Without this sync update,
+    // callers reading right after commit can see a stale `page_id`
+    // (the moved-then-deleted descendant case described in
+    // `restore_block_inner`) or stale `space_id` (#533). Before
+    // #664 this arm open-coded the chain and had drifted to skip
+    // the `space_id` step; routing through the shared helper makes
+    // the complete behaviour structurally impossible to drift.
+    agaric_store::block_descendants::rederive_page_and_space_ids(tx, p.block_id.as_str()).await?;
+
+    // #1884: when an ancestor chain was restored above, ALSO
+    // re-derive from the TOPMOST restored ancestor so the whole
+    // reconnected subtree — not just `block_id`'s — is refreshed,
+    // mirroring `restore_block_inner`'s `inheritance_root`.
+    if let Some(ref top) = restored_ancestor_top {
+        agaric_store::block_descendants::rederive_page_and_space_ids(tx, top).await?;
+    }
+
+    // #2655: converge the per-space engine with the SQL restore. The
+    // seed is now LIVE again (its `deleted_at` cleared above), so
+    // `resolve_block_space` — which filters tombstones — resolves it.
+    // `apply_restore_block` is idempotent and silently no-ops on an
+    // absent node, so re-clearing an already-live cohort/chain member
+    // (or one never in the engine) is harmless. Restoring the cohort
+    // clears the engine tombstones the reverse-of-restore / redo path
+    // set; restoring the ancestor chain mirrors the forward path's
+    // `dispatch_restore_ancestors` (#2017) so a later reproject does
+    // not re-delete the reconnected ancestors in SQL.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    drive_reverse_engine(state, device_id, space_id, "restore_block", |engine| {
+        for id in cohort.iter().chain(restored_chain.chain.iter()) {
+            engine.apply_restore_block(id)?;
+        }
+        Ok(())
+    })?;
+
+    Ok(cohort
+        .iter()
+        .chain(restored_chain.chain.iter())
+        .cloned()
+        .collect())
+}
+
+/// `EditBlock` arm of [`apply_reverse_in_tx`]: write the prior text back and
+/// diff-splice it into the per-space engine.
+async fn apply_reverse_edit_block(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::EditBlockPayload,
+) -> Result<(), AppError> {
+    let block_id_str = p.block_id.as_str();
+    // #2895 slice 2: the raw content UPDATE now lives behind the
+    // `blocks`-owning engine crate (`set_active_block_content` —
+    // byte-identical `UPDATE ... WHERE id = ? AND deleted_at IS NULL`).
+    let rows_affected =
+        agaric_engine::block_ops::set_active_block_content(tx, block_id_str, &p.to_text).await?;
+    if rows_affected == 0 {
+        return Err(AppError::NotFound(format!(
+            "block '{}' not found or soft-deleted during undo",
+            p.block_id
+        )));
+    }
+
+    // #2655: splice the prior text into the per-space engine's `LoroText`
+    // so the CRDT matches the SQL content, mirroring the forward
+    // `apply_edit_block_via_loro`. `apply_edit_via_diff_splice` computes
+    // the minimal diff from the engine's CURRENT content to `to_text`,
+    // and the block is live (the UPDATE matched a row), so it resolves a
+    // space. The present-guard mirrors the forward path's block-absent
+    // fallback.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    drive_reverse_engine(state, device_id, space_id, "edit_block", |engine| {
+        if engine.read_block(block_id_str)?.is_some() {
+            engine.apply_edit_via_diff_splice(block_id_str, &p.to_text)?;
+        }
+        Ok(())
+    })
+}
+
+/// `AddTag` arm of [`apply_reverse_in_tx`]. Idempotent: `INSERT OR IGNORE`
+/// silently handles duplicates, so a sync replay applying the same undo/redo
+/// sequence twice is lenient.
+async fn apply_reverse_add_tag(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::AddTagPayload,
+) -> Result<(), AppError> {
+    let block_id_str = p.block_id.as_str();
+    let tag_id_str = p.tag_id.as_str();
+    sqlx::query!(
+        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+        block_id_str,
+        tag_id_str,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // #2655: mirror the tag association into the per-space engine's
+    // `block_tags` map (idempotent, per-key LWW), matching the forward
+    // `apply_add_tag_via_loro`, so the exported CRDT carries the tag.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    drive_reverse_engine(state, device_id, space_id, "add_tag", |engine| {
+        if engine.read_block(block_id_str)?.is_some() {
+            engine.apply_add_tag(block_id_str, tag_id_str)?;
+        }
+        Ok(())
+    })
+}
+
+/// `RemoveTag` arm of [`apply_reverse_in_tx`]. Idempotent: the `DELETE` does
+/// not check `rows_affected`, so a sync replay applying the same undo/redo
+/// sequence twice is lenient.
+async fn apply_reverse_remove_tag(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::RemoveTagPayload,
+) -> Result<(), AppError> {
+    let block_id_str = p.block_id.as_str();
+    let tag_id_str = p.tag_id.as_str();
+    sqlx::query!(
+        "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        block_id_str,
+        tag_id_str,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // #2655: mirror the tag removal into the per-space engine (idempotent
+    // — no-ops when the tag is absent), matching the forward
+    // `apply_remove_tag_via_loro`.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    drive_reverse_engine(state, device_id, space_id, "remove_tag", |engine| {
+        if engine.read_block(block_id_str)?.is_some() {
+            engine.apply_remove_tag(block_id_str, tag_id_str)?;
+        }
+        Ok(())
+    })
+}
+
+/// `SetProperty` arm of [`apply_reverse_in_tx`].
+///
+/// #604: route through the same projection as the forward paths.
+/// Column-backed keys (`todo_state` / `priority` / `due_date` /
+/// `scheduled_date` → same-named `blocks` columns; `space` →
+/// `blocks.space_id` with owning-page-group fan-out) must UPDATE the column,
+/// never INSERT a `block_properties` row — the migration-0088
+/// `key_not_reserved` CHECK aborts such inserts. `project_set_property_to_sql`
+/// is the canonical SQL mirror of `set_property_in_tx`'s routing (incl. the
+/// per-key value_text / value_date / value_ref extraction) and stays
+/// idempotent on every branch (UPDATE / INSERT OR REPLACE), preserving the
+/// batch-undo idempotency policy of `apply_reverse_in_tx`.
+async fn apply_reverse_set_property(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::SetPropertyPayload,
+) -> Result<(), AppError> {
+    agaric_engine::loro::projection::project_set_property_to_sql(tx, p).await?;
+
+    // #2655: mirror the property write into the per-space engine's
+    // property map, matching the forward `apply_set_property_via_loro`.
+    // The `space` key is EXCLUDED: it is column-backed in `blocks` (not a
+    // `block_properties` row) and its forward handling is the subtree
+    // hydration special-case — the forward path NEVER stores `space` in
+    // the engine property map, so applying it here would inject a spurious
+    // property. `space`-key reverses stay SQL-only (they cannot trip the
+    // block-scoped #1257 gate). Reserved non-space keys (todo_state /
+    // priority / due_date / scheduled_date) DO enter the engine map on the
+    // forward path, so they are driven here too. `PropertyValue::from(p)`
+    // recovers the native typed value by the same precedence the forward
+    // path uses.
+    if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
+        let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+        drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
+            if engine.read_block(p.block_id.as_str())?.is_some() {
+                let value = agaric_engine::loro::engine::PropertyValue::from(p);
+                engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// `DeleteProperty` arm of [`apply_reverse_in_tx`].
+///
+/// #604: same routing note as [`apply_reverse_set_property`] — reserved keys
+/// NULL their `blocks` column, `space` NULLs `space_id` for the owning-page
+/// group, generic keys DELETE the `block_properties` row. All branches are
+/// idempotent (0-row UPDATE/DELETE no-ops).
+async fn apply_reverse_delete_property(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::DeletePropertyPayload,
+) -> Result<(), AppError> {
+    agaric_engine::loro::projection::project_delete_property_to_sql(
+        tx,
+        p.block_id.as_str(),
+        &p.key,
+    )
+    .await?;
+
+    // #2655: clear the key from the per-space engine property map
+    // (idempotent — no-ops when the key is absent), matching the forward
+    // `apply_delete_property_via_loro`. The `space` key is EXCLUDED for
+    // the same reason as the SetProperty arm (column-backed; never
+    // in the engine property map).
+    if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
+        let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+        drive_reverse_engine(state, device_id, space_id, "delete_property", |engine| {
+            if engine.read_block(p.block_id.as_str())?.is_some() {
+                engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// `RenameAttachment` arm of [`apply_reverse_in_tx`] (SQL-only: attachments
+/// are not modeled in the engine).
+///
+/// `reverse_payload` is already swapped by `reverse_rename_attachment`, so the
+/// filename to restore lives in `new_filename` (mirroring the forward
+/// materializer, which also writes `p.new_filename`). Reading `old_filename`
+/// here would re-apply the current name — a no-op undo.
+async fn apply_reverse_rename_attachment(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    p: &agaric_store::op::RenameAttachmentPayload,
+) -> Result<(), AppError> {
+    let attachment_id_str = p.attachment_id.as_str();
+    // #4248 (SECURITY): same coercion `apply_rename_attachment_tx`
+    // runs on the forward path — see `reverse_attachment_filename`.
+    // Undoing a rename must land the byte-identical value the
+    // forward apply of that payload would have stored.
+    let new_filename =
+        reverse_attachment_filename(&p.new_filename, attachment_id_str, "rename_attachment");
+    sqlx::query!(
+        "UPDATE attachments SET filename = ? WHERE id = ?",
+        new_filename,
+        attachment_id_str
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// `AddAttachment` arm of [`apply_reverse_in_tx`] (SQL-only: attachments are
+/// not modeled in the engine).
+///
+/// Undo of AddAttachment: the forward delete was a hard-DELETE, so the row is
+/// gone and `original_created_at` is None in the normal case. `created_at` is
+/// regenerated via `now_ms()` then. A row may survive only via idempotency
+/// (e.g. double-undo replay), in which case we preserve its existing
+/// `created_at`.
+///
+/// #3706: the bytes this row will name must still be on disk. The orphan GC
+/// reclaims a deleted attachment's file as a matter of course (see
+/// `require_reverse_attachment_bytes`), and committing the row anyway is what
+/// turns a taken-back delete into permanent data loss on a vault with no peer
+/// to re-request from. Checked BEFORE the INSERT so the failure rolls the
+/// whole reverse back.
+///
+/// `revert_ops_in_tx` runs the same check as a pre-append preflight; this one
+/// covers the paths that do not go through it — `undo_page_op_inner` and
+/// `redo_page_op_inner` redoing an undone `add_attachment` after a sweep.
+///
+/// #4247 update: `undo_page_op_inner` used to be UNREACHABLE here, and the
+/// note that stood in this spot recorded why — its target-selection query
+/// admitted a `delete_attachment` only via `EXISTS (SELECT 1 FROM attachments
+/// a WHERE a.id = ...)`, which the delete's own hard-DELETE had already
+/// falsified, while `ol.block_id IN (page_blocks)` never matched because
+/// `DeleteAttachmentPayload` carries no `block_id`. That was the #4247 bug
+/// (positional Ctrl-Z silently reversed the PREVIOUS op), and closing it makes
+/// this arm reachable from the positional path too. The intended consequence:
+/// a Ctrl-Z after the sweep now hits the refusal below instead of quietly
+/// undoing something else.
+async fn apply_reverse_add_attachment(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    p: &agaric_store::op::AddAttachmentPayload,
+    app_data_dir: Option<&std::path::Path>,
+) -> Result<(), AppError> {
+    require_reverse_attachment_bytes(app_data_dir, p).await?;
+
+    let attachment_id_str = p.attachment_id.as_str();
+    let original_created_at: Option<i64> = sqlx::query_scalar!(
+        "SELECT created_at FROM attachments WHERE id = ?",
+        attachment_id_str,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
+    let block_id_str = p.block_id.as_str();
+
+    // #3370 (SECURITY): the second payload-carried writer into
+    // `attachments.fs_path`. The reverse payload is built from the
+    // op-log record of the op being undone, which may be a *peer's*
+    // op — so the same coercion the apply path runs must run here, or
+    // undo re-introduces the value apply just refused to store.
+    //
+    // Shared with the #3706 byte-existence guard above via
+    // `reverse_add_attachment_fs_path`, so the path that is checked
+    // and the path that is stored cannot drift apart.
+    // #4248 (SECURITY): the display `filename` is the OTHER
+    // payload-carried writer into this row, and `apply_add_attachment_tx`
+    // sanitizes it on the forward path (#3029) exactly as it coerces
+    // `fs_path` (#3370). Both halves of the pair now run here too;
+    // see `reverse_attachment_filename`.
+    let filename = reverse_attachment_filename(&p.filename, attachment_id_str, "add_attachment");
+    let fs_path = reverse_add_attachment_fs_path(p);
+    let fs_path_str = fs_path.as_str();
+    if fs_path_str != p.fs_path {
+        tracing::warn!(
+            attachment_id = attachment_id_str,
+            original = %p.fs_path,
+            canonical = fs_path_str,
+            "rewrote unsafe or non-canonical attachment fs_path on undo re-insert"
+        );
+    }
+
+    sqlx::query!(
+        "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        attachment_id_str,
+        block_id_str,
+        p.mime_type,
+        filename,
+        p.size_bytes,
+        fs_path_str,
+        created_at,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// List all ops for blocks descended from a page, with cursor pagination
@@ -1450,7 +1560,6 @@ pub async fn revert_ops_inner(
 /// instead). The fan-out is the batch's merged [`ReverseFtsFanout`] — the
 /// caller owns the commit, so it owns the post-commit repair, and MUST NOT run
 /// it on a path that rolls back.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
     pool: &SqlitePool,
@@ -1460,8 +1569,6 @@ async fn revert_ops_in_tx(
     skip_non_reversible: bool,
     app_data_dir: Option<&std::path::Path>,
 ) -> Result<(Vec<UndoResult>, u64, ReverseFtsFanout), AppError> {
-    use agaric_engine::reverse;
-
     if ops.is_empty() {
         return Ok((vec![], 0, ReverseFtsFanout::default()));
     }
@@ -1477,41 +1584,83 @@ async fn revert_ops_in_tx(
         )));
     }
 
-    let mut non_reversible_skipped: u64 = 0;
-
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
-    //
-    // SQL-review B-3: previously this was a 3 × N per-op loop —
-    // `compute_reverse` (`get_op_by_seq` + `find_prior_*`) plus a second
-    // `get_op_by_seq` to source `created_at`/`op_type` for the
-    // `UndoResult`. A 50-op undo fanned out to 150 sequential queries.
-    //
-    // The batched path collapses that to:
-    //   1. one UNION-ALL `op_log` lookup for every input `OpRef`
-    //      (`get_op_records_batch`),
-    //   2. one UNION-ALL prior-context fetch per op-type present in
-    //      the batch (`compute_reverse_batch` — at most 5 queries for
-    //      the five context-bearing op-types).
-    //
-    // These reads target already-committed ops (the records being reverted),
-    // so they run against the bare pool — with ONE exception since #4259:
-    // `fetch_live_attachment_state_batch` reads `attachments`, which is
-    // mutable materialized state rather than the append-only log, while `tx`
-    // is already open. So the live row it adopts is the row as of
-    // reverse-COMPUTATION time, not as of the moment each reverse is applied.
-    // That gap is spelled out at `build_reverse_add_attachment`; noting it
-    // here too because this is the comment a reader reaches first, and on its
-    // own it now asserts a rationale that no longer covers every prefetch.
-    // The membership read that decides
-    // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
-    // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
+    let (reverses, computed_skipped) =
+        compute_reverses_newest_first(pool, &ops, skip_non_reversible).await?;
+    let plan = plan_reverse_apply_order(&reverses);
+
+    // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
+    // Collected in APPLICATION order tagged with the original op's `created_at`,
+    // then re-sorted newest-first to preserve the returned-order contract.
+    let (mut results_tagged, applied_skipped, fts_fanout) = apply_reverses_in_order(
+        tx,
+        state,
+        device_id,
+        &reverses,
+        &plan,
+        skip_non_reversible,
+        app_data_dir,
+    )
+    .await?;
+
+    // Re-sort results newest-first (created_at DESC, seq DESC, device_id DESC) —
+    // the returned-order contract, independent of the application order above.
+    results_tagged.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.reversed_op.seq.cmp(&a.1.reversed_op.seq))
+            .then_with(|| b.1.reversed_op.device_id.cmp(&a.1.reversed_op.device_id))
+    });
+    let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
+
+    Ok((results, computed_skipped + applied_skipped, fts_fanout))
+}
+
+/// A reverse computed for one op of a batch, awaiting application:
+/// `(op_ref, reverse_payload, reversed_op_created_at, reversed_op_type)`.
+type PendingReverse = (OpRef, OpPayload, i64, String);
+
+/// Phase 1 of [`revert_ops_in_tx`]: compute every op's reverse payload and
+/// sort the batch newest-first. Returns the reverses and the number of
+/// non-reversible ops skipped (always 0 unless `skip_non_reversible`).
+///
+/// `compute_reverse` (`get_op_by_seq` + `find_prior_*`) plus a second
+/// `get_op_by_seq` to source `created_at`/`op_type` for the
+/// `UndoResult`. A 50-op undo fanned out to 150 sequential queries.
+///
+/// The batched path collapses that to:
+///   1. one UNION-ALL `op_log` lookup for every input `OpRef`
+///      (`get_op_records_batch`),
+///   2. one UNION-ALL prior-context fetch per op-type present in
+///      the batch (`compute_reverse_batch` — at most 5 queries for
+///      the five context-bearing op-types).
+///
+/// These reads target already-committed ops (the records being reverted),
+/// so they run against the bare pool — with ONE exception since #4259:
+/// `fetch_live_attachment_state_batch` reads `attachments`, which is
+/// mutable materialized state rather than the append-only log, while `tx`
+/// is already open. So the live row it adopts is the row as of
+/// reverse-COMPUTATION time, not as of the moment each reverse is applied.
+/// That gap is spelled out at `build_reverse_add_attachment`; noting it
+/// here too because this is the comment a reader reaches first, and on its
+/// own it now asserts a rationale that no longer covers every prefetch.
+/// The membership read that decides
+/// *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
+/// SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
+async fn compute_reverses_newest_first(
+    pool: &SqlitePool,
+    ops: &[OpRef],
+    skip_non_reversible: bool,
+) -> Result<(Vec<PendingReverse>, u64), AppError> {
+    use agaric_engine::reverse;
+
+    let mut non_reversible_skipped: u64 = 0;
     // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
     // #2481/#2495). Such rows were ingested for provenance only and never
     // applied to local state, so applying their inverse would corrupt local
     // state by "undoing" a forward effect that never happened here. Reject
     // before any reverse is computed or applied.
-    reverse::reject_replicated_targets(pool, &ops).await?;
-    let records = reverse::get_op_records_batch(pool, &ops).await?;
+    reverse::reject_replicated_targets(pool, ops).await?;
+    let records = reverse::get_op_records_batch(pool, ops).await?;
     // #2020: `compute_reverse_batch` returns a per-op `Result`. A
     // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a
     // position-less `move_block`, a `delete_attachment` whose paired
@@ -1520,7 +1669,7 @@ async fn revert_ops_in_tx(
     // delete_attachment]` skip list. The non-reversible *contract* lives
     // in `reverse::is_skippable_non_reversible`.
     let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
-    let mut reverses: Vec<(OpRef, OpPayload, i64, String)> = Vec::with_capacity(ops.len());
+    let mut reverses: Vec<PendingReverse> = Vec::with_capacity(ops.len());
     for ((op_ref, reverse_payload), record) in ops.iter().zip(reverse_payloads).zip(records.iter())
     {
         let reverse_payload = match reverse_payload {
@@ -1556,25 +1705,42 @@ async fn revert_ops_in_tx(
             .then_with(|| b.0.seq.cmp(&a.0.seq)) // seq DESC
             .then_with(|| b.0.device_id.cmp(&a.0.device_id)) // device_id DESC
     });
+    Ok((reverses, non_reversible_skipped))
+}
 
-    // #2305 (Refs #914): APPLICATION order may differ from RESULTS order. The
-    // per-op reverse of a move restores the block to a slot recorded in the
-    // ORIGINAL tree frame; applying a group of DISTINCT-block move reverses
-    // newest-first does NOT reconstruct the pre-batch layout after a
-    // contiguous-run batch move — a not-yet-restored member displaces the target
-    // slot of the one being restored (e.g. undoing [A,B,C,D] → B,D,A,C would land
-    // C after D). Applying the reverses in ASCENDING (parent, slot) order —
-    // insertion-sort order — instead restores each member to its original index
-    // against an already-rebuilt prefix, reproducing the EXACT original tree.
-    //
-    // This reorder is sound ONLY for a group of MoveBlock reverses on DISTINCT
-    // blocks (a multi-select drag undo): distinct blocks moved once each are
-    // independent, so no LIFO dependency exists, and inserting each at its
-    // recorded original index in ascending order is the standard array-from-
-    // permutation reconstruction. Any other group (a same-block move sequence
-    // that needs LIFO, or a mixed group) keeps the newest-first order. The
-    // RESULTS Vec is re-sorted newest-first below regardless, so the redo stack
-    // is unaffected.
+/// The order [`apply_reverses_in_order`] applies a newest-first batch in, from
+/// [`plan_reverse_apply_order`].
+struct ReverseApplyPlan<'a> {
+    /// The batch is MoveBlock reverses on DISTINCT blocks (a multi-select drag
+    /// undo), so it is applied in ascending `(parent, slot)` order and each
+    /// move bypasses `apply_reverse_in_tx` to exclude cross-frame siblings.
+    distinct_move_group: bool,
+    /// block_id → the reverse-target parent it will land under, for every
+    /// member of a distinct-move group; empty otherwise.
+    group_target_parent: std::collections::HashMap<&'a str, Option<&'a str>>,
+    /// Indices into the batch, in application order.
+    apply_order: Vec<usize>,
+}
+
+/// #2305 (Refs #914): APPLICATION order may differ from RESULTS order. The
+/// per-op reverse of a move restores the block to a slot recorded in the
+/// ORIGINAL tree frame; applying a group of DISTINCT-block move reverses
+/// newest-first does NOT reconstruct the pre-batch layout after a
+/// contiguous-run batch move — a not-yet-restored member displaces the target
+/// slot of the one being restored (e.g. undoing [A,B,C,D] → B,D,A,C would land
+/// C after D). Applying the reverses in ASCENDING (parent, slot) order —
+/// insertion-sort order — instead restores each member to its original index
+/// against an already-rebuilt prefix, reproducing the EXACT original tree.
+///
+/// This reorder is sound ONLY for a group of MoveBlock reverses on DISTINCT
+/// blocks (a multi-select drag undo): distinct blocks moved once each are
+/// independent, so no LIFO dependency exists, and inserting each at its
+/// recorded original index in ascending order is the standard array-from-
+/// permutation reconstruction. Any other group (a same-block move sequence
+/// that needs LIFO, or a mixed group) keeps the newest-first order `reverses`
+/// arrives in. The RESULTS Vec is re-sorted newest-first by the caller
+/// regardless, so the redo stack is unaffected.
+fn plan_reverse_apply_order(reverses: &[PendingReverse]) -> ReverseApplyPlan<'_> {
     let distinct_move_group = reverses.len() > 1
         && reverses
             .iter()
@@ -1594,7 +1760,7 @@ async fn revert_ops_in_tx(
         };
     // #2305 cross-parent-swap fix: block_id -> the reverse-target parent it
     // will land under, for every member of a distinct-move group. Threaded
-    // down to `reverse_move_block` (per-op, see the apply loop below) so a
+    // down to `reverse_move_block` (per-op, in `apply_reverses_in_order`) so a
     // sibling group member whose OWN reverse targets a DIFFERENT parent — and
     // which may currently be sitting inside THIS op's target parent because
     // its own reverse hasn't run yet — never pollutes this op's live-sibling
@@ -1644,15 +1810,35 @@ async fn revert_ops_in_tx(
         };
         apply_order.sort_by_key(|&i| key(i));
     }
+    ReverseApplyPlan {
+        distinct_move_group,
+        group_target_parent,
+        apply_order,
+    }
+}
 
-    // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
-    // Collected in APPLICATION order tagged with the original op's `created_at`,
-    // then re-sorted newest-first to preserve the returned-order contract.
+/// Phase 2 of [`revert_ops_in_tx`]: preflight, append and apply each reverse
+/// in the plan's order inside the caller's IMMEDIATE transaction. Returns the
+/// results tagged with the reversed op's `created_at` (in APPLICATION order),
+/// the number of reverses skipped at preflight (always 0 unless
+/// `skip_non_reversible`), and the batch's merged [`ReverseFtsFanout`].
+async fn apply_reverses_in_order(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    reverses: &[PendingReverse],
+    plan: &ReverseApplyPlan<'_>,
+    skip_non_reversible: bool,
+    app_data_dir: Option<&std::path::Path>,
+) -> Result<(Vec<(i64, UndoResult)>, u64, ReverseFtsFanout), AppError> {
+    use agaric_engine::reverse;
+
+    let mut non_reversible_skipped: u64 = 0;
     let mut results_tagged: Vec<(i64, UndoResult)> = Vec::with_capacity(reverses.len());
     // #4733: merged across the batch — see [`ReverseFtsFanout`].
     let mut fts_fanout = ReverseFtsFanout::default();
 
-    for idx in apply_order {
+    for &idx in &plan.apply_order {
         let (op_ref, reverse_payload, created_at, reversed_op_type) = &reverses[idx];
         // Preflight state-dependent reverses against the CURRENT (in-tx) tree
         // BEFORE appending: a reverse move whose reconstructed prior parent is
@@ -1728,9 +1914,12 @@ async fn revert_ops_in_tx(
         // `reverse_move_block`'s doc comment. Same-target-parent siblings stay
         // visible (not excluded), preserving the ascending-order insertion-sort
         // correctness for a genuine single-parent multi-select batch undo.
-        if distinct_move_group && let OpPayload::MoveBlock(p) = reverse_payload {
+        if plan.distinct_move_group
+            && let OpPayload::MoveBlock(p) = reverse_payload
+        {
             let this_target = p.new_parent_id.as_ref().map(BlockId::as_str);
-            let cross_frame_exclude: std::collections::HashSet<&str> = group_target_parent
+            let cross_frame_exclude: std::collections::HashSet<&str> = plan
+                .group_target_parent
                 .iter()
                 .filter(|&(&id, &target)| id != p.block_id.as_str() && target != this_target)
                 .map(|(&id, _)| id)
@@ -1766,16 +1955,7 @@ async fn revert_ops_in_tx(
         tx.enqueue_background(op_record);
     }
 
-    // Re-sort results newest-first (created_at DESC, seq DESC, device_id DESC) —
-    // the returned-order contract, independent of the application order above.
-    results_tagged.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| b.1.reversed_op.seq.cmp(&a.1.reversed_op.seq))
-            .then_with(|| b.1.reversed_op.device_id.cmp(&a.1.reversed_op.device_id))
-    });
-    let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
-
-    Ok((results, non_reversible_skipped, fts_fanout))
+    Ok((results_tagged, non_reversible_skipped, fts_fanout))
 }
 
 /// Restore a page to its state at a specific operation (point-in-time restore).
@@ -1833,7 +2013,6 @@ async fn revert_ops_in_tx(
 /// timestamp is immutable, so it is not part of the membership decision and
 /// cannot be affected by a concurrent write.
 #[instrument(skip_all, fields(page_id, target_seq), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1846,7 +2025,7 @@ pub async fn restore_page_to_op_inner(
     // I-Core-8: wrap to typed read-pool — caller is in write context
     let target_record =
         op_log::get_op_by_seq(&ReadPool(pool.clone()), &target_device_id, target_seq).await?;
-    let target_ts = &target_record.created_at;
+    let target_ts = target_record.created_at;
 
     // #1551: open the IMMEDIATE write transaction up front so the
     // ops-to-revert membership SELECT below runs *inside* the same
@@ -1858,81 +2037,9 @@ pub async fn restore_page_to_op_inner(
     // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Query all ops after the target — executed on `tx` (the IMMEDIATE
-    // transaction), not the bare pool.
-    // NOTE: We intentionally do NOT filter by deleted_at IS NULL in the blocks subquery.
-    // We need to find ops on blocks that may have been deleted after the target point,
-    // since restoring to that point means un-deleting those blocks.
-    let ops_after: Vec<(String, i64, String)> = if page_id == "__all__" {
-        sqlx::query!(
-            // #2549: `AND is_replicated = 0` — this sweep feeds
-            // `revert_ops_in_tx`, whose `reject_replicated_targets` guard
-            // rejects the WHOLE batch if it sees a replicated op. A #2495
-            // audit-only row (foreign device, never applied to local state)
-            // touching the same block/page after the target timestamp must
-            // not be swept in here — it has no local forward effect to
-            // undo, so it belongs out of scope entirely rather than aborting
-            // an otherwise-legitimate point-in-time restore.
-            "SELECT device_id, seq, op_type FROM op_log \
-             WHERE is_replicated = 0 \
-             AND (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
-             ORDER BY created_at DESC, seq DESC, device_id DESC",
-            target_ts,
-            target_seq,
-            target_device_id,
-        )
-        .fetch_all(&mut **tx)
-        .await?
-        .into_iter()
-        .map(|r| (r.device_id, r.seq, r.op_type))
-        .collect()
-    } else {
-        // #2201: materialize the page subtree ONCE and feed it to the op-log
-        // scan as a `json_each` id list. The previous shape inlined a
-        // `WITH RECURSIVE page_blocks(...)` CTE and referenced it TWICE
-        // (block-op membership + the attachments EXISTS probe), letting
-        // SQLite re-evaluate the recursive walk per reference. The walk uses
-        // `DescendantWalkFilter::All` (NO deleted_at filter — see the NOTE
-        // above: ops on blocks deleted after the target must still be found)
-        // and runs on `tx`, so the subtree read stays inside the same
-        // IMMEDIATE transaction as the membership SELECT (#1551 atomicity).
-        // The batched walker keeps invariant #9 per batch
-        // (depth<100: DESCENDANT_DEPTH_CAP, see block_descendants).
-        let subtree_ids = agaric_store::block_descendants::collect_subtree_ids_unbounded(
-            &mut tx,
-            &page_id,
-            agaric_store::block_descendants::DescendantWalkFilter::All,
-        )
-        .await?;
-        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
-        let subtree_json = serde_json::Value::from(subtree_ids).to_string();
-        sqlx::query!(
-            // #2549: `AND o.is_replicated = 0` — see the matching note on
-            // the `__all__` branch above; a replicated audit row must not
-            // be swept into a page-scoped restore either.
-            "SELECT o.device_id, o.seq, o.op_type FROM op_log o \
-             WHERE ( \
-               o.block_id IN (SELECT value FROM json_each(?1)) \
-               OR (o.op_type IN ('delete_attachment', 'rename_attachment') AND EXISTS ( \
-                   SELECT 1 FROM attachments a \
-                   WHERE a.id = json_extract(o.payload, '$.attachment_id') \
-                   AND a.block_id IN (SELECT value FROM json_each(?1)) \
-               )) \
-             ) \
-             AND o.is_replicated = 0 \
-             AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
-             ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
-            subtree_json,
-            target_ts,
-            target_seq,
-            target_device_id,
-        )
-        .fetch_all(&mut **tx)
-        .await?
-        .into_iter()
-        .map(|r| (r.device_id, r.seq, r.op_type))
-        .collect()
-    };
+    let ops_after =
+        select_ops_after_target(&mut tx, &page_id, target_ts, target_seq, &target_device_id)
+            .await?;
 
     // #2020: split the swept suffix through the UNIFIED non-reversible
     // contract, which has two halves living in `reverse`:
@@ -2024,13 +2131,102 @@ pub async fn restore_page_to_op_inner(
     })
 }
 
+/// Every local op strictly after the restore target, newest-first, as
+/// `(device_id, seq, op_type)` — on blocks belonging to `page_id`, or on every
+/// block when `page_id == "__all__"`. Executed on `tx` (the IMMEDIATE
+/// transaction), not the bare pool, so the membership read and the revert are
+/// atomic (#1551).
+///
+/// NOTE: We intentionally do NOT filter by deleted_at IS NULL in the blocks
+/// subquery. We need to find ops on blocks that may have been deleted after
+/// the target point, since restoring to that point means un-deleting those
+/// blocks.
+async fn select_ops_after_target(
+    tx: &mut CommandTx,
+    page_id: &str,
+    target_ts: i64,
+    target_seq: i64,
+    target_device_id: &str,
+) -> Result<Vec<(String, i64, String)>, AppError> {
+    let ops_after: Vec<(String, i64, String)> = if page_id == "__all__" {
+        sqlx::query!(
+            // #2549: `AND is_replicated = 0` — this sweep feeds
+            // `revert_ops_in_tx`, whose `reject_replicated_targets` guard
+            // rejects the WHOLE batch if it sees a replicated op. A #2495
+            // audit-only row (foreign device, never applied to local state)
+            // touching the same block/page after the target timestamp must
+            // not be swept in here — it has no local forward effect to
+            // undo, so it belongs out of scope entirely rather than aborting
+            // an otherwise-legitimate point-in-time restore.
+            "SELECT device_id, seq, op_type FROM op_log \
+             WHERE is_replicated = 0 \
+             AND (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
+             ORDER BY created_at DESC, seq DESC, device_id DESC",
+            target_ts,
+            target_seq,
+            target_device_id,
+        )
+        .fetch_all(&mut ***tx)
+        .await?
+        .into_iter()
+        .map(|r| (r.device_id, r.seq, r.op_type))
+        .collect()
+    } else {
+        // #2201: materialize the page subtree ONCE and feed it to the op-log
+        // scan as a `json_each` id list. The previous shape inlined a
+        // `WITH RECURSIVE page_blocks(...)` CTE and referenced it TWICE
+        // (block-op membership + the attachments EXISTS probe), letting
+        // SQLite re-evaluate the recursive walk per reference. The walk uses
+        // `DescendantWalkFilter::All` (NO deleted_at filter — see the NOTE
+        // above: ops on blocks deleted after the target must still be found)
+        // and runs on `tx`, so the subtree read stays inside the same
+        // IMMEDIATE transaction as the membership SELECT (#1551 atomicity).
+        // The batched walker keeps invariant #9 per batch
+        // (depth<100: DESCENDANT_DEPTH_CAP, see block_descendants).
+        let subtree_ids = agaric_store::block_descendants::collect_subtree_ids_unbounded(
+            tx,
+            page_id,
+            agaric_store::block_descendants::DescendantWalkFilter::All,
+        )
+        .await?;
+        // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
+        let subtree_json = serde_json::Value::from(subtree_ids).to_string();
+        sqlx::query!(
+            // #2549: `AND o.is_replicated = 0` — see the matching note on
+            // the `__all__` branch above; a replicated audit row must not
+            // be swept into a page-scoped restore either.
+            "SELECT o.device_id, o.seq, o.op_type FROM op_log o \
+             WHERE ( \
+               o.block_id IN (SELECT value FROM json_each(?1)) \
+               OR (o.op_type IN ('delete_attachment', 'rename_attachment') AND EXISTS ( \
+                   SELECT 1 FROM attachments a \
+                   WHERE a.id = json_extract(o.payload, '$.attachment_id') \
+                   AND a.block_id IN (SELECT value FROM json_each(?1)) \
+               )) \
+             ) \
+             AND o.is_replicated = 0 \
+             AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
+             ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
+            subtree_json,
+            target_ts,
+            target_seq,
+            target_device_id,
+        )
+        .fetch_all(&mut ***tx)
+        .await?
+        .into_iter()
+        .map(|r| (r.device_id, r.seq, r.op_type))
+        .collect()
+    };
+    Ok(ops_after)
+}
+
 /// Undo the Nth most recent undoable op on a page.
 ///
 /// `undo_depth` is 0-based: 0 = most recent op, 1 = second most recent, etc.
 /// Queries the page's op history (using recursive CTE), applies OFFSET to
 /// skip `undo_depth` ops, then computes and applies the reverse.
 #[instrument(skip_all, fields(page_id, undo_depth), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn undo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2051,9 +2247,94 @@ pub async fn undo_page_op_inner(
 
     use agaric_engine::reverse;
 
-    // Find the op to undo: page ops ordered newest first, offset by undo_depth.
-    // Uses the write pool for consistency — these reads feed into the write
-    // transaction below.
+    let target = find_positional_undo_target(pool, &page_id, undo_depth).await?;
+    let target = target.ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no op found at undo_depth {undo_depth} for page '{page_id}'"
+        ))
+    })?;
+
+    // Compute reverse
+    let reverse_payload = reverse::compute_reverse(pool, &target.device_id, target.seq).await?;
+    let new_op_type = reverse_payload.op_type_str().to_owned();
+
+    // Apply in single IMMEDIATE transaction.
+    //
+    // See `revert_ops_inner` for the rationale — CommandTx
+    // makes the commit + dispatch pair atomic and impossible to
+    // desequence.
+    let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+
+    // #659: flag the reverse op as an undo op (`op_log.is_undo = 1`) so
+    // `redo_page_op_inner` can verify that the ref it is asked to reverse
+    // really came from an undo.
+    //
+    // ONE timestamp threads through BOTH the append and the apply
+    // (`reverse_op_timestamp`): the DeleteBlock arm stamps it into
+    // `blocks.deleted_at`, preserving the `op.created_at == deleted_at`
+    // cohort invariant (#1549) that redo relies on.
+    // #2468: stamp the reversed op's ref (`reverses_*`, migration 0101) so
+    // the ref-addressed undo's already-reversed guard also sees reverses
+    // produced by this positional path.
+    let target_ref = OpRef {
+        device_id: target.device_id,
+        seq: target.seq,
+    };
+    let op_ts = reverse_op_timestamp(&reverse_payload);
+    let op_record = op_log::append_local_undo_op_in_tx(
+        &mut tx,
+        device_id,
+        reverse_payload.clone(),
+        op_ts,
+        &target_ref,
+    )
+    .await?;
+
+    let app_data_dir = materializer.app_data_dir();
+    let fts_fanout = apply_reverse_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &reverse_payload,
+        op_ts,
+        app_data_dir.as_deref(),
+    )
+    .await?;
+
+    // Retain the identity fields the UndoResult needs after the tx
+    // consumes its owned clone.
+    let new_op_device_id = op_record.device_id.clone();
+    let new_op_seq = op_record.seq;
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
+    // `enqueue_background(op_record)` above reaches the SEED only — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
+
+    Ok(UndoResult {
+        reversed_op: target_ref,
+        reversed_op_type: target.op_type,
+        new_op_ref: OpRef {
+            device_id: new_op_device_id,
+            seq: new_op_seq,
+        },
+        new_op_type,
+        is_redo: false,
+    })
+}
+
+/// Find the op to undo for [`undo_page_op_inner`]: page ops ordered newest
+/// first, offset by `undo_depth`. Uses the write pool for consistency — this
+/// read feeds into the caller's write transaction.
+async fn find_positional_undo_target(
+    pool: &SqlitePool,
+    page_id: &str,
+    undo_depth: i64,
+) -> Result<Option<HistoryEntry>, AppError> {
     //
     // Recursive CTE with `depth < 100` to bound the walk against
     // runaway recursion on corrupted data (invariant #9).
@@ -2062,7 +2343,7 @@ pub async fn undo_page_op_inner(
     // offset pagination"): we are not paginating a list, we are fetching the
     // single Nth-most-recent op in the page's history. `undo_depth` is
     // validated to `[0, 1000]` upstream (see the bounds check at the top of
-    // this function), so the OFFSET is bounded by a small constant; combined
+    // `undo_page_op_inner`), so the OFFSET is bounded by a small constant; combined
     // with the indexed `(created_at DESC, seq DESC)` order, scan cost is
     // fixed. Invariant #3 protects unbounded list-query latency, which does
     // not apply to this "fetch Nth row" semantics.
@@ -2244,84 +2525,7 @@ pub async fn undo_page_op_inner(
     )
     .fetch_optional(pool)
     .await?;
-
-    let target = target.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no op found at undo_depth {undo_depth} for page '{page_id}'"
-        ))
-    })?;
-
-    // Compute reverse
-    let reverse_payload = reverse::compute_reverse(pool, &target.device_id, target.seq).await?;
-    let new_op_type = reverse_payload.op_type_str().to_owned();
-
-    // Apply in single IMMEDIATE transaction.
-    //
-    // See `revert_ops_inner` for the rationale — CommandTx
-    // makes the commit + dispatch pair atomic and impossible to
-    // desequence.
-    let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
-    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
-
-    // #659: flag the reverse op as an undo op (`op_log.is_undo = 1`) so
-    // `redo_page_op_inner` can verify that the ref it is asked to reverse
-    // really came from an undo.
-    //
-    // ONE timestamp threads through BOTH the append and the apply
-    // (`reverse_op_timestamp`): the DeleteBlock arm stamps it into
-    // `blocks.deleted_at`, preserving the `op.created_at == deleted_at`
-    // cohort invariant (#1549) that redo relies on.
-    // #2468: stamp the reversed op's ref (`reverses_*`, migration 0101) so
-    // the ref-addressed undo's already-reversed guard also sees reverses
-    // produced by this positional path.
-    let target_ref = OpRef {
-        device_id: target.device_id,
-        seq: target.seq,
-    };
-    let op_ts = reverse_op_timestamp(&reverse_payload);
-    let op_record = op_log::append_local_undo_op_in_tx(
-        &mut tx,
-        device_id,
-        reverse_payload.clone(),
-        op_ts,
-        &target_ref,
-    )
-    .await?;
-
-    let app_data_dir = materializer.app_data_dir();
-    let fts_fanout = apply_reverse_in_tx(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        &reverse_payload,
-        op_ts,
-        app_data_dir.as_deref(),
-    )
-    .await?;
-
-    // Retain the identity fields the UndoResult needs after the tx
-    // consumes its owned clone.
-    let new_op_device_id = op_record.device_id.clone();
-    let new_op_seq = op_record.seq;
-    tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
-
-    // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
-    // `enqueue_background(op_record)` above reaches the SEED only — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
-
-    Ok(UndoResult {
-        reversed_op: target_ref,
-        reversed_op_type: target.op_type,
-        new_op_ref: OpRef {
-            device_id: new_op_device_id,
-            seq: new_op_seq,
-        },
-        new_op_type,
-        is_redo: false,
-    })
+    Ok(target)
 }
 
 /// Redo by reversing an undo op.
@@ -2692,7 +2896,6 @@ async fn undo_group_size(
 /// passes to `find_undo_group`. An empty group (seed op doesn't exist / page
 /// has no undoable ops) returns `Ok(vec![])` after releasing the write lock.
 #[instrument(skip_all, fields(page_id, depth, window_ms), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn undo_page_group_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2717,32 +2920,82 @@ pub async fn undo_page_group_inner(
     // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Resolve the page subtree ONCE and enumerate the group's op refs. The
-    // `page_blocks` + `ordered_ops` CTEs are identical to
-    // `find_undo_group_inner`; the recursive `walk` additionally threads `seq`
-    // so we can project each op's concrete `(device_id, seq)` rather than only
-    // `MAX(count_so_far)`. `depth + 1` seeds at the newest undoable op for
-    // `depth = 0`. The `count_so_far < 1000` bound matches the `undo_depth`
-    // ceiling in `undo_page_op_inner`. #2481 phase 2: `is_replicated = 0`
-    // keeps replicated foreign audit rows out of the group (and out of the
-    // rn-numbering, so they don't break a local group either) — implicit
-    // undo is local-only; explicit `revert_ops` stays unfiltered.
-    // also #2549: without this filter a replicated audit row seeding or
-    // joining the walk would flow into `revert_ops_in_tx`, whose
-    // `reject_replicated_targets` guard aborts the WHOLE group; excluding it
-    // here keeps group undo usable and the rn universe identical to
-    // `find_undo_group_inner` / `undo_page_op_inner`.
-    // also #4247: the attachment disjunct's second `EXISTS` (owning block
-    // resolved from the paired `add_attachment` op, gated on
-    // `delete_attachment` alone per #4278) is part of that same shared rn
-    // universe — see the note on `undo_page_op_inner`'s target query. Without it a `delete_attachment` was enumerated by none of the
-    // three, so a group undo silently skipped the delete.
-    // also #4741: the `origin` allow-list (`'user'` / `'agent:%'`) — this
-    // is the query the first Ctrl+Z of a session reaches with an empty
-    // frontend stack, so it is where a boot-sweep batch (`origin =
-    // 'housekeeping'`, newest ops on the page) would otherwise be seeded
-    // on and reverted wholesale. See the note on `undo_page_op_inner`.
+    // `depth + 1` seeds at the newest undoable op for `depth = 0`.
     let seed_rn: i64 = depth + 1;
+    let ops = enumerate_undo_group_in_tx(&mut tx, &page_id, seed_rn, window_ms).await?;
+
+    if ops.is_empty() {
+        // No group — the seed op doesn't exist (depth exceeds the page's
+        // undoable-op count) or the page has no undoable ops. Release the
+        // write lock without churning the materializer. (Dropping/rolling
+        // `tx` back leaves the DB untouched.)
+        tx.rollback().await?;
+        return Ok(vec![]);
+    }
+
+    // Interactive batch undo preserves the historical contract: a single
+    // non-reversible op aborts the whole revert before any reverse is applied
+    // (`skip_non_reversible = false`), so a mid-group failure rolls the entire
+    // IMMEDIATE transaction back — no partial undo. `revert_ops_in_tx` sorts
+    // the ops newest-first and applies the reverses in that order; the
+    // discarded skip count is always 0 on this path.
+    let app_data_dir = materializer.app_data_dir();
+    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
+        &mut tx,
+        pool,
+        materializer.loro_state(),
+        device_id,
+        ops,
+        false,
+        app_data_dir.as_deref(),
+    )
+    .await?;
+
+    // Commit, then fire queued dispatches in enqueue order. If commit fails, no
+    // dispatches fire.
+    tx.commit_and_dispatch(materializer).await?;
+
+    // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
+    // [`ReverseFtsFanout`].
+    fts_fanout.apply(pool).await;
+
+    Ok(results)
+}
+
+/// Resolve the page subtree ONCE and enumerate the op refs of the coalesced
+/// undo group seeded at row `seed_rn` of the page's newest-first undoable-op
+/// stream, for [`undo_page_group_inner`].
+///
+/// The `page_blocks` + `ordered_ops` CTEs are identical to
+/// `find_undo_group_inner`; the recursive `walk` additionally threads `seq`
+/// so we can project each op's concrete `(device_id, seq)` rather than only
+/// `MAX(count_so_far)`. The `count_so_far < 1000` bound matches the
+/// `undo_depth` ceiling in `undo_page_op_inner`. #2481 phase 2:
+/// `is_replicated = 0` keeps replicated foreign audit rows out of the group
+/// (and out of the rn-numbering, so they don't break a local group either) —
+/// implicit undo is local-only; explicit `revert_ops` stays unfiltered.
+/// also #2549: without this filter a replicated audit row seeding or
+/// joining the walk would flow into `revert_ops_in_tx`, whose
+/// `reject_replicated_targets` guard aborts the WHOLE group; excluding it
+/// here keeps group undo usable and the rn universe identical to
+/// `find_undo_group_inner` / `undo_page_op_inner`.
+/// also #4247: the attachment disjunct's second `EXISTS` (owning block
+/// resolved from the paired `add_attachment` op, gated on
+/// `delete_attachment` alone per #4278) is part of that same shared rn
+/// universe — see the note on `find_positional_undo_target`. Without it a
+/// `delete_attachment` was enumerated by none of the three, so a group undo
+/// silently skipped the delete.
+/// also #4741: the `origin` allow-list (`'user'` / `'agent:%'`) — this
+/// is the query the first Ctrl+Z of a session reaches with an empty
+/// frontend stack, so it is where a boot-sweep batch (`origin =
+/// 'housekeeping'`, newest ops on the page) would otherwise be seeded
+/// on and reverted wholesale. See the note on `find_positional_undo_target`.
+async fn enumerate_undo_group_in_tx(
+    tx: &mut CommandTx,
+    page_id: &str,
+    seed_rn: i64,
+    window_ms: i64,
+) -> Result<Vec<OpRef>, AppError> {
     let rows = sqlx::query!(
         r#"WITH RECURSIVE page_blocks(id, depth) AS (
              SELECT id, 0 FROM blocks WHERE id = ?1
@@ -2801,7 +3054,7 @@ pub async fn undo_page_group_inner(
         seed_rn,
         window_ms,
     )
-    .fetch_all(&mut **tx)
+    .fetch_all(&mut ***tx)
     .await?;
 
     let ops: Vec<OpRef> = rows
@@ -2811,43 +3064,7 @@ pub async fn undo_page_group_inner(
             seq: r.seq,
         })
         .collect();
-
-    if ops.is_empty() {
-        // No group — the seed op doesn't exist (depth exceeds the page's
-        // undoable-op count) or the page has no undoable ops. Release the
-        // write lock without churning the materializer. (Dropping/rolling
-        // `tx` back leaves the DB untouched.)
-        tx.rollback().await?;
-        return Ok(vec![]);
-    }
-
-    // Interactive batch undo preserves the historical contract: a single
-    // non-reversible op aborts the whole revert before any reverse is applied
-    // (`skip_non_reversible = false`), so a mid-group failure rolls the entire
-    // IMMEDIATE transaction back — no partial undo. `revert_ops_in_tx` sorts
-    // the ops newest-first and applies the reverses in that order; the
-    // discarded skip count is always 0 on this path.
-    let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
-        &mut tx,
-        pool,
-        materializer.loro_state(),
-        device_id,
-        ops,
-        false,
-        app_data_dir.as_deref(),
-    )
-    .await?;
-
-    // Commit, then fire queued dispatches in enqueue order. If commit fails, no
-    // dispatches fire.
-    tx.commit_and_dispatch(materializer).await?;
-
-    // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
-
-    Ok(results)
+    Ok(ops)
 }
 
 /// #2468: ref-addressed interactive undo — revert an explicit set of op
@@ -5660,5 +5877,87 @@ mod tests {
             "expected the #659 provenance refusal; got {err:?}"
         );
         assert_still_swept_4741(&pool, &page.swept).await;
+    }
+
+    fn pending_move(seq: i64, block: &str, parent: &str, slot: i64) -> PendingReverse {
+        (
+            OpRef {
+                device_id: DEV.to_owned(),
+                seq,
+            },
+            OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
+                block_id: BlockId::from(block),
+                new_parent_id: Some(BlockId::from(parent)),
+                new_position: slot + 1,
+                new_index: Some(slot),
+            }),
+            seq, // created_at
+            "move_block".to_owned(),
+        )
+    }
+
+    /// #2305: a multi-select drag undo (MoveBlock reverses on DISTINCT blocks)
+    /// applies in ascending `(parent, slot)` order — insertion-sort order — not
+    /// the newest-first order the batch arrives in, and maps every member to
+    /// its reverse-target parent. A pre-#400 payload (`new_index: None`)
+    /// takes its slot from `new_position - 1`.
+    #[test]
+    fn plan_reverse_apply_order_sorts_a_distinct_move_group_by_parent_then_slot() {
+        let mut legacy = pending_move(3, "C", "P", 2);
+        if let OpPayload::MoveBlock(m) = &mut legacy.1 {
+            m.new_index = None;
+        }
+        // Newest-first arrival: (P, slot 2), (Q, slot 0), (P, slot 0).
+        let reverses = vec![
+            legacy,
+            pending_move(2, "B", "Q", 0),
+            pending_move(1, "A", "P", 0),
+        ];
+        let plan = plan_reverse_apply_order(&reverses);
+        assert!(plan.distinct_move_group);
+        assert_eq!(plan.apply_order, vec![2, 0, 1]);
+        assert_eq!(plan.group_target_parent.len(), 3);
+        assert_eq!(plan.group_target_parent["A"], Some("P"));
+        assert_eq!(plan.group_target_parent["B"], Some("Q"));
+        assert_eq!(plan.group_target_parent["C"], Some("P"));
+    }
+
+    /// A same-block move sequence needs LIFO: the plan keeps the newest-first
+    /// arrival order and excludes nothing.
+    #[test]
+    fn plan_reverse_apply_order_keeps_lifo_for_a_same_block_move_sequence() {
+        let reverses = vec![pending_move(2, "A", "Q", 0), pending_move(1, "A", "P", 3)];
+        let plan = plan_reverse_apply_order(&reverses);
+        assert!(!plan.distinct_move_group);
+        assert_eq!(plan.apply_order, vec![0, 1]);
+        assert!(plan.group_target_parent.is_empty());
+    }
+
+    /// A mixed group (a move plus an edit) is not a distinct-move group either,
+    /// even though its moves are on distinct blocks.
+    #[test]
+    fn plan_reverse_apply_order_keeps_lifo_for_a_mixed_group() {
+        let edit: PendingReverse = (
+            OpRef {
+                device_id: DEV.to_owned(),
+                seq: 3,
+            },
+            OpPayload::EditBlock(agaric_store::op::EditBlockPayload {
+                block_id: BlockId::from("B"),
+                to_text: String::new(),
+                prev_edit: None,
+            }),
+            3,
+            "edit_block".to_owned(),
+        );
+        let reverses = vec![
+            edit,
+            pending_move(2, "C", "P", 0),
+            pending_move(1, "A", "P", 2),
+        ];
+        let plan = plan_reverse_apply_order(&reverses);
+        assert!(!plan.distinct_move_group);
+        assert_eq!(plan.apply_order, vec![0, 1, 2]);
+        assert!(plan.group_target_parent.is_empty());
     }
 }
