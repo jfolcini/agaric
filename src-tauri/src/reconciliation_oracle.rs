@@ -70,8 +70,8 @@
 //! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent_in_tx` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
-//! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
-//! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
+//! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the incremental writers) / `backfill_block_links` (the one-shot vault-wide arm, marker-gated at boot, #4905) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
+//! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved` (the vault-wide arm, #4218; no production caller since #4699 — `backfill_block_links` reaches this table through the reindex writers instead) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
 //! | `fts_blocks` (#3345) | `blocks` — `content`, `deleted_at`, and the tag/page names the refs resolve to | `update_fts_for_block` / `remove_fts_for_block` / `reindex_fts_references` / `rebuild_fts_index` (the four FTS tasks; NOTHING writes it inside `apply_op_tx`) |
 //! | `blocks.space_id` on DERIVED rows (#3345) | `blocks` — `parent_id`, `block_type`, and the owning PAGE's own `space_id` | `maintain_pages_cache_counts_after_op`'s Create arm (in-tx, from the owning page) + `set_block_space_id_from_parent` (the post-commit re-stamp, the space half of the `SetBlockPageId` task) / `project_set_property_to_sql` + `project_delete_property_to_sql` (the in-tx page-group write of a `space` op) / `rederive_page_and_space_ids` (the in-tx move arm) / `rebuild_space_ids` (the vault-wide arm, second half of `RebuildPageIds`) — see [`fold_block_space_ids`] for what "derived" excludes |
 //! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks` — **`blocks.content`** | `reindex_block_tag_refs(_in_tx/_split/_split_in_tx)` / `rebuild_block_tag_refs_cache` (the vault-wide arm) — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
@@ -110,9 +110,9 @@
 //! # `block_links` used to be a base table with no independent expected side (#3955)
 //!
 //! Two artefacts above fold `block_links` as GROUND TRUTH, and so does the
-//! only vault-wide maintainer that exists (`rebuild_page_link_cache_impl`
-//! reads `FROM block_links bl` — it rolls *up from* the table and never
-//! re-parses content). A wrong row in `block_links` therefore produced a
+//! roll-up's vault-wide maintainer (`rebuild_page_link_cache_impl` reads
+//! `FROM block_links bl` — it rolls *up from* the table and never re-parses
+//! content). A wrong row in `block_links` therefore produced a
 //! CONSISTENT wrong answer on both sides of every diff above: the divergence
 //! was not merely unlikely to be generated, it was arithmetically impossible
 //! for [`reconcile`] to express. #3903 — the pushed-down cross-space filter
@@ -1001,11 +1001,10 @@ fn fold_block_space(by_id: &BTreeMap<&str, &BaseBlock>, block_id: &str) -> Optio
 /// # What this does NOT claim
 ///
 /// It re-derives what the writers WOULD insert against the CURRENT state of
-/// `blocks`. It is not a claim that production ever recomputes this set: there
-/// is no vault-wide `rebuild_block_links` (the one wholesale wipe of it went
-/// with the snapshot restore, #4699), and the per-block reindexer is a
-/// DIFF driven by content change alone. The gap between the two is real and is
-/// enumerated on [`reconcile_block_links`].
+/// `blocks`. Production recomputes this set once per vault
+/// (`cache::backfill_block_links`, #4905) and never again: the per-block
+/// reindexer is a DIFF driven by content change alone. The gap between the two
+/// is real and is enumerated on [`reconcile_block_links`].
 fn fold_block_links_from_content(blocks: &[BaseBlock]) -> BTreeSet<(String, String)> {
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
 
@@ -1037,8 +1036,8 @@ fn fold_block_links_from_content(blocks: &[BaseBlock]) -> BTreeSet<(String, Stri
     out
 }
 
-/// The maintenance site that owns every `block_links` divergence — there is
-/// exactly one pair of writers and no vault-wide repair behind them.
+/// The maintenance sites that own every `block_links` divergence — one pair
+/// of incremental writers, and one vault-wide pass that runs once.
 const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool writer, called both by the \
      ReindexBlockLinks task and IN-TRANSACTION by agaric-engine's \
      maintain_pages_cache_counts_after_op) / reindex_block_links_split (the \
@@ -1046,18 +1045,18 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
      materializer::dispatch::invalidations_for_op that enqueues \
      ReindexBlockLinks at all (only CreateBlock and EditBlock do) — plus \
      recovery::cache_refresh's draft-recovery path, which enqueues it \
-     directly. There is still NO vault-wide rebuild_block_links: \
-     the one wholesale wipe of it went with the snapshot restore (#4699), \
-     and every other link artefact (pages_cache.inbound_link_count, \
+     directly. Vault-wide, only cache::backfill_block_links (#4905): a \
+     one-shot pass, marker-gated at boot, that runs reindex_block_links_conn \
+     over every live block whose content carries a link token — so it fills \
+     block_links_unresolved through the same writer — and then retires \
+     itself. Every other link artefact (pages_cache.inbound_link_count, \
      page_link_cache) folds this table as ground truth, so a loss here is \
      consistent on both sides of their diffs and invisible to reconcile(). \
      Since #4118 the SOURCE-triggered writer is no longer the only path back: \
      a token the INSERT declines is recorded in block_links_unresolved, keyed \
      by target, and the ReindexBlockLinks handler re-links those referrers when \
      the target itself is reindexed (create, edit, or the SetBlockPageId \
-     page/space stamp). A row lost BEFORE that landed is still lost — the \
-     unresolved index is populated by the reindexes that run after the \
-     upgrade, not backfilled";
+     page/space stamp)";
 
 /// Diff `block_links` against a from-CONTENT rebuild — the artefact that makes
 /// a base table auditable (#3955).
@@ -1098,12 +1097,12 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
 ///   source's last reindex: the target was created later, or its `space_id`
 ///   was stamped later. #4118 closed that as an ONGOING loss — the declined
 ///   token is recorded in `block_links_unresolved` and the referrer is
-///   re-linked when the target is next reindexed — but the arm can still fire
-///   on a vault that carries such losses from BEFORE that landed (the
-///   unresolved index is populated by subsequent reindexes, not backfilled),
-///   and transiently in the window between the target becoming linkable and
-///   the referrer's repair draining. Those are findings to triage, not a
-///   regression signal, which is what keeps this artefact in a scheduled lane.
+///   re-linked when the target is next reindexed — and `backfill_block_links`
+///   (#4905) reindexed every token-bearing block once, so losses from before
+///   either landed are repaired too. The arm can still fire transiently, in
+///   the window between the target becoming linkable and the referrer's
+///   repair draining. That is a finding to triage, not a regression signal,
+///   which is what keeps this artefact in a scheduled lane.
 /// * **EXTRA** (row, no token). Scoped to production's DELETE rule: the writer
 ///   deletes `old_targets - parsed_tokens`, with NO existence and NO space
 ///   predicate. So a row is EXTRA only when its source's `content` column
@@ -2108,7 +2107,9 @@ const BLOCK_LINKS_UNRESOLVED_OWNER: &str = "sync_unresolved_links (agaric-store'
      reindex_block_links_split — so a source's whole owed set is recomputed \
      from its current content and its post-diff block_links rows on every \
      reindex of it; plus rebuild_block_links_unresolved, the vault-wide \
-     arm (#4218) nothing in production has called since #4699. One level up: \
+     arm (#4218) nothing in production has called since #4699 — the vault-wide \
+     pass production does run, cache::backfill_block_links (#4905), reaches \
+     this table through the reindex writers instead. One level up: \
      the arm of \
      materializer::dispatch::invalidations_for_op that enqueues \
      ReindexBlockLinks at all (only CreateBlock and EditBlock do). A row lost \
@@ -2169,7 +2170,7 @@ fn unresolved_target_state(by_id: &BTreeMap<&str, &BaseBlock>, target_id: &str) 
 /// **Scheduled/directed lane, NOT [`reconcile`]** — inherited from its sibling
 /// for the same three reasons (the re-parse cost per op of every generated
 /// chain; `reconcile`'s own fixtures writing link rows directly; MISSING being
-/// triage rather than a gate on a vault carrying pre-#4118 losses).
+/// triage rather than a gate).
 ///
 /// It is also a SEPARATE entry point from
 /// `block_links_reconciliation_failure` rather than an extra arm inside it.
@@ -2182,11 +2183,9 @@ fn unresolved_target_state(by_id: &BTreeMap<&str, &BaseBlock>, target_id: &str) 
 ///
 /// * **MISSING** (content owes the edge, no row). Sound for the shape it
 ///   exists to catch: a writer that dropped a token without recording it, the
-///   #4118 defect itself, and the restore path #4218 was. It CAN also fire on
-///   a vault whose losses predate #4118 (the index is populated by the
-///   reindexes that run after it landed, and — outside a snapshot restore —
-///   is not backfilled), and transiently between a content edit landing and
-///   its `ReindexBlockLinks` draining. Triage, not a regression signal.
+///   #4118 defect itself, and the restore path #4218 was. It CAN also fire
+///   transiently, between a content edit landing and its `ReindexBlockLinks`
+///   draining. Triage, not a regression signal.
 ///
 ///   One window is this artefact's ALONE and is irreducible, so it is
 ///   enumerated rather than discovered during a triage: a `PurgeBlock` of a
