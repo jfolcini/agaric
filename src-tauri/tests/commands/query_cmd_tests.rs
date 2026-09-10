@@ -2991,6 +2991,7 @@ async fn list_backlinks_grouped_returns_only_current_space_blocks_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -3038,6 +3039,7 @@ async fn list_backlinks_grouped_with_none_space_id_returns_all_feat3p4() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -3075,6 +3077,7 @@ async fn list_backlinks_grouped_with_nonexistent_space_id_returns_empty_feat3p4(
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted("01NONEXISTENT0000000000000")),
+        None,
     )
     .await
     .unwrap();
@@ -3121,6 +3124,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -3132,6 +3136,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
     )
     .await
     .unwrap();
@@ -3143,6 +3148,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();

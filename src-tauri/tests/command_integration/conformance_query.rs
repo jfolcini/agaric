@@ -112,7 +112,7 @@ use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::backlink::{BacklinkFilter, BacklinkSort};
+use agaric_store::backlink::{BacklinkFilter, BacklinkSort, LinkKind};
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 use agaric_store::tag_query::TagExpr;
 use serde_json::{Value, json};
@@ -941,6 +941,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
                 &arg_req::<SpaceScope>(args, "scope"),
+                opt_arg_as::<LinkKind>(args, "kind"),
             )
             .await?;
             backlink_groups_result(

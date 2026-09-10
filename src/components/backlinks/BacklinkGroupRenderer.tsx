@@ -63,6 +63,12 @@ export interface BacklinkGroupRendererProps {
    * is used so the container's active-descendant reference resolves.
    */
   rowDomId?: (blockId: string) => string
+  /**
+   * #4551 — the block these references point AT. Chips naming it are given
+   * the `.ref-chip-anchor` highlight so a row carrying several links shows
+   * which one earned it a place in this list.
+   */
+  anchorRefId?: string | undefined
 }
 
 interface BacklinkRowProps {
@@ -78,6 +84,8 @@ interface BacklinkRowProps {
   domId?: string | undefined
   /** Whether this row holds the roving keyboard focus (drives aria-current). */
   isFocused?: boolean
+  /** See {@link BacklinkGroupRendererProps.anchorRefId}. */
+  anchorRefId?: string | undefined
   /**
    * #3316 item 3 — virtualization context for this row. `style` positions it at
    * its virtual offset, `measureRef` reports its real height back to the
@@ -120,6 +128,7 @@ function BacklinkRowInner({
   emptyLabel,
   domId,
   isFocused,
+  anchorRefId,
   style,
   measureRef,
   dataIndex,
@@ -160,10 +169,13 @@ function BacklinkRowInner({
             resolveBlockTitle: (id) => resolveBlockTitleRef.current(id),
             resolveTagName: (id) => resolveTagNameRef.current(id),
             resolveBlockStatus: (id) => resolveBlockStatusRef.current(id),
+            anchorRefId,
           })
         : emptyLabel,
+    // `anchorRefId` is a VALUE, not a ref-held callback, so it belongs in the
+    // deps: changing it changes which chip carries the highlight.
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve/onTagClick callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
-    [block.content, resolveVersion, emptyLabel],
+    [block.content, resolveVersion, emptyLabel, anchorRefId],
   )
 
   return (
@@ -217,6 +229,7 @@ export function BacklinkGroupRenderer({
   linkType,
   focusedBlockId,
   rowDomId,
+  anchorRefId,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
@@ -269,6 +282,7 @@ export function BacklinkGroupRenderer({
             emptyLabel={t('references.empty')}
             domId={rowDomId ? rowDomId(block.id) : undefined}
             isFocused={focusedBlockId != null && block.id === focusedBlockId}
+            anchorRefId={anchorRefId}
           />
         )}
       />

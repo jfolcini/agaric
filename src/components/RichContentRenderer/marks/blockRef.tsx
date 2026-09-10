@@ -104,6 +104,7 @@ export function renderBlockRef(
         'block-ref-chip',
         clickable && 'cursor-pointer',
         status === 'deleted' && 'block-ref-deleted',
+        refId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-ref-chip"
       // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`.

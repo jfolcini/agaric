@@ -92,13 +92,28 @@ export interface UseBlockZoomReturn {
  *   `collapseVisible` was filtered by. Required, not optional: the zoomed
  *   projection re-applies collapse itself (#4038), so a caller that forgot to
  *   pass it would silently render a pane with every collapsed subtree open.
+ * @param onZoomChange #4551 — reports every zoom transition (the new zoom
+ *   root's id, or `null` at the page root) so a caller outside the tree can
+ *   retarget on it; `PageEditor` points the linked-references panel at the
+ *   zoomed block. Held in a ref and deliberately absent from the effect's
+ *   deps, for the reason `BlockTree`'s `onRevealSettled` is: an un-memoized
+ *   parent callback would otherwise re-fire the report on every parent render.
  */
 export function useBlockZoom(
   blocks: FlatBlock[],
   collapseVisible: FlatBlock[],
   collapsedIds: ReadonlySet<string>,
+  onZoomChange?: (id: string | null) => void,
 ): UseBlockZoomReturn {
   const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+
+  const onZoomChangeRef = useRef(onZoomChange)
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange
+  })
+  useEffect(() => {
+    onZoomChangeRef.current?.(zoomedBlockId)
+  }, [zoomedBlockId])
 
   // See `RebaseCache` — carries the zoomed projection's rebased row objects
   // across `zoomedVisible` recomputes so unedited rows keep their identity.

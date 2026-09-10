@@ -16,7 +16,7 @@
  *  - Pagination (load more) with cursor
  *  - Loading state shows skeletons
  *  - Error handling shows toast
- *  - Refetch when pageId changes
+ *  - Refetch when targetId changes
  *  - a11y compliance
  */
 
@@ -38,7 +38,8 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 // `src/components/common/__tests__/CollapsibleGroupList.virtualization.test.tsx`.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { makeBlockRow } from '@/__tests__/fixtures'
+import { mockInvokeCommands, strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import type { LinkedReferencesProps } from '@/components/backlinks/LinkedReferences'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -236,7 +237,7 @@ describe('LinkedReferences', () => {
   it('renders nothing when no backlinks', async () => {
     mockInvokeWith(emptyGrouped)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
@@ -273,7 +274,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     expect(await screen.findByText('5 References')).toBeInTheDocument()
   })
@@ -290,7 +291,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     expect(await screen.findByText('1 Reference')).toBeInTheDocument()
   })
@@ -308,7 +309,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait for content to appear
     expect(await screen.findByText('Page One (1)')).toBeInTheDocument()
@@ -354,7 +355,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     expect(await screen.findByText('Alpha Page (2)')).toBeInTheDocument()
     expect(screen.getByText('Beta Page (1)')).toBeInTheDocument()
@@ -372,7 +373,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     expect(await screen.findByText('Untitled (1)')).toBeInTheDocument()
   })
@@ -390,7 +391,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Block should be visible (group expanded by default for ≤5 groups)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
@@ -425,7 +426,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait for all groups to load
     expect(await screen.findByText('b1')).toBeInTheDocument()
@@ -454,7 +455,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait for first blocks to appear
     expect(await screen.findByText('block 1')).toBeInTheDocument()
@@ -484,7 +485,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Badge
     expect(await screen.findByText('content')).toBeInTheDocument()
@@ -508,7 +509,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1', onNavigateToPage: onNavigate })
+    renderLinkedReferences({ targetId: 'PAGE1', onNavigateToPage: onNavigate })
 
     const blockItem = await screen.findByText('click me')
     await user.click(blockItem)
@@ -530,7 +531,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1', onNavigateToPage: onNavigate })
+    renderLinkedReferences({ targetId: 'PAGE1', onNavigateToPage: onNavigate })
 
     const blockItem = await screen.findByText('keyboard nav')
     // Focus the list item (parent of the text)
@@ -554,7 +555,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1', onNavigateToPage: onNavigate })
+    renderLinkedReferences({ targetId: 'PAGE1', onNavigateToPage: onNavigate })
 
     const blockItem = await screen.findByText('space nav')
     const li = blockItem.closest('li') as HTMLElement
@@ -585,7 +586,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait until the list has rendered (and SourcePageFilter has captured the
     // initial sourcePages identity).
@@ -595,7 +596,7 @@ describe('LinkedReferences', () => {
 
     // Drive a focus-only re-render via roving keyboard navigation on the list
     // container -- this changes focusedIndex state but never touches `groups`.
-    const container = screen.getByRole('group')
+    const container = screen.getByRole('group', { name: t('linkedRefs.listLabel') })
     container.focus()
     await user.keyboard('{ArrowDown}')
 
@@ -626,10 +627,10 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
     await screen.findByText('block 1')
 
-    const container = screen.getByRole('group')
+    const container = screen.getByRole('group', { name: t('linkedRefs.listLabel') })
     // Initial roving position is the first row.
     expect(container).toHaveAttribute('aria-activedescendant', 'linked-ref-row-B1')
     const row1 = screen.getByText('block 1').closest('li') as HTMLElement
@@ -661,7 +662,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     const loadMoreBtn = await screen.findByRole('button', {
       name: /load more references/i,
@@ -700,7 +701,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     const loadMoreBtn = await screen.findByRole('button', {
       name: /load more references/i,
@@ -715,6 +716,7 @@ describe('LinkedReferences', () => {
         cursor: 'cursor_page2',
         limit: 50,
         scope: { kind: 'global' },
+        kind: null,
       })
     })
 
@@ -759,7 +761,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // First page: header shows the true total.
     expect(await screen.findByText('2 References')).toBeInTheDocument()
@@ -815,7 +817,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     const loadMoreBtn = await screen.findByRole('button', {
       name: /load more references/i,
@@ -876,7 +878,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('block 1')
 
@@ -888,7 +890,7 @@ describe('LinkedReferences', () => {
     // Never-resolving promise to keep loading state
     mockedInvoke.mockImplementation(() => new Promise(() => {}))
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     // ListViewState shows skeleton when loading with empty items
     await waitFor(() => {
@@ -907,7 +909,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -917,8 +919,8 @@ describe('LinkedReferences', () => {
     })
   })
 
-  // 18. refetches when pageId changes
-  it('refetches when pageId changes', async () => {
+  // 18. refetches when targetId changes
+  it('refetches when targetId changes', async () => {
     const resp1 = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }])],
       next_cursor: null,
@@ -929,7 +931,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp1)
 
-    const { rerender } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { rerender } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
@@ -939,6 +941,7 @@ describe('LinkedReferences', () => {
         cursor: null,
         limit: 50,
         scope: { kind: 'global' },
+        kind: null,
       })
     })
 
@@ -954,7 +957,7 @@ describe('LinkedReferences', () => {
 
     rerender(
       <TooltipProvider>
-        <LinkedReferences pageId="PAGE2" />
+        <LinkedReferences targetId="PAGE2" />
       </TooltipProvider>,
     )
 
@@ -966,6 +969,7 @@ describe('LinkedReferences', () => {
         cursor: null,
         limit: 50,
         scope: { kind: 'global' },
+        kind: null,
       })
     })
   })
@@ -982,7 +986,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('accessible block')
 
@@ -1004,7 +1008,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('block')
 
@@ -1028,7 +1032,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('block 1')
 
@@ -1048,7 +1052,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('block')
 
@@ -1064,7 +1068,7 @@ describe('LinkedReferences', () => {
   it('calls list_backlinks_grouped with correct params on mount', async () => {
     mockInvokeWith(emptyGrouped)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
@@ -1074,6 +1078,7 @@ describe('LinkedReferences', () => {
         cursor: null,
         limit: 50,
         scope: { kind: 'global' },
+        kind: null,
       })
     })
   })
@@ -1092,7 +1097,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1', onNavigateToPage: onNavigate })
+    renderLinkedReferences({ targetId: 'PAGE1', onNavigateToPage: onNavigate })
 
     const blockItem = await screen.findByText('null title block')
     await user.click(blockItem)
@@ -1113,7 +1118,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     const header = await screen.findByText('1 Reference')
     const headerBtn = header.closest('button') as HTMLElement
@@ -1146,7 +1151,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1180,7 +1185,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1209,7 +1214,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (2)')
 
@@ -1235,7 +1240,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1254,6 +1259,7 @@ describe('LinkedReferences', () => {
         cursor: null,
         limit: 50,
         scope: { kind: 'global' },
+        kind: null,
       })
     })
   })
@@ -1271,7 +1277,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1310,7 +1316,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('accessible block')
 
@@ -1323,8 +1329,8 @@ describe('LinkedReferences', () => {
     })
   })
 
-  // 33. filter state resets when pageId changes
-  it('resets filters when pageId changes', async () => {
+  // 33. filter state resets when targetId changes
+  it('resets filters when targetId changes', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'ref' }])],
@@ -1336,7 +1342,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { rerender, container } = renderLinkedReferences({ pageId: 'PAGE_A' })
+    const { rerender, container } = renderLinkedReferences({ targetId: 'PAGE_A' })
 
     await screen.findByText('Page One (1)')
 
@@ -1350,13 +1356,13 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('.linked-references-filter-count')).not.toBeNull()
     })
 
-    // Now rerender with a different pageId — filters should reset.
+    // Now rerender with a different targetId — filters should reset.
     mockedInvoke.mockClear()
     mockInvokeWith(resp)
 
     rerender(
       <TooltipProvider>
-        <LinkedReferences pageId="PAGE_B" />
+        <LinkedReferences targetId="PAGE_B" />
       </TooltipProvider>,
     )
 
@@ -1385,7 +1391,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1404,7 +1410,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1435,7 +1441,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1469,7 +1475,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
     expect(screen.getByText('Linked')).toBeInTheDocument()
@@ -1493,7 +1499,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    renderLinkedReferences({ pageId: 'PAGE1', onNavigateToPage: onNavigate })
+    renderLinkedReferences({ targetId: 'PAGE1', onNavigateToPage: onNavigate })
 
     // Wait for group to load — with onNavigateToPage, the split layout is active
     // PageLink renders the title separately
@@ -1519,7 +1525,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Toast fires with the translated error message
     await waitFor(() => {
@@ -1565,7 +1571,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait for initial load
     const loadMoreBtn = await screen.findByRole('button', {
@@ -1603,7 +1609,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait for the IPC to be issued so the catch path runs.
     await waitFor(() => {
@@ -1625,7 +1631,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -1646,7 +1652,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -1681,7 +1687,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1709,7 +1715,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
 
@@ -1783,7 +1789,7 @@ describe('LinkedReferences', () => {
       return emptyGrouped
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     const loadMoreBtn = await screen.findByRole('button', {
       name: /load more references/i,
@@ -1826,7 +1832,7 @@ describe('LinkedReferences', () => {
       return strictInvokeFallback(cmd)
     })
 
-    const { unmount } = renderLinkedReferences({ pageId: 'PAGE1' })
+    const { unmount } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     // Wait until the mount-once effect has fired the IPC call.
     await waitFor(() => {
@@ -1869,9 +1875,193 @@ describe('LinkedReferences', () => {
       truncated: false,
     })
 
-    renderLinkedReferences({ pageId: 'PAGE1' })
+    renderLinkedReferences({ targetId: 'PAGE1' })
 
     // `filtered/total` as forwarded to the filter builder.
     expect(await screen.findByTestId('mock-filter-counts')).toHaveTextContent('4/40')
+  })
+
+  // #4551 — the link-kind segmented control. Driven through a handler that
+  // reads the `kind` argument and answers a DIFFERENT row set, so the
+  // assertions are on what the panel ends up showing rather than on the fact
+  // that it asked: a toggle wired to state but not to the query key would
+  // leave TanStack serving the cached page and the rendered rows unchanged.
+  describe('link-kind filter (#4551)', () => {
+    const KIND_ROWS: Record<string, { id: string; content: string }> = {
+      null: { id: 'B_ALL', content: 'every shape' },
+      page_link: { id: 'B_PAGE', content: 'a page link' },
+      block_ref: { id: 'B_REF', content: 'a block reference' },
+    }
+
+    function mockKindAwareInvoke() {
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          list_backlinks_grouped: (args) => {
+            const row = KIND_ROWS[
+              String((args['kind'] as string | null | undefined) ?? 'null')
+            ] as {
+              id: string
+              content: string
+            }
+            return {
+              groups: [
+                {
+                  page_id: 'P1',
+                  page_title: 'Page One',
+                  blocks: [
+                    makeBlockRow({
+                      id: row.id,
+                      content: row.content,
+                      parent_id: 'P1',
+                      page_id: 'P1',
+                    }),
+                  ],
+                  truncated: false,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+              filtered_count: 1,
+              truncated: false,
+            }
+          },
+          batch_resolve: () => [],
+          list_property_keys: () => [],
+          list_tags_by_prefix: () => [],
+        }),
+      )
+    }
+
+    it('re-queries and re-renders when the kind is toggled', async () => {
+      const user = userEvent.setup()
+      mockKindAwareInvoke()
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+
+      expect(await screen.findByText('every shape')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      expect(await screen.findByText('a page link')).toBeInTheDocument()
+      expect(screen.queryByText('every shape')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindBlockRefs') }))
+      expect(await screen.findByText('a block reference')).toBeInTheDocument()
+      expect(screen.queryByText('a page link')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindAll') }))
+      expect(await screen.findByText('every shape')).toBeInTheDocument()
+    })
+
+    it('exposes the selected kind through aria-pressed', async () => {
+      const user = userEvent.setup()
+      mockKindAwareInvoke()
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+
+      expect(await screen.findByRole('button', { name: t('references.kindAll') })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+
+      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      expect(await screen.findByText('a page link')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      expect(screen.getByRole('button', { name: t('references.kindAll') })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+    })
+
+    // axe-presence: one audit per visual state, not one per file — each kind
+    // is a distinct rendering of the group and of the toggle row.
+    it('has no a11y violations in any of the three filter states', async () => {
+      const user = userEvent.setup()
+      mockKindAwareInvoke()
+
+      const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
+      expect(await screen.findByText('every shape')).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      expect(await screen.findByText('a page link')).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindBlockRefs') }))
+      expect(await screen.findByText('a block reference')).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    // The toggle lives OUTSIDE `ListViewState`. Put it back inside and both
+    // tests below go red: the skeleton swap unmounts the pressed button
+    // (focus falls to <body>), and an empty result renders `empty={null}`,
+    // taking the whole control with it.
+    it('keeps focus on the pressed button while the new query resolves', async () => {
+      const user = userEvent.setup()
+      mockKindAwareInvoke()
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+      await screen.findByText('every shape')
+
+      const pageLinks = screen.getByRole('button', { name: t('references.kindPageLinks') })
+      await user.click(pageLinks)
+      expect(await screen.findByText('a page link')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveFocus()
+    })
+
+    it('stays reachable when the selected kind matches nothing', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          list_backlinks_grouped: (args) =>
+            args['kind'] === 'page_link'
+              ? emptyGrouped
+              : {
+                  groups: [
+                    {
+                      page_id: 'P1',
+                      page_title: 'Page One',
+                      blocks: [
+                        makeBlockRow({
+                          id: 'B_REF',
+                          content: 'a block reference',
+                          parent_id: 'P1',
+                          page_id: 'P1',
+                        }),
+                      ],
+                      truncated: false,
+                    },
+                  ],
+                  next_cursor: null,
+                  has_more: false,
+                  total_count: 1,
+                  filtered_count: 1,
+                  truncated: false,
+                },
+          batch_resolve: () => [],
+          list_property_keys: () => [],
+          list_tags_by_prefix: () => [],
+        }),
+      )
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+      expect(await screen.findByText('a block reference')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      await waitFor(() => {
+        expect(screen.queryByText('a block reference')).not.toBeInTheDocument()
+      })
+
+      // Nothing matched, so the list is gone — but the way back is not.
+      await user.click(screen.getByRole('button', { name: t('references.kindAll') }))
+      expect(await screen.findByText('a block reference')).toBeInTheDocument()
+    })
   })
 })

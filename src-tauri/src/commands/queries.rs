@@ -13,7 +13,9 @@ use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
 use agaric_core::error::AppError;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::backlink::{self, BacklinkFilter, BacklinkSort, GroupedBacklinkResponse};
+use agaric_store::backlink::{
+    self, BacklinkFilter, BacklinkSort, GroupedBacklinkResponse, LinkKind,
+};
 use agaric_store::fts;
 use agaric_store::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
 use agaric_store::space::SpaceScope;
@@ -387,9 +389,14 @@ pub async fn list_unfinished_tasks_inner(
 /// `filtered_count` reflect the post-space-filter universe.
 /// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
 ///
+/// `kind` — #4551. `Some` narrows the result to one link shape (`[[ULID]]`
+/// page links or `((ULID))` block references); `None` is every shape, the
+/// pre-#4551 behaviour.
+///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
 #[instrument(skip(pool, filters, sort), err)]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_backlinks_grouped_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -398,6 +405,7 @@ pub async fn list_backlinks_grouped_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
+    kind: Option<LinkKind>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     if block_id.as_str().trim().is_empty() {
         return Err(AppError::validation("block_id must not be empty".into()));
@@ -410,6 +418,7 @@ pub async fn list_backlinks_grouped_inner(
         sort,
         &page,
         scope.as_filter_param(),
+        kind,
     )
     .await
 }
@@ -978,10 +987,20 @@ pub async fn list_backlinks_grouped(
     cursor: Option<String>,
     limit: Option<i64>,
     scope: SpaceScope,
+    kind: Option<LinkKind>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit, &scope)
-        .await
-        .map_err(sanitize_internal_error)
+    list_backlinks_grouped_inner(
+        &read_pool.0,
+        block_id,
+        filters,
+        sort,
+        cursor,
+        limit,
+        &scope,
+        kind,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].

@@ -194,6 +194,14 @@ interface BlockTreeProps {
    * nowhere in the effect body.
    */
   revealNonce?: number | undefined
+  /**
+   * #4551 — reports every zoom transition of this tree: the new zoom root's
+   * block id, or `null` at the page root. Lets a caller OUTSIDE the tree
+   * retarget on the active zoom — `PageEditor` points the linked-references
+   * panel at the zoomed block. Held in a ref inside `useBlockZoom` for the
+   * same reason `onRevealSettled` is, so an un-memoized callback is safe.
+   */
+  onZoomChange?: ((id: string | null) => void) | undefined
 }
 
 export function BlockTree({
@@ -202,6 +210,7 @@ export function BlockTree({
   autoCreateFirstBlock = true,
   onRevealSettled,
   revealNonce,
+  onZoomChange,
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
@@ -295,7 +304,7 @@ export function BlockTree({
     // zoomed projection re-apply collapse WITHIN the pane, from the unfiltered
     // tree, instead of inheriting the page-wide filtering — under which a
     // collapsed ANCESTOR of the zoom root emptied the pane outright.
-  } = useBlockZoom(blocks, collapseFilteredVisible, collapsedIds)
+  } = useBlockZoom(blocks, collapseFilteredVisible, collapsedIds, onZoomChange)
 
   // Zoom means "show me inside this block". Expand the target through the
   // collapse hook's persisted, idempotent path before changing projection, so

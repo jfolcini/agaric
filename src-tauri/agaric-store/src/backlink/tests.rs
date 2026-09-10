@@ -66,6 +66,23 @@ async fn insert_block_link(pool: &SqlitePool, source_id: &str, target_id: &str) 
         .unwrap();
 }
 
+/// Insert a block link naming its `kind` (migration 0119) — the sibling above
+/// leaves the column to its `page_link` default.
+async fn insert_block_link_of_kind(
+    pool: &SqlitePool,
+    source_id: &str,
+    target_id: &str,
+    kind: &str,
+) {
+    sqlx::query("INSERT INTO block_links (source_id, target_id, kind) VALUES (?, ?, ?)")
+        .bind(source_id)
+        .bind(target_id)
+        .bind(kind)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// Tag a block.
 async fn insert_tag_assoc(pool: &SqlitePool, block_id: &str, tag_id: &str) {
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -3454,13 +3471,148 @@ async fn eval_grouped_empty() {
     insert_block(&pool, "LONELY", "page", "No one links to me").await;
     let page = default_page();
 
-    let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page, None, None)
         .await
         .unwrap();
     assert!(resp.groups.is_empty(), "no backlinks means no groups");
     assert_eq!(resp.total_count, 0, "total count should be 0");
     assert_eq!(resp.filtered_count, 0, "filtered count should be 0");
     assert!(!resp.has_more, "should not have more pages");
+}
+
+/// #4551 — the `kind` argument narrows grouped backlinks to one link shape,
+/// in the groups, their members AND both counts. Every `block_links`-reading
+/// query in `eval_backlink_query_grouped` has to carry the predicate: the
+/// no-filter run pins the total-count, group and member queries, the filtered
+/// run pins the `filtered_count` query (which only runs when a filter is
+/// present).
+#[tokio::test]
+async fn eval_grouped_filters_by_link_kind_4551() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_A1",
+        "content",
+        "[[TARGET]]",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    // A SECOND source on the same page, of the OTHER kind: without it the
+    // member query could drop the predicate unnoticed, because each page would
+    // contribute members of one kind only.
+    insert_block_with_parent(
+        &pool,
+        "BLK_A2",
+        "content",
+        "((TARGET))",
+        Some("PAGE_A"),
+        Some(2),
+    )
+    .await;
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_B1",
+        "content",
+        "((TARGET))",
+        Some("PAGE_B"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_link_of_kind(&pool, "BLK_A1", "TARGET", "page_link").await;
+    insert_block_link_of_kind(&pool, "BLK_A2", "TARGET", "block_ref").await;
+    insert_block_link_of_kind(&pool, "BLK_B1", "TARGET", "block_ref").await;
+    let page = default_page();
+
+    let all = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
+        .await
+        .unwrap();
+    assert_eq!(all.groups.len(), 2, "no kind filter keeps both shapes");
+    assert_eq!(all.total_count, 3, "unfiltered total counts both shapes");
+    assert_eq!(all.filtered_count, 3, "unfiltered filtered-count matches");
+
+    let page_links = eval_backlink_query_grouped(
+        &pool,
+        "TARGET",
+        None,
+        None,
+        &page,
+        None,
+        Some(LinkKind::PageLink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(page_links.groups.len(), 1, "one page-link source page");
+    assert_eq!(page_links.groups[0].page_id, "PAGE_A", "PAGE_A page-links");
+    assert_eq!(
+        page_links.groups[0].blocks.len(),
+        1,
+        "PAGE_A's block-ref member is filtered out of the group too"
+    );
+    assert_eq!(
+        page_links.groups[0].blocks[0].id, "BLK_A1",
+        "the member is the page-linking block"
+    );
+    assert_eq!(page_links.total_count, 1, "total counts page links only");
+    assert_eq!(page_links.filtered_count, 1, "filtered count narrows too");
+
+    let block_refs = eval_backlink_query_grouped(
+        &pool,
+        "TARGET",
+        None,
+        None,
+        &page,
+        None,
+        Some(LinkKind::BlockRef),
+    )
+    .await
+    .unwrap();
+    assert_eq!(block_refs.groups.len(), 2, "both pages block-reference it");
+    assert_eq!(
+        block_refs.groups[0].page_id, "PAGE_A",
+        "groups stay alphabetical by title"
+    );
+    assert_eq!(
+        block_refs.groups[0].blocks.len(),
+        1,
+        "PAGE_A's page-link member is filtered out"
+    );
+    assert_eq!(
+        block_refs.groups[0].blocks[0].id, "BLK_A2",
+        "the member is the referencing block"
+    );
+    assert_eq!(block_refs.total_count, 2, "total counts block refs only");
+    assert_eq!(block_refs.filtered_count, 2, "filtered count narrows too");
+
+    // A present filter routes `filtered_count` through its own SQL instead of
+    // reusing `total_count`, so that query needs the predicate as well. The
+    // filter itself keeps both sources; only `kind` narrows.
+    let filters = vec![BacklinkFilter::BlockType {
+        block_type: "content".to_string(),
+    }];
+    let filtered = eval_backlink_query_grouped(
+        &pool,
+        "TARGET",
+        Some(filters),
+        None,
+        &page,
+        None,
+        Some(LinkKind::BlockRef),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        filtered.groups.len(),
+        2,
+        "kind still narrows under a filter"
+    );
+    assert_eq!(
+        filtered.filtered_count, 2,
+        "the filtered-count query carries the kind predicate"
+    );
 }
 
 #[tokio::test]
@@ -3495,7 +3647,7 @@ async fn eval_grouped_happy_path() {
     insert_block_link(&pool, "BLK_B1", "TARGET").await;
     let page = default_page();
 
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 2, "2 source pages");
@@ -3552,7 +3704,7 @@ async fn eval_grouped_pagination() {
 
     // First page: limit=2
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None, None)
         .await
         .unwrap();
     assert_eq!(resp1.groups.len(), 2, "first page should have 2 groups");
@@ -3563,7 +3715,7 @@ async fn eval_grouped_pagination() {
 
     // Second page via cursor
     let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
-    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None, None)
         .await
         .unwrap();
     assert_eq!(resp2.groups.len(), 1, "second page has 1 remaining group");
@@ -3599,7 +3751,7 @@ async fn eval_grouped_counts_only_on_first_page_2201() {
 
     // First page (limit=2): counts are computed and correct.
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -3619,7 +3771,7 @@ async fn eval_grouped_counts_only_on_first_page_2201() {
     // Second page (cursor set): counts are SKIPPED and reported as 0, but the
     // page's groups / rows / cursor are unchanged.
     let page2 = PageRequest::new(Some(cursor), Some(2)).unwrap();
-    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -3688,10 +3840,17 @@ async fn eval_grouped_counts_only_on_first_page_with_filter_2201() {
     }];
 
     let page1 = PageRequest::new(None, Some(2)).unwrap();
-    let resp1 =
-        eval_backlink_query_grouped(&pool, "TARGET", Some(filters.clone()), None, &page1, None)
-            .await
-            .unwrap();
+    let resp1 = eval_backlink_query_grouped(
+        &pool,
+        "TARGET",
+        Some(filters.clone()),
+        None,
+        &page1,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(resp1.total_count, 3, "first page total_count with filter");
     assert_eq!(
         resp1.filtered_count, 3,
@@ -3701,9 +3860,10 @@ async fn eval_grouped_counts_only_on_first_page_with_filter_2201() {
     let cursor = resp1.next_cursor.expect("has_more implies a cursor");
 
     let page2 = PageRequest::new(Some(cursor), Some(2)).unwrap();
-    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page2, None)
-        .await
-        .unwrap();
+    let resp2 =
+        eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page2, None, None)
+            .await
+            .unwrap();
     assert_eq!(resp2.total_count, 0, "non-first page skips total_count");
     assert_eq!(
         resp2.filtered_count, 0,
@@ -3743,7 +3903,7 @@ async fn eval_grouped_pagination_survives_vanished_cursor_group_625() {
 
     // Page 1, limit=1 → first group is PAGE_A; cursor points at it.
     let page1 = PageRequest::new(None, Some(1)).unwrap();
-    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None, None)
         .await
         .unwrap();
     assert_eq!(resp1.groups.len(), 1, "page 1 has one group");
@@ -3761,7 +3921,7 @@ async fn eval_grouped_pagination_survives_vanished_cursor_group_625() {
     // Page 2 via the now-orphaned cursor: must resume at PAGE_B (the
     // next-greater group), NOT terminate empty.
     let page2 = PageRequest::new(Some(cursor), Some(1)).unwrap();
-    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -3778,7 +3938,7 @@ async fn eval_grouped_pagination_survives_vanished_cursor_group_625() {
 
     // Page 3 → PAGE_C, then exhausted.
     let page3 = PageRequest::new(Some(cursor2), Some(1)).unwrap();
-    let resp3 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page3, None)
+    let resp3 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page3, None, None)
         .await
         .unwrap();
     assert_eq!(resp3.groups.len(), 1, "page 3 returns the last group");
@@ -3825,7 +3985,7 @@ async fn eval_grouped_respects_filters() {
         key: "status".into(),
     }];
 
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
@@ -3881,7 +4041,7 @@ async fn eval_grouped_no_filter_filtered_count_equals_total_2201() {
     let page = default_page();
 
     // No filter (None) -> exercises the short-circuit branch.
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "two cross-page backlinks");
@@ -3892,9 +4052,10 @@ async fn eval_grouped_no_filter_filtered_count_equals_total_2201() {
     );
 
     // Empty filter vec compiles to `None` as well -> same short-circuit.
-    let resp_empty = eval_backlink_query_grouped(&pool, "TARGET", Some(vec![]), None, &page, None)
-        .await
-        .unwrap();
+    let resp_empty =
+        eval_backlink_query_grouped(&pool, "TARGET", Some(vec![]), None, &page, None, None)
+            .await
+            .unwrap();
     assert_eq!(
         resp_empty.filtered_count, resp_empty.total_count,
         "empty filter vec is treated as no filter and must short-circuit too"
@@ -3935,7 +4096,7 @@ async fn eval_grouped_with_filter_still_reduces_count_2201() {
     let filters = vec![BacklinkFilter::PropertyIsSet {
         key: "status".into(),
     }];
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None, None)
         .await
         .unwrap();
     assert_eq!(resp.total_count, 2, "base set still has 2 backlinks");
@@ -4025,7 +4186,7 @@ async fn eval_backlink_query_grouped_total_count_excludes_self_references() {
     // N = 4 backlinks total in `block_links`, M = 2 self-references.
     // Post-filter expectation: total_count = N - M = 2.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -4085,7 +4246,7 @@ async fn eval_backlink_query_grouped_total_count_excludes_orphan_source_blocks()
 
     // N = 4 base backlinks, K = 3 orphans => total_count = 1.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -4148,7 +4309,7 @@ async fn eval_backlink_query_grouped_total_count_matches_visible_results() {
 
     // N = 10, M = 2, K = 3 => expected total_count = 5.
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -6191,7 +6352,7 @@ async fn eval_grouped_blockrow_fetch_small_in_bind() {
     bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 5).await;
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -6259,7 +6420,7 @@ async fn eval_grouped_blockrow_fetch_large_json_each() {
 
     // Use a group page limit large enough to return all 3 groups in one shot.
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -6553,7 +6714,7 @@ async fn eval_backlink_query_grouped_paginates_correctly() {
     let mut cursor: Option<String> = None;
     for iteration in 0..4 {
         let page = PageRequest::new(cursor, Some(2)).unwrap();
-        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
             .await
             .unwrap();
         for group in &resp.groups {
@@ -6633,7 +6794,7 @@ async fn eval_grouped_keyset_per_page_cost_is_bounded_2042() {
         assert!(pages <= 100, "pagination must terminate");
         let is_first_page = cursor.is_none();
         let page = PageRequest::new(cursor, Some(page_size)).unwrap();
-        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
             .await
             .unwrap();
 
@@ -7905,9 +8066,10 @@ mod parity_p1 {
                 .collect();
 
             // Grouped union across all groups.
-            let grouped = eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None)
-                .await
-                .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
+            let grouped =
+                eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None, None)
+                    .await
+                    .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
             let got: FxHashSet<String> = grouped
                 .groups
                 .iter()
@@ -8096,9 +8258,10 @@ mod parity_p1 {
             } else {
                 Some(filters.clone())
             };
-            let resp = eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None)
-                .await
-                .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
+            let resp =
+                eval_backlink_query_grouped(&pool, &target, filt_arg, None, &page, None, None)
+                    .await
+                    .unwrap_or_else(|e| panic!("[{label}] grouped eval failed: {e:?}"));
 
             assert_eq!(
                 resp.filtered_count,
@@ -8326,6 +8489,7 @@ mod parity_p1 {
             None,
             &big_page,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -8355,6 +8519,7 @@ mod parity_p1 {
                 Some(filters.clone()),
                 None,
                 &page,
+                None,
                 None,
             )
             .await
@@ -8442,7 +8607,7 @@ async fn eval_grouped_compound_and_blocktype_is_behaviour_preserving() {
         ],
     }];
 
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None, None)
         .await
         .unwrap();
 
@@ -8502,7 +8667,7 @@ async fn eval_grouped_compound_and_matches_unscoped_oracle() {
     }];
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None, None)
         .await
         .unwrap();
 
@@ -8626,7 +8791,7 @@ async fn eval_grouped_caps_blocks_per_group() {
     }
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
 
@@ -8678,7 +8843,7 @@ async fn eval_grouped_under_cap_not_truncated() {
     }
 
     let page = default_page();
-    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None, None)
         .await
         .unwrap();
     assert_eq!(resp.groups.len(), 1);

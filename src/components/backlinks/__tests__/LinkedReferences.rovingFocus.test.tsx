@@ -147,7 +147,7 @@ function rovingContainer(container: HTMLElement): HTMLElement {
 function panelElement() {
   return (
     <TooltipProvider>
-      <LinkedReferences pageId="PAGE1" />
+      <LinkedReferences targetId="PAGE1" />
     </TooltipProvider>
   )
 }

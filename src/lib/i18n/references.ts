@@ -21,6 +21,11 @@ export const references: Record<string, string> = {
   'references.backlinksFrom': 'Backlinks from {{title}}',
   'references.linkedBadge': 'Linked',
   'references.unlinkedBadge': 'Unlinked',
+  // #4551 — the link-kind segmented control above the backlink filter builder.
+  'references.kindFilterLabel': 'Filter by link kind',
+  'references.kindAll': 'All',
+  'references.kindPageLinks': 'Page links',
+  'references.kindBlockRefs': 'Block refs',
   'references.filtersAppliedBadge': '{{count}}',
   'references.filtersAppliedAriaLabel_one': '{{count}} filter applied',
   'references.filtersAppliedAriaLabel_other': '{{count}} filters applied',

@@ -419,7 +419,7 @@ export const commands = {
 	 */
 	computeBlockVsCurrentDiff: (blockId: BlockId, historicalCreatedAt: number, historicalSeq: number) => typedError<DiffSpan[], AppError>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalCreatedAt, historicalSeq })),
 	/**  Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`]. */
-	listBacklinksGrouped: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope })),
+	listBacklinksGrouped: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope, kind: "page_link" | "block_ref" | null) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope, kind })),
 	/**  Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`]. */
 	listUnlinkedReferences: (pageId: PageId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
 	/**  Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`]. */
@@ -2480,6 +2480,16 @@ export type LastEditedSpec =
  *  `Rolling`). Used by `last-edited:older` chip.
  */
 { type: "OlderThan"; days: number };
+
+/**
+ *  The two link shapes `block_links.kind` tells apart (migration 0119):
+ *  `[[ULID]]` page links and `((ULID))` block references.
+ * 
+ *  Not a [`BacklinkFilter`] variant: a compiled filter fragment is correlated
+ *  on the SOURCE block alias `b` alone (`backlink/filters.rs`) and never sees
+ *  the `block_links` row, so this predicate cannot be expressed there.
+ */
+export type LinkKind = "page_link" | "block_ref";
 
 export type LinkMetadata = {
 	url: string,

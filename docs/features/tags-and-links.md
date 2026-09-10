@@ -71,7 +71,7 @@ A link whose target is in a different space **does not navigate** — it renders
 
 Every page shows two sections in its footer area:
 
-- **Linked references** — every block that links to this page or any of its blocks.
+- **Linked references** — every block that links to this page. Zoom into a block and the section retargets onto it, listing what links to *that block* instead; zoom back out and the page's own references return. Within a row, the chip naming the target is outlined, so a block that links several things shows which link earned it its place.
 - **Unlinked references** — every block that mentions this page's title or aliases as plain text (no chip).
 
 ### Filter dimensions
@@ -87,6 +87,7 @@ Both sections share a **BacklinkFilterBuilder** with these dimensions:
 | Property | `key:value` |
 | Source page | Show only references from one or more specific pages (multi-select pill) |
 | Source page exclude | Hide references from one or more pages |
+| Link kind | Linked section only: All / Page links (`[[…]]`) / Block refs (`((…))`) |
 
 The filter pills compose; clear with *"Clear all"*.
 
@@ -109,7 +110,7 @@ A property of type *ref* can point at a tag as well as a page (e.g. a custom `ar
 ## Pitfalls to know
 
 - **Tag namespaces are a naming convention, not a hierarchy.** `@projects/website` is a *different, unrelated* tag from `@projects`. Use a prefix query (`projects/`) to sweep a namespace — and remember it won't include the bare parent tag.
-- **Block references are live.** Editing the source rewrites every embed. If you want a frozen copy, copy the text manually.
+- **A block reference is a link, not a copy.** The `((…))` chip carries the target's title and nothing else — no children, no live content. To pull a block's actual content onto another page, use an **embed**.
 - **Unlinked references are case-insensitive substring matches.** They can be noisy if a page title is a common word. Use page aliases (or rename) to disambiguate.
 - **Backlink filters are local to the section.** The Linked / Unlinked sections have independent filter state.
 - **Picker can't find a page from another space.** Switch space first (intentional — see [spaces.md](spaces.md)).

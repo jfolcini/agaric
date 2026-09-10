@@ -1473,6 +1473,18 @@
   @apply bg-block-ref/70;
 }
 
+/* #4551 — the anchor chip in a linked-reference row: the `[[…]]`/`((…))` that
+   names the block the panel is listing references TO. A row can carry several
+   chips, and only this one explains why the row is in the list. An outline
+   (not a background swap) so it composes with every chip type's own fill and
+   with the deleted/hover states, and `outline-offset` keeps it clear of the
+   chip's rounded edge. `--ring` is the same accent `focus-visible` uses, one
+   step down in weight so a focused anchor chip still reads as focused. */
+.ref-chip-anchor {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 /* Shared focus-visible affordance for all chip types */
 .block-link-chip:focus-visible,
 .tag-ref-chip:focus-visible,

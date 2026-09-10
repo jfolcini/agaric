@@ -20,6 +20,7 @@ import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
+  classifyLinkKind,
   contentLinksTo,
   inSpaceScope,
   pageRequestLimit,
@@ -277,11 +278,16 @@ export const linksHandlers = {
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    // #4551 — `AND (? IS NULL OR bl.kind = ?)`. The backend classifies the
+    // pair once at reindex time and stores it; the mock derives `block_links`
+    // from content on every read, so it classifies here from the same rule.
+    const kind = (a['kind'] as string | null | undefined) ?? null
     const sources = [...blocks.values()].filter(
       (b) =>
         !b['deleted_at'] &&
         inSpaceScope(b, spaceId) &&
-        contentLinksTo(b['content'] as string | null, targetId),
+        contentLinksTo(b['content'] as string | null, targetId) &&
+        (kind === null || classifyLinkKind(b['content'] as string | null, targetId) === kind),
     )
     // `COALESCE(tgt.page_id, tgt.id)` — the target's root page, whose own
     // blocks are self-references.
