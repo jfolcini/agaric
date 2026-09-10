@@ -30,7 +30,11 @@ name: Scheduled deep checks
 #   mutants        — #649/#3393: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine), SHARDED one job per
 #                    (package, shard) with the counts derived from measured
-#                    per-mutant cost. Non-blocking; the survivor list is the
+#                    per-mutant cost. TWO PHASES per shard (#4872): a scan of
+#                    every mutant against the package's narrowed suite, then
+#                    a confirm of the scan's survivors against the full one,
+#                    so the published survivors are the ones the full suite
+#                    missed. Non-blocking; the survivor list is the
 #                    deliverable to triage into tests.
 #   mutants-merge  — #3393: reassembles the shards into the single
 #                    `mutants-out` artifact + step summary the filer below
@@ -1143,7 +1147,26 @@ jobs:
         # Same guard runs as a `manual`-stage prek hook on every PR (#4556).
         run: node scripts/check-mutants-scope.mjs
 
-      - name: Run cargo-mutants (scoped to invariant core)
+      - name: Scan — every mutant of this shard against the narrowed suite (#4872 phase 1)
+        # #4872 — two phases, so the lane can narrow its tests WITHOUT false
+        # survivors. A mutant that only a sibling module's test would catch
+        # reads as a survivor under a narrowed suite; the confirm step below
+        # re-runs every scan survivor against the FULL package suite, so the
+        # published list is exactly what a full-suite run would publish. The
+        # narrowing is per package (`scripts/mutants-scan-filters.json`, one
+        # nextest expression each, served by `check-mutants-scope.mjs
+        # --scan-filter` so the guard and this step read one table), because
+        # `-- <test args>` is fixed for a whole `cargo mutants` run and a
+        # per-glob split would mean one invocation — one baseline — per glob.
+        # Phase durations go to `two-phase.json` for the merge summary; the
+        # before/after the issue asks for is read off the lane, not a dev box.
+        #
+        # The scan writes cargo-mutants' default `mutants.out/`, which is then
+        # moved to `scan.out/` so the confirm step's own `mutants.out/` cannot
+        # shadow it (cargo-mutants renames a previous `mutants.out` to
+        # `.old`, which is the previous-run trap `check-mutants-scope.mjs`
+        # exists to catch).
+        #
         working-directory: src-tauri
         # Scope, test-tool (nextest), and timeouts come from
         # `src-tauri/.cargo/mutants.toml`.
@@ -1237,11 +1260,123 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ matrix.shards }}
         run: |
+          set -uo pipefail
+          filter=$(node ../scripts/check-mutants-scope.mjs --scan-filter "$PACKAGE")
+          echo "scan filter for $PACKAGE: $filter"
+          started=$(date +%s)
           timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
             cargo mutants --in-place -p "$PACKAGE" \
               --shard "$SHARD/$SHARDS" --sharding round-robin \
               --timeout "$MUTANTS_TIMEOUT" \
+              --build-timeout "$MUTANTS_BUILD_TIMEOUT" \
+              -- -E "$filter" || true
+          echo "SCAN_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
+          rm -rf scan.out
+          if [ -d mutants.out ]; then mv mutants.out scan.out; fi
+
+      - name: Confirm — the scan's survivors against the full package suite (#4872 phase 2)
+        # One anchored `--re` alternation over the surviving SITES — the
+        # `file:line:col:` prefix of each scan `missed.txt` line, dots escaped
+        # — because cargo-mutants selects by regex over the names `--list`
+        # prints and nothing else. Both replacement variants at a site are
+        # re-tested; the second costs one extra build and the alternative is
+        # escaping the whole name.
+        # No `--shard`: the survivor set is already this shard's. No `--`:
+        # the FULL suite is the point. The wall budget is what the scan left
+        # of `MUTANTS_WALL_BUDGET`, floored so a scan that ate it all still
+        # gets its baseline; survivors this phase does not reach are carried
+        # into `missed.txt` by the assemble step, never dropped.
+        working-directory: src-tauri
+        env:
+          MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
+          MUTANTS_BUILD_TIMEOUT: '600'
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -uo pipefail
+          if [ ! -s scan.out/missed.txt ]; then
+            echo "the scan left no survivors — nothing to confirm"
+            echo "CONFIRM_SECONDS=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sites=$(sed -E 's/^([^:]+:[0-9]+:[0-9]+:).*$/\1/' scan.out/missed.txt | sort -u)
+          count=$(printf '%s\n' "$sites" | grep -c .)
+          re="^($(printf '%s\n' "$sites" | sed 's/\./\\./g' | paste -sd '|'))"
+          remaining=$(( MUTANTS_WALL_BUDGET - ${SCAN_SECONDS:-0} ))
+          if [ "$remaining" -lt 600 ]; then remaining=600; fi
+          echo "confirming $count surviving site(s) with the full $PACKAGE suite, ${remaining}s left of the budget"
+          started=$(date +%s)
+          timeout --signal=INT --kill-after=120 "$remaining" \
+            cargo mutants --in-place -p "$PACKAGE" \
+              --re "$re" \
+              --timeout "$MUTANTS_TIMEOUT" \
               --build-timeout "$MUTANTS_BUILD_TIMEOUT" || true
+          echo "CONFIRM_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
+
+      - name: Assemble the shard's mutants.out from the two phases (#4872)
+        # The final `mutants.out/` keeps every downstream reader unchanged:
+        # `mutants.json` and `total_mutants` are the scan's (the confirm
+        # re-tests, it does not generate); `caught`/`unviable`/`timeout` are
+        # both phases'; `missed.txt` is the confirm's, plus any scan survivor
+        # the confirm did not reach — a survivor is never dropped, and the
+        # count of carried ones is in `two-phase.json` and the log. When the
+        # scan left no survivors the scan IS the result. When the confirm was
+        # needed and wrote nothing, nothing is assembled: the guard below reds
+        # the shard rather than publish unconfirmed survivors as confirmed.
+        working-directory: src-tauri
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -uo pipefail
+          if [ ! -f scan.out/outcomes.json ]; then
+            echo "::error::the scan wrote no outcomes.json — nothing to assemble; the guard below reds this shard (#3057)."
+            exit 0
+          fi
+          site_of='.outcomes[]? | select((.scenario|type) == "object") | .scenario.Mutant | "\(.file):\(.span.start.line):\(.span.start.column):"'
+          final=$(mktemp -d)
+          cp scan.out/mutants.json "$final/mutants.json"
+          scan_survivors=$(grep -c . scan.out/missed.txt 2>/dev/null || true)
+          if [ "${scan_survivors:-0}" -eq 0 ]; then
+            cp scan.out/*.txt "$final/" 2>/dev/null || true
+            cp scan.out/outcomes.json "$final/outcomes.json"
+            confirmed_missed=0; unconfirmed=0
+          elif [ ! -f mutants.out/outcomes.json ]; then
+            echo "::error::the scan left $scan_survivors survivor(s) but the confirm phase wrote no outcomes.json — not assembling, so unconfirmed survivors are not published as confirmed. The guard below reds this shard."
+            rm -rf "$final"
+            exit 0
+          else
+            for f in caught unviable timeout; do
+              cat "scan.out/$f.txt" "mutants.out/$f.txt" 2>/dev/null > "$final/$f.txt" || true
+            done
+            jq -r "$site_of" mutants.out/outcomes.json | sort -u > "$final/confirmed-sites.txt"
+            sed -E 's/^([^:]+:[0-9]+:[0-9]+:).*$/\1/' scan.out/missed.txt | sort -u > "$final/scan-sites.txt"
+            comm -23 "$final/scan-sites.txt" "$final/confirmed-sites.txt" > "$final/unconfirmed-sites.txt"
+            grep -F -f "$final/unconfirmed-sites.txt" scan.out/missed.txt > "$final/unconfirmed.txt" 2>/dev/null || true
+            cat mutants.out/missed.txt "$final/unconfirmed.txt" 2>/dev/null | sort -u > "$final/missed.txt"
+            jq -s '{
+                cargo_mutants_version: .[0].cargo_mutants_version,
+                total_mutants: .[0].total_mutants,
+                outcomes: ([.[0].outcomes[]? | select(.summary != "MissedMutant")]
+                  + [.[1].outcomes[]? | select((.scenario|type) == "object")]),
+              }' scan.out/outcomes.json mutants.out/outcomes.json > "$final/outcomes.json"
+            confirmed_missed=$(grep -c . mutants.out/missed.txt 2>/dev/null || true)
+            unconfirmed=$(grep -c . "$final/unconfirmed.txt" 2>/dev/null || true)
+            rm -f "$final/confirmed-sites.txt" "$final/scan-sites.txt" "$final/unconfirmed-sites.txt"
+            if [ "${unconfirmed:-0}" -gt 0 ]; then
+              echo "::notice::$unconfirmed of $scan_survivors scan survivor(s) were not reached by the confirm phase within the wall budget; they are carried into missed.txt UNCONFIRMED (a full-suite run may still catch them)."
+            fi
+          fi
+          jq -n --arg pkg "$PACKAGE" \
+            --argjson scanned "$(jq -r '.total_mutants // 0' scan.out/outcomes.json)" \
+            --argjson survivors "${scan_survivors:-0}" \
+            --argjson confirmed_missed "${confirmed_missed:-0}" \
+            --argjson unconfirmed "${unconfirmed:-0}" \
+            --argjson scan_seconds "${SCAN_SECONDS:-0}" \
+            --argjson confirm_seconds "${CONFIRM_SECONDS:-0}" \
+            '{package: $pkg, scanned: $scanned, scan_survivors: $survivors, confirmed_missed: $confirmed_missed, unconfirmed: $unconfirmed, scan_seconds: $scan_seconds, confirm_seconds: $confirm_seconds}' \
+            > "$final/two-phase.json"
+          rm -rf mutants.out
+          mv "$final" mutants.out
+          echo "assembled: scanned $(jq -r .scanned mutants.out/two-phase.json), scan survivors ${scan_survivors:-0}, confirmed missed ${confirmed_missed:-0}, unconfirmed ${unconfirmed:-0}, scan ${SCAN_SECONDS:-0}s, confirm ${CONFIRM_SECONDS:-0}s"
 
       - name: Zero-coverage guard (#3057) — the load-bearing acceptance item
         # Deliberately OUTSIDE the `|| true` above: a baseline that times out
@@ -1271,13 +1406,25 @@ jobs:
         #   (c) the Baseline scenario's own summary != Success (covers
         #       Timeout/Failure even in the — currently unreachable per the
         #       source — case where total_mutants ended up nonzero anyway).
+        #
+        # #4872: coverage is the SCAN's — its `outcomes.json` carries the
+        # baseline and the mutant count, and it is read from `scan.out/`, where
+        # the scan step moved it. The assembled `mutants.out/outcomes.json` is
+        # what gets uploaded, and its absence is the assemble step's own
+        # refusal (the confirm was needed and wrote nothing), so both are
+        # checked: a shard whose confirm silently did not run would otherwise
+        # publish narrowed-suite survivors as full-suite ones.
         if: always()
         working-directory: src-tauri
         run: |
           set -uo pipefail
-          outcomes=mutants.out/outcomes.json
+          outcomes=scan.out/outcomes.json
           if [ ! -f "$outcomes" ]; then
-            echo "::error::cargo-mutants wrote no $outcomes — the run crashed or aborted before producing any output; treating as zero mutation coverage (#3057)."
+            echo "::error::cargo-mutants wrote no $outcomes — the scan crashed or aborted before producing any output; treating as zero mutation coverage (#3057)."
+            exit 1
+          fi
+          if [ ! -f mutants.out/outcomes.json ]; then
+            echo "::error::no assembled mutants.out/outcomes.json — the scan left survivors and the confirm phase wrote nothing, so this shard's survivors are unconfirmed and are not published (#4872)."
             exit 1
           fi
           if ! jq -e . "$outcomes" >/dev/null 2>&1; then
@@ -1303,7 +1450,7 @@ jobs:
           # never be silent, so state it. `mutants.json` is this shard's
           # generated slice (written before testing begins); `total_mutants`
           # is what was actually tested.
-          generated=$(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo 0)
+          generated=$(jq -r 'length' scan.out/mutants.json 2>/dev/null || echo 0)
           echo "zero-coverage guard OK: total_mutants=$total baseline=$baseline_summary (surviving/missed mutants, if any, are triage signal — see the summary in \`mutants-merge\` — and never gate this job)"
           if [ "$generated" -gt 0 ] && [ "$total" -lt "$generated" ]; then
             echo "::notice::mutation coverage is PARTIAL for this shard: $total of $generated mutants in its slice were tested before the ${MUTANTS_WALL_BUDGET}s wall-clock budget stopped it. Round-robin sharding means the untested remainder is spread across the package's files rather than concentrated at its tail; if this fires every week the package needs more shards (see the derivation on the matrix above)."
@@ -1488,6 +1635,11 @@ jobs:
               # was short. The counts come from the merge step, not a second
               # count of the same files.
               echo "shards merged: ${MERGED:-?} of ${EXPECTED:-?}"
+              # #4872 — the two phases, summed over the shards that wrote a
+              # two-phase.json: the before/after the issue asks for, on the lane.
+              if compgen -G "shards/*/two-phase.json" >/dev/null; then
+                jq -rs 'group_by(.package)[] | "two-phase \(.[0].package): scanned \(map(.scanned)|add), survivors \(map(.scan_survivors)|add) → confirmed missed \(map(.confirmed_missed)|add), unconfirmed \(map(.unconfirmed)|add); scan \(map(.scan_seconds)|add)s, confirm \(map(.confirm_seconds)|add)s"' shards/*/two-phase.json || true
+              fi
               # …then the same split PER PACKAGE (#3386 review). Since #3393
               # each package has its own shard count derived from its own
               # per-mutant cost, so this split is how you tell whether that

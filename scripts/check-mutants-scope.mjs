@@ -102,6 +102,12 @@ const FILER_JOB_ID = 'file-mutation-survivors'
  * where the guard stays green and the filer reds a week later.
  */
 const MERGE_JOB_ID = 'mutants-merge'
+/**
+ * #4872 — one nextest filter expression per examined package: what the scan
+ * phase narrows to. Served to the workflow by `--scan-filter <package>` so the
+ * table the guard checks is the table the lane runs.
+ */
+export const SCAN_FILTERS_PATH = 'scripts/mutants-scan-filters.json'
 /** The artifact name the two jobs hand off through. */
 const ARTIFACT_NAME = 'mutants-out'
 
@@ -162,15 +168,105 @@ export function jobLines(text, jobId) {
  * spans (so its own `--output` argument is not mistaken for a reader path).
  */
 export function findInvocation(lines) {
-  const at = lines.findIndex((l) => /\bcargo mutants\b/.test(l))
-  if (at < 0) return undefined
-  let last = at
-  while (last < lines.length - 1 && lines[last].trimEnd().endsWith('\\')) last++
-  const joined = lines.slice(at, last + 1).join(' ')
-  const from = joined.indexOf('cargo mutants')
-  return {
-    argv: joined.slice(from).replaceAll('\\', ' ').split(/\s+/).filter(Boolean),
-    span: [at, last],
+  return findInvocations(lines)[0]
+}
+
+/**
+ * Every `cargo mutants` invocation in the job, in order. #4872 made it two:
+ * the scan and the confirm. The FIRST is the one the package-selection and
+ * output-path checks read, because it is the one that generates the mutant
+ * list and writes the shard's coverage.
+ */
+export function findInvocations(lines) {
+  const out = []
+  for (let at = 0; at < lines.length; at++) {
+    if (!/\bcargo mutants\b/.test(lines[at])) continue
+    let last = at
+    while (last < lines.length - 1 && lines[last].trimEnd().endsWith('\\')) last++
+    const joined = lines.slice(at, last + 1).join(' ')
+    const from = joined.indexOf('cargo mutants')
+    out.push({
+      argv: joined.slice(from).replaceAll('\\', ' ').split(/\s+/).filter(Boolean),
+      span: [at, last],
+    })
+    at = last
+  }
+  return out
+}
+
+function readScanFilters(root) {
+  const abs = resolve(root, SCAN_FILTERS_PATH)
+  if (!existsSync(abs)) return undefined
+  try {
+    const parsed = JSON.parse(readFileSync(abs, 'utf8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * #4872 — the two phases are what make a narrowed scan honest, so their shape
+ * is checked: a scan that narrows (`-- -E`) and shards, then a confirm that
+ * re-runs by name (`--re`) against the FULL suite (no `--`), unsharded. A
+ * lane with the scan alone publishes narrowed-suite survivors as real ones —
+ * the false-survivor objection #3443 exists to dissolve, one level down.
+ */
+export function checkTwoPhase({ invocations, matrixPackages, filters, push }) {
+  if (invocations.length < 2) {
+    push(
+      'confirm-phase-missing',
+      `the \`${JOB_ID}\` job has ${invocations.length} \`cargo mutants\` invocation(s); #4872 needs two — a narrowed scan and a full-suite confirm of its survivors. With the scan alone, every mutant a sibling module's test would have caught is published as a survivor.`,
+    )
+    return
+  }
+  const [scan, confirm] = invocations
+  const dash = scan.argv.indexOf('--')
+  if (dash < 0 || scan.argv[dash + 1] !== '-E') {
+    push(
+      'scan-not-narrowed',
+      `the scan invocation carries no \`-- -E <filter>\`, so phase 1 runs the full suite and the confirm phase re-tests survivors it has already tested with the same suite: all the cost of two phases and none of the win.`,
+    )
+  }
+  if (!scan.argv.includes('--shard')) {
+    push(
+      'scan-not-sharded',
+      `the scan invocation carries no \`--shard\`; every shard would then scan the whole package and the matrix's denominators mean nothing (#3393).`,
+    )
+  }
+  if (confirm.argv.includes('--')) {
+    push(
+      'confirm-narrowed',
+      `the confirm invocation passes test args after \`--\`; phase 2 exists to run the FULL package suite, so a narrowed confirm publishes exactly the false survivors the two phases are for.`,
+    )
+  }
+  if (confirm.argv.includes('--shard')) {
+    push(
+      'confirm-sharded',
+      `the confirm invocation carries \`--shard\`, but its input is already this shard's survivors; sharding it again drops a share of them from the re-test and they publish unconfirmed.`,
+    )
+  }
+  if (!confirm.argv.includes('--re')) {
+    push(
+      'confirm-unselected',
+      `the confirm invocation carries no \`--re\`, so it would re-test the whole package rather than the scan's survivors — the full-suite run the scan was meant to replace, on top of the scan.`,
+    )
+  }
+  if (filters === undefined) {
+    push(
+      'scan-filters-unreadable',
+      `${SCAN_FILTERS_PATH} is missing or not a JSON object of package → nextest filter; \`--scan-filter\` would then hand the scan nothing and it would run the full suite, silently.`,
+    )
+    return
+  }
+  for (const pkg of matrixPackages) {
+    const f = filters[pkg]
+    if (typeof f !== 'string' || f.trim() === '') {
+      push(
+        'scan-filter-missing',
+        `${SCAN_FILTERS_PATH} has no nextest filter for '${pkg}', which the shard matrix examines; its scan would run with an empty \`-E\` and every one of its shards would red on the spot, a week after the merge.`,
+      )
+    }
   }
 }
 
@@ -748,6 +844,15 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
   const matrixPackages = mapsMatrixPackage ? [...new Set(shardEntries.map((e) => e.package))] : []
   if (shardEntries.length > 0) checkShardMatrix({ entries: shardEntries, push })
 
+  if (lines && !overrideArgv) {
+    checkTwoPhase({
+      invocations: findInvocations(lines),
+      matrixPackages,
+      filters: readScanFilters(root),
+      push,
+    })
+  }
+
   const examinedDirs = invocation
     ? examinedPackageDirs(invocation.argv, workspace, matrixPackages)
     : undefined
@@ -806,6 +911,18 @@ function main(root = REPO_ROOT) {
  * nothing on stdout, so the caller reds rather than comparing against a 0 that
  * every merge trivially clears.
  */
+/** #4872 — the scan phase's nextest filter for one package, from the table the guard checks. */
+function printScanFilter(root, pkg) {
+  const filter = readScanFilters(root)?.[pkg]
+  if (typeof filter !== 'string' || filter.trim() === '') {
+    console.error(
+      `--scan-filter: ${SCAN_FILTERS_PATH} has no nextest filter for '${pkg}'. The scan step reads this, so exiting non-zero here is what keeps it from running the full suite under the name of a narrowed one.`,
+    )
+    process.exit(2)
+  }
+  console.log(filter)
+}
+
 function printShardCount(root = REPO_ROOT) {
   const workflowAbs = resolve(root, WORKFLOW_PATH)
   const lines = existsSync(workflowAbs)
@@ -1069,6 +1186,52 @@ function selfTestFilerPlumbing(ok, fail) {
   else fail('dispatch-writing filer job is flagged', JSON.stringify(writes))
 }
 
+function selfTestTwoPhase(ok, fail) {
+  const kinds = (invocations, filters = { 'agaric-store': 'test(/op/)' }) => {
+    const found = []
+    checkTwoPhase({
+      invocations: invocations.map((argv) => ({ argv, span: [-1, -1] })),
+      matrixPackages: ['agaric-store'],
+      filters,
+      push: (kind) => found.push(kind),
+    })
+    return found
+  }
+  const scan = [
+    'cargo',
+    'mutants',
+    '-p',
+    '"$PACKAGE"',
+    '--shard',
+    '"$SHARD/$SHARDS"',
+    '--',
+    '-E',
+    '"$filter"',
+  ]
+  const confirm = ['cargo', 'mutants', '-p', '"$PACKAGE"', '--re', '"^x"']
+  if (kinds([scan, confirm]).length === 0)
+    ok('a narrowed sharded scan plus a full-suite --re confirm is the two-phase shape')
+  else fail('two-phase shape', JSON.stringify(kinds([scan, confirm])))
+  if (kinds([scan]).includes('confirm-phase-missing')) ok('a scan with no confirm is reported')
+  else fail('confirm-phase-missing', JSON.stringify(kinds([scan])))
+  const narrowedConfirm = [...confirm, '--', '-E', 'x']
+  if (kinds([scan, narrowedConfirm]).includes('confirm-narrowed'))
+    ok('a confirm that narrows its suite is reported')
+  else fail('confirm-narrowed', JSON.stringify(kinds([scan, narrowedConfirm])))
+  const wideScan = scan.slice(0, scan.indexOf('--'))
+  if (kinds([wideScan, confirm]).includes('scan-not-narrowed'))
+    ok('a scan that runs the full suite is reported')
+  else fail('scan-not-narrowed', JSON.stringify(kinds([wideScan, confirm])))
+  if (kinds([scan, confirm], {}).includes('scan-filter-missing'))
+    ok('a matrix package without a scan filter is reported')
+  else fail('scan-filter-missing', JSON.stringify(kinds([scan, confirm], {})))
+  const jl = jobLines(readFileSync(resolve(REPO_ROOT, WORKFLOW_PATH), 'utf8'), JOB_ID)
+  const real = jl ? findInvocations(jl) : []
+  if (real.length === 2 && real[1].argv.includes('--re'))
+    ok('the real workflow job has the scan and the confirm invocations')
+  else fail('real two-phase job', JSON.stringify(real.map((i) => i.argv.slice(0, 5))))
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -1076,6 +1239,7 @@ function runSelfTest() {
     failures.push(name)
     console.error(`  FAIL - ${name}: ${detail}`)
   }
+  selfTestTwoPhase(ok, fail)
 
   // 1. The REAL tree must be clean. This is the assertion that actually
   //    protects the lane, and the reason this guard is not vacuous.
@@ -1231,6 +1395,8 @@ if (isMainModule) {
     runSelfTest()
   } else if (rest[0] === '--shard-count' && rest.length === 1) {
     printShardCount(root)
+  } else if (rest[0] === '--scan-filter' && rest.length === 2) {
+    printScanFilter(root, rest[1])
   } else if (rest.length > 0) {
     console.error(`unknown argument: ${rest[0]}`)
     process.exit(2)
