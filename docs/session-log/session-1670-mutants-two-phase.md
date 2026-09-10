@@ -71,3 +71,25 @@ The PR is a draft for that reason.
   (sync) tests, measured with `cargo nextest list -E`.
 - Not run, and cannot be here: the lane. The acceptance's `workflow_dispatch`
   comparison against the previous cron's `missed.txt` is the maintainer's.
+
+## Round two
+
+The reviewer found a double count: the confirm selects by SITE, so it
+re-tests both variants at a surviving site, including the one the scan
+already caught — and the assemble kept the scan's outcome for that variant
+and appended the confirm's, so the merge summary would have read
+`138 of 125` under a correct `tested: 125 of 125`. The assemble now drops
+the scan's outcome for every re-tested site (the confirm's is the one that
+ran the full suite) and unions the `.txt` lists with `sort -u`. Two more
+holes from the same review, closed: a confirm whose baseline failed still
+wrote an `outcomes.json`, so every scan survivor would have been carried as
+"unconfirmed" under a notice — the assemble now refuses on a non-Success
+confirm baseline the way the guard refuses a scan's; and the scan filter
+lookup's `exit 2` was discarded under `set -uo pipefail` without `-e` — it
+is `|| exit 1` now.
+
+The assemble harness grew two cases: a caught variant sharing a site with a
+survivor (counted once; three caught, none missed, four outcomes for three
+mutants plus the baseline), and a confirm with a `Timeout` baseline (not
+assembled). The other four cases hold. Guard and self-test green, shellcheck
+clean on all four blocks, zizmor clean.

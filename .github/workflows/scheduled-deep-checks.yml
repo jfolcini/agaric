@@ -1261,7 +1261,7 @@ jobs:
           SHARDS: ${{ matrix.shards }}
         run: |
           set -uo pipefail
-          filter=$(node ../scripts/check-mutants-scope.mjs --scan-filter "$PACKAGE")
+          filter=$(node ../scripts/check-mutants-scope.mjs --scan-filter "$PACKAGE") || exit 1
           echo "scan filter for $PACKAGE: $filter"
           started=$(date +%s)
           timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
@@ -1318,10 +1318,15 @@ jobs:
         # re-tests, it does not generate); `caught`/`unviable`/`timeout` are
         # both phases'; `missed.txt` is the confirm's, plus any scan survivor
         # the confirm did not reach — a survivor is never dropped, and the
-        # count of carried ones is in `two-phase.json` and the log. When the
-        # scan left no survivors the scan IS the result. When the confirm was
-        # needed and wrote nothing, nothing is assembled: the guard below reds
-        # the shard rather than publish unconfirmed survivors as confirmed.
+        # count of carried ones is in `two-phase.json` and the log. The confirm
+        # selects by SITE, so it re-tests every variant at a surviving site,
+        # the ones the scan already caught included: the scan's outcome for
+        # any re-tested site is dropped, and the `.txt` lists are unioned, so
+        # nothing is counted twice. When the scan left no survivors the scan IS
+        # the result. When the confirm was needed and wrote nothing usable — no
+        # `outcomes.json`, or a baseline that did not succeed — nothing is
+        # assembled: the guard below reds the shard rather than publish
+        # narrowed-suite survivors as confirmed.
         working-directory: src-tauri
         env:
           PACKAGE: ${{ matrix.package }}
@@ -1343,19 +1348,29 @@ jobs:
             echo "::error::the scan left $scan_survivors survivor(s) but the confirm phase wrote no outcomes.json — not assembling, so unconfirmed survivors are not published as confirmed. The guard below reds this shard."
             rm -rf "$final"
             exit 0
+          elif [ "$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' mutants.out/outcomes.json)" != "Success" ]; then
+            echo "::error::the scan left $scan_survivors survivor(s) but the confirm phase's baseline did not succeed — its outcomes.json says nothing about them. Not assembling; the guard below reds this shard."
+            rm -rf "$final"
+            exit 0
           else
             for f in caught unviable timeout; do
-              cat "scan.out/$f.txt" "mutants.out/$f.txt" 2>/dev/null > "$final/$f.txt" || true
+              cat "scan.out/$f.txt" "mutants.out/$f.txt" 2>/dev/null | sort -u > "$final/$f.txt" || true
             done
             jq -r "$site_of" mutants.out/outcomes.json | sort -u > "$final/confirmed-sites.txt"
             sed -E 's/^([^:]+:[0-9]+:[0-9]+:).*$/\1/' scan.out/missed.txt | sort -u > "$final/scan-sites.txt"
             comm -23 "$final/scan-sites.txt" "$final/confirmed-sites.txt" > "$final/unconfirmed-sites.txt"
             grep -F -f "$final/unconfirmed-sites.txt" scan.out/missed.txt > "$final/unconfirmed.txt" 2>/dev/null || true
             cat mutants.out/missed.txt "$final/unconfirmed.txt" 2>/dev/null | sort -u > "$final/missed.txt"
-            jq -s '{
+            # Every variant at a re-tested site takes the confirm's outcome; the
+            # scan's is dropped so a site with one caught and one surviving
+            # variant is counted once, not once and a half.
+            confirmed_sites=$(jq -R -s 'split("\n") | map(select(length > 0))' "$final/confirmed-sites.txt")
+            jq -s --argjson sites "$confirmed_sites" '
+              def site: "\(.scenario.Mutant.file):\(.scenario.Mutant.span.start.line):\(.scenario.Mutant.span.start.column):";
+              {
                 cargo_mutants_version: .[0].cargo_mutants_version,
                 total_mutants: .[0].total_mutants,
-                outcomes: ([.[0].outcomes[]? | select(.summary != "MissedMutant")]
+                outcomes: ([.[0].outcomes[]? | select((.scenario|type) != "object" or ((site) as $s | ($sites | index($s)) == null))]
                   + [.[1].outcomes[]? | select((.scenario|type) == "object")]),
               }' scan.out/outcomes.json mutants.out/outcomes.json > "$final/outcomes.json"
             confirmed_missed=$(grep -c . mutants.out/missed.txt 2>/dev/null || true)
@@ -1424,7 +1439,7 @@ jobs:
             exit 1
           fi
           if [ ! -f mutants.out/outcomes.json ]; then
-            echo "::error::no assembled mutants.out/outcomes.json — the scan left survivors and the confirm phase wrote nothing, so this shard's survivors are unconfirmed and are not published (#4872)."
+            echo "::error::no assembled mutants.out/outcomes.json — the scan left survivors and the confirm phase wrote nothing usable (no outcomes.json, or a baseline that did not succeed), so this shard's survivors are unconfirmed and are not published (#4872)."
             exit 1
           fi
           if ! jq -e . "$outcomes" >/dev/null 2>&1; then
