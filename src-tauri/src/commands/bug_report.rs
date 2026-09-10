@@ -258,21 +258,11 @@ const STABLE_MESSAGES: &[&str] = &[
     // sync_daemon — protocol lifecycle.
     "incoming sync connection received, starting responder session",
     "SyncDaemon started successfully",
-    // #3464 restored the announce that #3488 had to defer: the daemon now owns an iroh
-    // endpoint, so it has the `EndpointId` a peer would dial and the record it publishes
-    // names the key it is actually accepting on.
-    //
-    // #3852 split the old single `"SyncDaemon started; announced over mDNS"` line in two,
-    // because it was making a claim it could not support: `register()` returns as soon as
-    // a command is queued, so that line was logged on a Pixel 8 that answered nothing on
-    // the wire. The submit and the actual wire event are now separate messages, and both
-    // are here — a bug report about mDNS that redacted either of them would be missing
-    // exactly the distinction the report is about.
-    "mDNS announce submitted to the daemon's command queue (not yet on the wire)",
-    "mDNS announcement sent on the wire",
-    "mDNS announce could not be queued; peers must discover this device another way",
-    "mDNS daemon reported an error after the announce was accepted; peer discovery is degraded",
-    "could not subscribe to the mDNS daemon monitor; announce failures will not be observable",
+    // #3852: "attached" says the lookup was added to the bound endpoint, not that a record
+    // reached the wire — `swarm-discovery` has no send-side event, so no line here may
+    // claim "announced" (the `mdns-sd` line that did was logged on a Pixel 8 that answered
+    // nothing on the wire).
+    "mDNS discovery attached",
     // #3852 — Android's per-uid background firewall, as reported by the platform itself.
     // Whether this line is present is the difference between "the LAN was quiet" and "the
     // OS was dropping our packets", which is the question that took three days to answer.
@@ -290,8 +280,6 @@ const STABLE_MESSAGES: &[&str] = &[
     "could not determine app_data_dir, skipping file transfer",
     "discovered new peer via mDNS",
     "debounced-change peer task panicked",
-    "mDNS browse failed (peer discovery disabled)",
-    "mDNS shutdown error",
     "mDNS initialization failed (peer discovery disabled)",
     "peer announced no endpoint id, skipping sync (nothing to dial)",
     "failed to save peer address",

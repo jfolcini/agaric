@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iroh::EndpointId;
 
-use crate::mdns::{self, DiscoveredPeer, ServiceEventKind};
+use crate::mdns::{DiscoveredPeer, ServiceEventKind};
 use agaric_store::peer_refs::PeerRef;
 
 /// The daemon's live view of peers seen on the network: `device_id` → the last
@@ -434,10 +434,11 @@ fn address_family_priority(ip: &std::net::IpAddr) -> u8 {
 /// Process an mDNS discovery event. Updates the `discovered` map and
 /// returns the peer to sync with (if it's a new, paired peer).
 ///
+/// Takes the already-parsed [`ServiceEventKind`], not the discovery crate's own event
+/// type, so this module and its tests do not depend on which crate does the browsing.
+///
 /// Returns `None` when:
-/// - The event is not a [`ServiceEventKind::Resolved`] event
-///   ([`ServiceEventKind::Removed`] flows through
-///   [`process_service_removed`] instead)
+/// - The event is a [`ServiceEventKind::Removed`] (eviction is the side effect)
 /// - The peer is the local device (self-discovery)
 /// - [`should_attempt_sync_with_discovered_peer`] declines: a peer already in
 ///   the map outside a pairing window (timestamp updated, no new sync), or a
@@ -454,13 +455,13 @@ fn address_family_priority(ip: &std::net::IpAddr) -> u8 {
 /// that bypass unreachable, and a first-ever pair undiallable, no matter what
 /// the bypass said. The decision now lives in exactly one function.
 pub fn process_discovery_event(
-    event: mdns_sd::ServiceEvent,
+    event: ServiceEventKind,
     device_id: &str,
     discovered: &mut DiscoveredPeers,
     peer_refs: &[PeerRef],
     pairing_pending: bool,
 ) -> Option<DiscoveredPeer> {
-    match mdns::parse_service_event(event)? {
+    match event {
         ServiceEventKind::Resolved(peer) => {
             if peer.device_id == device_id {
                 return None; // Self-discovery
@@ -484,39 +485,14 @@ pub fn process_discovery_event(
             }
             Some(peer)
         }
-        ServiceEventKind::Removed { device_id: removed } => {
-            // Drop the entry from the discovered map immediately
-            // so try_sync_with_peer doesn't keep firing against a stale
-            // address. Returns None because there is no peer to sync
-            // with — eviction is the side effect.
-            if removed != device_id {
-                discovered.remove(&removed);
-                tracing::debug!(peer_id = %removed, "evicted peer after mDNS ServiceRemoved");
-            }
+        ServiceEventKind::Removed { endpoint_id } => {
+            // Drop the entry from the discovered map immediately so
+            // try_sync_with_peer doesn't keep firing against a stale address.
+            // An expiry names the key, not the device, so the row is found by
+            // its `endpoint_id` rather than by the map's `device_id` key.
+            discovered.retain(|_, (peer, _)| peer.endpoint_id != Some(endpoint_id));
+            tracing::debug!(%endpoint_id, "evicted peer after mDNS expiry");
             None
         }
     }
-}
-
-/// Explicit eviction helper.
-///
-/// Drops `removed_device_id` from the `discovered` HashMap. Returns
-/// `true` if the entry was present (useful in unit tests asserting the
-/// HashMap shrinks the moment mDNS announces the removal). The
-/// daemon's main loop already calls into [`process_discovery_event`],
-/// which forwards `Removed` events here; this helper is exported so
-/// tests can drive the eviction path without constructing real
-/// `mdns_sd::ServiceEvent` values.
-#[allow(dead_code)] // test seam — production removal goes through process_discovery_event
-pub fn process_service_removed(
-    removed_device_id: &str,
-    local_device_id: &str,
-    discovered: &mut DiscoveredPeers,
-) -> bool {
-    if removed_device_id == local_device_id {
-        // Removing our own announcement is a no-op for the discovered
-        // map (the local device was never inserted).
-        return false;
-    }
-    discovered.remove(removed_device_id).is_some()
 }

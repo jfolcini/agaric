@@ -17,13 +17,13 @@ mod discovery;
 // Which local interface the sync endpoint binds (#3853). Its own module because the
 // selection is a *policy* with a table of cases, and the policy has to be a pure
 // function over synthetic interface lists or no test of it can be reproducible.
-mod lan_interface;
+pub(crate) mod lan_interface;
 pub mod server;
 mod session_supervisor;
 pub mod snapshot_transfer;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
-// `mdns-sd` crate's UDP multicast sockets receive packets. The module carries
+// discovery crate's UDP multicast sockets receive packets. The module carries
 // its own `#![cfg(any(target_os = "android", test))]`, so it is empty on a
 // non-test host build but still compiles (and is tested) under `cargo test` —
 // that is how the "no Android context" degrade path of #3847 is covered
@@ -61,7 +61,7 @@ pub use discovery::{
 // These helpers are only called from test siblings — guard against unused_imports
 // on non-test builds (same rationale as the orchestrator/server re-exports below).
 #[allow(unused_imports)]
-pub use discovery::{format_peer_address, process_service_removed};
+pub use discovery::format_peer_address;
 // `pub(crate) use` re-exports consumed only by the `#[cfg(test)]` sibling
 // `sync_daemon/tests.rs` (the crate-level `sync_integration_tests.rs` that
 // once also consumed these was deleted with the diffy sync layer). Without
@@ -113,9 +113,9 @@ pub use snapshot_transfer::sweep_orphaned_snapshot_temps;
 ///
 /// The `EndpointId` has none of that shape. The responder gets it from the QUIC/TLS 1.3
 /// handshake before any application byte, and the initiator must have it to dial at
-/// all (`mdns::parse_service_event` refuses an announcement with no parseable one,
-/// precisely so "we discovered a peer" and "we can attempt a session" stay the same
-/// statement). No wire field is involved, in either direction.
+/// all (the mDNS instance name *is* the key, so "we discovered a peer" and "we can
+/// attempt a session" stay the same statement). No wire field is involved, in either
+/// direction.
 ///
 /// # The trade-off, stated
 ///

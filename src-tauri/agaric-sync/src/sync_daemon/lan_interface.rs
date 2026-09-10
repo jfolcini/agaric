@@ -129,17 +129,14 @@
 //! real host or a live daemon; naming those seams is the only honest substitute for a
 //! test of them.
 //!
-//! * **`daemon_loop`'s mDNS announce.** `session_supervisor::daemon_loop` passes the
-//!   selected `lan_ip` to `MdnsService::announce`; replacing that argument with `None`
-//!   compiles and leaves the whole suite green. Pinning it needs a `SyncDaemonContext`
-//!   (pool, materializer, scheduler, identity) *and* a live `mdns_sd::ServiceDaemon` —
-//!   which the crate already records as unavailable to unit tests, see
-//!   `handle_mdns_init_result_no_event_path_is_ok_only` — and `daemon_loop` does not
-//!   return. Both seams *under* it are pinned: the bind side by
-//!   `lan_bind_target_returns_the_bind_policy_decision_not_a_fallback`, and the record
-//!   side by `mdns::tests::the_announced_record_carries_exactly_the_bound_address`. What
-//!   remains unpinned is the pair of hops between them:
-//!   `daemon_loop` → `MdnsService::announce` → `announce_info`.
+//! * **`daemon_loop`'s mDNS record.** The address it advertises is iroh's own bound
+//!   socket (`mdns::attach` adds the lookup to the endpoint `SyncService::bind` made),
+//!   so there is no announce argument left to drop. What is pinned: the bind side by
+//!   `lan_bind_target_returns_the_bind_policy_decision_not_a_fallback`, the filter that
+//!   keeps a public-space bind address by
+//!   `mdns::tests::announce_addr_filter_keeps_the_bound_address_the_rfc1918_filter_would_drop`,
+//!   and the two-endpoint round trip by the `#[ignore]`d
+//!   `mdns::tests::two_endpoints_on_this_host_discover_each_other`, which needs a LAN.
 //! * **`daemon_loop`'s `host_addrs` argument.** The same seam, one hop earlier:
 //!   `session_supervisor::daemon_loop` hands [`BindDecision::host_addrs`] to
 //!   `SyncService::bind`, and replacing that argument with `&[]` compiles and leaves the
