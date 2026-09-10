@@ -6,7 +6,8 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   mergeSlashHandlerTables,
   useBlockSlashCommands,
@@ -88,25 +89,49 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
   }
 }
 
+/**
+ * The commands the slash handlers can reach, each answering what its binding
+ * declares; a test overrides the one it is about, and anything else fails by
+ * name.
+ *
+ * #2468 — the migrated mutations resolve `WithOps` envelopes, so the undo-ref
+ * capture has real `op_refs` to forward (the seq values are what the
+ * `onNewAction` assertions below pin).
+ */
+function stubSlashInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    edit_block: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+      ...makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string }),
+    }),
+    set_property: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 1 }],
+      ...makeBlockRow({ id: args['blockId'] as string }),
+    }),
+    delete_property: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 2 }],
+      block_id: args['blockId'] as string,
+      key: args['key'] as string,
+    }),
+    set_todo_state: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+    set_priority: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
+    list_property_keys: () => [],
+    // The F-37 `blocked_by` probe that fires when a checkbox lands on DONE;
+    // the old catch-all absorbed it silently.
+    get_property: () => null,
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   // #1105 — the slash MRU is localStorage-backed; clear it so the
   // empty-query test sees an empty recents band and cross-test recents
   // never leak.
   localStorage.clear()
-  // #2468 — migrated mutations resolve `WithOps` envelopes (`op_refs`); give
-  // them wire-faithful defaults so the handlers' undo-ref capture doesn't
-  // trip on an `undefined` response.
-  mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd === 'edit_block') {
-      return { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
-    }
-    if (cmd === 'set_property') return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 1 }] }
-    if (cmd === 'delete_property') {
-      return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [{ device_id: 'dev1', seq: 2 }] }
-    }
-    return undefined
-  })
+  stubSlashInvoke()
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
     blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
@@ -274,19 +299,23 @@ describe('searchPropertyKeys', () => {
   })
 
   it('returns matching property keys', async () => {
-    mockedInvoke.mockResolvedValueOnce(['effort', 'assignee', 'location'])
+    stubSlashInvoke({ list_property_keys: () => ['effort', 'assignee', 'location'] })
     const results = await searchPropertyKeys('eff')
     expect(results).toEqual([{ id: 'effort', label: 'effort' }])
   })
 
   it('returns all keys for empty query', async () => {
-    mockedInvoke.mockResolvedValueOnce(['effort', 'assignee'])
+    stubSlashInvoke({ list_property_keys: () => ['effort', 'assignee'] })
     const results = await searchPropertyKeys('')
     expect(results).toHaveLength(2)
   })
 
   it('returns empty array on error', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubSlashInvoke({
+      list_property_keys: () => {
+        throw new Error('fail')
+      },
+    })
     const results = await searchPropertyKeys('x')
     expect(results).toEqual([])
   })
@@ -394,7 +423,11 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
   })
 
   it('shows error toast on set_todo_state failure', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    stubSlashInvoke({
+      set_todo_state: () => {
+        throw new Error('fail')
+      },
+    })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 

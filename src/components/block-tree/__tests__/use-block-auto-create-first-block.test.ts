@@ -17,7 +17,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { useBlockAutoCreateFirstBlock } from '@/components/block-tree/use-block-auto-create-first-block'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
@@ -25,6 +26,15 @@ import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 const mockedInvoke = vi.mocked(invoke)
 
 let pageStore: StoreApi<PageBlockState>
+
+/**
+ * What `create_block` answers: `WithOps<BlockRow>`, not the bare row. The
+ * store keeps whatever came back, so `op_refs` rides along into the block the
+ * assertions below compare against.
+ */
+function created(id: string): CommandReturns['create_block'] {
+  return withOps(makeBlockRow({ id, content: '', parent_id: 'PAGE_1', position: 0 }))
+}
 
 function makeParams(
   overrides?: Partial<Parameters<typeof useBlockAutoCreateFirstBlock>[0]>,
@@ -49,8 +59,8 @@ beforeEach(() => {
 
 describe('useBlockAutoCreateFirstBlock', () => {
   it('creates the first block, stores it (blocks + blocksById) and focuses it', async () => {
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    mockedInvoke.mockResolvedValue(newBlock)
+    const newBlock = created('NEW_1')
+    stubInvoke(mockedInvoke, { create_block: () => newBlock })
 
     renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
 
@@ -74,8 +84,7 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('clears selection fields when focusing the new block (#2465 mutual-exclusivity invariant)', async () => {
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    mockedInvoke.mockResolvedValue(newBlock)
+    stubInvoke(mockedInvoke, { create_block: () => created('NEW_1') })
 
     // Set up stale selection state (e.g., cross-page block selection from a previous page)
     useBlockStore.setState({
@@ -99,15 +108,8 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('does not clobber a block that appeared while the create IPC was in flight (#752)', async () => {
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    let resolveCreate!: (value: unknown) => void
-    mockedInvoke.mockImplementation(
-      (cmd: string) =>
-        new Promise((resolve) => {
-          if (cmd === 'create_block') resolveCreate = resolve
-          else resolve(undefined)
-        }),
-    )
+    const create = deferred<CommandReturns['create_block']>()
+    stubInvoke(mockedInvoke, { create_block: () => create.promise })
 
     renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
     await waitFor(() => {
@@ -119,7 +121,7 @@ describe('useBlockAutoCreateFirstBlock', () => {
     pageStore.setState({ blocks: [userBlock] })
 
     await act(async () => {
-      resolveCreate(newBlock)
+      create.resolve(created('NEW_1'))
       await Promise.resolve()
     })
 
@@ -129,15 +131,8 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('discards the result when the page changed while the IPC was in flight', async () => {
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    let resolveCreate!: (value: unknown) => void
-    mockedInvoke.mockImplementation(
-      (cmd: string) =>
-        new Promise((resolve) => {
-          if (cmd === 'create_block') resolveCreate = resolve
-          else resolve(undefined)
-        }),
-    )
+    const create = deferred<CommandReturns['create_block']>()
+    stubInvoke(mockedInvoke, { create_block: () => create.promise })
 
     renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
     await waitFor(() => {
@@ -147,7 +142,7 @@ describe('useBlockAutoCreateFirstBlock', () => {
     pageStore.setState({ rootParentId: 'PAGE_2' })
 
     await act(async () => {
-      resolveCreate(newBlock)
+      create.resolve(created('NEW_1'))
       await Promise.resolve()
     })
 
@@ -156,7 +151,11 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('shows a failure toast when create_block rejects', async () => {
-    mockedInvoke.mockRejectedValue(new Error('DB error'))
+    stubInvoke(mockedInvoke, {
+      create_block: () => {
+        throw new Error('DB error')
+      },
+    })
 
     renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
 
@@ -167,9 +166,17 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('resets the idempotency ref on failure so a re-render retries (#1566 recovery)', async () => {
-    // First create rejects; the second (on the next render) succeeds.
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    mockedInvoke.mockRejectedValueOnce(new Error('DB error')).mockResolvedValueOnce(newBlock)
+    // First create rejects; the second (on the next render) succeeds — the
+    // attempt order IS the subject here, so the handler counts its calls.
+    const newBlock = created('NEW_1')
+    let attempts = 0
+    stubInvoke(mockedInvoke, {
+      create_block: () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('DB error')
+        return newBlock
+      },
+    })
 
     const { rerender } = renderHook((props) => useBlockAutoCreateFirstBlock(props), {
       initialProps: makeParams(),
@@ -195,8 +202,7 @@ describe('useBlockAutoCreateFirstBlock', () => {
   })
 
   it('does not re-create on success (idempotency preserved across re-renders)', async () => {
-    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
-    mockedInvoke.mockResolvedValue(newBlock)
+    stubInvoke(mockedInvoke, { create_block: () => created('NEW_1') })
 
     const { rerender } = renderHook((props) => useBlockAutoCreateFirstBlock(props), {
       initialProps: makeParams(),

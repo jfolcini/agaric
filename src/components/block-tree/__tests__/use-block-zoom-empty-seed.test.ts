@@ -23,7 +23,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
@@ -31,6 +32,40 @@ import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 const mockedInvoke = vi.mocked(invoke)
 
 let pageStore: StoreApi<PageBlockState>
+
+/**
+ * What `create_block` answers: `WithOps<BlockRow>`, not the bare row. The seed
+ * splices the response straight into the store, so `op_refs` rides along into
+ * the block the assertions below compare against.
+ */
+function created(id: string, parentId: string): CommandReturns['create_block'] {
+  return withOps(makeBlockRow({ id, content: '', parent_id: parentId, position: 0 }))
+}
+
+type CreateDeferred = ReturnType<typeof deferred<CommandReturns['create_block']>>
+
+/**
+ * Park one `create_block` per zoom root, keyed by `parentId`.
+ *
+ * The hook's in-flight guard is per-root, so these tests settle roots in an
+ * order — and sometimes not at all — that a positional `…Once` queue cannot
+ * express. The returned map is also the test's "has the IPC started?" probe.
+ */
+function parkCreates(): Map<string, CreateDeferred> {
+  const pending = new Map<string, CreateDeferred>()
+  stubInvoke(mockedInvoke, {
+    create_block: (args) => {
+      const parentId = args['parentId'] as string
+      let park = pending.get(parentId)
+      if (!park) {
+        park = deferred<CommandReturns['create_block']>()
+        pending.set(parentId, park)
+      }
+      return park.promise
+    },
+  })
+  return pending
+}
 
 function makeParams(
   overrides?: Partial<Parameters<typeof useBlockZoomEmptySeed>[0]>,
@@ -96,8 +131,8 @@ describe('useBlockZoomEmptySeed', () => {
     const leaf = makeBlock({ id: 'LEAF', position: 1, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [other, leaf] })
 
-    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
-    mockedInvoke.mockResolvedValue(newChild)
+    const newChild = created('CHILD', 'LEAF')
+    stubInvoke(mockedInvoke, { create_block: () => newChild })
 
     renderHook(() => useBlockZoomEmptySeed(makeParams()))
 
@@ -147,8 +182,7 @@ describe('useBlockZoomEmptySeed', () => {
   it('does not re-seed while the zoom root still has the created child', async () => {
     const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [leaf] })
-    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
-    mockedInvoke.mockResolvedValue(newChild)
+    stubInvoke(mockedInvoke, { create_block: () => created('CHILD', 'LEAF') })
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams(),
@@ -169,15 +203,7 @@ describe('useBlockZoomEmptySeed', () => {
     const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [leaf] })
 
-    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
-    let resolveCreate!: (value: unknown) => void
-    mockedInvoke.mockImplementation(
-      (cmd: string) =>
-        new Promise((resolve) => {
-          if (cmd === 'create_block') resolveCreate = resolve
-          else resolve(undefined)
-        }),
-    )
+    const pending = parkCreates()
 
     renderHook(() => useBlockZoomEmptySeed(makeParams()))
     await waitFor(() => {
@@ -189,7 +215,7 @@ describe('useBlockZoomEmptySeed', () => {
     pageStore.setState({ blocks: [leaf, raced] })
 
     await act(async () => {
-      resolveCreate(newChild)
+      pending.get('LEAF')?.resolve(created('CHILD', 'LEAF'))
       await Promise.resolve()
     })
 
@@ -200,7 +226,11 @@ describe('useBlockZoomEmptySeed', () => {
 
   it('shows a failure toast when create_block rejects', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'LEAF', parent_id: null, depth: 0 })] })
-    mockedInvoke.mockRejectedValue(new Error('DB error'))
+    stubInvoke(mockedInvoke, {
+      create_block: () => {
+        throw new Error('DB error')
+      },
+    })
 
     renderHook(() => useBlockZoomEmptySeed(makeParams()))
 
@@ -214,9 +244,16 @@ describe('useBlockZoomEmptySeed', () => {
     const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [leaf] })
 
-    // First create rejects; the second (on the next render) succeeds.
-    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
-    mockedInvoke.mockRejectedValueOnce(new Error('DB error')).mockResolvedValueOnce(newChild)
+    // First create rejects; the second (on the next render) succeeds — the
+    // attempt order IS the subject, so the handler counts its calls.
+    let attempts = 0
+    stubInvoke(mockedInvoke, {
+      create_block: () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('DB error')
+        return created('CHILD', 'LEAF')
+      },
+    })
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams(),
@@ -244,9 +281,15 @@ describe('useBlockZoomEmptySeed', () => {
   it('re-seeds after the created child is deleted', async () => {
     const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [leaf] })
-    const firstChild = makeBlock({ id: 'CHILD_1', content: '', parent_id: 'LEAF' })
-    const secondChild = makeBlock({ id: 'CHILD_2', content: '', parent_id: 'LEAF' })
-    mockedInvoke.mockResolvedValueOnce(firstChild).mockResolvedValueOnce(secondChild)
+    // Two seeds of the SAME root in sequence, so the handler counts: the first
+    // child is deleted below and the re-arm must create a distinct second.
+    let seeds = 0
+    stubInvoke(mockedInvoke, {
+      create_block: () => {
+        seeds += 1
+        return created(`CHILD_${seeds}`, 'LEAF')
+      },
+    })
 
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
 
@@ -276,8 +319,7 @@ describe('useBlockZoomEmptySeed', () => {
     pageStore.setState({ blocks: [root, child, other] })
 
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
-    const seeded = makeBlock({ id: 'SEEDED', content: '', parent_id: 'LEAF' })
-    mockedInvoke.mockResolvedValue(seeded)
+    stubInvoke(mockedInvoke, { create_block: () => created('SEEDED', 'LEAF') })
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams({ t: stableT, zoomRootHasChildren: true }),
@@ -305,13 +347,7 @@ describe('useBlockZoomEmptySeed', () => {
     pageStore.setState({ blocks: [leaf] })
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
 
-    let resolveCreate: ((value: unknown) => void) | undefined
-    mockedInvoke.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveCreate = resolve
-        }),
-    )
+    const pending = parkCreates()
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams({ t: stableT }),
@@ -326,7 +362,7 @@ describe('useBlockZoomEmptySeed', () => {
     expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')).toHaveLength(1)
 
     await act(async () => {
-      resolveCreate?.(makeBlock({ id: 'CHILD', parent_id: 'LEAF' }))
+      pending.get('LEAF')?.resolve(created('CHILD', 'LEAF'))
       await Promise.resolve()
     })
   })
@@ -336,24 +372,18 @@ describe('useBlockZoomEmptySeed', () => {
     const rootB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [rootA, rootB] })
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
-    const resolvers = new Map<string, (value: unknown) => void>()
-    mockedInvoke.mockImplementation((_cmd, args) => {
-      const parentId = (args as { parentId: string }).parentId
-      return new Promise((resolve) => {
-        resolvers.set(parentId, resolve)
-      })
-    })
+    const pending = parkCreates()
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams({ t: stableT, zoomedBlockId: 'A' }),
     })
-    await waitFor(() => expect(resolvers.has('A')).toBe(true))
+    await waitFor(() => expect(pending.has('A')).toBe(true))
 
     rerender(makeParams({ t: stableT, zoomedBlockId: 'B' }))
-    await waitFor(() => expect(resolvers.has('B')).toBe(true))
+    await waitFor(() => expect(pending.has('B')).toBe(true))
 
     await act(async () => {
-      resolvers.get('A')?.(makeBlock({ id: 'A_CHILD', parent_id: 'A' }))
+      pending.get('A')?.resolve(created('A_CHILD', 'A'))
       await Promise.resolve()
     })
 
@@ -369,7 +399,7 @@ describe('useBlockZoomEmptySeed', () => {
     expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')).toHaveLength(2)
 
     await act(async () => {
-      resolvers.get('B')?.(makeBlock({ id: 'B_CHILD', parent_id: 'B' }))
+      pending.get('B')?.resolve(created('B_CHILD', 'B'))
       await Promise.resolve()
     })
 
@@ -388,15 +418,9 @@ describe('useBlockZoomEmptySeed', () => {
     newStore.setState({ blocks: [newRoot], loading: false })
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
 
-    let resolveOld: ((value: unknown) => void) | undefined
-    mockedInvoke.mockImplementation((_cmd, args) => {
-      const parentId = (args as { parentId: string }).parentId
-      return new Promise((resolve) => {
-        if (parentId === 'OLD_ROOT') resolveOld = resolve
-      })
-    })
+    const pending = parkCreates()
     const settleOld = (): void => {
-      resolveOld?.(makeBlock({ id: 'OLD_CHILD', parent_id: 'OLD_ROOT' }))
+      pending.get('OLD_ROOT')?.resolve(created('OLD_CHILD', 'OLD_ROOT'))
     }
 
     const container = document.createElement('div')
@@ -413,7 +437,7 @@ describe('useBlockZoomEmptySeed', () => {
         }),
       )
     })
-    await waitFor(() => expect(resolveOld).toBeDefined())
+    await waitFor(() => expect(pending.has('OLD_ROOT')).toBe(true))
 
     // The harness layout effect settles OLD after the hook's context lifecycle
     // has committed NEW, but before passive effects would update a passive ref.
@@ -456,15 +480,9 @@ describe('useBlockZoomEmptySeed', () => {
     originStore.setState({ blocks: [rootBlock], loading: false })
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
 
-    let resolveOrigin: ((value: unknown) => void) | undefined
-    mockedInvoke.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveOrigin = resolve
-        }),
-    )
+    const pending = parkCreates()
     const settleOrigin = (): void => {
-      resolveOrigin?.(makeBlock({ id: 'ORIGIN_CHILD', parent_id: 'ORIGIN_ROOT' }))
+      pending.get('ORIGIN_ROOT')?.resolve(created('ORIGIN_CHILD', 'ORIGIN_ROOT'))
     }
 
     const container = document.createElement('div')
@@ -481,7 +499,7 @@ describe('useBlockZoomEmptySeed', () => {
         }),
       )
     })
-    await waitFor(() => expect(resolveOrigin).toBeDefined())
+    await waitFor(() => expect(pending.has('ORIGIN_ROOT')).toBe(true))
 
     // Replace the seed with a layout-only signal. The seed's layout cleanup
     // must invalidate focus ownership before the signal settles the old IPC;
@@ -518,21 +536,15 @@ describe('useBlockZoomEmptySeed', () => {
     const rootB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
     pageStore.setState({ blocks: [rootA, rootB] })
     const stableT = vi.fn((key: string) => key) as unknown as TFunction
-    const resolvers = new Map<string, (value: unknown) => void>()
-    mockedInvoke.mockImplementation((_cmd, args) => {
-      const parentId = (args as { parentId: string }).parentId
-      return new Promise((resolve) => {
-        resolvers.set(parentId, resolve)
-      })
-    })
+    const pending = parkCreates()
 
     const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
       initialProps: makeParams({ t: stableT, zoomedBlockId: 'A' }),
     })
-    await waitFor(() => expect(resolvers.has('A')).toBe(true))
+    await waitFor(() => expect(pending.has('A')).toBe(true))
 
     rerender(makeParams({ t: stableT, zoomedBlockId: 'B' }))
-    await waitFor(() => expect(resolvers.has('B')).toBe(true))
+    await waitFor(() => expect(pending.has('B')).toBe(true))
     rerender(makeParams({ t: stableT, zoomedBlockId: 'A' }))
 
     const createCalls = mockedInvoke.mock.calls.filter((call) => call[0] === 'create_block')
@@ -542,8 +554,8 @@ describe('useBlockZoomEmptySeed', () => {
     ).toHaveLength(1)
 
     await act(async () => {
-      resolvers.get('B')?.(makeBlock({ id: 'B_CHILD', parent_id: 'B' }))
-      resolvers.get('A')?.(makeBlock({ id: 'A_CHILD', parent_id: 'A' }))
+      pending.get('B')?.resolve(created('B_CHILD', 'B'))
+      pending.get('A')?.resolve(created('A_CHILD', 'A'))
       await Promise.resolve()
     })
   })

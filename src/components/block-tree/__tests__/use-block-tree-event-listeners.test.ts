@@ -9,12 +9,14 @@
  * exactly once (in the owning tree only), and is torn down on unmount.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import type { UseBlockTreeEventListenersOptions } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
@@ -81,8 +83,34 @@ function setGlobalFocus(id: string | null): void {
   useBlockStore.setState({ focusedBlockId: id })
 }
 
+const mockedInvoke = vi.mocked(invoke)
+
+/**
+ * The commands the dispatched events can reach, each answering what its
+ * binding declares; anything else fails by name.
+ *
+ * #2468 — `edit_block` resolves a `WithOps` envelope whose `op_refs` the
+ * `applyContentEdit` undo-ref capture reads. `get_property` is here because
+ * cycling a task to DONE fires the F-37 `blocked_by` dependency check.
+ */
+function stubListenerInvoke(overrides: TypedInvokeHandlers = {}): void {
+  stubInvoke(mockedInvoke, {
+    edit_block: (args) => ({
+      op_refs: [{ device_id: 'dev1', seq: 3 }],
+      ...makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string }),
+    }),
+    set_priority: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, priority: args['level'] as string | null }),
+    set_todo_state: (args) =>
+      makeBlockRow({ id: args['blockId'] as string, todo_state: args['state'] as string | null }),
+    get_property: () => null,
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  stubListenerInvoke()
   __resetBlockCommandBus()
   setGlobalFocus('BLOCK_1')
 })
@@ -137,16 +165,6 @@ describe('useBlockTreeEventListeners', () => {
 
   describe('SET_PRIORITY_1/2/3', () => {
     it('calls setPriority for SET_PRIORITY_1 event', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
-      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === 'edit_block'
-          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
-          : undefined,
-      )
-
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -162,10 +180,6 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not call setPriority when no block is focused', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
-
       setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
@@ -330,15 +344,6 @@ describe('useBlockTreeEventListeners', () => {
       ['INSERT_DIVIDER', '---'],
       ['INSERT_CALLOUT', '> [!INFO] hello'],
     ] as const)('%s edits the focused block to "%s"', async (event, toText) => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
-      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === 'edit_block'
-          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
-          : undefined,
-      )
       const { opts, mount } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -363,8 +368,7 @@ describe('useBlockTreeEventListeners', () => {
       await vi.waitFor(() =>
         expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('BLOCK_1', 'ordered'),
       )
-      const { invoke } = await import('@tauri-apps/api/core')
-      expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(
+      expect(mockedInvoke).not.toHaveBeenCalledWith(
         'edit_block',
         expect.objectContaining({ blockId: 'BLOCK_1' }),
       )
@@ -373,13 +377,6 @@ describe('useBlockTreeEventListeners', () => {
     // #4552 slice 2 — TURN_INTO_BLOCK also writes the `listStyle` property the
     // target type implies, alongside the existing content edit.
     it('TURN_INTO_BLOCK { type: numbered-list } edits content bare AND sets listStyle=ordered', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === 'edit_block'
-          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
-          : undefined,
-      )
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -401,15 +398,6 @@ describe('useBlockTreeEventListeners', () => {
       ['tip', '> [!TIP] hello'],
       ['bogus', '> [!INFO] hello'], // unknown type falls back to info (#215)
     ] as const)('INSERT_CALLOUT { type: %s } → "%s"', async (type, toText) => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      // #2468 — edit_block resolves a WithOps envelope (op_refs) that the
-      // applyContentEdit undo-ref capture reads; keep the mock wire-faithful.
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === 'edit_block'
-          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
-          : undefined,
-      )
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -420,10 +408,7 @@ describe('useBlockTreeEventListeners', () => {
       )
     })
 
-    it('no-ops when no block is focused', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
+    it('no-ops when no block is focused', () => {
       setGlobalFocus(null)
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners({ ...opts, focusedBlockId: null }))
@@ -433,9 +418,7 @@ describe('useBlockTreeEventListeners', () => {
       expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     })
 
-    it('removes the structural handlers on unmount', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
+    it('removes the structural handlers on unmount', () => {
       const { opts } = structuralOpts('hello')
       const { unmount } = renderHook(() => useBlockTreeEventListeners(opts))
       unmount()
@@ -538,11 +521,6 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('SET_PRIORITY_1 issues exactly ONE set_priority IPC and only updates the owning store', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
-      mockedInvoke.mockResolvedValue(undefined)
-
       const { treeA, treeB } = renderTwoTrees()
 
       dispatchBlockEvent('SET_PRIORITY_1')
@@ -568,11 +546,6 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('INSERT_DIVIDER edits the block exactly once, via the owning tree only', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
-      mockedInvoke.mockResolvedValue(undefined)
-
       renderTwoTrees()
 
       dispatchBlockEvent('INSERT_DIVIDER')
@@ -585,10 +558,6 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('a non-owning tree alone performs zero side effects', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
-
       // The global focus points at a block that does NOT live in this store.
       setGlobalFocus('BLOCK_A')
       const opts = makeOptions({
@@ -621,11 +590,6 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('todo toggle computes the next state from the OWNING store, not a foreign tree', async () => {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const mockedInvoke = vi.mocked(invoke)
-      mockedInvoke.mockClear()
-      mockedInvoke.mockResolvedValue(undefined)
-
       // Real per-page stores + the real `useBlockProperties` cycle logic.
       // Tree A owns BLOCK_A in state DOING → next is DONE. Tree B's store
       // doesn't contain BLOCK_A; pre-#713 its handler computed
