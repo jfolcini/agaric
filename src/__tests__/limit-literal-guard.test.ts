@@ -24,6 +24,14 @@
  *
  * The command→argument-index map is DERIVED from `src/lib/bindings.ts`, never
  * hand-written: a second table is the drift this whole area exists to remove.
+ *
+ * Argument splitting goes through `js-scanner.mjs` (`findMatchingBracket` +
+ * `splitTopLevelCommas`), never a local state machine. A hand-rolled splitter
+ * is blind to regex literals — the `)` in `/[,)]/` decrements its depth and
+ * every later argument shifts, so the guard reports a clean tree for a file it
+ * did not parse. That is the fail-OPEN direction, and #3991 exists to stop a
+ * fourth copy of this scanner appearing. `splitTopLevelCommas` throws
+ * `ScanError` on undecidable input, so the test reddens rather than skipping.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -32,55 +40,20 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // @ts-expect-error -- untyped JS helper, the repo's sanctioned tokenizer (#3991)
-import { stripComments } from '../../scripts/lib/js-scanner.mjs'
+import * as scanner from '../../scripts/lib/js-scanner.mjs'
 
 /** `limit`'s positional index in each generated binding that takes one. */
 function limitIndexByCommand(): Map<string, number> {
   const bindings = readFileSync('src/lib/bindings.ts', 'utf8')
   const out = new Map<string, number>()
   for (const m of bindings.matchAll(/^\t(\w+): \(([^)]*)\) =>/gm)) {
-    const params = (m[2] ?? '').split(',').map((p) => (p.split(':')[0] ?? '').trim())
+    const params = (scanner.splitTopLevelCommas(m[2] ?? '') as string[]).map((p) =>
+      (p.split(':')[0] ?? '').trim(),
+    )
     const i = params.indexOf('limit')
     if (i !== -1) out.set(m[1] as string, i)
   }
   return out
-}
-
-/** Top-level split of a call's argument list, starting just past its `(`. */
-function splitArgs(source: string): string[] {
-  const args: string[] = []
-  let depth = 0
-  let current = ''
-  let quote: string | null = null
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i] as string
-    if (quote !== null) {
-      current += c
-      if (c === quote && source[i - 1] !== '\\') quote = null
-      continue
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      quote = c
-      current += c
-      continue
-    }
-    if ('([{'.includes(c)) depth++
-    if (')]}'.includes(c)) {
-      if (depth === 0) {
-        args.push(current)
-        return args
-      }
-      depth--
-    }
-    if (c === ',' && depth === 0) {
-      args.push(current)
-      current = ''
-      continue
-    }
-    current += c
-  }
-  args.push(current)
-  return args
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -104,11 +77,14 @@ describe('#4918 limit-literal guard', () => {
       // Tests may pass a raw limit on purpose — they are asserting what the
       // backend does with one.
       if (/__tests__|\.test\.tsx?$/.test(file)) continue
-      const source = stripComments(readFileSync(file, 'utf8')) as string
+      const source = scanner.stripComments(readFileSync(file, 'utf8')) as string
       for (const [command, index] of limitIndex) {
         const call = new RegExp(`commands\\s*\\.\\s*${command}\\s*\\(`, 'g')
         for (const m of source.matchAll(call)) {
-          const arg = (splitArgs(source.slice(m.index + m[0].length))[index] ?? '').trim()
+          const open = m.index + m[0].length - 1
+          const close = scanner.findMatchingBracket(source, open) as number
+          const args = scanner.splitTopLevelCommas(source.slice(open + 1, close)) as string[]
+          const arg = (args[index] ?? '').trim()
           if (!/^-?\d[\d_]*$/.test(arg)) continue
           const line = source.slice(0, m.index).split('\n').length
           offenders.push(`${file}:${line} — commands.${command}(…, ${arg}, …)`)
