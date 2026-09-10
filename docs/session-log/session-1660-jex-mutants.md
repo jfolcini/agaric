@@ -54,14 +54,10 @@ killable is a test you owe; this one is not.
 
 **One of them was.** The list claimed `resolveFolderPath`'s `depth < 64` sits
 behind the `seen` set "that already bounds the walk". `seen` bounds *cycles*.
-A long enough ACYCLIC chain reaches the cap, so the mutants on it are killable
-— which makes the entry a test owed, not a gap.
-
-The review independently reached the opposite conclusion, that the counter is
-dead code and the three lines should go. Both `depth <= 64` and deleting the
-condition outright now redden the new 65-deep-chain test, so the counter is
-live and the suggested deletion would have been a silent behaviour change. The
-entry is gone from the accepted list and the test stands in its place.
+A long enough ACYCLIC chain reaches the cap, so the counter is live and the
+mutants on it are killable — an entry that is a test owed, not a gap. A
+65-notebook chain now pins where the cap cuts, and both `depth <= 64` and
+deleting the condition redden it.
 
 ## Falsification
 
