@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  strictInvokeFallback,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
+import type { BlockRow } from '@/lib/bindings'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -21,8 +27,55 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // in the un-truncated shape so the many `load()` mocks below keep their
 // intent (a full, non-truncated page load) without each spelling out the
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
-function subtreeResp<T>(blocks: T[]): { blocks: T[]; truncated: boolean; total: number } {
+function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
+}
+
+/**
+ * Install this test's command-keyed `invoke` handlers. Anything the store
+ * fires that is not listed hits `strictInvokeFallback` and fails by name —
+ * the hole #3225 found in this very file's split-rollback test, where an
+ * unmodelled compensating write took the positional slot meant for another
+ * command and sent the flow down the full-reload branch instead.
+ */
+function stubInvoke(handlers: TypedInvokeHandlers): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/**
+ * The `edit_block` echo the backend really sends: the row it just wrote,
+ * `WithOps`-wrapped. Echoing the argument verbatim is the un-normalized case
+ * every one of this file's split stubs modelled one `…Once` value at a time.
+ */
+function echoEditBlock(args: Record<string, unknown>): CommandReturns['edit_block'] {
+  return withOps(
+    makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string, position: 0 }),
+  )
+}
+
+/**
+ * The `create_block` echo. #2849 PR2 — the backend takes the client-supplied
+ * id verbatim, so echoing the arguments back is exactly what it answers with.
+ */
+function echoCreateBlock(args: Record<string, unknown>): CommandReturns['create_block'] {
+  return withOps(
+    makeBlockRow({
+      id: args['blockId'] as string,
+      block_type: args['blockType'] as string,
+      content: args['content'] as string,
+      parent_id: args['parentId'] as string | null,
+      position: args['index'] as number | null,
+    }),
+  )
+}
+
+/** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
+function moveResp(
+  blockId: string,
+  newParentId: string | null,
+  newPosition: number,
+): CommandReturns['move_block'] {
+  return withOps({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -96,6 +149,9 @@ describe('PageBlockStore', () => {
     // The pre-bootstrap no-op contract is exercised in its own test.
     useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
+    // Every test installs its own persistent implementation, so restore the
+    // strict base first — otherwise one test's handlers would serve the next.
+    mockedInvoke.mockImplementation(strictInvokeFallback)
     // #2849 PR2 — reset the client-ULID counter so each test's first
     // `createBelow` mints `CID_1` deterministically.
     resetClientIds()
@@ -117,33 +173,8 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0, content: '' })
       store.setState({ blocks: [block] })
 
-      // edit('A', 'line1') → invoke('edit_block', ...)
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // createBelow('A', 'line2') → invoke('create_block', ...)
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'line2',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
-      // createBelow('B', 'line3') → invoke('create_block', ...)
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'C',
-        block_type: 'text',
-        content: 'line3',
-        parent_id: null,
-        position: 2,
-        deleted_at: null,
-      })
+      // edit('A', 'line1') then createBelow for 'line2' and 'line3'.
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'line1\nline2\nline3')
 
@@ -159,14 +190,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // Empty paragraph filtered → only 'text' remains → single block, just edit
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'text',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
+      stubInvoke({ edit_block: echoEditBlock })
 
       await store.getState().splitBlock('A', '\ntext')
 
@@ -179,33 +203,8 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0 })
       store.setState({ blocks: [block] })
 
-      // edit
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'a',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // createBelow('A', 'b') → returns 'B'
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'b',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
-      // createBelow('B', 'c') — note: must use B as the afterBlockId
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'C',
-        block_type: 'text',
-        content: 'c',
-        parent_id: null,
-        position: 2,
-        deleted_at: null,
-      })
+      // edit, then createBelow('A','b') and createBelow on ITS new id for 'c'.
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'a\nb\nc')
 
@@ -220,24 +219,8 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0 })
       store.setState({ blocks: [block] })
 
-      // edit('A', '# Title') — first block is heading
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: '# Title',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // createBelow('A', 'Paragraph') — second block is paragraph
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'Paragraph',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
+      // edit('A', '# Title') — heading — then createBelow('A', 'Paragraph').
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', '# Title\nParagraph')
 
@@ -277,22 +260,7 @@ describe('PageBlockStore', () => {
 
       // 'hello\n\nworld' → 3 parsed blocks: paragraph("hello"), empty paragraph, paragraph("world")
       // After filtering empty: 2 blocks
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'hello',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'world',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'hello\n\nworld')
 
@@ -314,7 +282,7 @@ describe('PageBlockStore', () => {
         store.setState({ blocks: [block] })
         // edit('A', 'line1') → invoke('edit_block', ...) — rejects; edit()
         // swallows it and resolves false (the real store contract).
-        mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+        stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
       })
@@ -340,22 +308,10 @@ describe('PageBlockStore', () => {
         // compensating write that production actually takes. Modelling both
         // commands puts it back on the production path; the assertions below
         // pin that distinction.
-        mockedInvoke.mockImplementation(
-          mockInvokeCommands({
-            edit_block: (args) =>
-              withOps(
-                makeBlockRow({
-                  id: 'A',
-                  block_type: 'text',
-                  content: args['toText'] as string,
-                  parent_id: null,
-                  position: 0,
-                  deleted_at: null,
-                }),
-              ),
-            create_block: () => Promise.reject(new Error('create failed')),
-          }),
-        )
+        stubInvoke({
+          edit_block: echoEditBlock,
+          create_block: () => Promise.reject(new Error('create failed')),
+        })
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
         // The compensating edit ran and restored the pre-split content, so
@@ -371,7 +327,7 @@ describe('PageBlockStore', () => {
         store.setState({ blocks: [block] })
         // 'hello\n' parses to a single paragraph whose serialization ('hello')
         // differs from the input → plan.kind === 'edit-only'.
-        mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+        stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
 
         await expect(store.getState().splitBlock('A', 'hello\n')).resolves.toBe(false)
       })
@@ -379,22 +335,7 @@ describe('PageBlockStore', () => {
       it('resolves true on a fully successful split', async () => {
         const block = makeBlock({ id: 'A', position: 0, content: 'original' })
         store.setState({ blocks: [block] })
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'A',
-          block_type: 'text',
-          content: 'line1',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-        })
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'B',
-          block_type: 'text',
-          content: 'line2',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-        })
+        stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(true)
       })
@@ -421,27 +362,12 @@ describe('PageBlockStore', () => {
 
       const previousContent = store.getState().blocks[0]?.content
 
-      // edit('A', 'line1') → invoke('edit_block', ...) — succeeds (commits the
-      // truncated first line DURABLY).
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // createBelow('A', 'line2') → invoke('create_block', ...) — rejects
-      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
-      // COMPENSATING edit('A', 'original') → invoke('edit_block', ...) — succeeds,
-      // re-converging store AND backend on the full pre-split content.
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'original',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
+      // Both `edit_block` writes succeed — the first-line commit and the
+      // COMPENSATING one that re-converges store AND backend on the pre-split
+      // content — while `create_block` rejects.
+      stubInvoke({
+        edit_block: echoEditBlock,
+        create_block: () => Promise.reject(new Error('create failed')),
       })
 
       await store.getState().splitBlock('A', 'line1\nline2')
@@ -464,23 +390,22 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, content: 'original' })
       store.setState({ blocks: [block] })
 
-      // edit('A', 'line1') succeeds; createBelow rejects; compensating edit rejects.
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: 'PAGE_1',
-        position: 0,
-        deleted_at: null,
+      // The first-line edit succeeds; createBelow rejects; the COMPENSATING
+      // edit then rejects too. Both edits are the same command, so the order
+      // is explicit state here.
+      let editCall = 0
+      stubInvoke({
+        edit_block: (args) =>
+          editCall++ === 0
+            ? echoEditBlock(args)
+            : Promise.reject(new Error('compensating edit failed')),
+        create_block: () => Promise.reject(new Error('create failed')),
+        // load() reconciles from the backend, which still holds the pre-split text.
+        load_page_subtree: () =>
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, content: 'original' }),
+          ]),
       })
-      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
-      mockedInvoke.mockRejectedValueOnce(new Error('compensating edit failed'))
-      // load() reconciles from the backend, which still holds the pre-split text.
-      mockedInvoke.mockResolvedValueOnce(
-        subtreeResp([
-          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, content: 'original' }),
-        ]),
-      )
 
       await store.getState().splitBlock('A', 'line1\nline2')
 
@@ -505,25 +430,15 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0, content: 'original' })
       store.setState({ blocks: [block] })
 
-      // First split: edit('A','line1') succeeds, createBelow('A','line2') rejects.
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
-      // #2913 — the first-createBelow failure now issues a compensating
-      // edit('A','original') to re-converge the backend; mock it as succeeding.
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'original',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
+      // First split: edit('A','line1') succeeds, createBelow('A','line2')
+      // rejects. #2913 — that failure issues a compensating edit('A','original')
+      // to re-converge the backend, which succeeds. The SECOND split's create
+      // must succeed, so `create_block` fails only on its first call.
+      let createCall = 0
+      stubInvoke({
+        edit_block: echoEditBlock,
+        create_block: (args) =>
+          createCall++ === 0 ? Promise.reject(new Error('create failed')) : echoCreateBlock(args),
       })
 
       await store.getState().splitBlock('A', 'line1\nline2')
@@ -532,23 +447,6 @@ describe('PageBlockStore', () => {
 
       // Second split on the SAME block must run — if the guard were still set,
       // splitBlock would early-return and issue zero further IPCs.
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'x',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'y',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
-
       await store.getState().splitBlock('A', 'x\ny')
 
       // Two more IPCs (edit + create) fired → the guard was cleared on the error
@@ -562,25 +460,9 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0, content: '' })
       store.setState({ blocks: [block] })
 
-      // Mocks for the first (and only) splitBlock that executes:
-      // edit_block for 'line1'
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // create_block for 'line2'
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'line2',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
+      // Mocks for the first (and only) splitBlock that executes: edit_block
+      // for 'line1' then create_block for 'line2'.
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       // Fire two splitBlocks simultaneously on the same block
       await Promise.all([
@@ -601,45 +483,13 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0, content: '' })
       store.setState({ blocks: [block] })
 
-      // First splitBlock on block A
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'line1',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
-        content: 'line2',
-        parent_id: null,
-        position: 1,
-        deleted_at: null,
-      })
+      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
 
+      // First splitBlock on block A
       await store.getState().splitBlock('A', 'line1\nline2')
       expect(mockedInvoke).toHaveBeenCalledTimes(2)
 
       // Second splitBlock on same block A — should work (guard cleared)
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'A',
-        block_type: 'text',
-        content: 'x',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'C',
-        block_type: 'text',
-        content: 'y',
-        parent_id: null,
-        position: 2,
-        deleted_at: null,
-      })
-
       await store.getState().splitBlock('A', 'x\ny')
       expect(mockedInvoke).toHaveBeenCalledTimes(4)
     })
@@ -653,7 +503,7 @@ describe('PageBlockStore', () => {
 
       // edit('A', 'line1') → editBlock IPC rejects (edit() resolves false and
       // rolls its optimistic update back internally).
-      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
 
       await store.getState().splitBlock('A', 'line1\nline2\nline3')
 
@@ -671,16 +521,14 @@ describe('PageBlockStore', () => {
 
       // First editBlock attempt rejects with pool_busy; the shared
       // retryOnPoolBusy helper retries and the second attempt succeeds.
-      mockedInvoke
-        .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
-        .mockResolvedValueOnce({
-          id: 'A',
-          block_type: 'text',
-          content: 'new',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-        })
+      // The ORDER is the subject: attempt 1 is the blip, attempt 2 the retry.
+      let attempt = 0
+      stubInvoke({
+        edit_block: (args) =>
+          attempt++ === 0
+            ? Promise.reject({ kind: 'pool_busy', message: 'pool exhausted' })
+            : echoEditBlock(args),
+      })
 
       const ok = await store.getState().edit('A', 'new')
 
@@ -698,9 +546,14 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      mockedInvoke
-        .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
-        .mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
+      // The ORDER is the subject: attempt 1 is the blip, attempt 2 the retry.
+      let attempt = 0
+      stubInvoke({
+        move_block: () =>
+          attempt++ === 0
+            ? Promise.reject({ kind: 'pool_busy', message: 'pool exhausted' })
+            : moveResp('B', null, 0),
+      })
 
       const ok = await store.getState().moveUp('B')
 
@@ -714,7 +567,9 @@ describe('PageBlockStore', () => {
 
       // A generic database error must bubble on the first attempt — the
       // retry helper only retries pool_busy.
-      mockedInvoke.mockRejectedValueOnce({ kind: 'database', message: 'boom' })
+      stubInvoke({
+        edit_block: () => Promise.reject({ kind: 'database', message: 'boom' }),
+      })
 
       const ok = await store.getState().edit('A', 'new')
 
@@ -731,11 +586,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'B',
-        new_parent_id: 'A',
-        new_position: 0,
-      })
+      stubInvoke({ move_block: () => moveResp('B', 'A', 0) })
 
       await store.getState().indent('B')
 
@@ -833,7 +684,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().indent('B')
 
@@ -847,11 +698,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, childA1, childA2, blockB] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'B',
-        new_parent_id: 'A',
-        new_position: 0,
-      })
+      stubInvoke({ move_block: () => moveResp('B', 'A', 0) })
 
       await store.getState().indent('B')
 
@@ -871,18 +718,15 @@ describe('PageBlockStore', () => {
       // parent ('UNEXPECTED'). Old indent ignored the echo entirely and
       // trusted the requested parent → silent FE/BE divergence. The fix
       // mirrors reorder/moveUp: fall back to a structural reload.
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'B',
-        new_parent_id: 'UNEXPECTED',
-        new_position: 0,
+      stubInvoke({
+        move_block: () => moveResp('B', 'UNEXPECTED', 0),
+        // The reload load_page_subtree returns the authoritative tree.
+        load_page_subtree: () =>
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
+            makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 0 }),
+          ]),
       })
-      // The reload load_page_subtree returns the authoritative tree.
-      mockedInvoke.mockResolvedValueOnce(
-        subtreeResp([
-          makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
-          makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 0 }),
-        ]),
-      )
 
       const ok = await store.getState().indent('B')
 
@@ -910,10 +754,10 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      // First moveDown: A swaps past B → slot 1.
-      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
-      // Second moveDown (computed AFTER the first commits): A swaps past C → slot 2.
-      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+      // The ORDER is the subject: the first moveDown swaps A past B → slot 1,
+      // the second (computed AFTER the first commits) past C → slot 2.
+      let move = 0
+      stubInvoke({ move_block: () => moveResp('A', null, move++ === 0 ? 1 : 2) })
 
       // Fire both without awaiting the first — the queue serializes them.
       const p1 = store.getState().moveDown('A')
@@ -952,7 +796,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockA1, blockB, blockC] })
 
-      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'A', new_position: 2 })
+      stubInvoke({ move_block: () => moveResp('B', 'A', 2) })
 
       await store.getState().indent('B')
 
@@ -976,11 +820,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 1 })
       store.setState({ blocks: [parent, child] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'C',
-        new_parent_id: null,
-        new_position: 1,
-      })
+      stubInvoke({ move_block: () => moveResp('C', null, 1) })
 
       await store.getState().dedent('C')
 
@@ -1028,7 +868,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', depth: 1 })
       store.setState({ blocks: [parent, child] })
 
-      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().dedent('C')
 
@@ -1040,11 +880,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
       store.setState({ blocks: [parent, child] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'C',
-        new_parent_id: 'GP',
-        new_position: 2,
-      })
+      stubInvoke({ move_block: () => moveResp('C', 'GP', 2) })
 
       await store.getState().dedent('C')
 
@@ -1064,11 +900,7 @@ describe('PageBlockStore', () => {
       const otherRoot = makeBlock({ id: 'R', parent_id: null, position: 1, depth: 0 })
       store.setState({ blocks: [grandparent, parent, sibling, child, otherRoot] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'C',
-        new_parent_id: 'GP',
-        new_position: 1,
-      })
+      stubInvoke({ move_block: () => moveResp('C', 'GP', 1) })
 
       await store.getState().dedent('C')
 
@@ -1092,18 +924,15 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
       store.setState({ blocks: [grandparent, parent, child] })
 
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'C',
-        new_parent_id: 'UNEXPECTED',
-        new_position: 0,
+      stubInvoke({
+        move_block: () => moveResp('C', 'UNEXPECTED', 0),
+        load_page_subtree: () =>
+          subtreeResp([
+            makeBlock({ id: 'GP', parent_id: 'PAGE_1', depth: 0 }),
+            makeBlock({ id: 'P', parent_id: 'GP', depth: 1 }),
+            makeBlock({ id: 'C', parent_id: 'UNEXPECTED', depth: 1 }),
+          ]),
       })
-      mockedInvoke.mockResolvedValueOnce(
-        subtreeResp([
-          makeBlock({ id: 'GP', parent_id: 'PAGE_1', depth: 0 }),
-          makeBlock({ id: 'P', parent_id: 'GP', depth: 1 }),
-          makeBlock({ id: 'C', parent_id: 'UNEXPECTED', depth: 1 }),
-        ]),
-      )
 
       const ok = await store.getState().dedent('C')
 

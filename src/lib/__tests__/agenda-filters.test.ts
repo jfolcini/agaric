@@ -10,7 +10,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import {
   AGENDA_QUERY_LIMIT,
   executeAgendaFilters,
@@ -19,11 +23,22 @@ import {
   toFutureDatePreset,
   toPastDatePreset,
 } from '@/lib/agenda-filters'
-import type { TagCacheRow } from '@/lib/bindings'
+import type { BlockRow, TagCacheRow } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+/**
+ * One `PageResponse<BlockRow>` — the shape all three agenda commands answer
+ * with. #4941 — the `next_cursor` / `has_more` / `total_count` tail was spelled
+ * out at every stub in this file; only `items` and the occasional cursor differ.
+ */
+function page(items: BlockRow[], rest: Partial<Omit<AgendaPage, 'items'>> = {}): AgendaPage {
+  return { items, next_cursor: null, has_more: false, total_count: null, ...rest }
+}
+
+type AgendaPage = CommandReturns['query_by_property']
+
+const emptyPage = page([])
 
 /**
  * Install the three commands `agenda-filters` can fire, each defaulted to an
@@ -122,10 +137,10 @@ describe('executeAgendaFilters', () => {
         query_by_property: (args) => {
           const req = args['request'] as Record<string, unknown>
           if (req['key'] === 'due_date') {
-            return { items: [dueBlock], next_cursor: null, has_more: false, total_count: null }
+            return page([dueBlock])
           }
           if (req['key'] === 'scheduled_date') {
-            return { items: [schedBlock], next_cursor: null, has_more: false, total_count: null }
+            return page([schedBlock])
           }
           return emptyPage
         },
@@ -154,12 +169,7 @@ describe('executeAgendaFilters', () => {
       // Both dated sources answer with the SAME block — the duplicate the
       // merge has to collapse.
       stubAgenda({
-        query_by_property: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        query_by_property: () => page([block]),
       })
 
       const result = await executeAgendaFilters([], null)
@@ -184,16 +194,11 @@ describe('executeAgendaFilters', () => {
       })
 
       stubAgenda({
-        list_undated_tasks: () => ({
-          items: [undatedBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        list_undated_tasks: () => page([undatedBlock]),
         query_by_property: (args) => {
           const req = args['request'] as Record<string, unknown>
           if (req['key'] === 'due_date') {
-            return { items: [dueBlock], next_cursor: null, has_more: false, total_count: null }
+            return page([dueBlock])
           }
           return emptyPage
         },
@@ -218,12 +223,7 @@ describe('executeAgendaFilters', () => {
         list_undated_tasks: (args) => {
           undatedCallCount++
           expect(args['cursor']).toBeNull()
-          return {
-            items: [undatedPage1],
-            next_cursor: 'CURSOR_PAGE_2',
-            has_more: true,
-            total_count: null,
-          }
+          return page([undatedPage1], { next_cursor: 'CURSOR_PAGE_2', has_more: true })
         },
       })
 
@@ -247,17 +247,12 @@ describe('executeAgendaFilters', () => {
           const req = args['request'] as Record<string, unknown>
           if (req['key'] === 'due_date') {
             if (req['cursor'] === 'DUE_CURSOR_2') {
-              return { items: [duePage2], next_cursor: null, has_more: false, total_count: null }
+              return page([duePage2])
             }
-            return {
-              items: [duePage1],
-              next_cursor: 'DUE_CURSOR_2',
-              has_more: true,
-              total_count: null,
-            }
+            return page([duePage1], { next_cursor: 'DUE_CURSOR_2', has_more: true })
           }
           if (req['key'] === 'scheduled_date') {
-            return { items: [schedPage1], next_cursor: null, has_more: false, total_count: null }
+            return page([schedPage1])
           }
           return emptyPage
         },
@@ -317,12 +312,7 @@ describe('executeAgendaFilters', () => {
     it('does not call listUndatedTasks / queryByProperty / listBlocks when filters are active', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -342,12 +332,7 @@ describe('executeAgendaFilters', () => {
       const doingBlock = makeBlock({ id: 'doing-1', todo_state: 'DOING' })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [todoBlock, doingBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([todoBlock, doingBlock]),
       })
 
       const result = await executeAgendaFilters(
@@ -389,12 +374,7 @@ describe('executeAgendaFilters', () => {
       const p2Block = makeBlock({ id: 'p2-1', priority: '2' })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [p1Block, p2Block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([p1Block, p2Block]),
       })
 
       const result = await executeAgendaFilters(
@@ -432,12 +412,7 @@ describe('executeAgendaFilters', () => {
 
       const block = makeBlock({ id: 'due-today', due_date: '2025-03-15' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
@@ -483,12 +458,7 @@ describe('executeAgendaFilters', () => {
         todo_state: 'TODO',
       })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [overdueBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([overdueBlock]),
       })
 
       const result = await executeAgendaFilters(
@@ -547,12 +517,7 @@ describe('executeAgendaFilters', () => {
       const todayTodo = makeBlock({ id: 'today-todo', due_date: '2025-03-15', todo_state: 'TODO' })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [overdueTodo, overdueDone, todayDone, todayTodo],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([overdueTodo, overdueDone, todayDone, todayTodo]),
       })
 
       const result = await executeAgendaFilters(
@@ -610,12 +575,7 @@ describe('executeAgendaFilters', () => {
         todo_state: 'DONE',
       })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [overdueDone, inRangeDone],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([overdueDone, inRangeDone]),
       })
 
       const result = await executeAgendaFilters(
@@ -651,12 +611,7 @@ describe('executeAgendaFilters', () => {
       })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [nullStateOverdue, nullStateToday],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([nullStateOverdue, nullStateToday]),
       })
 
       const result = await executeAgendaFilters(
@@ -685,9 +640,9 @@ describe('executeAgendaFilters', () => {
       stubAgenda({
         filtered_blocks_query: (args) => {
           if (args['cursor'] === 'PAGE_2') {
-            return { items: [survivor], next_cursor: 'PAGE_3', has_more: true, total_count: null }
+            return page([survivor], { next_cursor: 'PAGE_3', has_more: true })
           }
-          return { items: [overdueDone], next_cursor: 'PAGE_2', has_more: true, total_count: null }
+          return page([overdueDone], { next_cursor: 'PAGE_2', has_more: true })
         },
       })
 
@@ -801,12 +756,7 @@ describe('executeAgendaFilters', () => {
 
       const block = makeBlock({ id: 'sched-today', scheduled_date: '2025-03-15' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -858,12 +808,7 @@ describe('executeAgendaFilters', () => {
 
       const block = makeBlock({ id: 'completed-1', todo_state: 'DONE' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -926,12 +871,7 @@ describe('executeAgendaFilters', () => {
 
       const block = makeBlock({ id: 'created-1' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -956,12 +896,7 @@ describe('executeAgendaFilters', () => {
       stubAgenda({
         list_tags_by_prefix: (args) =>
           args['prefix'] === 'tag-abc' ? [tagRow('TAG_ID_ABC', 'tag-abc')] : [],
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'tag', values: ['tag-abc'] }], null)
@@ -1047,12 +982,7 @@ describe('executeAgendaFilters', () => {
         // Tag never resolves.
         list_tags_by_prefix: () => [],
         // If the bug were present, the status-only IPC would return this.
-        filtered_blocks_query: () => ({
-          items: [statusOnlyBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([statusOnlyBlock]),
       })
 
       const result = await executeAgendaFilters(
@@ -1076,12 +1006,7 @@ describe('executeAgendaFilters', () => {
       stubAgenda({
         list_tags_by_prefix: (args) =>
           args['prefix'] === 'tag-ok' ? [tagRow('TID_OK', 'tag-ok')] : [],
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -1108,12 +1033,7 @@ describe('executeAgendaFilters', () => {
     it('#1594: tag dimension with no values leaves the status dimension unaffected', async () => {
       const block = makeBlock({ id: 'status-survives', todo_state: 'TODO' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -1141,12 +1061,7 @@ describe('executeAgendaFilters', () => {
       const block = makeBlock({ id: 'prop-1' })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -1168,12 +1083,7 @@ describe('executeAgendaFilters', () => {
       const block = makeBlock({ id: 'prop-2' })
 
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters(
@@ -1201,12 +1111,7 @@ describe('executeAgendaFilters', () => {
 
       // Backend returns the post-intersection result directly; no JS fan-out.
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [sharedBlock],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([sharedBlock]),
       })
 
       const result = await executeAgendaFilters(
@@ -1240,12 +1145,7 @@ describe('executeAgendaFilters', () => {
       stubAgenda({
         list_tags_by_prefix: (args) =>
           args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : [],
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       await executeAgendaFilters(
@@ -1290,12 +1190,7 @@ describe('executeAgendaFilters', () => {
     it('forwards hasMore=true and the cursor from the backend response', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: 'CURSOR_NEXT',
-          has_more: true,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block], { next_cursor: 'CURSOR_NEXT', has_more: true }),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -1308,12 +1203,7 @@ describe('executeAgendaFilters', () => {
     it('forwards hasMore=false / cursor=null when the page is exhausted', async () => {
       const block = makeBlock({ id: 'b1', todo_state: 'TODO' })
       stubAgenda({
-        filtered_blocks_query: () => ({
-          items: [block],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+        filtered_blocks_query: () => page([block]),
       })
 
       const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
@@ -1357,12 +1247,7 @@ describe('loadMoreAgendaFilters', () => {
   it('routes through filtered_blocks_query with the saved cursor (NOT query_by_property)', async () => {
     const page2Block = makeBlock({ id: 'b2', todo_state: 'TODO', priority: '1' })
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [page2Block],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([page2Block]),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1402,12 +1287,7 @@ describe('loadMoreAgendaFilters', () => {
   it('#1594: status + unresolved tag short-circuits to empty (no widening IPC)', async () => {
     stubAgenda({
       list_tags_by_prefix: () => [],
-      filtered_blocks_query: () => ({
-        items: [makeBlock({ id: 'leak', todo_state: 'TODO' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([makeBlock({ id: 'leak', todo_state: 'TODO' })]),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1436,12 +1316,7 @@ describe('loadMoreAgendaFilters', () => {
       makeBlock({ id: 'b12', todo_state: 'TODO', priority: '1' }),
     ]
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: blocks,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page(blocks),
     })
 
     const filters: Parameters<typeof loadMoreAgendaFilters>[0] = [
@@ -1462,12 +1337,7 @@ describe('loadMoreAgendaFilters', () => {
     const block = makeBlock({ id: 'tagged-p2' })
     stubAgenda({
       list_tags_by_prefix: (args) => (args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : []),
-      filtered_blocks_query: () => ({
-        items: [block],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([block]),
     })
 
     await loadMoreAgendaFilters(
@@ -1515,12 +1385,7 @@ describe('loadMoreAgendaFilters', () => {
     vi.setSystemTime(new Date('2025-03-16T00:30:00'))
 
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([]),
     })
 
     // ...but the caller threads page 1's today through.
@@ -1545,12 +1410,7 @@ describe('loadMoreAgendaFilters', () => {
     vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [],
-        next_cursor: null,
-        has_more: true,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([], { has_more: true }),
     })
 
     const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
@@ -1572,12 +1432,7 @@ describe('loadMoreAgendaFilters', () => {
       todo_state: 'TODO',
     })
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [overdueDone, overdueTodo],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([overdueDone, overdueTodo]),
     })
 
     const result = await loadMoreAgendaFilters(
@@ -1592,12 +1447,7 @@ describe('loadMoreAgendaFilters', () => {
 
   it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([]),
     })
 
     await loadMoreAgendaFilters([{ dimension: 'status', values: ['TODO'] }], 'CURSOR_PAGE_2', null)
@@ -1608,12 +1458,7 @@ describe('loadMoreAgendaFilters', () => {
 
   it('forwards a non-null spaceId verbatim', async () => {
     stubAgenda({
-      filtered_blocks_query: () => ({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      filtered_blocks_query: () => page([]),
     })
 
     await loadMoreAgendaFilters(
