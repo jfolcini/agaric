@@ -28,6 +28,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef } from 'react'
 
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { unwrap } from '@/lib/app-error'
 import type {
   BacklinkFilter,
@@ -131,15 +132,18 @@ export function useUnlinkedReferences(
   // for why the counts survive a smaller limit.
   const groupLimit = collapsed ? COLLAPSED_GROUP_LIMIT : EXPANDED_GROUP_LIMIT
 
+  // A mention becomes a link (or a link is removed, un-linking a mention)
+  // through content edits, which fire no property event; the graph-structure
+  // counter is bumped on every local op and on `sync:complete`, so it is the
+  // key's refresh axis. Property changes do not move this list.
+  const { structureKey } = useGraphStructureEvents()
+
   // Exported so the optimistic "Link it" removal can target this exact cache
-  // entry. NOTE: unlike `useBacklinkGroups`, there is NO `invalidationKey`
-  // here — the old `fetchGroups` never depended on `useBlockPropertyEvents`, so
-  // the key is stable across property changes. `groupLimit` IS part of the key
-  // so expanding the panel refetches the full page rather than showing the
-  // single group the collapsed fetch returned.
+  // entry. `groupLimit` IS part of the key so expanding the panel refetches the
+  // full page rather than showing the single group the collapsed fetch returned.
   const queryKeyPrefix = useMemo(
-    () => ['unlinkedReferences', spaceId, pageId, filters, sort],
-    [spaceId, pageId, filters, sort],
+    () => ['unlinkedReferences', spaceId, pageId, structureKey, filters, sort],
+    [spaceId, pageId, structureKey, filters, sort],
   )
   const queryKey = useMemo(() => [...queryKeyPrefix, groupLimit], [queryKeyPrefix, groupLimit])
 

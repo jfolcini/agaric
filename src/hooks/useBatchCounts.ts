@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { DayEntry } from '@/lib/date-utils'
@@ -34,6 +35,9 @@ export function useBatchCounts(entries: DayEntry[]) {
   )
   const datesKey = dates.join(',')
   const pageIdsKey = pageIds.join(',')
+  // A `[[link]]` typed, pasted or synced changes the badge counts without any
+  // property event; the graph-structure counter is what notices it.
+  const { structureKey } = useGraphStructureEvents()
 
   useEffect(() => {
     let cancelled = false
@@ -69,7 +73,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     // the effect re-runs only when the date range or page-id set actually
     // changes, not when `entries` merely gets a new array identity (#1632).
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [datesKey, pageIdsKey, t, currentSpaceId])
+  }, [datesKey, pageIdsKey, t, currentSpaceId, structureKey])
 
   return { agendaCounts, agendaCountsBySource, backlinkCounts }
 }

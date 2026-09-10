@@ -23,6 +23,7 @@ import {
   useUnlinkedReferences,
   type UseUnlinkedReferencesParams,
 } from '@/hooks/useUnlinkedReferences'
+import { getGraphStructureKey, recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { queryClient } from '@/lib/query-client'
 
 // #3332 — the shared strict `invoke` mock from `src/test-setup.ts` stays in
@@ -64,6 +65,43 @@ beforeEach(() => {
 })
 
 describe('useUnlinkedReferences', () => {
+  // A mention turning into a link (or back) is a content edit: no property
+  // event fires, so the graph-structure counter is what refreshes this list.
+  it('refetches when the graph structure changes', async () => {
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }]),
+        makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    let calls = 0
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: () => {
+          calls += 1
+          return calls === 1 ? resp : { ...resp, groups: [], total_count: 0, filtered_count: 0 }
+        },
+      }),
+    )
+    const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
+    await waitFor(() => {
+      expect(result.current.groups).toHaveLength(2)
+    })
+
+    act(() => {
+      recordGraphStructureChange()
+    })
+    await waitFor(() => {
+      expect(result.current.groups).toHaveLength(0)
+    })
+    expect(calls).toBe(2)
+  })
+
   it('happy path: returns first-page groups, totalCount, truncated and hasMore', async () => {
     const resp = {
       groups: [
@@ -95,7 +133,15 @@ describe('useUnlinkedReferences', () => {
     expect(result.current.isError).toBe(false)
     // The exported query key mirrors the hook's read location exactly. The
     // trailing element is the #3316 item-2 group limit (20 = panel expanded).
-    expect(result.current.queryKey).toEqual(['unlinkedReferences', null, 'PAGE1', [], null, 20])
+    expect(result.current.queryKey).toEqual([
+      'unlinkedReferences',
+      null,
+      'PAGE1',
+      getGraphStructureKey(),
+      [],
+      null,
+      20,
+    ])
   })
 
   it('load-more: appends + merges by page_id without mutating prior objects', async () => {
@@ -416,7 +462,14 @@ describe('useUnlinkedReferences', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    expect(result.current.queryKeyPrefix).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
+    expect(result.current.queryKeyPrefix).toEqual([
+      'unlinkedReferences',
+      null,
+      'PAGE1',
+      getGraphStructureKey(),
+      [],
+      null,
+    ])
     // It is exactly the read key minus the trailing group limit, so
     // `setQueriesData` prefix-matching cannot drift from where the hook reads.
     expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])

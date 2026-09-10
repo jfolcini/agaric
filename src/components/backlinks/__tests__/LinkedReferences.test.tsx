@@ -44,6 +44,7 @@ import type { LinkedReferencesProps } from '@/components/backlinks/LinkedReferen
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
@@ -920,6 +921,45 @@ describe('LinkedReferences', () => {
   })
 
   // 18. refetches when targetId changes
+  // A `[[link]]` typed on another page, pasted, or synced fires no property
+  // event, so the graph-structure counter is the only way a mounted panel
+  // learns that its target gained a backlink.
+  it('refetches when the graph structure changes while mounted', async () => {
+    const resp1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockInvokeWith(resp1)
+    renderLinkedReferences({ targetId: 'PAGE1' })
+    await waitFor(() => {
+      expect(screen.getByText('page 1 block')).toBeInTheDocument()
+    })
+
+    const resp2 = {
+      groups: [
+        makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }]),
+        makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'page 2 block' }]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    mockInvokeWith(resp2)
+    act(() => {
+      recordGraphStructureChange()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('page 2 block')).toBeInTheDocument()
+    })
+  })
+
   it('refetches when targetId changes', async () => {
     const resp1 = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'page 1 block' }])],

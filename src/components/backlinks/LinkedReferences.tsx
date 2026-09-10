@@ -24,6 +24,7 @@ import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { unwrap } from '@/lib/app-error'
@@ -63,7 +64,14 @@ export function LinkedReferences({
   onNavigateToPage,
 }: LinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
-  const { invalidationKey } = useBlockPropertyEvents()
+  // Two refresh signals, as in `GraphView`: property commands fire the Tauri
+  // `block:properties-changed` event; a `[[link]]` typed, pasted or synced
+  // does not, so the graph-structure counter (bumped by the page-block store
+  // on every local op and by `sync:complete`) is the one that notices a new
+  // backlink while this panel is mounted.
+  const { invalidationKey: propertyKey } = useBlockPropertyEvents()
+  const { structureKey } = useGraphStructureEvents()
+  const invalidationKey = propertyKey + structureKey
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [expanded, setExpanded] = useState(true)
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({})
