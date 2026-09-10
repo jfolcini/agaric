@@ -82,7 +82,8 @@
 //! answering in `blockTags` INSERTION order against `ORDER BY tag_id`). Both
 //! are fixed and both are now pinned by ordered steps.
 //!
-//! Three of the 119 steps opt out today, all for the same reason: the command
+//! Three steps opt out today — the denominator is deliberately not quoted, it
+//! only drifts — all for the same reason: the command
 //! they call has NO `ORDER BY`, so its sequence is the query plan's and not
 //! anything either stack can be held to (`batch_resolve_inner`,
 //! `get_properties_inner`, `get_batch_properties_inner`). The other benign
