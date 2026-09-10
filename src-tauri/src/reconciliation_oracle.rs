@@ -593,9 +593,10 @@ pub async fn rebuild_pages_cache_counts_from_base(
         sources.entry(page).or_default().insert(source_id.as_str());
     }
     for (page, distinct) in sources {
-        if let Some(counts) = out.get_mut(page) {
-            counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
-        }
+        let counts = out
+            .get_mut(page)
+            .expect("`sources` is keyed only by pages the `out.contains_key` gate above admitted");
+        counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
     }
     Ok(out)
 }
