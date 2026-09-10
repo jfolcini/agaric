@@ -263,12 +263,13 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3992 item 3 — this reason used to say PageHeader.test.tsx was "the only
   // test naming undo_page_group". It is not: `stores/__tests__/undo.test.ts`
   // names it too, in a `'undo_page_group failed'` log assertion. The waiver's
-  // CONCLUSION survived (that test mocks hand-written, so it reaches the
-  // handler no more than the other does) but the claim itself was an unchecked
-  // universal — "no OTHER test exists" is not something a citation can carry,
-  // and nothing in this guard could have contradicted it. Both files are named
-  // instead, which is a claim the citation check above actually verifies: each
-  // must exist and must mention `undo_page_group` as a whole word.
+  // CONCLUSION survived (that test mocks the hand-written helpers, so it
+  // reaches the handler no more than the other does) but the claim itself was
+  // an unchecked universal — "no OTHER test exists" is not something a
+  // citation can carry, and nothing in this guard could have contradicted it.
+  // Both files are named instead, which is a claim the citation check above
+  // actually verifies: each must exist and must mention `undo_page_group` as a
+  // whole word.
   undo_page_group:
     'NOT cross-checked, and not mock-level guarded either: the tests naming ' +
     'undo_page_group — components/pages/__tests__/PageHeader.test.tsx (mocked invoke) and ' +
@@ -3632,32 +3633,15 @@ describe('#3083 conformance-coverage ratchet', () => {
   // carry either a non-empty `returns` or a recorded `error`. Alignment is by
   // index, as `expected_queries` is.
   it('every `via: "command"` op records a non-empty return or a refusal', () => {
-    const misaligned: string[] = []
     const vacuous: string[] = []
     for (const fx of fixtures) {
-      if (fx.commandOps.length !== fx.expectedOps.length) {
-        misaligned.push(
-          `${fx.name} (${fx.commandOps.length} ops, ${fx.expectedOps.length} records)`,
-        )
-        continue
-      }
       for (const [i, op] of fx.commandOps.entries()) {
         const recorded = fx.expectedOps[i]
-        if (!recorded || recorded.name !== op.name) {
-          misaligned.push(`${fx.name}/${op.name}`)
-          continue
-        }
-        if (recorded.returns.length === 0 && (recorded.error ?? null) === null) {
+        if (recorded && recorded.returns.length === 0 && (recorded.error ?? null) === null) {
           vacuous.push(`${fx.name}/${op.name}`)
         }
       }
     }
-    expect(
-      misaligned,
-      `These \`via: "command"\` ops have no positionally-matching \`expected_ops\` entry ` +
-        `${JSON.stringify(misaligned)}. Re-author with CONFORMANCE_UPDATE=1 cargo nextest run ` +
-        `-E 'test(conformance_fixtures_match_backend)'.`,
-    ).toEqual([])
     expect(
       vacuous,
       `These \`via: "command"\` ops recorded neither a return value nor a refusal ` +

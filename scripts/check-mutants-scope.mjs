@@ -926,14 +926,6 @@ function printShardCount(root = REPO_ROOT) {
   console.log(entries.length)
 }
 
-// ---------------------------------------------------------------------------
-// self-test
-// ---------------------------------------------------------------------------
-/**
- * The readers everything above stands on: if the TOML array parser or the
- * workflow slicer silently returns nothing, every other check "passes" while
- * inspecting an empty set.
- */
 /** #4872 — the scan phase's nextest filter for one package, from the table the guard checks. */
 function printScanFilter(root, pkg) {
   const filter = readScanFilters(root)?.[pkg]
@@ -946,6 +938,14 @@ function printScanFilter(root, pkg) {
   console.log(filter)
 }
 
+// ---------------------------------------------------------------------------
+// self-test
+// ---------------------------------------------------------------------------
+/**
+ * The readers everything above stands on: if the TOML array parser or the
+ * workflow slicer silently returns nothing, every other check "passes" while
+ * inspecting an empty set.
+ */
 function selfTestReaders(ok, fail) {
   // `--output DIR` nests: DIR/mutants.out, not DIR. The bug that made every
   // reader path one level short.

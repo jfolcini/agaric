@@ -928,8 +928,8 @@ stages = ["manual"]
 # down as call sites gain a real validator — model: src/lib/filters/
 # validate.ts, #3791). `src/lib/tauri-mock/**` is excluded by path
 # (test/mock-only, per #3881); test files are excluded like the sibling
-# tauri-import / set-property-args guards. pass_filenames=false — the
-# script does its own scoped walk of src/.
+# set-property-args guard. pass_filenames=false — the script does its own
+# scoped walk of src/.
 # WHY: `JSON.parse(x) as T` asserts a shape nothing validates — #3881 ratchet (#3913, #3791)
 [[repos.hooks]]
 id = "json-parse-cast-baseline"

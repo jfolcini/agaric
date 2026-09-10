@@ -1638,6 +1638,55 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
   })
 
+  // #4934 — the note is gated on the count being the PREVIOUS key's
+  // (`isPlaceholderData`), not on any fetch being in flight: a load-more keeps
+  // the current key's rows, so the note must stay put while the next page loads.
+  it('keeps the inherited note while a load-more is in flight', async () => {
+    let resolveNextPage: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      const a = (args ?? {}) as { includeInherited?: boolean | null; cursor?: string | null }
+      if (cmd === 'list_tags_by_prefix') {
+        return Promise.resolve([makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })])
+      }
+      if (cmd === 'query_by_tags') {
+        if (a.cursor != null) {
+          return new Promise((resolve) => {
+            resolveNextPage = resolve
+          })
+        }
+        return Promise.resolve({
+          ...emptyPage,
+          items: a.includeInherited === true ? [PARENT, CHILD] : [PARENT],
+          next_cursor: 'cursor_next',
+          has_more: true,
+        })
+      }
+      if (cmd === 'batch_resolve') return Promise.resolve([])
+      return Promise.resolve(emptyPage)
+    })
+    render(<TagFilterPanel />)
+    await selectWorkTag()
+    await user.click(inheritedSwitch())
+    await vi.advanceTimersByTimeAsync(0)
+
+    const feedback = screen.getByTestId('tag-filter-feedback')
+    await waitFor(() => {
+      expect(feedback).toHaveTextContent(t('tagFilter.includingInherited'))
+    })
+
+    await user.click(screen.getByRole('button', { name: /Load more/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Mid-flight: the fetch is running, but the rows on screen are this key's.
+    expect(feedback).toHaveAttribute('aria-busy', 'true')
+    expect(feedback).toHaveTextContent(t('tagFilter.includingInherited'))
+
+    await act(async () => {
+      resolveNextPage(emptyPage)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  })
+
   it('has no a11y violations with the switch on', async () => {
     vi.useRealTimers()
     routeByInheritance()

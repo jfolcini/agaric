@@ -228,8 +228,7 @@ export const commands = {
 	 *  `value_text_in`, `value_date_range`, `exclude_todo_states`) lives
 	 *  together as fields of the request; the grouping reflects the request,
 	 *  not the `tauri-specta` 10-arg transport limit, and a new filter is
-	 *  added as a field there. The hand-written TS wrapper in
-	 *  TS call site keeps its own flat shape at
+	 *  added as a field there. The TS call site keeps its own flat shape at
 	 *  `queryByProperty({ blockType, valueTextIn, ... })` and builds the
 	 *  request only at the IPC boundary.
 	 * 
