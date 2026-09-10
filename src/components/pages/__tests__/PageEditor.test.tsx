@@ -271,6 +271,23 @@ describe('PageEditor', () => {
     expect(capturedLinkedRefsPageId).toBe('PAGE_123')
   })
 
+  // #4945 review note — navigating away WHILE zoomed. Nothing ordered the zoom
+  // reset against the `pageId` change, so the panel could stay pointed at the
+  // old page's block on the new page.
+  it('retargets LinkedReferences at the new page when pageId changes while zoomed', () => {
+    const { rerender } = render(<PageEditor pageId="PAGE_A" title="Page A" />)
+
+    act(() => {
+      capturedOnZoomChange?.('BLOCK_9')
+    })
+    expect(capturedLinkedRefsPageId).toBe('BLOCK_9')
+
+    rerender(<PageEditor pageId="PAGE_B" title="Page B" />)
+
+    expect(capturedLinkedRefsPageId).toBe('PAGE_B')
+    expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'PAGE_B')
+  })
+
   it('renders UnlinkedReferences with correct pageId and pageTitle', () => {
     render(<PageEditor pageId="PAGE_123" title="Test Title" />)
 

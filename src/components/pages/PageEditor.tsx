@@ -54,6 +54,11 @@ export function PageEditor({
   return (
     <PageBlockStoreProvider pageId={pageId}>
       <PageEditorInner
+        // #4945 review note — remounting on `pageId` is what orders the zoom
+        // reset against the navigation: `zoomedBlockId` is local state, and
+        // without this the references panel stays pointed at the block you
+        // zoomed into on the page you just left.
+        key={pageId}
         pageId={pageId}
         title={title}
         onBack={onBack}

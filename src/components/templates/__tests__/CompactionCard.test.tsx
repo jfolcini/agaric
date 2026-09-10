@@ -74,7 +74,9 @@ function stubCompaction(handlers: TypedInvokeHandlers = {}): void {
  */
 function stubCompactionRun(
   status: CommandReturns['get_compaction_status'],
-  compact: () => CommandReturns['compact_op_log_cmd'] | Promise<never>,
+  compact: () =>
+    | CommandReturns['compact_op_log_cmd']
+    | Promise<CommandReturns['compact_op_log_cmd']>,
   afterCompact: CommandReturns['get_compaction_status'] = status,
 ): void {
   let compacted = false

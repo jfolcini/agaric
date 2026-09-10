@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -33,8 +34,6 @@ import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
-
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /**
  * The commands `TemplatesView` fires on mount, defaulted to "nothing here".

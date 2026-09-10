@@ -88,9 +88,10 @@ Both sections share a **BacklinkFilterBuilder** with these dimensions:
 | Property | `key:value` |
 | Source page | Show only references from one or more specific pages (multi-select pill) |
 | Source page exclude | Hide references from one or more pages |
-| Link kind | Linked section only: All / Page links (`[[…]]`) / Block refs (`((…))`) |
 
 The filter pills compose; clear with *"Clear all"*.
+
+The linked section also carries a separate **link kind** toggle — All / Page links (`[[…]]`) / Block refs (`((…))`). It is not one of the pills above: it scopes the whole panel, header count included, rather than filtering within it.
 
 ## Inline query blocks
 

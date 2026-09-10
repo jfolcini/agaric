@@ -20,7 +20,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { emptyPage, makeBlock, makeBlockRow } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -43,8 +43,6 @@ const makeTag = (overrides?: Partial<TagCacheRow>): TagCacheRow => ({
   updated_at: '2025-01-15T00:00:00Z',
   ...overrides,
 })
-
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
 /**
  * The commands the panel fires. Handlers ACCUMULATE across calls within one

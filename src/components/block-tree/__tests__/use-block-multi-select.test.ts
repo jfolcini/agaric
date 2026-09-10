@@ -1278,7 +1278,6 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
         items: [
           {
             ...makeBlockRow({ id: 'P_ROOT', block_type: 'page', content: 'Root Page' }),
-            offsets: [],
           },
         ],
         next_cursor: null,
