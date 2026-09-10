@@ -12,22 +12,20 @@
  * returns an implementation you still install, so a migrated file keeps that
  * string and the number could only fall by deleting tests.
  *
- * Equality, not `<=` — a stale baseline would hide a migration and let the
- * count drift back up. Same mechanism as `tauri-import-baseline`.
+ * The baseline is the FILE SET, not its size. A count alone is satisfied by a
+ * PR that migrates one file and adds a hand-stub in another — the arithmetic
+ * that hid a regression behind a win. Naming the files also makes the
+ * migration auditable in the diff, and it is what
+ * `scripts/tauri-import-baseline.json` does for the sibling ratchet.
  *
  * The match is textual, so the source goes through `js-scanner.mjs`'s
  * `stripComments` first (the sanctioned tokenizer) and the walk is fenced to
  * `*.test.ts(x)`: strings survive `stripComments` by design, and
  * `helpers/invoke.ts` names the expression in an error message.
- *
- * Zero is not the target. A test needing an ARBITRARY response — error
- * injection, a malformed payload, an IPC rejection — is testing the frontend's
- * handling of a shape the backend should never send, and a typed seam would
- * destroy it. Hence a ratchet, not a ban.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -35,12 +33,96 @@ import { describe, expect, it } from 'vitest'
 import { stripComments } from '../../scripts/lib/js-scanner.mjs'
 
 /**
- * Files still handing the invoke mock a hand-written literal.
+ * Files that hand the invoke mock a literal because they SHOULD, keyed to why.
  *
- * Lower this when you migrate one to `mockInvokeCommands`; the test fails if it
- * does not match, in either direction.
+ * Zero is not the target. These do not migrate — ever — so they are named
+ * here rather than sitting in the backlog below pretending to be work.
+ * A test needing an ARBITRARY response — a malformed payload, a command with
+ * no binding to be typed against — is testing a shape the typed seam exists to
+ * forbid, and routing it through that seam would destroy it.
+ *
+ * An IPC REJECTION is not in this class: `mockInvokeCommands` takes a handler
+ * that rejects or throws, so those migrate like any other stub.
  */
-const HAND_STUB_FILE_BASELINE = 56
+const DELIBERATE_EXCEPTIONS: readonly string[] = [
+  // The seam under test. Its counted stub is a catch-all resolving `undefined`,
+  // installed to prove that an explicit stub overrides `strictInvokeFallback` —
+  // the case the whole design turns on. Expressing it through
+  // `mockInvokeCommands` would test that helper instead of the fallback it is
+  // asserting about.
+  'src/__tests__/strict-invoke.test.ts',
+]
+
+/**
+ * Files still to migrate onto `mockInvokeCommands`. Not exceptions — just not
+ * done yet. Delete an entry when you migrate its file; the test fails in both
+ * directions, so a stale entry cannot hide a win and a new one cannot slip in.
+ */
+const MIGRATION_BACKLOG: readonly string[] = [
+  // Most of this file's stubs — `startSync`, `importMarkdown`, the trash
+  // drains — have generated bindings and should migrate. It will not leave
+  // this list even so: `read_attachment` returns a raw-byte
+  // `tauri::ipc::Response`, which cannot carry a `specta::Type`, so it has no
+  // generated binding (`src/lib/ipc-helpers.ts:15-17`) and is not a key of
+  // `CommandReturns`. Move it to DELIBERATE_EXCEPTIONS once the others are
+  // done — until then, exempting it would hide every new hand-stub added here
+  // for a command that IS bound.
+  'src/lib/__tests__/ipc-helpers.test.ts',
+  'src/__tests__/viewTransition.test.tsx',
+  'src/components/PageBrowser/__tests__/editors.test.tsx',
+  'src/components/agenda/__tests__/AgendaFilterBuilder.test.tsx',
+  'src/components/agenda/__tests__/GlobalDateControls.test.tsx',
+  'src/components/agenda/__tests__/StatusPanel.test.tsx',
+  'src/components/attachments/__tests__/AttachmentList.test.tsx',
+  'src/components/backlink-filter/categories/__tests__/HasTagFilterForm.test.tsx',
+  'src/components/block-tree/__tests__/use-block-auto-create-first-block.test.ts',
+  'src/components/block-tree/__tests__/use-block-date-picker.test.ts',
+  'src/components/block-tree/__tests__/use-block-multi-select.test.ts',
+  'src/components/block-tree/__tests__/use-block-properties.test.ts',
+  'src/components/block-tree/__tests__/use-block-slash-commands.test.ts',
+  'src/components/block-tree/__tests__/use-block-tree-event-listeners.test.ts',
+  'src/components/block-tree/__tests__/use-block-zoom-empty-seed.test.ts',
+  'src/components/block-tree/use-block-slash-commands/__tests__/useSlashCommandProperty.test.ts',
+  'src/components/dialogs/__tests__/QuickCaptureDialog.test.tsx',
+  'src/components/editor/__tests__/BlockPropertyDrawer.test.tsx',
+  'src/components/editor/__tests__/BlockTree.a11y.test.tsx',
+  'src/components/editor/__tests__/BlockTree.test.tsx',
+  'src/components/editor/__tests__/StaticBlock.test.tsx',
+  'src/components/filters/__tests__/TagComposer.test.tsx',
+  'src/components/filters/__tests__/TagFilterPanel.test.tsx',
+  'src/components/history/__tests__/HistoryView.test.tsx',
+  'src/components/journal/__tests__/JournalCalendarDropdown.test.tsx',
+  'src/components/journal/__tests__/JournalControls.test.tsx',
+  'src/components/pages/__tests__/PageBrowserBatchToolbar.test.tsx',
+  'src/components/pages/__tests__/PagePropertyTable.test.tsx',
+  'src/components/pages/__tests__/ViewDispatcher.test.tsx',
+  'src/components/peers/__tests__/DeviceManagement.test.tsx',
+  'src/components/peers/__tests__/PeerListItem.test.tsx',
+  'src/components/properties/__tests__/PropertyDefinitionsList.test.tsx',
+  'src/components/properties/__tests__/PropertyRowEditor.test.tsx',
+  'src/components/properties/__tests__/PropertyValuePicker.test.tsx',
+  'src/components/properties/__tests__/TagValuePicker.test.tsx',
+  'src/components/query/__tests__/QueryResult.test.tsx',
+  'src/components/templates/__tests__/CompactionCard.test.tsx',
+  'src/components/templates/__tests__/TemplatesView.test.tsx',
+  'src/lib/__tests__/agenda-filters.test.ts',
+  'src/lib/__tests__/export-graph.test.ts',
+  'src/lib/__tests__/property-keys-cache.test.ts',
+  'src/lib/__tests__/property-save-utils.test.ts',
+  'src/lib/__tests__/property-values-cache.test.ts',
+  'src/lib/__tests__/slash-commands.test.ts',
+  'src/lib/__tests__/tauri.test.ts',
+  'src/lib/__tests__/template-utils.test.ts',
+  'src/stores/__tests__/page-blocks.crud.test.ts',
+  'src/stores/__tests__/page-blocks.load-reconcile.test.ts',
+  'src/stores/__tests__/page-blocks.move-reparent.test.ts',
+  'src/stores/__tests__/page-blocks.optimistic-invariants.test.ts',
+  'src/stores/__tests__/page-blocks.paste-prefetch.test.ts',
+  'src/stores/__tests__/page-blocks.reorder.test.ts',
+  'src/stores/__tests__/page-blocks.split-indent.test.ts',
+  'src/stores/__tests__/page-blocks.undo-registry.test.ts',
+  'src/stores/__tests__/resolve.test.ts',
+]
 
 // Anchored at the alias: only a stub call that immediately follows it counts,
 // so a `.mockResolvedValue(` on a different mock nearby cannot be attributed
@@ -53,7 +135,10 @@ function walk(dir: string, out: string[] = []): string[] {
     if (statSync(full).isDirectory()) {
       if (entry !== 'node_modules') walk(full, out)
     } else if (/\.test\.tsx?$/.test(entry)) {
-      out.push(full)
+      // Posix-separated, like the baseline lists below: on Windows a raw
+      // `join` result matches nothing and every entry lands in BOTH halves.
+      // Same normalisation as the sibling `check-tauri-import-baseline.mjs`.
+      out.push(full.split(sep).join('/'))
     }
   }
   return out
@@ -77,9 +162,29 @@ function handStubsInvoke(source: string): boolean {
 }
 
 describe('#4668 hand-stubbed invoke ratchet', () => {
-  it('the number of files handing invoke a literal only goes down', () => {
-    const files = walk('src').filter((f) => handStubsInvoke(stripComments(readFileSync(f, 'utf8'))))
+  it('the set of files handing invoke a literal only shrinks', () => {
+    const live = new Set(
+      walk('src').filter((f) => handStubsInvoke(stripComments(readFileSync(f, 'utf8')))),
+    )
+    const baseline = new Set([...DELIBERATE_EXCEPTIONS, ...MIGRATION_BACKLOG])
 
-    expect(files.length, `hand-stubbing files:\n${files.join('\n')}`).toBe(HAND_STUB_FILE_BASELINE)
+    const added = [...live].filter((f) => !baseline.has(f)).toSorted()
+    const stale = [...baseline].filter((f) => !live.has(f)).toSorted()
+
+    // One assertion, not two: a migrate-one-add-one PR drifts BOTH ways at
+    // once, and a second `expect` would never run to report the half that
+    // motivates listing the files at all.
+    expect(
+      { added, stale },
+      '`added` — new file(s) hand `vi.mocked(invoke)` a literal, which nothing checks ' +
+        'against the Rust surface. Stub through `mockInvokeCommands` ' +
+        '(src/__tests__/helpers/invoke.ts) instead; it is typed against the generated ' +
+        'command return types. If the test genuinely needs a shape the backend cannot ' +
+        'produce, add it to DELIBERATE_EXCEPTIONS above WITH its reason.\n' +
+        '`stale` — baseline entr(ies) no longer hand invoke a literal. Delete them from ' +
+        'whichever list holds them — MIGRATION_BACKLOG if migrated, DELIBERATE_EXCEPTIONS ' +
+        'if the file was renamed or deleted; a stale entry lets the set drift back up and ' +
+        'hides the migration that earned it.',
+    ).toEqual({ added: [], stale: [] })
   })
 })
