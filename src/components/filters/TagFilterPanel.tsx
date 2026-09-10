@@ -89,7 +89,7 @@ function FilterFeedback({
       </p>
     )
   }
-  if (loading || resultCount === 0) return null
+  if (resultCount === 0 && !loading) return null
   const matchText =
     resultCount === 1
       ? t('tagFilter.blockMatchOne', { count: resultCount })
@@ -97,13 +97,16 @@ function FilterFeedback({
   return (
     // `aria-live`: flipping the inherited switch changes the count without any
     // other visible cue, so a screen-reader user hears the new count (#4548).
+    // The element stays MOUNTED across the refetch — a live region inserted
+    // together with its content is not announced — so during `loading` it keeps
+    // the previous text rather than unmounting.
     <p
       className="text-sm text-muted-foreground"
       data-testid="tag-filter-feedback"
       aria-live="polite"
+      aria-busy={loading}
     >
       {matchText}
-      {includeInherited && <> {t('tagFilter.includingInherited')}</>}
       {flat && selectedCount > 0 && (
         <>
           {' '}
@@ -112,6 +115,7 @@ function FilterFeedback({
           {mode.toUpperCase()})
         </>
       )}
+      {includeInherited && <> {t('tagFilter.includingInherited')}</>}
     </p>
   )
 }
@@ -211,7 +215,7 @@ function InheritedToggle({
           <p className="max-w-xs">{t('tagFilter.includeInheritedTooltip')}</p>
         </TooltipContent>
       </Tooltip>
-      <Label htmlFor={id} muted className="font-normal">
+      <Label htmlFor={id} className="font-normal">
         {t('tagFilter.includeInherited')}
       </Label>
     </div>

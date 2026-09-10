@@ -1520,7 +1520,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(screen.getByText('tagged parent')).toBeInTheDocument()
     const feedback = screen.getByTestId('tag-filter-feedback')
     expect(feedback).toHaveTextContent(
-      `2 blocks match ${t('tagFilter.includingInherited')} 1 tag (AND)`,
+      `2 blocks match 1 tag (AND) ${t('tagFilter.includingInherited')}`,
     )
     expect(feedback).toHaveAttribute('aria-live', 'polite')
 

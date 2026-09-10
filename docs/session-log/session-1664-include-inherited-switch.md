@@ -39,3 +39,13 @@ ON test and the rejection test; `null` in the composer call reddened the
 composer test; restoring the old hint string reddened the `PageTagSection`
 title assertion. Full vitest and typecheck green; no `.rs` touched, so the
 Rust lanes are unchanged from `main`.
+
+## From review
+
+The feedback line is an `aria-live` region so a screen-reader user hears the
+new count when the switch flips. It used to return `null` while loading and
+remount with the new text — and a live region inserted together with its
+content is not announced. It stays mounted across the refetch now, marked
+`aria-busy`. The "(including inherited tags)" fragment also moved to the end
+of the sentence, and a `muted` prop that was already the `Label` default is
+gone.
