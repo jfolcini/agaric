@@ -8,9 +8,10 @@ import type { StoreApi } from 'zustand'
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
-  mockInvokeCommands,
+  echoEditBlock,
+  moveResp,
   strictInvokeFallback,
-  type TypedInvokeHandlers,
+  stubInvoke,
 } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
@@ -32,28 +33,6 @@ function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
 }
 
 /**
- * Install this test's command-keyed `invoke` handlers. Anything the store
- * fires that is not listed hits `strictInvokeFallback` and fails by name —
- * the hole #3225 found in this very file's split-rollback test, where an
- * unmodelled compensating write took the positional slot meant for another
- * command and sent the flow down the full-reload branch instead.
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
-}
-
-/**
- * The `edit_block` echo the backend really sends: the row it just wrote,
- * `WithOps`-wrapped. Echoing the argument verbatim is the un-normalized case
- * every one of this file's split stubs modelled one `…Once` value at a time.
- */
-function echoEditBlock(args: Record<string, unknown>): CommandReturns['edit_block'] {
-  return withOps(
-    makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string, position: 0 }),
-  )
-}
-
-/**
  * The `create_block` echo. #2849 PR2 — the backend takes the client-supplied
  * id verbatim, so echoing the arguments back is exactly what it answers with.
  */
@@ -67,15 +46,6 @@ function echoCreateBlock(args: Record<string, unknown>): CommandReturns['create_
       position: args['index'] as number | null,
     }),
   )
-}
-
-/** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
-function moveResp(
-  blockId: string,
-  newParentId: string | null,
-  newPosition: number,
-): CommandReturns['move_block'] {
-  return withOps({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -174,7 +144,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // edit('A', 'line1') then createBelow for 'line2' and 'line3'.
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'line1\nline2\nline3')
 
@@ -190,7 +160,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // Empty paragraph filtered → only 'text' remains → single block, just edit
-      stubInvoke({ edit_block: echoEditBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock })
 
       await store.getState().splitBlock('A', '\ntext')
 
@@ -204,7 +174,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // edit, then createBelow('A','b') and createBelow on ITS new id for 'c'.
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'a\nb\nc')
 
@@ -220,7 +190,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [block] })
 
       // edit('A', '# Title') — heading — then createBelow('A', 'Paragraph').
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', '# Title\nParagraph')
 
@@ -260,7 +230,7 @@ describe('PageBlockStore', () => {
 
       // 'hello\n\nworld' → 3 parsed blocks: paragraph("hello"), empty paragraph, paragraph("world")
       // After filtering empty: 2 blocks
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'hello\n\nworld')
 
@@ -282,7 +252,7 @@ describe('PageBlockStore', () => {
         store.setState({ blocks: [block] })
         // edit('A', 'line1') → invoke('edit_block', ...) — rejects; edit()
         // swallows it and resolves false (the real store contract).
-        stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+        stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
       })
@@ -308,7 +278,7 @@ describe('PageBlockStore', () => {
         // compensating write that production actually takes. Modelling both
         // commands puts it back on the production path; the assertions below
         // pin that distinction.
-        stubInvoke({
+        stubInvoke(mockedInvoke, {
           edit_block: echoEditBlock,
           create_block: () => Promise.reject(new Error('create failed')),
         })
@@ -327,7 +297,7 @@ describe('PageBlockStore', () => {
         store.setState({ blocks: [block] })
         // 'hello\n' parses to a single paragraph whose serialization ('hello')
         // differs from the input → plan.kind === 'edit-only'.
-        stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+        stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
         await expect(store.getState().splitBlock('A', 'hello\n')).resolves.toBe(false)
       })
@@ -335,7 +305,7 @@ describe('PageBlockStore', () => {
       it('resolves true on a fully successful split', async () => {
         const block = makeBlock({ id: 'A', position: 0, content: 'original' })
         store.setState({ blocks: [block] })
-        stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+        stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(true)
       })
@@ -365,7 +335,7 @@ describe('PageBlockStore', () => {
       // Both `edit_block` writes succeed — the first-line commit and the
       // COMPENSATING one that re-converges store AND backend on the pre-split
       // content — while `create_block` rejects.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: echoEditBlock,
         create_block: () => Promise.reject(new Error('create failed')),
       })
@@ -394,7 +364,7 @@ describe('PageBlockStore', () => {
       // edit then rejects too. Both edits are the same command, so the order
       // is explicit state here.
       let editCall = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: (args) =>
           editCall++ === 0
             ? echoEditBlock(args)
@@ -435,7 +405,7 @@ describe('PageBlockStore', () => {
       // to re-converge the backend, which succeeds. The SECOND split's create
       // must succeed, so `create_block` fails only on its first call.
       let createCall = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: echoEditBlock,
         create_block: (args) =>
           createCall++ === 0 ? Promise.reject(new Error('create failed')) : echoCreateBlock(args),
@@ -462,7 +432,7 @@ describe('PageBlockStore', () => {
 
       // Mocks for the first (and only) splitBlock that executes: edit_block
       // for 'line1' then create_block for 'line2'.
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       // Fire two splitBlocks simultaneously on the same block
       await Promise.all([
@@ -483,7 +453,7 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0, content: '' })
       store.setState({ blocks: [block] })
 
-      stubInvoke({ edit_block: echoEditBlock, create_block: echoCreateBlock })
+      stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       // First splitBlock on block A
       await store.getState().splitBlock('A', 'line1\nline2')
@@ -503,7 +473,7 @@ describe('PageBlockStore', () => {
 
       // edit('A', 'line1') → editBlock IPC rejects (edit() resolves false and
       // rolls its optimistic update back internally).
-      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
       await store.getState().splitBlock('A', 'line1\nline2\nline3')
 
@@ -523,7 +493,7 @@ describe('PageBlockStore', () => {
       // retryOnPoolBusy helper retries and the second attempt succeeds.
       // The ORDER is the subject: attempt 1 is the blip, attempt 2 the retry.
       let attempt = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: (args) =>
           attempt++ === 0
             ? Promise.reject({ kind: 'pool_busy', message: 'pool exhausted' })
@@ -548,7 +518,7 @@ describe('PageBlockStore', () => {
 
       // The ORDER is the subject: attempt 1 is the blip, attempt 2 the retry.
       let attempt = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () =>
           attempt++ === 0
             ? Promise.reject({ kind: 'pool_busy', message: 'pool exhausted' })
@@ -567,7 +537,7 @@ describe('PageBlockStore', () => {
 
       // A generic database error must bubble on the first attempt — the
       // retry helper only retries pool_busy.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => Promise.reject({ kind: 'database', message: 'boom' }),
       })
 
@@ -586,7 +556,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => moveResp('B', 'A', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'A', 0) })
 
       await store.getState().indent('B')
 
@@ -684,7 +654,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().indent('B')
 
@@ -698,7 +668,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, childA1, childA2, blockB] })
 
-      stubInvoke({ move_block: () => moveResp('B', 'A', 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'A', 0) })
 
       await store.getState().indent('B')
 
@@ -718,7 +688,7 @@ describe('PageBlockStore', () => {
       // parent ('UNEXPECTED'). Old indent ignored the echo entirely and
       // trusted the requested parent → silent FE/BE divergence. The fix
       // mirrors reorder/moveUp: fall back to a structural reload.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('B', 'UNEXPECTED', 0),
         // The reload load_page_subtree returns the authoritative tree.
         load_page_subtree: () =>
@@ -757,7 +727,7 @@ describe('PageBlockStore', () => {
       // The ORDER is the subject: the first moveDown swaps A past B → slot 1,
       // the second (computed AFTER the first commits) past C → slot 2.
       let move = 0
-      stubInvoke({ move_block: () => moveResp('A', null, move++ === 0 ? 1 : 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, move++ === 0 ? 1 : 2) })
 
       // Fire both without awaiting the first — the queue serializes them.
       const p1 = store.getState().moveDown('A')
@@ -796,7 +766,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockA1, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('B', 'A', 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'A', 2) })
 
       await store.getState().indent('B')
 
@@ -820,7 +790,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 1 })
       store.setState({ blocks: [parent, child] })
 
-      stubInvoke({ move_block: () => moveResp('C', null, 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', null, 1) })
 
       await store.getState().dedent('C')
 
@@ -868,7 +838,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', depth: 1 })
       store.setState({ blocks: [parent, child] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().dedent('C')
 
@@ -880,7 +850,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
       store.setState({ blocks: [parent, child] })
 
-      stubInvoke({ move_block: () => moveResp('C', 'GP', 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', 'GP', 2) })
 
       await store.getState().dedent('C')
 
@@ -900,7 +870,7 @@ describe('PageBlockStore', () => {
       const otherRoot = makeBlock({ id: 'R', parent_id: null, position: 1, depth: 0 })
       store.setState({ blocks: [grandparent, parent, sibling, child, otherRoot] })
 
-      stubInvoke({ move_block: () => moveResp('C', 'GP', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', 'GP', 1) })
 
       await store.getState().dedent('C')
 
@@ -924,7 +894,7 @@ describe('PageBlockStore', () => {
       const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
       store.setState({ blocks: [grandparent, parent, child] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('C', 'UNEXPECTED', 0),
         load_page_subtree: () =>
           subtreeResp([

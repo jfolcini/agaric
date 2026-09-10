@@ -46,8 +46,8 @@
 import type { invoke } from '@tauri-apps/api/core'
 import type { MockedFunction } from 'vitest'
 
-import { asPageWithMetadataRow } from '@/__tests__/fixtures'
-import type { BlockRow, commands } from '@/lib/bindings'
+import { asPageWithMetadataRow, makeBlockRow, withOps } from '@/__tests__/fixtures'
+import type { BlockRow, commands, OpRef } from '@/lib/bindings'
 
 const RECORD_KEY = '__agaricUnstubbedInvokes__'
 
@@ -228,6 +228,73 @@ export function mockInvokeCommands(
       return Promise.reject(err)
     }
   }
+}
+
+/**
+ * Install a test's command-keyed `invoke` handlers. Anything the code under
+ * test fires that is not listed hits {@link strictInvokeFallback} and fails by
+ * name instead of stealing a positional slot (#3217).
+ *
+ * The caller passes its own `vi.mocked(invoke)` for the reason
+ * {@link stubPageRowInvoke} spells out: a VALUE import of
+ * `@tauri-apps/api/core` in this module deadlocks the suite.
+ */
+export function stubInvoke(
+  mockedInvoke: MockedFunction<typeof invoke>,
+  handlers: Readonly<TypedInvokeHandlers>,
+): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
+export function moveResp(
+  blockId: string,
+  newParentId: string | null,
+  newPosition: number,
+): CommandReturns['move_block'] {
+  return withOps({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
+}
+
+/** The `edit_block` echo: the row the backend just wrote, `WithOps`-wrapped. */
+export function echoEditBlock(args: Record<string, unknown>): CommandReturns['edit_block'] {
+  return withOps(
+    makeBlockRow({ id: args['blockId'] as string, content: args['toText'] as string, position: 0 }),
+  )
+}
+
+/**
+ * What a successful `delete_block` answers: `WithOps<DeleteResponse>`, whose
+ * `deleted_at` is epoch-ms (migration 0080) and which carries the cascade's
+ * `affected_page_ids`. The literals this replaced spelled `deleted_at` as an
+ * ISO string and omitted both that array and `op_refs`.
+ */
+export function deleteResp(blockId: string, opRefs: OpRef[] = []): CommandReturns['delete_block'] {
+  return {
+    op_refs: opRefs,
+    block_id: blockId,
+    deleted_at: 1_735_689_600_000,
+    descendants_affected: 1,
+    affected_page_ids: [],
+  }
+}
+
+/**
+ * A promise the test settles by hand, so one command's response can be parked
+ * while the flow's OTHER commands (an interleaved edit, the reconciling load)
+ * keep answering — which a positional `…Once` queue cannot model (#3217).
+ */
+export function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (err: Error) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (err: Error) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
 }
 
 /** The `list_pages_with_metadata` envelope, as `invoke` resolves it. */

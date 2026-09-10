@@ -10,9 +10,9 @@ import type { StoreApi } from 'zustand'
 import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
-  mockInvokeCommands,
+  deleteResp,
   strictInvokeFallback,
-  type TypedInvokeHandlers,
+  stubInvoke,
 } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
@@ -37,30 +37,6 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
 function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
-}
-
-/**
- * What a successful `delete_block` answers: `WithOps<DeleteResponse>`, whose
- * `deleted_at` is epoch-ms (migration 0080) and which carries the cascade's
- * `affected_page_ids`. The literals this replaced spelled `deleted_at` as an
- * ISO string and omitted both that array and `op_refs`.
- */
-function deleteResp(blockId: string): CommandReturns['delete_block'] {
-  return withOps({
-    block_id: blockId,
-    deleted_at: 1_735_689_600_000,
-    descendants_affected: 1,
-    affected_page_ids: [],
-  })
-}
-
-/**
- * Install this test's command-keyed `invoke` handlers. Anything the store
- * fires that is not listed hits `strictInvokeFallback` and fails by name
- * instead of stealing a positional slot (#3217).
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -152,7 +128,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
       ]
-      stubInvoke({ load_page_subtree: () => subtreeResp(blocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(blocks) })
 
       await store.getState().load()
 
@@ -171,7 +147,9 @@ describe('PageBlockStore', () => {
     it('surfaces truncatedTotal when the backend caps the page (#1258)', async () => {
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
       // total > blocks.length — the cap fired, descendants were dropped.
-      stubInvoke({ load_page_subtree: () => ({ blocks, truncated: true, total: 10_005 }) })
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () => ({ blocks, truncated: true, total: 10_005 }),
+      })
 
       await store.getState().load()
 
@@ -183,7 +161,7 @@ describe('PageBlockStore', () => {
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
       let call = 0
       // The ORDER is the subject: only the second, non-truncated load clears it.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           call++ === 0 ? { blocks, truncated: true, total: 10_005 } : subtreeResp(blocks),
       })
@@ -197,7 +175,7 @@ describe('PageBlockStore', () => {
 
     it('sets loading=true while the request is in flight', async () => {
       let resolvePromise!: (v: CommandReturns['load_page_subtree']) => void
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           new Promise<CommandReturns['load_page_subtree']>((resolve) => {
             resolvePromise = resolve
@@ -214,7 +192,7 @@ describe('PageBlockStore', () => {
     })
 
     it('resets loading on error without changing blocks', async () => {
-      stubInvoke({ load_page_subtree: () => Promise.reject(new Error('network')) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => Promise.reject(new Error('network')) })
 
       await store.getState().load()
 
@@ -226,7 +204,7 @@ describe('PageBlockStore', () => {
       let call = 0
       // The ORDER is the subject: the first load fails, the toast's retry then
       // has to issue a FRESH call that succeeds.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           call++ === 0 ? Promise.reject(new Error('network')) : subtreeResp([]),
       })
@@ -258,7 +236,7 @@ describe('PageBlockStore', () => {
 
     it('passes rootBlockId through to load_page_subtree', async () => {
       const s = createPageBlockStore('PARENT_42')
-      stubInvoke({ load_page_subtree: () => subtreeResp([]) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp([]) })
 
       await s.getState().load()
 
@@ -270,7 +248,7 @@ describe('PageBlockStore', () => {
 
     it('#753 — overlapping loads of the same page: the latest-started load wins', async () => {
       const resolvers: Array<(v: CommandReturns['load_page_subtree']) => void> = []
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           new Promise<CommandReturns['load_page_subtree']>((resolve) => resolvers.push(resolve)),
       })
@@ -304,7 +282,7 @@ describe('PageBlockStore', () => {
       let call = 0
       // The ORDER is the subject: call 1 is the stale load that fails, call 2
       // the newer one that owns the `loading` flag.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           call++ === 0
             ? new Promise<never>((_resolve, reject) => {
@@ -348,7 +326,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old backend content' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'updated B from backend' }),
       ]
-      stubInvoke({ load_page_subtree: () => subtreeResp(backendBlocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(backendBlocks) })
 
       await store.getState().load()
 
@@ -373,7 +351,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
         makeBlock({ id: 'C', parent_id: 'PAGE_1', content: 'new C from backend' }),
       ]
-      stubInvoke({ load_page_subtree: () => subtreeResp(backendBlocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(backendBlocks) })
 
       await store.getState().load()
 
@@ -397,7 +375,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'new A from backend' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
       ]
-      stubInvoke({ load_page_subtree: () => subtreeResp(backendBlocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(backendBlocks) })
 
       await store.getState().load()
 
@@ -449,7 +427,7 @@ describe('PageBlockStore', () => {
       // Registry-wide reload — exactly what useSyncEvents' sync:complete
       // handler does (now via `forEachPageStore`). The fresh backend snapshot
       // no longer contains A (a remote peer deleted it).
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () => subtreeResp([makeBlock({ id: 'B', parent_id: 'PAGE_1' })]),
       })
       await store.getState().load()
@@ -468,7 +446,7 @@ describe('PageBlockStore', () => {
       })
       mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           subtreeResp([
             makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'from backend' }),
@@ -491,7 +469,7 @@ describe('PageBlockStore', () => {
       pageB.setState({ blocks: [makeBlock({ id: 'X', parent_id: 'PAGE_B' })] })
       mockGlobalBlockState = { focusedBlockId: 'BLOCK_ON_PAGE_A', selectedBlockIds: [] }
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () => subtreeResp([makeBlock({ id: 'X', parent_id: 'PAGE_B' })]),
       })
       await pageB.getState().load()
@@ -512,7 +490,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
 
       let resolveLoad!: (v: CommandReturns['load_page_subtree']) => void
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           new Promise<CommandReturns['load_page_subtree']>((resolve) => {
             resolveLoad = resolve
@@ -545,7 +523,7 @@ describe('PageBlockStore', () => {
       const fresh = createPageBlockStore('PAGE_NAV')
       mockGlobalBlockState = { focusedBlockId: 'STALE_FOCUS', selectedBlockIds: [] }
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () => subtreeResp([makeBlock({ id: 'Y', parent_id: 'PAGE_NAV' })]),
       })
       await fresh.getState().load()
@@ -566,7 +544,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
 
       // Fresh backend snapshot lost B (a remote peer deleted it).
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () => subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]),
       })
       await store.getState().load()
@@ -585,7 +563,7 @@ describe('PageBlockStore', () => {
       })
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           subtreeResp([
             makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
@@ -606,7 +584,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'OTHER_PAGE_BLK'] }
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () => subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]),
       })
       await store.getState().load()
@@ -624,7 +602,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A'] }
 
       let resolveLoad!: (v: CommandReturns['load_page_subtree']) => void
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           new Promise<CommandReturns['load_page_subtree']>((resolve) => {
             resolveLoad = resolve
@@ -718,7 +696,9 @@ describe('PageBlockStore', () => {
           [OTHER_SPACE]: [{ pageId: 'PAGE_1', title: 'Moved page' }],
         },
       })
-      stubInvoke({ load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')) })
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')),
+      })
 
       await store.getState().load()
 
@@ -749,7 +729,9 @@ describe('PageBlockStore', () => {
         recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
         recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
       })
-      stubInvoke({ load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')) })
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')),
+      })
 
       await store.getState().load()
 
@@ -773,7 +755,7 @@ describe('PageBlockStore', () => {
         recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
         recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
       })
-      stubInvoke({ load_page_subtree: () => Promise.reject(new Error('network')) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => Promise.reject(new Error('network')) })
 
       await store.getState().load()
 
@@ -797,7 +779,7 @@ describe('PageBlockStore', () => {
         recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
         recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           Promise.reject(otherValidationRejection('some other validation failure')),
       })
@@ -836,7 +818,9 @@ describe('PageBlockStore', () => {
           [OTHER_SPACE]: [{ pageId: 'PAGE_1', title: 'Moved page' }],
         },
       })
-      stubInvoke({ load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')) })
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')),
+      })
 
       // Kick off the load (captures spaceId = TEST_SPACE_ID synchronously),
       // switch spaces BEFORE the rejection lands, then let it settle.
@@ -927,7 +911,7 @@ describe('PageBlockStore', () => {
       // #2849 PR2 — the backend uses the client-supplied id verbatim, so it
       // echoes `blockId` back. The new block is addressed by the CLIENT id
       // (`CID_1`), never a server-minted one.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () =>
           withOps(makeBlockRow({ id: 'CID_1', content: 'new content', position: 1 })),
       })
@@ -955,7 +939,7 @@ describe('PageBlockStore', () => {
     it('returns null on backend error (state unchanged)', async () => {
       const block = makeBlock({ id: 'A' })
       store.setState({ blocks: [block] })
-      stubInvoke({ create_block: () => Promise.reject(new Error('create failed')) })
+      stubInvoke(mockedInvoke, { create_block: () => Promise.reject(new Error('create failed')) })
 
       const result = await store.getState().createBelow('A')
 
@@ -967,7 +951,7 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', parent_id: 'PARENT', position: 3 })
       store.setState({ blocks: [block] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () =>
           withOps(
             makeBlockRow({
@@ -995,7 +979,7 @@ describe('PageBlockStore', () => {
     it('defaults content to empty string', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_block: () =>
           withOps(makeBlockRow({ id: 'NEW', block_type: 'text', content: '', position: 1 })),
       })
@@ -1013,7 +997,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () =>
           withOps(makeBlockRow({ id: 'A', block_type: 'text', content: 'new', position: 0 })),
       })
@@ -1030,7 +1014,7 @@ describe('PageBlockStore', () => {
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
       // The backend echoes a NORMALIZED version of the text we sent.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () =>
           withOps(
             makeBlockRow({
@@ -1054,7 +1038,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => {
           // A newer optimistic edit lands while the first IPC is in flight.
           store.setState({ blocks: [makeBlock({ id: 'A', content: 'newer typed text' })] })
@@ -1082,7 +1066,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => {
           // The user keeps typing while edit('A', 'new') is in flight — a newer
           // optimistic edit lands before this IPC rejects.
@@ -1106,7 +1090,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
       const ok = await store.getState().edit('A', 'new')
 
@@ -1118,7 +1102,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
       await store.getState().edit('A', 'new')
 
@@ -1127,7 +1111,7 @@ describe('PageBlockStore', () => {
 
     it('does not crash when editing a block that does not exist in the store', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A', content: 'aaa' })] })
-      stubInvoke({ edit_block: () => Promise.reject(new Error('not found')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('not found')) })
 
       await store.getState().edit('NONEXISTENT', 'whatever')
 
@@ -1140,7 +1124,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'aaa' }), makeBlock({ id: 'B', content: 'bbb' })],
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => withOps(makeBlockRow({ id: 'A', content: 'aaa-updated', position: 0 })),
       })
 
@@ -1154,7 +1138,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => {
           // Simulate rootParentId change during IPC
           store.setState({ rootParentId: 'PAGE_2' })
@@ -1185,7 +1169,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', content: 'ccc' })
       store.setState({ blocks: [blockA, blockB, blockC] })
       const blocksBefore = store.getState().blocks
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () => withOps(makeBlockRow({ id: 'B', content: 'bbb-edited', position: 1 })),
       })
 
@@ -1208,7 +1192,7 @@ describe('PageBlockStore', () => {
     it('#2200 — leaves the blocks array reference untouched when the target id is not found', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A', content: 'aaa' })] })
       const blocksBefore = store.getState().blocks
-      stubInvoke({ edit_block: () => Promise.reject(new Error('not found')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('not found')) })
 
       await store.getState().edit('NONEXISTENT', 'whatever')
 
@@ -1222,7 +1206,7 @@ describe('PageBlockStore', () => {
       const blockA = makeBlock({ id: 'A', content: 'old' })
       const blockB = makeBlock({ id: 'B', content: 'bbb' })
       store.setState({ blocks: [blockA, blockB] })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         edit_block: () =>
           withOps(
             makeBlockRow({
@@ -1245,7 +1229,7 @@ describe('PageBlockStore', () => {
       const blockA = makeBlock({ id: 'A', content: 'old' })
       const blockB = makeBlock({ id: 'B', content: 'bbb' })
       store.setState({ blocks: [blockA, blockB] })
-      stubInvoke({ edit_block: () => Promise.reject(new Error('edit failed')) })
+      stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
       await store.getState().edit('A', 'new')
 
@@ -1259,7 +1243,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
       })
-      stubInvoke({ delete_block: () => deleteResp('A') })
+      stubInvoke(mockedInvoke, { delete_block: () => deleteResp('A') })
 
       await store.getState().remove('A')
 
@@ -1273,7 +1257,7 @@ describe('PageBlockStore', () => {
         blocks: [makeBlock({ id: 'A' })],
       })
       mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
-      stubInvoke({ delete_block: () => deleteResp('A') })
+      stubInvoke(mockedInvoke, { delete_block: () => deleteResp('A') })
 
       await store.getState().remove('A')
 
@@ -1285,7 +1269,7 @@ describe('PageBlockStore', () => {
       store.setState({
         blocks: [originalBlock],
       })
-      stubInvoke({ delete_block: () => Promise.reject(new Error('delete failed')) })
+      stubInvoke(mockedInvoke, { delete_block: () => Promise.reject(new Error('delete failed')) })
 
       await store.getState().remove('A')
 
@@ -1301,7 +1285,7 @@ describe('PageBlockStore', () => {
         ],
       })
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
-      stubInvoke({ delete_block: () => deleteResp('A') })
+      stubInvoke(mockedInvoke, { delete_block: () => deleteResp('A') })
 
       await store.getState().remove('A')
 

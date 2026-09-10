@@ -5,12 +5,13 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, withOps } from '@/__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
-  mockInvokeCommands,
+  deferred,
+  moveResp,
   strictInvokeFallback,
-  type TypedInvokeHandlers,
+  stubInvoke,
 } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -30,43 +31,6 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
 function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
-}
-
-/**
- * Install this test's command-keyed `invoke` handlers. Anything the store
- * fires that is not listed hits `strictInvokeFallback` and fails by name
- * instead of stealing a positional slot (#3217).
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
-}
-
-/** A `move_block` response: `WithOps<MoveResponse>`, `op_refs` included. */
-function moveResp(
-  blockId: string,
-  newParentId: string | null,
-  newPosition: number,
-): CommandReturns['move_block'] {
-  return withOps({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
-}
-
-/**
- * A promise the test settles by hand, so one command's response can be parked
- * while the flow's OTHER commands keep answering — which a positional `…Once`
- * queue cannot model (#3217).
- */
-function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (err: Error) => void
-} {
-  let resolve!: (value: T) => void
-  let reject!: (err: Error) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
 }
 
 // #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
@@ -158,7 +122,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('C', null, 0) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', null, 0) })
 
       await store.getState().reorder('C', 0)
 
@@ -207,7 +171,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('B', null, 3) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', null, 3) })
 
       await store.getState().reorder('B', 2)
 
@@ -233,7 +197,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       await store.getState().reorder('B', 0)
 
@@ -248,7 +212,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('A', null, 3) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 3) })
 
       // Move A to index 2 (where C is) → [B, C, A] via arrayMove
       await store.getState().reorder('A', 2)
@@ -269,7 +233,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: 'PARENT' })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => moveResp('B', 'PARENT', -1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'PARENT', -1) })
 
       await store.getState().reorder('B', 0)
 
@@ -286,7 +250,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 12, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('C', null, 11) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', null, 11) })
 
       // Move C (idx 2) to idx 1 → between A(10) and B(11)
       // floor((10+11)/2) = 10, which <= 10, so nudge up → 11
@@ -305,7 +269,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 12, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('A', null, 12) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 12) })
 
       // Move A (idx 0) to idx 1 → between B(11) and C(12)
       // floor((11+12)/2) = 11, which <= 11, so nudge up → 12
@@ -323,7 +287,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 10, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('A', null, 11) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 11) })
 
       // Move A to last index (2) — hits newIndex >= blocks.length - 1 branch
       await store.getState().reorder('A', 2)
@@ -341,7 +305,7 @@ describe('PageBlockStore', () => {
       const blockC = makeBlock({ id: 'C', position: 20, parent_id: null })
       store.setState({ blocks: [blockA, blockB, blockC] })
 
-      stubInvoke({ move_block: () => moveResp('C', null, 5) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', null, 5) })
 
       // Move C (idx 2) to idx 1 → between A(0) and B(10)
       // floor((0+10)/2) = 5, which > 0, so no nudge needed
@@ -371,7 +335,7 @@ describe('PageBlockStore', () => {
 
       // Y's only remaining root sibling is X (length 1) — newIndex 1 is past
       // it, hitting the `lastSib` branch.
-      stubInvoke({ move_block: () => moveResp('Y', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('Y', null, 2) })
 
       await store.getState().reorder('Y', 1)
 
@@ -401,7 +365,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [blockA, blockB, blockC, blockD] })
 
       const resolvers: Array<(v: CommandReturns['move_block']) => void> = []
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () =>
           new Promise<CommandReturns['move_block']>((resolve) => resolvers.push(resolve)),
       })
@@ -454,7 +418,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [blockA, blockB] })
 
       // move_block — echoes the dense new position back so FE can splice.
-      stubInvoke({ move_block: () => moveResp('B', null, 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', null, 1) })
 
       await store.getState().moveUp('B')
 
@@ -495,7 +459,7 @@ describe('PageBlockStore', () => {
 
       // move_block — the cross-parent pop-out. C1 lands under GRAND at the
       // parent P's own sibling slot (1), i.e. right BEFORE P.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('C1', 'GRAND', 1),
         load_page_subtree: () =>
           subtreeResp([
@@ -531,7 +495,7 @@ describe('PageBlockStore', () => {
       const child2 = makeBlock({ id: 'C2', position: 1, parent_id: 'P', depth: 1 })
       store.setState({ blocks: [parent, child1, child2] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('C1', null, 0),
         load_page_subtree: () =>
           subtreeResp([
@@ -564,7 +528,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       // R6 (#405): move actions now resolve `false` on a caught backend error.
       await expect(store.getState().moveUp('B')).resolves.toBe(false)
@@ -577,7 +541,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [blockA, blockB] })
 
       // move_block — echoes new position
-      stubInvoke({ move_block: () => moveResp('B', 'PARENT', -1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'PARENT', -1) })
 
       await store.getState().moveUp('B')
 
@@ -598,7 +562,7 @@ describe('PageBlockStore', () => {
       // move_block returns a parent_id different from what we asked for —
       // shouldn't happen in practice for moveUp, but the guard exists so
       // descendant chains stay consistent if it ever does.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('B', 'OTHER', -1),
         // The fallback reload. This used to be stubbed with a PAGE envelope
         // (`items`/`next_cursor`), which `load_page_subtree` never returns.
@@ -620,7 +584,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [blockA, blockB] })
 
       // move_block — echoes the dense new position.
-      stubInvoke({ move_block: () => moveResp('A', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 2) })
 
       await store.getState().moveDown('A')
 
@@ -660,7 +624,7 @@ describe('PageBlockStore', () => {
       const child2 = makeBlock({ id: 'C2', position: 1, parent_id: 'P', depth: 2 })
       store.setState({ blocks: [grand, parent, sibAfterP, child1, child2] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('C2', 'GRAND', 1),
         load_page_subtree: () =>
           subtreeResp([
@@ -695,7 +659,7 @@ describe('PageBlockStore', () => {
       const child1 = makeBlock({ id: 'C1', position: 0, parent_id: 'P', depth: 1 })
       store.setState({ blocks: [parent, child1] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('C1', null, 1),
         load_page_subtree: () =>
           subtreeResp([
@@ -727,7 +691,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({ move_block: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, { move_block: () => Promise.reject(new Error('move failed')) })
 
       // R6 (#405): move actions now resolve `false` on a caught backend error.
       await expect(store.getState().moveDown('A')).resolves.toBe(false)
@@ -739,7 +703,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_block: () => moveResp('A', 'OTHER', 6),
         // The fallback reload. This used to be stubbed with a PAGE envelope
         // (`items`/`next_cursor`), which `load_page_subtree` never returns.
@@ -766,7 +730,7 @@ describe('PageBlockStore', () => {
       const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
-      stubInvoke({ move_block: () => moveResp('B', null, 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', null, 1) })
 
       await store.getState().moveUp('B')
 
@@ -778,7 +742,7 @@ describe('PageBlockStore', () => {
       const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
-      stubInvoke({ move_block: () => moveResp('B', null, 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', null, 1) })
 
       await store.getState().reorder('B', 0)
 
@@ -791,7 +755,7 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
       const blockC = makeBlock({ id: 'C', position: 3, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB, blockC] })
-      stubInvoke({ move_block: () => moveResp('A', null, 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('A', null, 2) })
 
       // Move A down past B → slot 1 (B slides up once A vacates). The backend
       // assigns a dense rank from the slot; no collision.
@@ -817,7 +781,7 @@ describe('PageBlockStore', () => {
           ['S', s],
         ]),
       })
-      stubInvoke({ move_block: () => moveResp('X', 'GP', 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('X', 'GP', 2) })
 
       await store.getState().dedent('X')
 
@@ -855,7 +819,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'B'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'B'], 'PAGE_1') })
 
       await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 2)
 
@@ -889,7 +853,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'C'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'C'], 'PAGE_1') })
 
       await store.getState().moveBlocks(['A', 'C'], 'PAGE_1', 2)
 
@@ -921,7 +885,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['B', 'C'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['B', 'C'], 'PAGE_1') })
 
       // Multi-select move of [B,C] to the end (slot 3 of the rendered order).
       await store.getState().moveBlocks(['B', 'C'], 'PAGE_1', 3)
@@ -950,7 +914,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['D'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['D'], 'PAGE_1') })
 
       // Move [D] (rendered slot 1) to the end — slot 3 among the others.
       await store.getState().moveBlocks(['D'], 'PAGE_1', 3)
@@ -971,7 +935,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'C'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'C'], 'PAGE_1') })
 
       // Caller passes ['C', 'A'] — but A precedes C in the document, so the
       // batch must be issued as ['A', 'C'].
@@ -989,7 +953,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'B'], 'P') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'B'], 'P') })
 
       await store.getState().moveBlocks(['A', 'B'], 'P', 0)
 
@@ -1014,7 +978,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['B', 'C'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['B', 'C'], 'PAGE_1') })
 
       await store.getState().moveBlocks(['B', 'C'], 'PAGE_1', 0)
 
@@ -1040,7 +1004,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A'], 'PAGE_1') })
 
       // 'GHOST' is not in the tree — only 'A' should be sent.
       await store.getState().moveBlocks(['A', 'GHOST'], 'PAGE_1', 1)
@@ -1056,7 +1020,9 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: before })
 
       // The single batch IPC rejects → whole tx rolled back backend-side.
-      stubInvoke({ move_blocks_batch: () => Promise.reject(new Error('move failed')) })
+      stubInvoke(mockedInvoke, {
+        move_blocks_batch: () => Promise.reject(new Error('move failed')),
+      })
 
       await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)
 
@@ -1085,7 +1051,7 @@ describe('PageBlockStore', () => {
       })
 
       const batch = deferred<CommandReturns['move_blocks_batch']>()
-      stubInvoke({ move_blocks_batch: () => batch.promise })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batch.promise })
 
       const moving = store.getState().moveBlocks(['A'], 'PAGE_1', 1)
 
@@ -1129,7 +1095,7 @@ describe('PageBlockStore', () => {
 
       // Backend reparented A somewhere other than the requested 'PAGE_1' → a
       // local splice would diverge, so `reconcileBatchMove` requests a reload.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_blocks_batch: () => [{ block_id: 'A', new_parent_id: 'ELSEWHERE', new_position: 1 }],
         load_page_subtree: () =>
           subtreeResp([makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 })]),
@@ -1254,7 +1220,7 @@ describe('PageBlockStore', () => {
       // Two roots requested, ONE response — and the response it does carry
       // echoes the requested parent, so the count check is the only guard that
       // can catch the mismatch.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_blocks_batch: () => batchResp(['A'], 'PAGE_1'),
         // Backend truth: only A actually moved to the tail.
         load_page_subtree: () =>
@@ -1286,7 +1252,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'B'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'B'], 'PAGE_1') })
 
       // Base slot 1 among the non-selected children [C, D].
       await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)
@@ -1314,7 +1280,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'B'], 'P') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'B'], 'P') })
 
       await store.getState().moveBlocks(['A', 'B'], 'P', 0)
 
@@ -1344,7 +1310,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['X'], 'P2') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['X'], 'P2') })
 
       await store.getState().moveBlocks(['X'], 'P2', 0)
 
@@ -1371,7 +1337,7 @@ describe('PageBlockStore', () => {
 
       // A re-parented under its OWN child: the replayed bag holds the cycle
       // A→A1→A, which `buildFlatTree` cannot reach from the root and drops.
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_blocks_batch: () => batchResp(['A'], 'A1'),
         load_page_subtree: () =>
           subtreeResp([
@@ -1406,7 +1372,7 @@ describe('PageBlockStore', () => {
 
         // Requesting to move A under itself — the simplest cycle
         // `wouldCreateMoveCycle` rejects (`orderedIds.includes(wantParent)`).
-        stubInvoke({
+        stubInvoke(mockedInvoke, {
           move_blocks_batch: () => batchResp(['A'], 'A'),
           load_page_subtree: () =>
             subtreeResp([
@@ -1453,7 +1419,7 @@ describe('PageBlockStore', () => {
       })
 
       const batch = deferred<CommandReturns['move_blocks_batch']>()
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         move_blocks_batch: () => batch.promise,
         // The reload the presence check will trigger.
         load_page_subtree: () =>
@@ -1505,7 +1471,7 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      stubInvoke({ move_blocks_batch: () => batchResp(['A', 'A1'], 'PAGE_1') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'A1'], 'PAGE_1') })
 
       // Pass BOTH the parent (A) and its child (A1) — violating the contract.
       await store.getState().moveBlocks(['A', 'A1'], 'PAGE_1', 2)
@@ -1546,13 +1512,13 @@ describe('PageBlockStore', () => {
       // reorder(B,1) leaves array order [D,B,C,A] with STALE/duplicated
       // stored positions D=1,B=2,C=1,A=1 (each reorder heals only the ONE
       // moved block's `position`, per #404).
-      stubInvoke({ move_block: () => moveResp('C', 'GROUP_A', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('C', 'GROUP_A', 1) })
       await store.getState().reorder('C', 0)
 
-      stubInvoke({ move_block: () => moveResp('D', 'GROUP_A', 1) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('D', 'GROUP_A', 1) })
       await store.getState().reorder('D', 0)
 
-      stubInvoke({ move_block: () => moveResp('B', 'GROUP_A', 2) })
+      stubInvoke(mockedInvoke, { move_block: () => moveResp('B', 'GROUP_A', 2) })
       await store.getState().reorder('B', 1)
 
       // Sanity: GROUP_A is now exactly the corrupting pre-state the issue
@@ -1576,7 +1542,7 @@ describe('PageBlockStore', () => {
 
       // A MULTI-SELECT batch move entirely inside GROUP_B — GROUP_A is
       // neither the destination nor a vacated source.
-      stubInvoke({ move_blocks_batch: () => batchResp(['R'], 'GROUP_B') })
+      stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['R'], 'GROUP_B') })
       await store.getState().moveBlocks(['R'], 'GROUP_B', 0)
 
       const after = store.getState().blocks

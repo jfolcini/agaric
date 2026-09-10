@@ -1360,12 +1360,14 @@ export const blocksHandlers = {
     // is the same `COALESCE(page_id, id)` lookup as
     // `count_backlinks_batch` above.
     // #2248 — the IPC now carries `scope: SpaceScope`. Trash is inherently
-    // per-space, so only an `active` scope produces a count; `global` (never
-    // sent by the FE for trash) resolves to no space and counts nothing.
+    // per-space, so only an `active` scope produces a count; `global` is
+    // refused by `require_active`, exactly as `list_trash` refuses it.
     const a = args as Record<string, unknown>
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    if (spaceId == null) return 0
+    if (scope?.kind !== 'active' || !scope.space_id) {
+      throw validationRejection('count_trash requires an active space scope')
+    }
+    const spaceId = scope.space_id
     let count = 0
     for (const b of blocks.values()) {
       if (!b['deleted_at']) continue

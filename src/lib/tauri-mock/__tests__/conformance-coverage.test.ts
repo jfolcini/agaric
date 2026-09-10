@@ -466,12 +466,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     "mock's answer is a constant no query step could bind to the backend's",
 
   // ── Trash ──
-  //
-  // Neither `list_trash` nor `count_trash` is waived: the multi-cohort roots
-  // and the badge's count are query steps in
-  // `query_trash_and_page_listings.json` (#3829, #3830). The count's bare
-  // `i64` — the old waiver's blocker — projects as the one-token `value`
-  // shape (`conformance-query.ts`).
   trash_descendant_counts:
     'returns `HashMap<root_id, count>` — a keyed count map, not the canonical ' +
     'block-id rows the query projection binds',
@@ -507,12 +501,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   list_page_aliases_by_prefix: 'page-alias table outside the conformance snapshot scope',
   resolve_page_by_alias: 'page-alias table outside the conformance snapshot scope',
   list_spaces: 'space registry outside the single-space conformance snapshot scope',
-  // `get_property_def` and `list_property_defs` are NOT waived (#3830). The old
-  // reason — "property_definitions registry (app-layer), not projected block
-  // state" — was true of the SNAPSHOT and read as if it settled the query leg
-  // too: what a query step needs is a registry both stacks start with, and a
-  // fixture's `seed.property_defs` section is that. Both are driven by
-  // `query_property_defs.json`.
   get_link_metadata: 'link_metadata cache outside the conformance snapshot scope',
   list_attachments: 'attachments blob store outside the conformance snapshot scope',
   list_attachments_batch: 'attachments blob store outside the conformance snapshot scope',

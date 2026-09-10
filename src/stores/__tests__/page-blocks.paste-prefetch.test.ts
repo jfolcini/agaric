@@ -6,12 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
-import {
-  type CommandReturns,
-  mockInvokeCommands,
-  strictInvokeFallback,
-  type TypedInvokeHandlers,
-} from '@/__tests__/helpers/invoke'
+import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import {
@@ -36,15 +31,6 @@ const TEST_SPACE_ID = 'SPACE_TEST'
 // wrapper. See the dedicated truncation test for the `truncated: true` path.
 function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
   return { blocks, truncated: false, total: blocks.length }
-}
-
-/**
- * Install this test's command-keyed `invoke` handlers. The `return []` tails
- * these switches used to carry absorbed any command nobody modelled; anything
- * unlisted now hits `strictInvokeFallback` and fails the test by name.
- */
-function stubInvoke(handlers: TypedInvokeHandlers): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
 }
 
 /** The `create_blocks_batch` specs the store sends, as the handlers read them. */
@@ -145,7 +131,7 @@ describe('PageBlockStore', () => {
     function wireBatchAndReload(reloadRows: FlatBlock[]): { batches: BatchSpecs[] } {
       const batches: BatchSpecs[] = []
       let created = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_blocks_batch: (args) => {
           const specs = specsOf(args)
           batches.push(specs)
@@ -242,7 +228,7 @@ describe('PageBlockStore', () => {
 
     it('reloads and returns [] when the anchor vanished before paste', async () => {
       store.setState({ blocks: [] })
-      stubInvoke({ load_page_subtree: () => subtreeResp([]) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp([]) })
 
       const ids = await store.getState().pasteBlocks('GONE', 'x')
 
@@ -258,7 +244,7 @@ describe('PageBlockStore', () => {
     it('reconciles with a reload when the create batch fails', async () => {
       const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
       store.setState({ blocks: [anchor] })
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         create_blocks_batch: () => {
           throw new Error('batch failed')
         },
@@ -300,7 +286,7 @@ describe('PageBlockStore', () => {
         let createdBlocks = 0
         let createdPageN = 0
         let createdTagN = 0
-        stubInvoke({
+        stubInvoke(mockedInvoke, {
           list_all_pages_in_space: () =>
             (opts.pages ?? []).map((p) => makePageHeading({ id: p.id, content: p.content })),
           list_all_tags_in_space: () =>
@@ -423,7 +409,7 @@ describe('PageBlockStore', () => {
 
         const batches: BatchSpecs[] = []
         let createdBlocks = 0
-        stubInvoke({
+        stubInvoke(mockedInvoke, {
           list_all_pages_in_space: () => {
             // Simulate a concurrent remote/MCP write inserting a new sibling
             // ABOVE the anchor while this lazy, only-when-needed IPC is in
@@ -475,7 +461,7 @@ describe('PageBlockStore', () => {
 
         const batches: BatchSpecs[] = []
         let createdBlocks = 0
-        stubInvoke({
+        stubInvoke(mockedInvoke, {
           list_all_pages_in_space: () => {
             // Simulate a concurrent write re-parenting the anchor itself
             // (e.g. an indent/move from another device) while the lazy
@@ -520,7 +506,7 @@ describe('PageBlockStore', () => {
       // fired a second, fresh IPC it would find no queued response and hang
       // / reject — proving `mockedInvoke` was called exactly once is the
       // load-bearing assertion below.
-      stubInvoke({ load_page_subtree: () => subtreeResp(blocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(blocks) })
 
       prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
       expect(mockedInvoke).toHaveBeenCalledTimes(1)
@@ -549,7 +535,7 @@ describe('PageBlockStore', () => {
       // served that parked snapshot.
       const snapshots = ['A', 'STALE', 'FRESH']
       let call = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           subtreeResp([makeBlock({ id: snapshots[call++] ?? 'UNEXPECTED', parent_id: 'PAGE_1' })]),
       })
@@ -574,7 +560,7 @@ describe('PageBlockStore', () => {
 
     it('falls through to a fresh IPC when no prefetch is live for this page', async () => {
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
-      stubInvoke({ load_page_subtree: () => subtreeResp(blocks) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => subtreeResp(blocks) })
 
       // No prefetchPageSubtree call — load() has nothing to consume.
       await store.getState().load()
@@ -588,7 +574,7 @@ describe('PageBlockStore', () => {
       // The ORDER is the subject: the first call backs the unrelated page's
       // prefetch and never settles; the second is this page's own fetch.
       let call = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           call++ === 0
             ? new Promise<CommandReturns['load_page_subtree']>(() => {})
@@ -614,7 +600,7 @@ describe('PageBlockStore', () => {
       // The ORDER is the subject: call 1 backs the prefetch this test parks
       // and holds open; call 2 is the newer load's own fetch, which wins.
       let call = 0
-      stubInvoke({
+      stubInvoke(mockedInvoke, {
         load_page_subtree: () =>
           call++ === 0
             ? new Promise<CommandReturns['load_page_subtree']>((res) => {
@@ -664,7 +650,7 @@ describe('PageBlockStore', () => {
       )
       // Backs the PREFETCH's IPC — the prefetch itself is what rejects, not
       // a fresh fetch inside load().
-      stubInvoke({ load_page_subtree: () => Promise.reject(membershipRejection) })
+      stubInvoke(mockedInvoke, { load_page_subtree: () => Promise.reject(membershipRejection) })
 
       prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
       await store.getState().load()

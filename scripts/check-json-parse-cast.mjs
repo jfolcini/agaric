@@ -71,12 +71,12 @@
 //
 // ─── Kill-date ────────────────────────────────────────────────────────
 //
-// REMOVE AFTER 0.13.0 (#4885). Bumped from 0.12.0 at the 0.12.0 cut; burning
-// it down is its own PR, not a release's. This baseline exists to reach `{}`, and
-// nothing but someone happening to notice has ever pressed it there. At
-// 0.13.0 `remove-after-markers` fails on this line: give the remaining
-// sites a real validator and delete this block, or bump the version and
-// say in the diff why not.
+// REMOVE AFTER 0.13.0 (#4885). Bumped from 0.12.0 at the 0.12.0 cut;
+// burning it down is its own PR, not a release's. This baseline exists to
+// reach `{}`, and nothing but someone happening to notice has ever pressed
+// it there. At 0.13.0 `remove-after-markers` fails on this line: give the
+// remaining sites a real validator and delete this block, or bump the
+// version and say in the diff why not.
 //
 // ─── Detection ────────────────────────────────────────────────────────
 //
