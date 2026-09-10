@@ -1,4 +1,4 @@
-# Session 1684 — review notes from five PRs, one follow-up
+# Session 1684 — review notes from four PRs, one follow-up
 
 The non-blocking notes the reviewer left on #4939, #4940, #4942 and #4943,
 acted on together so that none of those approved branches took a push of
