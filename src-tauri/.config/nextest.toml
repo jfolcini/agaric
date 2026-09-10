@@ -165,6 +165,17 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 filter = 'test(/rebuild_block_links_unresolved_residency_at_.*_blocks_4242/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
+# `reconcile_all_scale_sweep_4901` (`reconciliation_oracle::tests`) is a
+# measurement whose figures are printed, not bounded: equivalence is gated per
+# PR by `reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901`,
+# so this kill can only LOSE the number, never catch a defect. Hence the long
+# leash rather than the sweeps' usual 4x30s: this one seeds 101k blocks against
+# the 4241/4242 sweeps' 5k, it measured 25s in debug on a 16-core dev box, and
+# a debug run on a 2-core runner is well inside 4x30s of being slower.
+[[profile.default.overrides]]
+filter = 'test(/reconcile_all_scale_sweep_4901/)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 [profile.ci]
 fail-fast = false
 retries = 2

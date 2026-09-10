@@ -195,8 +195,13 @@ impl std::fmt::Display for Divergence {
 // ---------------------------------------------------------------------------
 
 /// One `blocks` row, reduced to the columns the derived artefacts depend on.
+///
+/// [`reconcile_all`] dumps it once and hands the same slice to every artefact
+/// (#4901): each `rebuild_*_from_base` / `reconcile_*` below takes the dump
+/// rather than reading `blocks` — every row, including `content`, and no
+/// liveness filter — for itself.
 #[derive(Debug, Clone)]
-struct BaseBlock {
+pub struct BaseBlock {
     id: String,
     /// The structural parent. The ONLY input to page ownership — everything
     /// else about a page is a cache of this edge.
@@ -524,8 +529,8 @@ pub struct PageCounts {
 /// questions, and this module claims only the one it computes.
 pub async fn rebuild_pages_cache_counts_from_base(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
 ) -> Result<BTreeMap<String, PageCounts>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let links = dump_block_links(pool).await?;
     let page_ids = sqlx::query_scalar!("SELECT page_id FROM pages_cache")
         .fetch_all(pool)
@@ -533,48 +538,65 @@ pub async fn rebuild_pages_cache_counts_from_base(
 
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
 
-    let mut out = BTreeMap::new();
-    for page in page_ids {
-        let mut child_block_count: i64 = 0;
-        for b in &blocks {
-            if b.deleted_at.is_none() && b.page_id.as_deref() == Some(page.as_str()) && b.id != page
-            {
-                child_block_count += 1;
-            }
+    // One pass over each dump, attributed to the page a row counts towards. A
+    // page with no cache row collects nothing: whether it should have one is
+    // Artefact 3's question.
+    let mut out: BTreeMap<String, PageCounts> = page_ids
+        .into_iter()
+        .map(|page| {
+            (
+                page,
+                PageCounts {
+                    inbound_link_count: 0,
+                    child_block_count: 0,
+                },
+            )
+        })
+        .collect();
+    for b in blocks {
+        let Some(page) = b.page_id.as_deref() else {
+            continue;
+        };
+        if b.deleted_at.is_some() || b.id == page {
+            continue;
         }
-
-        let mut sources: BTreeSet<&str> = BTreeSet::new();
-        for (source_id, target_id) in &links {
-            // Target must be a LIVE block owned by this page.
-            let Some(target) = by_id.get(target_id.as_str()) else {
-                continue;
-            };
-            if target.deleted_at.is_some() || target.page_id.as_deref() != Some(page.as_str()) {
-                continue;
-            }
-            // Source must be live, page-owned, and on a DIFFERENT page.
-            let Some(source) = by_id.get(source_id.as_str()) else {
-                continue;
-            };
-            if source.deleted_at.is_some() {
-                continue;
-            }
-            let Some(source_page) = source.page_id.as_deref() else {
-                continue;
-            };
-            if source_page == page {
-                continue;
-            }
-            sources.insert(source_id.as_str());
+        if let Some(counts) = out.get_mut(page) {
+            counts.child_block_count += 1;
         }
+    }
 
-        out.insert(
-            page,
-            PageCounts {
-                inbound_link_count: i64::try_from(sources.len()).unwrap_or(i64::MAX),
-                child_block_count,
-            },
-        );
+    let mut sources: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (source_id, target_id) in &links {
+        // Target must be a LIVE block owned by a page with a cache row.
+        let Some(target) = by_id.get(target_id.as_str()) else {
+            continue;
+        };
+        let Some(page) = target.page_id.as_deref() else {
+            continue;
+        };
+        if target.deleted_at.is_some() || !out.contains_key(page) {
+            continue;
+        }
+        // Source must be live, page-owned, and on a DIFFERENT page.
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            continue;
+        };
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        let Some(source_page) = source.page_id.as_deref() else {
+            continue;
+        };
+        if source_page == page {
+            continue;
+        }
+        sources.entry(page).or_default().insert(source_id.as_str());
+    }
+    for (page, distinct) in sources {
+        let counts = out
+            .get_mut(page)
+            .expect("`sources` is keyed only by pages the `out.contains_key` gate above admitted");
+        counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
     }
     Ok(out)
 }
@@ -782,8 +804,8 @@ pub struct PageLinkEdge {
 /// any edge whose source or target block is absent from `blocks`.
 pub async fn rebuild_page_link_cache_from_base(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
 ) -> Result<BTreeMap<(String, String), PageLinkEdge>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let links = dump_block_links(pool).await?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
 
@@ -1101,10 +1123,12 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
 ///
 /// Divergences come back MISSING-first, each arm sorted by `(source, target)`,
 /// so `first` is deterministic.
-pub async fn reconcile_block_links(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
-    let blocks = dump_blocks(pool).await?;
+pub async fn reconcile_block_links(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
-    let expected = fold_block_links_from_content(&blocks);
+    let expected = fold_block_links_from_content(blocks);
     let stored: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
 
     let mut out = Vec::new();
@@ -1271,10 +1295,12 @@ const BLOCK_TAG_REFS_OWNER: &str = "reindex_block_tag_refs(_in_tx/_split/_split_
 ///
 /// Divergences come back MISSING-first, each arm sorted by `(source, tag)`, so
 /// `first` is deterministic.
-pub async fn reconcile_block_tag_refs(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
-    let blocks = dump_blocks(pool).await?;
+pub async fn reconcile_block_tag_refs(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
-    let expected = fold_block_tag_refs_from_content(&blocks);
+    let expected = fold_block_tag_refs_from_content(blocks);
     let stored: BTreeSet<(String, String)> = dump_block_tag_refs(pool).await?.into_iter().collect();
 
     let mut out = Vec::new();
@@ -1389,11 +1415,11 @@ async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTa
 /// being misattributed to this roll-up.
 pub async fn rebuild_tags_cache_from_base(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
 ) -> Result<BTreeMap<String, DerivedTagRow>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let explicit = dump_block_tags(pool).await?;
     let inline = dump_block_tag_refs(pool).await?;
-    Ok(fold_tags_cache_from_base(&blocks, &explicit, &inline))
+    Ok(fold_tags_cache_from_base(blocks, &explicit, &inline))
 }
 
 fn fold_tags_cache_from_base(
@@ -1473,8 +1499,11 @@ const TAGS_CACHE_OWNER: &str = "rebuild_tags_cache(_split) and refresh_tag_usage
      count is a wrong number on screen and a missing row is a tag the resolver cannot find";
 
 /// `tags_cache` against a from-base rebuild, in both directions.
-pub async fn reconcile_tags_cache(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
-    let expected = rebuild_tags_cache_from_base(pool).await?;
+pub async fn reconcile_tags_cache(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_tags_cache_from_base(pool, blocks).await?;
     let stored = dump_tags_cache(pool).await?;
 
     let mut out = Vec::new();
@@ -1658,11 +1687,11 @@ fn date_tag_date(content: Option<&str>) -> Option<String> {
 /// resurfacing as a phantom agenda row.
 pub async fn rebuild_agenda_cache_from_base(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
 ) -> Result<BTreeMap<(String, String), BTreeSet<String>>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let properties = dump_block_properties(pool).await?;
     let explicit = dump_block_tags(pool).await?;
-    Ok(fold_agenda_cache_from_base(&blocks, &properties, &explicit))
+    Ok(fold_agenda_cache_from_base(blocks, &properties, &explicit))
 }
 
 /// The pages both agenda folds exclude — `NOT EXISTS (SELECT 1 FROM
@@ -1759,8 +1788,11 @@ const AGENDA_CACHE_OWNER: &str = "rebuild_agenda_cache(_split) (the RebuildAgend
      it for";
 
 /// `agenda_cache` against a from-base rebuild, in both directions.
-pub async fn reconcile_agenda_cache(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
-    let expected = rebuild_agenda_cache_from_base(pool).await?;
+pub async fn reconcile_agenda_cache(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_agenda_cache_from_base(pool, blocks).await?;
     let stored = dump_agenda_cache(pool).await?;
 
     let mut out = Vec::new();
@@ -1870,11 +1902,11 @@ async fn dump_projected_agenda_cache(
 /// [`reconcile`] sweep, which has no date to pin.
 pub async fn rebuild_projected_agenda_from_base(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
     today: chrono::NaiveDate,
 ) -> Result<BTreeSet<ProjectedRow>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let properties = dump_block_properties(pool).await?;
-    Ok(fold_projected_agenda_from_base(&blocks, &properties, today))
+    Ok(fold_projected_agenda_from_base(blocks, &properties, today))
 }
 
 /// `remaining` as `project_block_into` derives it: `count - seq` while the
@@ -1901,12 +1933,13 @@ fn fold_projected_agenda_from_base(
 ) -> BTreeSet<ProjectedRow> {
     let template_pages = fold_template_pages(properties);
 
-    // `block_properties` is keyed `(block_id, key)`, so at most one row each.
-    let prop = |block_id: &str, key: &str| -> Option<&BaseProperty> {
-        properties
-            .iter()
-            .find(|p| p.block_id == block_id && p.key == key)
-    };
+    // `block_properties` is keyed `(block_id, key)`, so at most one row each —
+    // indexed once, the way `fold_agenda_cache_from_base` builds `by_id`.
+    let by_key: BTreeMap<(&str, &str), &BaseProperty> = properties
+        .iter()
+        .map(|p| ((p.block_id.as_str(), p.key.as_str()), p))
+        .collect();
+    let prop = |block_id: &str, key: &str| by_key.get(&(block_id, key)).copied();
 
     let mut out = BTreeSet::new();
     for block in blocks {
@@ -1974,9 +2007,10 @@ const PROJECTED_AGENDA_OWNER: &str = "rebuild_projected_agenda_cache(_split) (th
 /// [`rebuild_projected_agenda_from_base`].
 pub async fn reconcile_projected_agenda(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
-    let expected = rebuild_projected_agenda_from_base(pool, today).await?;
+    let expected = rebuild_projected_agenda_from_base(pool, blocks, today).await?;
     let stored = dump_projected_agenda_cache(pool).await?;
 
     let mut out = Vec::new();
@@ -2192,11 +2226,11 @@ fn unresolved_target_state(by_id: &BTreeMap<&str, &BaseBlock>, target_id: &str) 
 /// Returns [`AppError`] if any dump fails.
 pub async fn reconcile_block_links_unresolved(
     pool: &SqlitePool,
+    blocks: &[BaseBlock],
 ) -> Result<Vec<Divergence>, AppError> {
-    let blocks = dump_blocks(pool).await?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
     let links: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
-    let expected = fold_block_links_unresolved(&blocks, &links);
+    let expected = fold_block_links_unresolved(blocks, &links);
     let stored: BTreeSet<(String, String)> = dump_block_links_unresolved(pool)
         .await?
         .into_iter()
@@ -2369,14 +2403,11 @@ fn fold_ref_maps(
 /// or a page retitle expressible: production propagates those through
 /// `ReindexFtsReferences`, and an arm that forgets to enqueue it leaves the
 /// old name sitting in `stripped` while this rebuild resolves the new one.
-pub async fn rebuild_fts_index_from_base(
-    pool: &SqlitePool,
-) -> Result<BTreeMap<String, String>, AppError> {
-    let blocks = dump_blocks(pool).await?;
-    let (tag_names, page_titles) = fold_ref_maps(&blocks);
+pub fn rebuild_fts_index_from_base(blocks: &[BaseBlock]) -> BTreeMap<String, String> {
+    let (tag_names, page_titles) = fold_ref_maps(blocks);
 
     let mut expected = BTreeMap::new();
-    for block in &blocks {
+    for block in blocks {
         let Some(content) = block.content.as_deref() else {
             continue;
         };
@@ -2393,7 +2424,7 @@ pub async fn rebuild_fts_index_from_base(
             ),
         );
     }
-    Ok(expected)
+    expected
 }
 
 /// Read the maintained index, keeping EVERY row per `block_id`.
@@ -2770,7 +2801,13 @@ fn diff_fts_blocks(
 /// precedes the counts, because the counts are keyed on both of the others. A
 /// single missed `page_id` re-derivation therefore reports as one ownership
 /// divergence rather than as an unexplained count difference on two pages.
-pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
+///
+/// `blocks` is the caller's `dump_blocks`; every artefact here folds that one
+/// slice.
+pub async fn reconcile(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
     let mut out = Vec::new();
 
     // Artefact 2 first: it shares no key with anything below.
@@ -2785,11 +2822,10 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
     // the space column keyed on the same `parent_id` walk (Artefact 9, so a
     // block whose owner drifted reports once), then row membership (3), then
     // the counts keyed on both (1).
-    let blocks = dump_blocks(pool).await?;
-    diff_page_ownership(&blocks, &mut out);
-    diff_block_space_ids(&blocks, &mut out);
-    diff_pages_cache_rows(&blocks, &read_pages_cache_page_ids(pool).await?, &mut out);
-    let expected_counts = rebuild_pages_cache_counts_from_base(pool).await?;
+    diff_page_ownership(blocks, &mut out);
+    diff_block_space_ids(blocks, &mut out);
+    diff_pages_cache_rows(blocks, &read_pages_cache_page_ids(pool).await?, &mut out);
+    let expected_counts = rebuild_pages_cache_counts_from_base(pool, blocks).await?;
     diff_pages_cache_counts(
         &expected_counts,
         &read_pages_cache_counts(pool).await?,
@@ -2799,7 +2835,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
     // Artefact 5 after ownership, deliberately: the roll-up is keyed on the
     // same `page_id`, so a drift there would otherwise report twice — once at
     // its root and once as an unexplained link-attribution difference.
-    let expected_links = rebuild_page_link_cache_from_base(pool).await?;
+    let expected_links = rebuild_page_link_cache_from_base(pool, blocks).await?;
     diff_page_link_cache(
         &expected_links,
         &read_page_link_cache(pool).await?,
@@ -2809,7 +2845,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
     // Artefact 8 last, and independent of everything above it: the index
     // derives from `blocks.content` plus the tag/page reference maps, not from
     // `page_id`, so it cannot double-report an ownership drift.
-    let expected_fts = rebuild_fts_index_from_base(pool).await?;
+    let expected_fts = rebuild_fts_index_from_base(blocks);
     diff_fts_blocks(&expected_fts, &read_fts_blocks(pool).await?, &mut out);
 
     Ok(out)
@@ -2830,17 +2866,32 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
 /// report so a run that straddles local midnight is diagnosable rather than a
 /// phantom divergence. The order is [`reconcile`]'s, then the six in the
 /// order the header table lists them, so `first` stays deterministic.
+///
+/// # One `blocks` dump, not one snapshot (#4901)
+///
+/// `blocks` is read once and every artefact folds that slice, so the
+/// `blocks`-derived expectations agree with each other and the sweep does not
+/// pull every row's `content` a dozen times. That is NOT snapshot isolation:
+/// `block_links`, `block_properties`, `block_tags`, `attachments` and every
+/// derived table are still read in their own autocommit statements, so a
+/// write that lands between the dump and a later read still reports as a
+/// divergence a second run will not reproduce
+/// (`a_write_after_the_blocks_dump_still_reads_as_a_divergence_4901` pins
+/// that this is so). Closing it means one read transaction around every
+/// read, i.e. every `dump_*` / `read_*` taking a connection instead of the
+/// pool — not taken here.
 pub async fn reconcile_all(
     pool: &SqlitePool,
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
-    let mut out = reconcile(pool).await?;
-    out.extend(reconcile_block_links(pool).await?);
-    out.extend(reconcile_block_links_unresolved(pool).await?);
-    out.extend(reconcile_block_tag_refs(pool).await?);
-    out.extend(reconcile_tags_cache(pool).await?);
-    out.extend(reconcile_agenda_cache(pool).await?);
-    out.extend(reconcile_projected_agenda(pool, today).await?);
+    let blocks = dump_blocks(pool).await?;
+    let mut out = reconcile(pool, &blocks).await?;
+    out.extend(reconcile_block_links(pool, &blocks).await?);
+    out.extend(reconcile_block_links_unresolved(pool, &blocks).await?);
+    out.extend(reconcile_block_tag_refs(pool, &blocks).await?);
+    out.extend(reconcile_tags_cache(pool, &blocks).await?);
+    out.extend(reconcile_agenda_cache(pool, &blocks).await?);
+    out.extend(reconcile_projected_agenda(pool, &blocks, today).await?);
     Ok(out)
 }
 

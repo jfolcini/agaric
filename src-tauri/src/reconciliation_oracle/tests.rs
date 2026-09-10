@@ -1286,9 +1286,10 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
     // NON-VACUITY, by value not just by size: a fold that ignored the nested
     // page boundary would report ONE row of edge_count 3 and still be
     // "non-empty".
-    let expected = rebuild_page_link_cache_from_base(&pool)
-        .await
-        .expect("page-link rebuild");
+    let expected =
+        rebuild_page_link_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
+            .await
+            .expect("page-link rebuild");
     assert_eq!(
         expected,
         [
@@ -1667,7 +1668,7 @@ async fn block_links_oracle_audits_the_base_table_against_content_3955() {
     // `BL_TGT_PENDING`, so a fold that dropped the cross-space filter would
     // still produce a string not containing it. Checking the string here would
     // be vacuous with respect to the claim this comment makes.
-    let divergences = reconcile_block_links(&pool)
+    let divergences = reconcile_block_links(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("reconcile_block_links");
     assert!(
@@ -1701,7 +1702,7 @@ async fn block_links_oracle_audits_the_base_table_against_content_3955() {
     settle_page_link_cache_rebuild(&pool)
         .await
         .expect("page_link_cache rebuild");
-    let seen: Vec<(&str, String)> = reconcile(&pool)
+    let seen: Vec<(&str, String)> = reconcile(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("reconcile")
         .into_iter()
@@ -1962,7 +1963,7 @@ async fn block_links_oracle_scale_sweep_3955() {
     }
 
     let started = std::time::Instant::now();
-    let divergences = reconcile_block_links(&pool)
+    let divergences = reconcile_block_links(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("block_links reconcile");
     let elapsed = started.elapsed();
@@ -2212,9 +2213,10 @@ async fn block_links_unresolved_oracle_reports_a_debt_nothing_owes_4229() {
         already.contains("in 2 place(s)"),
         "both planted rows must be reported, got:\n{already}"
     );
-    let divergences = reconcile_block_links_unresolved(&pool)
-        .await
-        .expect("reconcile_block_links_unresolved");
+    let divergences =
+        reconcile_block_links_unresolved(&pool, &dump_blocks(&pool).await.expect("dump"))
+            .await
+            .expect("reconcile_block_links_unresolved");
     assert!(
         divergences
             .iter()
@@ -2408,9 +2410,10 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
         .await
         .expect("soft-delete the dormant target");
 
-    let divergences = reconcile_block_links_unresolved(&pool)
-        .await
-        .expect("reconcile_block_links_unresolved");
+    let divergences =
+        reconcile_block_links_unresolved(&pool, &dump_blocks(&pool).await.expect("dump"))
+            .await
+            .expect("reconcile_block_links_unresolved");
     let live_case = divergences
         .iter()
         .find(|d| d.key == format!("{PW_SRC_LIVE} -> {PW_TGT_LIVE}"))
@@ -2674,9 +2677,10 @@ async fn block_links_unresolved_oracle_scale_sweep_4241() {
     }
 
     let started = std::time::Instant::now();
-    let divergences = reconcile_block_links_unresolved(&pool)
-        .await
-        .expect("block_links_unresolved reconcile");
+    let divergences =
+        reconcile_block_links_unresolved(&pool, &dump_blocks(&pool).await.expect("dump"))
+            .await
+            .expect("block_links_unresolved reconcile");
     let elapsed = started.elapsed();
 
     let coverage = block_links_unresolved_coverage(&pool)
@@ -2763,7 +2767,7 @@ async fn fts_stored(pool: &sqlx::SqlitePool, block_id: &str) -> Vec<String> {
 
 /// The divergences this artefact reported, in `reconcile`'s stable order.
 async fn fts_divergences(pool: &sqlx::SqlitePool) -> Vec<Divergence> {
-    reconcile(pool)
+    reconcile(pool, &dump_blocks(pool).await.expect("dump"))
         .await
         .expect("reconcile")
         .into_iter()
@@ -3265,7 +3269,7 @@ async fn block_tag_refs_oracle_audits_the_base_table_against_content_3345() {
     // Asserted over the DIVERGENCE SET, not the rendered report: the report
     // shows only `divergences.first()`, so a string check here would pass
     // vacuously for any token that sorts after the first.
-    let divergences = reconcile_block_tag_refs(&pool)
+    let divergences = reconcile_block_tag_refs(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("reconcile_block_tag_refs");
     for excluded in [BTR_TAG_PENDING, BTR_TAG_OTHER, BTR_TAG_DEAD, BTR_NOT_A_TAG] {
@@ -3489,7 +3493,7 @@ async fn tags_cache_reconciles_and_reports_a_stale_count_3345() {
     // NON-VACUITY by VALUE. The expected set is exactly three rows, and the
     // count is 2 — one deduped double-tagged source plus one inline-only
     // source, with the dead source excluded.
-    let expected = rebuild_tags_cache_from_base(&pool)
+    let expected = rebuild_tags_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("from-base rebuild");
     assert_eq!(
@@ -3562,7 +3566,7 @@ async fn tags_cache_reconciles_and_reports_a_stale_count_3345() {
 #[tokio::test]
 async fn tags_cache_dedup_folds_non_ascii_case_variants_3345() {
     let (pool, _dir) = tc_fixture().await;
-    let expected = rebuild_tags_cache_from_base(&pool)
+    let expected = rebuild_tags_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("from-base rebuild");
 
@@ -3744,7 +3748,7 @@ async fn agenda_cache_reconciles_and_reports_a_stale_row_3345() {
     // is deleted, or lives under a template page, or carries a tag that is
     // deleted or not date-shaped, is absent — and absence is only meaningful
     // against a keyset asserted in full.
-    let expected = rebuild_agenda_cache_from_base(&pool)
+    let expected = rebuild_agenda_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
         .await
         .expect("from-base rebuild");
     let keys: Vec<(String, String)> = expected.keys().cloned().collect();
@@ -4010,9 +4014,10 @@ async fn projected_agenda_reconciles_and_reports_a_dropped_occurrence_3345() {
     let today = pa_today();
     let horizon = agaric_store::cache::HORIZON_OCCURRENCES;
 
-    let expected = rebuild_projected_agenda_from_base(&pool, today)
-        .await
-        .expect("from-base rebuild");
+    let expected =
+        rebuild_projected_agenda_from_base(&pool, &dump_blocks(&pool).await.expect("dump"), today)
+            .await
+            .expect("from-base rebuild");
 
     // NON-VACUITY by VALUE, and by the exact set of blocks that contribute.
     let mut blocks: Vec<&str> = expected.iter().map(|(b, _, _)| b.as_str()).collect();
@@ -4088,4 +4093,455 @@ async fn projected_agenda_reconciles_and_reports_a_dropped_occurrence_3345() {
         extra.contains("projected_agenda_cache.row") && extra.contains(PA_DONE),
         "expected an extra-row divergence naming the DONE block, got:\n{extra}"
     );
+}
+
+// ===========================================================================
+// `reconcile_all` — the release sweep (#4886), one `blocks` dump (#4901)
+// ===========================================================================
+
+const EQ_SPACE: &str = "01EQSPACE49010000000000000";
+const EQ_PAGE_P: &str = "01EQPAGEP49010000000000000";
+const EQ_PAGE_Q: &str = "01EQPAGEQ49010000000000000";
+/// Live, on P: links B and the never-created Z, names tag G inline.
+const EQ_LIVE_A: &str = "01EQBLKAA49010000000000000";
+/// Live, on Q: the link target.
+const EQ_LIVE_B: &str = "01EQBLKBB49010000000000000";
+/// TOMBSTONED, structurally under P but stored as owned by Q, holding a
+/// `block_links` row its content never named. Both of its divergences exist
+/// only because the dump is unfiltered: a live-only slice folds neither.
+const EQ_DEAD_T: &str = "01EQDEADT49010000000000000";
+/// A top-level tag (no page ancestor) that also holds a stale link row.
+const EQ_TAG_G: &str = "01EQTAGGG49010000000000000";
+/// Repeating, bounded by `repeat-count` MINUS `repeat-seq`.
+const EQ_REPEAT_L: &str = "01EQRPTLL49010000000000000";
+/// Repeating, bounded by `repeat-until`; links A on its OWN page.
+const EQ_REPEAT_R: &str = "01EQRPTRR49010000000000000";
+const EQ_GHOST_Z: &str = "01EQGHOSTZ4901000000000000";
+
+fn eq_today() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date")
+}
+
+/// One vault that diverges in EVERY artefact [`reconcile_all`] sweeps, with
+/// every rule the two restructured folds carry armed by a row that must fail
+/// it. Nothing here is a pure corruption: each state is one production reaches
+/// between an apply landing and its maintainer draining, except the count
+/// UPDATE, which stands in for a missed increment.
+async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("reconcile_all.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, EQ_SPACE, None).await;
+    bl_register_space(&pool, EQ_SPACE).await;
+    bl_insert_page(&pool, EQ_PAGE_P, Some(EQ_SPACE)).await;
+    bl_insert_page(&pool, EQ_PAGE_Q, Some(EQ_SPACE)).await;
+    btr_insert_tag(&pool, EQ_TAG_G, EQ_PAGE_P, Some(EQ_SPACE), None).await;
+    // A top-level tag: no parent, no owning page — outside the space fold's
+    // scope and an ORPHAN source for the inbound-count rule.
+    // dynamic-sql: test-only fixture seed.
+    sqlx::query("UPDATE blocks SET parent_id = NULL, page_id = NULL, content = 'g' WHERE id = ?")
+        .bind(EQ_TAG_G)
+        .execute(&pool)
+        .await
+        .expect("detach the tag");
+
+    bl_insert_content(&pool, EQ_LIVE_B, EQ_PAGE_Q, Some(EQ_SPACE), "hello").await;
+    bl_insert_content(
+        &pool,
+        EQ_LIVE_A,
+        EQ_PAGE_P,
+        Some(EQ_SPACE),
+        &format!("see [[{EQ_LIVE_B}]] and [[{EQ_GHOST_Z}]] #[{EQ_TAG_G}]"),
+    )
+    .await;
+    bl_insert_content(&pool, EQ_DEAD_T, EQ_PAGE_P, Some(EQ_SPACE), "gone").await;
+
+    // The four `repeat*` keys, each deciding the row count of its block.
+    bl_insert_content(&pool, EQ_REPEAT_L, EQ_PAGE_P, Some(EQ_SPACE), "limited").await;
+    ag_set_columns(&pool, EQ_REPEAT_L, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, EQ_REPEAT_L, "repeat", "+1d").await;
+    pa_num_property(&pool, EQ_REPEAT_L, "repeat-count", 3.0).await;
+    pa_num_property(&pool, EQ_REPEAT_L, "repeat-seq", 1.0).await;
+    bl_insert_content(
+        &pool,
+        EQ_REPEAT_R,
+        EQ_PAGE_P,
+        Some(EQ_SPACE),
+        &format!("[[{EQ_LIVE_A}]]"),
+    )
+    .await;
+    ag_set_columns(&pool, EQ_REPEAT_R, Some("2026-01-01"), None).await;
+    pa_text_property(&pool, EQ_REPEAT_R, "repeat", "+1d").await;
+    ag_date_property(&pool, EQ_REPEAT_R, "repeat-until", "2026-01-05").await;
+
+    // `block_links` as the in-tx arm leaves it: two edges content names, one
+    // SAME-page edge, and two stale rows (a tombstoned source, an orphan
+    // source) that arm the inbound count's three exclusions.
+    insert_block_link(&pool, EQ_LIVE_A, EQ_LIVE_B).await;
+    insert_block_link(&pool, EQ_REPEAT_R, EQ_LIVE_A).await;
+    insert_block_link(&pool, EQ_DEAD_T, EQ_LIVE_B).await;
+    insert_block_link(&pool, EQ_TAG_G, EQ_LIVE_B).await;
+    tc_tag_edge(&pool, EQ_LIVE_B, EQ_TAG_G).await;
+
+    // FTS indexed while T is live, so its row survives the tombstone.
+    seed_fts_index(&pool).await;
+    // T: soft-deleted, and its owner drifted to Q while its parent is P.
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("UPDATE blocks SET deleted_at = 1, page_id = ? WHERE id = ?")
+        .bind(EQ_PAGE_Q)
+        .bind(EQ_DEAD_T)
+        .execute(&pool)
+        .await
+        .expect("tombstone and drift T");
+
+    // Production settles the `pages_cache` rows and both counts; one missed
+    // increment is then injected on P.
+    settle_pages_cache(&pool).await;
+    // dynamic-sql: test-only fault injection.
+    sqlx::query("UPDATE pages_cache SET child_block_count = 0 WHERE page_id = ?")
+        .bind(EQ_PAGE_P)
+        .execute(&pool)
+        .await
+        .expect("zero P's child count");
+
+    (pool, dir)
+}
+
+/// **The equivalence pin for #4901.** `reconcile_all` reports exactly this
+/// list, in this order, for the fixture above — the same list the pre-#4901
+/// sweep produced when every artefact read `blocks` for itself.
+///
+/// Two entries (`blocks.page_id [T]`, `block_links.row [T -> B]`) exist ONLY
+/// because the threaded dump is the unfiltered one every artefact used to
+/// take for itself; a live-only slice drops both. The six projected rows pin
+/// all four `repeat*` keys of the indexed property lookup (losing `repeat`
+/// projects nothing, losing `repeat-until` or `repeat-count` projects the
+/// full horizon, losing `repeat-seq` projects three). The count divergence
+/// and the ABSENCE of any other count divergence pin the restructured fold:
+/// Q's inbound count is 1 only if the tombstoned source, the orphan source
+/// and the same-page edge are all excluded, as production excludes them.
+#[tokio::test]
+async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
+    let (pool, _dir) = eq_fixture().await;
+
+    let divergences = reconcile_all(&pool, eq_today())
+        .await
+        .expect("reconcile_all");
+
+    let got: Vec<(&str, &str)> = divergences
+        .iter()
+        .map(|d| (d.artefact, d.key.as_str()))
+        .collect();
+    let g_to_b = format!("{EQ_TAG_G} -> {EQ_LIVE_B}");
+    let p_to_a = format!("{EQ_PAGE_P} -> {EQ_LIVE_A}");
+    let p_to_b = format!("{EQ_PAGE_P} -> {EQ_LIVE_B}");
+    let t_to_b = format!("{EQ_DEAD_T} -> {EQ_LIVE_B}");
+    let a_to_z = format!("{EQ_LIVE_A} -> {EQ_GHOST_Z}");
+    let a_to_g = format!("{EQ_LIVE_A} -> {EQ_TAG_G}");
+    let l_day1 = format!("2026-01-01 / {EQ_REPEAT_L}");
+    let r_day1 = format!("2026-01-01 / {EQ_REPEAT_R}");
+    // `repeat-until` is a dated PROPERTY, so agenda arm 0 promotes it too.
+    let r_until = format!("2026-01-05 / {EQ_REPEAT_R}");
+    let l_rows: Vec<String> = ["2026-01-02", "2026-01-03"]
+        .iter()
+        .map(|d| format!("{EQ_REPEAT_L} / {d} / due_date"))
+        .collect();
+    let r_rows: Vec<String> = ["2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05"]
+        .iter()
+        .map(|d| format!("{EQ_REPEAT_R} / {d} / due_date"))
+        .collect();
+    let mut want: Vec<(&str, &str)> = vec![
+        ("blocks.page_id", EQ_DEAD_T),
+        ("pages_cache.child_block_count", EQ_PAGE_P),
+        ("page_link_cache.row", &p_to_a),
+        ("page_link_cache.row", &p_to_b),
+        ("page_link_cache.row", &g_to_b),
+        ("fts_blocks.row", EQ_DEAD_T),
+        ("block_links.row", &t_to_b),
+        ("block_links.row", &g_to_b),
+        ("block_links_unresolved.row", &a_to_z),
+        ("block_tag_refs.row", &a_to_g),
+        ("tags_cache.row", EQ_TAG_G),
+        ("agenda_cache.row", &l_day1),
+        ("agenda_cache.row", &r_day1),
+        ("agenda_cache.row", &r_until),
+    ];
+    want.extend(
+        l_rows
+            .iter()
+            .map(|k| ("projected_agenda_cache.row", k.as_str())),
+    );
+    want.extend(
+        r_rows
+            .iter()
+            .map(|k| ("projected_agenda_cache.row", k.as_str())),
+    );
+    assert_eq!(
+        got, want,
+        "the sweep must report exactly these, in this order"
+    );
+    assert_eq!(divergences.len(), 20, "twenty divergences");
+
+    let ownership = &divergences[0];
+    assert_eq!(
+        (ownership.expected.as_str(), ownership.actual.as_str()),
+        (EQ_PAGE_P, EQ_PAGE_Q),
+        "T's owner is derived through the tombstone's parent_id"
+    );
+    let count = &divergences[1];
+    assert_eq!(
+        (count.expected.as_str(), count.actual.as_str()),
+        ("3", "0"),
+        "P's live children are A, L and R — the tombstone is not one"
+    );
+}
+
+/// The measurement behind #4901, mirroring the two sibling sweeps: seeds a
+/// vault, settles it with production's own rebuilds, and prints what the
+/// release sweep costs — `#[ignore]`d for the weekly `--run-ignored=only` lane,
+/// no wall-clock bound asserted, non-vacuity asserted exactly.
+///
+/// The vault is shaped for the two superlinear terms the issue named: every
+/// block carries one property row (so the property dump is vault-sized), one
+/// block in fifty repeats (the dated blocks the projected fold looks up), and
+/// every block links to the next across page boundaries (so `block_links` and
+/// the inbound count are vault-sized too). No tags: the tag artefacts fold
+/// empty sets here and are pinned by their own fixtures.
+///
+/// Measured at 1000 x 100 (101,001 rows: 100,000 content blocks, 104,000
+/// property rows, 100,000 links — the size the performance baseline is stated
+/// at) on one 16-core dev box, load 2-6 except where noted. The two named
+/// terms are timed on their own; before #4901 each of those calls also paid
+/// its own `blocks` dump:
+///
+/// | build | `dump_blocks` x1 | projected rebuild | counts rebuild | `reconcile_all` |
+/// |---|---|---|---|---|
+/// | debug, before | — | 17.8 s | 66.2 s | 316.8 s |
+/// | debug, after | 0.67 s | 0.46 s | 0.46 s | 8.3 s |
+/// | release, before | 0.37 s | 5.3 s | 14.7 s | 57.4 s |
+/// | release, after | 0.36 s | 0.24 s | 0.17 s | 2.4 s |
+///
+/// The release `before` row ran straight after its own LTO build with the box
+/// swapping; its seven entry points timed one by one summed to 25 s, so the
+/// 57 s carries contention and 25 s is the floor of that comparison.
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 100K-block vault to measure the release sweep"]
+async fn reconcile_all_scale_sweep_4901() {
+    const PAGES: usize = 1000;
+    const BLOCKS_PER_PAGE: usize = 100;
+    const REPEAT_EVERY: usize = 50;
+    let today = eq_today();
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("scale_all.db"))
+        .await
+        .expect("init_pool");
+    bl_insert_page(&pool, EQ_SPACE, None).await;
+    bl_register_space(&pool, EQ_SPACE).await;
+
+    let ids: Vec<String> = (0..PAGES * BLOCKS_PER_PAGE)
+        .map(|i| format!("01SWP{i:021}"))
+        .collect();
+    assert_eq!(ids[0].len(), 26, "seed ids must be token-shaped");
+
+    // One transaction: 300K autocommits would dominate the wall clock.
+    let mut tx = pool.begin().await.expect("begin");
+    for p in 0..PAGES {
+        let page = format!("01SWPAGE{p:018}");
+        // dynamic-sql: test-only fixture seed (not a production query path).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+             space_id) VALUES (?, 'page', ?, NULL, ?, ?, ?)",
+        )
+        .bind(&page)
+        .bind(format!("Page {p}"))
+        .bind(i64::try_from(p + 1).unwrap())
+        .bind(&page)
+        .bind(EQ_SPACE)
+        .execute(&mut *tx)
+        .await
+        .expect("seed page");
+        for b in 0..BLOCKS_PER_PAGE {
+            let i = p * BLOCKS_PER_PAGE + b;
+            let next = &ids[(i + 1) % ids.len()];
+            let repeats = i.is_multiple_of(REPEAT_EVERY);
+            // dynamic-sql: test-only fixture seed (not a production query path).
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                 space_id, due_date) VALUES (?, 'content', ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&ids[i])
+            .bind(format!("body {b} [[{next}]]"))
+            .bind(&page)
+            .bind(i64::try_from(b + 1).unwrap())
+            .bind(&page)
+            .bind(EQ_SPACE)
+            .bind(repeats.then_some("2026-01-01"))
+            .execute(&mut *tx)
+            .await
+            .expect("seed block");
+            // dynamic-sql: test-only fixture seed (not a production query path).
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'note', 'n')",
+            )
+            .bind(&ids[i])
+            .execute(&mut *tx)
+            .await
+            .expect("seed property");
+            if repeats {
+                // dynamic-sql: test-only fixture seed (not a production query path).
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', '+1d')",
+                )
+                .bind(&ids[i])
+                .execute(&mut *tx)
+                .await
+                .expect("seed repeat");
+                // dynamic-sql: test-only fixture seed (not a production query path).
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'repeat-count', 3.0)",
+                )
+                .bind(&ids[i])
+                .execute(&mut *tx)
+                .await
+                .expect("seed repeat-count");
+            }
+        }
+    }
+    // Links second: the target of every edge is the block seeded after it.
+    for (i, id) in ids.iter().enumerate() {
+        // dynamic-sql: test-only fixture seed (not a production query path).
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(id)
+            .bind(&ids[(i + 1) % ids.len()])
+            .execute(&mut *tx)
+            .await
+            .expect("seed link");
+    }
+    tx.commit().await.expect("commit seed");
+
+    // Production's own maintainers settle every artefact the sweep covers.
+    settle_pages_cache(&pool).await;
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    agaric_store::cache::rebuild_agenda_cache(&pool)
+        .await
+        .expect("rebuild_agenda_cache");
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, today)
+        .await
+        .expect("rebuild_projected_agenda_cache_with_today");
+    seed_fts_index(&pool).await;
+
+    let started = std::time::Instant::now();
+    let blocks = dump_blocks(&pool).await.expect("dump_blocks");
+    let dump_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let projected = rebuild_projected_agenda_from_base(&pool, &blocks, today)
+        .await
+        .expect("projected rebuild");
+    let projected_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let counts = rebuild_pages_cache_counts_from_base(&pool, &blocks)
+        .await
+        .expect("counts rebuild");
+    let counts_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let divergences = reconcile_all(&pool, today).await.expect("reconcile_all");
+    let all_took = started.elapsed();
+
+    let coverage = oracle_coverage(&pool).await.expect("coverage");
+    println!(
+        "reconcile_all scale sweep: {} blocks; dump_blocks {dump_took:?}, projected rebuild \
+         {projected_took:?}, counts rebuild {counts_took:?}, reconcile_all {all_took:?} \
+         ({coverage:?})",
+        ids.len() + PAGES + 1,
+    );
+    let dated = i64::try_from(ids.len() / REPEAT_EVERY).unwrap();
+    assert_eq!(
+        (
+            coverage.pages_cache_rows,
+            coverage.page_link_edges,
+            coverage.fts_indexable_blocks,
+            coverage.date_column_rows,
+        ),
+        (
+            i64::try_from(PAGES + 1).unwrap(),
+            i64::try_from(ids.len()).unwrap(),
+            i64::try_from(ids.len() + PAGES + 1).unwrap(),
+            dated,
+        ),
+        "every page has a cache row, every block is a distinct link target and is indexed, \
+         and one block in {REPEAT_EVERY} is dated; got {coverage:?}"
+    );
+    assert_eq!(
+        projected.len(),
+        ids.len() / REPEAT_EVERY * 3,
+        "every dated block projects exactly its repeat-count of occurrences"
+    );
+    assert_eq!(
+        counts
+            .values()
+            .filter(|c| *c
+                == &PageCounts {
+                    inbound_link_count: 1,
+                    child_block_count: i64::try_from(BLOCKS_PER_PAGE).unwrap()
+                })
+            .count(),
+        PAGES,
+        "every seeded page has a full complement of children and one inbound page"
+    );
+    assert_eq!(
+        divergences.len(),
+        0,
+        "a vault settled by production's own maintainers must reconcile; first: {:?}",
+        divergences.first()
+    );
+}
+
+/// The limit [`reconcile_all`]'s doc states, pinned so it cannot rot: one
+/// `blocks` dump is not a snapshot. A block written AFTER the dump and settled
+/// by production's maintainers is counted by `pages_cache` and indexed by
+/// `fts_blocks`, yet absent from the slice the folds read, so the sweep reports
+/// two divergences that a fresh run does not. Closing this needs a read
+/// transaction around every read; when that lands, this test reddens and the
+/// doc paragraph goes with it.
+#[tokio::test]
+async fn a_write_after_the_blocks_dump_still_reads_as_a_divergence_4901() {
+    const LATE: &str = "01EQLATE49010000000000000A";
+    let (pool, _dir) = page_fixture().await;
+    settle_pages_cache(&pool).await;
+    assert_reconciled(&pool, "settled fixture").await;
+
+    let stale = dump_blocks(&pool).await.expect("dump");
+    insert_content_block(&pool, LATE, Some(PAGE_A), Some(PAGE_A)).await;
+    settle_deferred_pages_cache_counts(&pool)
+        .await
+        .expect("count rebuild");
+    settle_fts_for_block(&pool, LATE).await;
+
+    let divergences = reconcile(&pool, &stale).await.expect("reconcile");
+    let keys: Vec<(&str, &str)> = divergences
+        .iter()
+        .map(|d| (d.artefact, d.key.as_str()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            ("pages_cache.child_block_count", PAGE_A),
+            ("fts_blocks.row", LATE),
+        ],
+        "the stale slice knows neither the third child of A nor the indexed row"
+    );
+    assert_eq!(
+        (
+            divergences[0].expected.as_str(),
+            divergences[0].actual.as_str()
+        ),
+        ("2", "3"),
+        "the stale slice still holds two children of A; the settled table holds three"
+    );
+    assert_reconciled(&pool, "a fresh dump sees the new block").await;
 }

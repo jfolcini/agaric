@@ -126,15 +126,20 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     // Folded, not counted in SQL — same rule as the page-shaped counters
     // below: "the fixture covers this" and "the oracle audited this" must come
     // from one computation so they cannot drift apart.
-    let page_link_edges =
-        i64::try_from(rebuild_page_link_cache_from_base(pool).await?.len()).unwrap_or(i64::MAX);
+    let blocks = dump_blocks(pool).await?;
+    let page_link_edges = i64::try_from(
+        rebuild_page_link_cache_from_base(pool, &blocks)
+            .await?
+            .len(),
+    )
+    .unwrap_or(i64::MAX);
     // dynamic-sql: static SQL, test-only oracle read-back.
     let fts_blocks_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks")
         .fetch_one(pool)
         .await?;
     // Folded, not counted in SQL — same reason as `page_link_edges`.
     let fts_indexable_blocks =
-        i64::try_from(rebuild_fts_index_from_base(pool).await?.len()).unwrap_or(i64::MAX);
+        i64::try_from(rebuild_fts_index_from_base(&blocks).len()).unwrap_or(i64::MAX);
     // dynamic-sql: static SQL, test-only oracle read-back.
     let date_column_rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks \
@@ -150,7 +155,6 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     // The page-shaped and space-shaped counters come from the SAME Rust folds
     // the artefacts use, so "the fixture covers this" and "the oracle audited
     // this" can never drift apart.
-    let blocks = dump_blocks(pool).await?;
     // The removal half's obligations, folded from the same dump — the
     // complement of `fts_indexable_blocks` within the blocks that have content.
     let fts_tombstoned_blocks = i64::try_from(
@@ -512,14 +516,15 @@ pub async fn block_links_reconciliation_failure(
     pool: &SqlitePool,
     context: &str,
 ) -> Option<String> {
-    let divergences = match reconcile_block_links(pool).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "block_links oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_block_links(pool, &dump_blocks(pool).await?).await }.await {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "block_links oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "BLOCK_LINKS RECONCILIATION FAILED at [{context}]\n  \
@@ -549,14 +554,15 @@ pub async fn block_tag_refs_reconciliation_failure(
     pool: &SqlitePool,
     context: &str,
 ) -> Option<String> {
-    let divergences = match reconcile_block_tag_refs(pool).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "block_tag_refs oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_block_tag_refs(pool, &dump_blocks(pool).await?).await }.await {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "block_tag_refs oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "BLOCK_TAG_REFS RECONCILIATION FAILED at [{context}]\n  \
@@ -575,14 +581,15 @@ pub async fn assert_block_tag_refs_reconciled(pool: &SqlitePool, context: &str) 
 
 /// The formatted first `tags_cache` divergence, or `None` when it reconciles.
 pub async fn tags_cache_reconciliation_failure(pool: &SqlitePool, context: &str) -> Option<String> {
-    let divergences = match reconcile_tags_cache(pool).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "tags_cache oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_tags_cache(pool, &dump_blocks(pool).await?).await }.await {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "tags_cache oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "TAGS_CACHE RECONCILIATION FAILED at [{context}]\n  \
@@ -603,14 +610,15 @@ pub async fn agenda_cache_reconciliation_failure(
     pool: &SqlitePool,
     context: &str,
 ) -> Option<String> {
-    let divergences = match reconcile_agenda_cache(pool).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "agenda_cache oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_agenda_cache(pool, &dump_blocks(pool).await?).await }.await {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "agenda_cache oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "AGENDA_CACHE RECONCILIATION FAILED at [{context}]\n  \
@@ -632,14 +640,17 @@ pub async fn projected_agenda_reconciliation_failure(
     today: chrono::NaiveDate,
     context: &str,
 ) -> Option<String> {
-    let divergences = match reconcile_projected_agenda(pool, today).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "projected_agenda_cache oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_projected_agenda(pool, &dump_blocks(pool).await?, today).await }
+            .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "projected_agenda_cache oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "PROJECTED_AGENDA_CACHE RECONCILIATION FAILED at [{context}]\n  \
@@ -740,14 +751,17 @@ pub async fn block_links_unresolved_reconciliation_failure(
     pool: &SqlitePool,
     context: &str,
 ) -> Option<String> {
-    let divergences = match reconcile_block_links_unresolved(pool).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Some(format!(
-                "block_links_unresolved oracle could not read the database at [{context}]: {e}"
-            ));
-        }
-    };
+    let divergences =
+        match async { reconcile_block_links_unresolved(pool, &dump_blocks(pool).await?).await }
+            .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                return Some(format!(
+                    "block_links_unresolved oracle could not read the database at [{context}]: {e}"
+                ));
+            }
+        };
     let first = divergences.first()?;
     Some(format!(
         "BLOCK_LINKS_UNRESOLVED RECONCILIATION FAILED at [{context}]\n  \
@@ -924,7 +938,7 @@ pub async fn settle_block_space_ids_for_op(
 /// Returns a `String` rather than panicking so proptest callers can feed it
 /// to `prop_assert!` and let the shrinker minimise the counter-example.
 pub async fn reconciliation_failure(pool: &SqlitePool, context: &str) -> Option<String> {
-    let divergences = match reconcile(pool).await {
+    let divergences = match async { reconcile(pool, &dump_blocks(pool).await?).await }.await {
         Ok(d) => d,
         Err(e) => {
             return Some(format!(
