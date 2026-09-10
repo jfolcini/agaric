@@ -123,6 +123,15 @@ function applyBacklinkFilters(
 }
 
 /**
+ * `cmp_group` sorts a `None` title LAST. A sort key cannot hold `null`, and a
+ * cursor slot minted as `null` decodes back to the `''` sentinel, which sorts
+ * FIRST and would re-serve the group on the next page — so a titleless group
+ * carries a string above every title instead, and the same keyset compare
+ * orders it last and round-trips it through the cursor.
+ */
+const TITLELESS_SORTS_LAST = '\uFFFF'
+
+/**
  * The `GroupedBacklinkResponse` both grouped readers answer with, built the
  * way `eval_backlink_query_grouped` and `eval_unlinked_references` build
  * theirs (`agaric-store/src/backlink/grouped.rs`).
@@ -150,20 +159,12 @@ function applyBacklinkFilters(
  * the `MAX_BLOCKS_PER_GROUP` cap per group and the FTS row cap on the
  * envelope; neither is reachable from a mock fixture.
  */
-/**
- * `cmp_group` sorts a `None` title LAST. A sort key cannot hold `null`, and a
- * cursor slot minted as `null` decodes back to the `''` sentinel, which sorts
- * FIRST and would re-serve the group on the next page — so a titleless group
- * carries a string above every title instead, and the same keyset compare
- * orders it last and round-trips it through the cursor.
- */
-const TITLELESS_SORTS_LAST = '\uFFFF'
-
 function groupedBacklinkResponse(
   sources: Record<string, unknown>[],
   targetPageId: string,
   a: Record<string, unknown>,
   counts: 'first-page-only' | 'every-page',
+  limit: number,
 ): {
   groups: Record<string, unknown>[]
   next_cursor: string | null
@@ -198,7 +199,7 @@ function groupedBacklinkResponse(
   const page = paginateKeyset(
     groups,
     (g) => [(g['page_title'] as string | null) ?? TITLELESS_SORTS_LAST, g['page_id'] as string],
-    pageRequestLimit(a['limit']),
+    limit,
     a['cursor'],
     null,
     ['deleted_at'],
@@ -271,6 +272,7 @@ export const linksHandlers = {
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
+    const limit = pageRequestLimit(a['limit'])
     // Honour `scope: SpaceScope` (mirrors
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
@@ -284,12 +286,15 @@ export const linksHandlers = {
     // `COALESCE(tgt.page_id, tgt.id)` — the target's root page, whose own
     // blocks are self-references.
     const targetPageId = (blocks.get(targetId)?.['page_id'] as string | null) ?? targetId
-    return groupedBacklinkResponse(sources, targetPageId, a, 'first-page-only')
+    return groupedBacklinkResponse(sources, targetPageId, a, 'first-page-only', limit)
   },
 
   list_unlinked_references: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
+    // `PageRequest::new` runs before the title lookup on the backend, so an
+    // out-of-range limit is refused on BOTH exits, the empty-needle one too.
+    const limit = pageRequestLimit(a['limit'])
     // Honour `scope: SpaceScope` (mirrors
     // `list_unlinked_references_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
@@ -372,7 +377,7 @@ export const linksHandlers = {
       // Exclude if it already has a [[link]] to this page.
       return !contentLinksTo(content, pageId)
     })
-    return groupedBacklinkResponse(unlinked, pageId, a, 'every-page')
+    return groupedBacklinkResponse(unlinked, pageId, a, 'every-page', limit)
   },
 
   // ---------------------------------------------------------------------------

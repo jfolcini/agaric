@@ -26,17 +26,7 @@ import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority
 
 const mockedInvoke = vi.mocked(invoke)
 
-/**
- * Install command-keyed handlers, MERGING with those already installed.
- *
- * Tests here stub the initial `list_property_defs` load and then, once the
- * list has rendered, the mutation the interaction is about. Merging keeps the
- * load handler alive across that second call, so a re-fetch resolves instead
- * of falling through to `strictInvokeFallback`.
- */
-let handlers: TypedInvokeHandlers = {}
-function stubInvoke(next: Readonly<TypedInvokeHandlers>): void {
-  handlers = { ...handlers, ...next }
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
   mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
 }
 
@@ -73,7 +63,6 @@ function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
 beforeEach(() => {
   vi.clearAllMocks()
   __resetPriorityLevelsForTests()
-  handlers = {}
 })
 
 describe('PropertyDefinitionsList', () => {

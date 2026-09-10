@@ -1638,7 +1638,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
   })
 
-  it('has no a11y violations with the switch on and results visible', async () => {
+  it('has no a11y violations with the switch on', async () => {
     vi.useRealTimers()
     routeByInheritance()
     const { container } = render(<TagFilterPanel />)

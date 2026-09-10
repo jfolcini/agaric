@@ -2949,13 +2949,9 @@ mod group_token_tests {
     }
 }
 
-/// #3833 items 2, 5 and 8 — the three properties that need a real backend
-/// under them: the grouped arm's call site, the fixture-naming of an accessor
-/// failure, and the read-phase purity guard.
 /// #4667 — the `GroupedBacklinkResponse` projection, Rust half. The TS twin
 /// runs the same cases in `conformance-query-backlink-groups.test.ts`; the
 /// grammar is the half that has to agree byte-for-byte.
-#[cfg(test)]
 mod backlink_group_token_tests {
     use super::*;
 
@@ -3022,6 +3018,9 @@ mod backlink_group_token_tests {
     }
 }
 
+/// #3833 items 2, 5 and 8 — the three properties that need a real backend
+/// under them: the grouped arm's call site, the fixture-naming of an accessor
+/// failure, and the read-phase purity guard.
 mod query_runner_context_tests {
     use super::super::common::{TEST_SPACE_ID, assign_all_to_test_space, insert_block, test_pool};
     use super::{derived_cache_digest, run_query_steps};

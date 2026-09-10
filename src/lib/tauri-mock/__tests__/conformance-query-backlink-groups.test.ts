@@ -299,4 +299,21 @@ describe('runQuerySteps records the grouped backlink payload', () => {
     })
     expect(out[3]).toMatchObject({ rows: ['filtered#count=0#truncated=false'], total_count: 0 })
   })
+
+  // `PageRequest::new` runs before the backend's title lookup, so the limit is
+  // refused on the empty-needle exit too — the mock used to answer empty there.
+  it('refuses an out-of-range limit even when the id resolves no title', async () => {
+    const out = await runQuerySteps(
+      [
+        {
+          name: 'not_a_page_bad_limit',
+          command: 'list_unlinked_references',
+          args: { pageId: C1, limit: 201, scope },
+          expect_error: 'validation',
+        },
+      ],
+      new Map(),
+    )
+    expect(out[0]).toMatchObject({ error: 'validation', rows: [] })
+  })
 })
