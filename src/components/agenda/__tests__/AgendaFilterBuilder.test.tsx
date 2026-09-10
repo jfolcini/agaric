@@ -23,6 +23,11 @@ import { type ReactElement, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import type {
   AgendaFilter,
   AgendaFilterBuilderProps,
@@ -37,6 +42,24 @@ import {
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { getTaskStates } from '@/lib/filter-dimension-metadata'
 import { t } from '@/lib/i18n'
+
+const mockedInvoke = vi.mocked(invoke)
+
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/**
+ * A `list_tags_by_prefix` row. The stubs here used to omit `updated_at`,
+ * which `TagCacheRow` always carries (#4668).
+ */
+function tagRow(
+  tagId: string,
+  name: string,
+  usageCount: number,
+): CommandReturns['list_tags_by_prefix'][number] {
+  return { tag_id: tagId, name, usage_count: usageCount, updated_at: '2026-01-01T00:00:00Z' }
+}
 
 const defaultProps: AgendaFilterBuilderProps = {
   filters: [],
@@ -318,17 +341,13 @@ describe('AgendaFilterBuilder', () => {
   })
 
   it('adds a tag filter via search and selection', async () => {
-    const mockedInvoke = vi.mocked(invoke)
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_tags_by_prefix') {
-        const a = args as Record<string, unknown>
-        const prefix = ((a['prefix'] as string) ?? '').toLowerCase()
-        return [
-          { tag_id: 'TAG_1', name: 'work', usage_count: 5 },
-          { tag_id: 'TAG_2', name: 'workout', usage_count: 2 },
-        ].filter((tag) => tag.name.toLowerCase().startsWith(prefix))
-      }
-      return []
+    stubInvoke({
+      list_tags_by_prefix: (args) => {
+        const prefix = ((args['prefix'] as string) ?? '').toLowerCase()
+        return [tagRow('TAG_1', 'work', 5), tagRow('TAG_2', 'workout', 2)].filter((tag) =>
+          tag.name.toLowerCase().startsWith(prefix),
+        )
+      },
     })
 
     const user = userEvent.setup()
@@ -607,10 +626,7 @@ describe('AgendaFilterBuilder', () => {
   // 22. Selecting Property dimension shows key picker and value input
   // -----------------------------------------------------------------------
   it('selecting Property dimension shows key picker and value input', async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_property_keys') return ['project', 'effort', 'context']
-      return undefined
-    })
+    stubInvoke({ list_property_keys: () => ['project', 'effort', 'context'] })
 
     const user = userEvent.setup()
     renderBuilder()
@@ -881,8 +897,9 @@ describe('AgendaFilterBuilder', () => {
   // -----------------------------------------------------------------------
 
   it('tag search gracefully handles list_tags_by_prefix failure', async () => {
-    const mockedInvoke = vi.mocked(invoke)
-    mockedInvoke.mockRejectedValue(new Error('backend unavailable'))
+    stubInvoke({
+      list_tags_by_prefix: () => Promise.reject(new Error('backend unavailable')),
+    })
 
     const user = userEvent.setup()
     renderBuilder()
@@ -933,8 +950,9 @@ describe('AgendaFilterBuilder', () => {
   })
 
   it('property picker gracefully handles list_property_keys failure', async () => {
-    const mockedInvoke = vi.mocked(invoke)
-    mockedInvoke.mockRejectedValue(new Error('backend unavailable'))
+    stubInvoke({
+      list_property_keys: () => Promise.reject(new Error('backend unavailable')),
+    })
 
     const user = userEvent.setup()
     renderBuilder()

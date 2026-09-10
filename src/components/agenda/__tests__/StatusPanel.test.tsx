@@ -19,6 +19,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { StatusPanel } from '@/components/agenda/StatusPanel'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
@@ -48,11 +53,68 @@ vi.mock('@/stores/sync', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-const mockStatus = {
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+}
+
+/**
+ * What `get_status` actually resolves with.
+ *
+ * #4668 — this fixture used to carry four fields. `StatusInfo` has thirty-odd,
+ * all of them required: the panel's `?? 0` defaults for `fg_high_water`,
+ * `bg_high_water` and `bg_dropped` can never fire against the real backend,
+ * and the tests that pinned them were pinning a response nothing sends. The
+ * counters below are zeroed so every assertion that read a defaulted `0` still
+ * reads `0`; `retry_queue_pending` is genuinely nullable, so it stays `null`
+ * and keeps `BoundedStalenessNotice`'s live `?? 0` branch covered.
+ */
+const mockStatus: CommandReturns['get_status'] = {
   foreground_queue_depth: 3,
   background_queue_depth: 7,
   total_ops_dispatched: 42,
   total_background_dispatched: 15,
+  fg_high_water: 0,
+  bg_high_water: 0,
+  fg_errors: 0,
+  bg_errors: 0,
+  fg_apply_dropped: 0,
+  fg_apply_dropped_persisted: 0,
+  bg_dropped: 0,
+  bg_dropped_global: 0,
+  bg_deduped: 0,
+  fg_full_waits: 0,
+  bg_full_waits: 0,
+  retry_queue_persist_errors: 0,
+  retry_queue_giveup_total: 0,
+  last_materialize_at: null,
+  time_since_last_materialize_secs: null,
+  total_ops_in_log: null,
+  sync_peer_failure_counts: [],
+  retry_queue_pending: null,
+  retry_persist_apply_op: 0,
+  retry_persist_cache: 0,
+  retry_persist_cache_global: 0,
+  retry_persist_capped: 0,
+  sql_only_fallback_count: 0,
+  descendant_fanout_dropped: 0,
+  snapshot_fallback_count: 0,
+  snapshot_fallback_last: null,
+  audit_ingest_deferred: 0,
+  audit_ingest_stalls: 0,
+  audit_ingest_out_of_order: 0,
+  audit_ingest_last_stall: null,
+}
+
+/**
+ * What `start_sync` resolves with: `SyncSessionInfo`. The retry test used to
+ * let the catch-all hand it a `StatusInfo` (#4668).
+ */
+const mockSyncSession: CommandReturns['start_sync'] = {
+  state: 'idle',
+  local_device_id: 'LOCAL',
+  remote_device_id: 'REMOTE',
+  ops_received: 0,
+  ops_sent: 0,
 }
 
 beforeEach(() => {
@@ -69,7 +131,7 @@ beforeEach(() => {
 
 describe('StatusPanel', () => {
   it('calls get_status on mount', async () => {
-    mockedInvoke.mockResolvedValue(mockStatus)
+    stubInvoke({ get_status: () => mockStatus })
 
     render(<StatusPanel />)
 
@@ -79,7 +141,7 @@ describe('StatusPanel', () => {
   })
 
   it('renders all 4 metrics', async () => {
-    mockedInvoke.mockResolvedValue(mockStatus)
+    stubInvoke({ get_status: () => mockStatus })
 
     render(<StatusPanel />)
 
@@ -96,7 +158,7 @@ describe('StatusPanel', () => {
   })
 
   it('renders the panel title', async () => {
-    mockedInvoke.mockResolvedValue(mockStatus)
+    stubInvoke({ get_status: () => mockStatus })
 
     render(<StatusPanel />)
 
@@ -113,7 +175,7 @@ describe('StatusPanel', () => {
     })
 
     it('polls every 5 seconds', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       await act(async () => {
         render(<StatusPanel />)
@@ -138,7 +200,7 @@ describe('StatusPanel', () => {
     })
 
     it('cleans up interval on unmount', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       let unmountFn: (() => void) | undefined
       await act(async () => {
@@ -159,13 +221,20 @@ describe('StatusPanel', () => {
     })
 
     it('updates metrics when polled data changes', async () => {
-      const updatedStatus = {
+      const updatedStatus: CommandReturns['get_status'] = {
+        ...mockStatus,
         foreground_queue_depth: 10,
         background_queue_depth: 20,
         total_ops_dispatched: 100,
         total_background_dispatched: 50,
       }
-      mockedInvoke.mockResolvedValueOnce(mockStatus).mockResolvedValueOnce(updatedStatus)
+      // The mount load and the first poll must answer DIFFERENTLY, which the
+      // positional `…Once` queue this replaced expressed by call order alone.
+      // Keyed on the command, the order is explicit instead.
+      let polls = 0
+      stubInvoke({
+        get_status: () => (polls++ === 0 ? mockStatus : updatedStatus),
+      })
 
       await act(async () => {
         render(<StatusPanel />)
@@ -188,7 +257,7 @@ describe('StatusPanel', () => {
   })
 
   it('has no a11y violations', async () => {
-    mockedInvoke.mockResolvedValue(mockStatus)
+    stubInvoke({ get_status: () => mockStatus })
 
     const { container } = render(<StatusPanel />)
 
@@ -199,7 +268,7 @@ describe('StatusPanel', () => {
   })
 
   it('handles error from getStatus without crashing', async () => {
-    mockedInvoke.mockRejectedValue(new Error('network failure'))
+    stubInvoke({ get_status: () => Promise.reject(new Error('network failure')) })
 
     render(<StatusPanel />)
 
@@ -214,9 +283,12 @@ describe('StatusPanel', () => {
   it('shows error alongside status when poll fails after initial success', async () => {
     vi.useFakeTimers()
 
-    mockedInvoke
-      .mockResolvedValueOnce(mockStatus) // initial load succeeds
-      .mockRejectedValueOnce(new Error('poll failed')) // second poll fails
+    // Initial load succeeds, the poll that follows fails. Keyed on call order
+    // inside the handler rather than on the positional `…Once` queue.
+    let polls = 0
+    stubInvoke({
+      get_status: () => (polls++ === 0 ? mockStatus : Promise.reject(new Error('poll failed'))),
+    })
 
     await act(async () => {
       render(<StatusPanel />)
@@ -247,12 +319,14 @@ describe('StatusPanel', () => {
   // that a debug build can still observe now surfaces as an error here.
   describe('error section', () => {
     it('renders when error counts are non-zero', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        fg_errors: 2,
-        bg_errors: 3,
-        fg_high_water: 0,
-        bg_high_water: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          fg_errors: 2,
+          bg_errors: 3,
+          fg_high_water: 0,
+          bg_high_water: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -263,12 +337,14 @@ describe('StatusPanel', () => {
     })
 
     it('renders singular form for count of 1', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        fg_errors: 1,
-        bg_errors: 1,
-        fg_high_water: 0,
-        bg_high_water: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          fg_errors: 1,
+          bg_errors: 1,
+          fg_high_water: 0,
+          bg_high_water: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -277,12 +353,14 @@ describe('StatusPanel', () => {
     })
 
     it('is hidden when all error counts are zero', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        fg_errors: 0,
-        bg_errors: 0,
-        fg_high_water: 0,
-        bg_high_water: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          fg_errors: 0,
+          bg_errors: 0,
+          fg_high_water: 0,
+          bg_high_water: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -292,9 +370,11 @@ describe('StatusPanel', () => {
       expect(screen.queryByText(/background error/)).not.toBeInTheDocument()
     })
 
-    it('is hidden when error fields are undefined (legacy mock)', async () => {
-      // mockStatus has no error fields — component defaults to 0
-      mockedInvoke.mockResolvedValue(mockStatus)
+    it('is hidden for the base status, whose error counters are zero', async () => {
+      // #4668 — this case used to omit the error fields entirely and lean on
+      // the component's `?? 0`. `StatusInfo` requires them, so the backend
+      // always sends a number; zero is the shape it sends when nothing failed.
+      stubInvoke({ get_status: () => mockStatus })
 
       render(<StatusPanel />)
 
@@ -303,12 +383,14 @@ describe('StatusPanel', () => {
     })
 
     it('shows cache staleness warning when bgErrors > 0', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        fg_errors: 0,
-        bg_errors: 3,
-        fg_high_water: 0,
-        bg_high_water: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          fg_errors: 0,
+          bg_errors: 3,
+          fg_high_water: 0,
+          bg_high_water: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -322,10 +404,12 @@ describe('StatusPanel', () => {
 
   describe('bounded-staleness notice (#2471)', () => {
     it('renders when a background rebuild dropped and retry rows are pending', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        bg_dropped: 4,
-        retry_queue_pending: 2,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          bg_dropped: 4,
+          retry_queue_pending: 2,
+        }),
       })
 
       render(<StatusPanel />)
@@ -339,10 +423,12 @@ describe('StatusPanel', () => {
     })
 
     it('renders the singular form for a single pending rebuild', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        bg_dropped: 1,
-        retry_queue_pending: 1,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          bg_dropped: 1,
+          retry_queue_pending: 1,
+        }),
       })
 
       render(<StatusPanel />)
@@ -357,10 +443,12 @@ describe('StatusPanel', () => {
     it('is hidden when a drop occurred but the retry queue has drained', async () => {
       // bg_dropped is monotonic since boot; once the queue drains the notice
       // must clear rather than stay lit on the stale counter.
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        bg_dropped: 4,
-        retry_queue_pending: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          bg_dropped: 4,
+          retry_queue_pending: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -370,10 +458,12 @@ describe('StatusPanel', () => {
     })
 
     it('is hidden when rows are pending but no background drop occurred', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        bg_dropped: 0,
-        retry_queue_pending: 5,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          bg_dropped: 0,
+          retry_queue_pending: 5,
+        }),
       })
 
       render(<StatusPanel />)
@@ -382,8 +472,11 @@ describe('StatusPanel', () => {
       expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
     })
 
-    it('is hidden for the legacy mock with neither field present', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+    // The base fixture drops nothing (`bg_dropped: 0`) and reports a null
+    // `retry_queue_pending` — the one nullable field of the pair, so this
+    // still covers `BoundedStalenessNotice`'s `?? 0` on a real backend shape.
+    it('is hidden when nothing dropped and the pending count is null', async () => {
+      stubInvoke({ get_status: () => mockStatus })
 
       render(<StatusPanel />)
 
@@ -394,12 +487,14 @@ describe('StatusPanel', () => {
 
   describe('high-water marks', () => {
     it('displays peak values under queue depth cards', async () => {
-      mockedInvoke.mockResolvedValue({
-        ...mockStatus,
-        fg_high_water: 15,
-        bg_high_water: 22,
-        fg_errors: 0,
-        bg_errors: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          fg_high_water: 15,
+          bg_high_water: 22,
+          fg_errors: 0,
+          bg_errors: 0,
+        }),
       })
 
       render(<StatusPanel />)
@@ -408,8 +503,10 @@ describe('StatusPanel', () => {
       expect(screen.getByText(/Peak: 22/)).toBeInTheDocument()
     })
 
-    it('shows Peak: 0 when high-water fields are undefined', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+    // #4668 — was "when high-water fields are undefined". They are required
+    // on `StatusInfo`; a quiet queue reports zero, which is what this pins.
+    it('shows Peak: 0 when the high-water marks are zero', async () => {
+      stubInvoke({ get_status: () => mockStatus })
 
       render(<StatusPanel />)
 
@@ -421,15 +518,18 @@ describe('StatusPanel', () => {
 
   describe('health color classes', () => {
     it('applies green accent when queue depth is 0', async () => {
-      mockedInvoke.mockResolvedValue({
-        foreground_queue_depth: 0,
-        background_queue_depth: 0,
-        total_ops_dispatched: 5,
-        total_background_dispatched: 3,
-        fg_high_water: 0,
-        bg_high_water: 0,
-        fg_errors: 0,
-        bg_errors: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          foreground_queue_depth: 0,
+          background_queue_depth: 0,
+          total_ops_dispatched: 5,
+          total_background_dispatched: 3,
+          fg_high_water: 0,
+          bg_high_water: 0,
+          fg_errors: 0,
+          bg_errors: 0,
+        }),
       })
 
       const { container } = render(<StatusPanel />)
@@ -444,7 +544,7 @@ describe('StatusPanel', () => {
 
     it('applies no health accent for queue depth 1-10', async () => {
       // mockStatus has fg=3, bg=7 — both in the 1-10 range
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       const { container } = render(<StatusPanel />)
 
@@ -457,15 +557,18 @@ describe('StatusPanel', () => {
     })
 
     it('applies amber accent when queue depth exceeds 10', async () => {
-      mockedInvoke.mockResolvedValue({
-        foreground_queue_depth: 15,
-        background_queue_depth: 25,
-        total_ops_dispatched: 5,
-        total_background_dispatched: 3,
-        fg_high_water: 15,
-        bg_high_water: 25,
-        fg_errors: 0,
-        bg_errors: 0,
+      stubInvoke({
+        get_status: () => ({
+          ...mockStatus,
+          foreground_queue_depth: 15,
+          background_queue_depth: 25,
+          total_ops_dispatched: 5,
+          total_background_dispatched: 3,
+          fg_high_water: 15,
+          bg_high_water: 25,
+          fg_errors: 0,
+          bg_errors: 0,
+        }),
       })
 
       const { container } = render(<StatusPanel />)
@@ -482,7 +585,7 @@ describe('StatusPanel', () => {
   describe('tooltips', () => {
     it('shows tooltip content when hovering a metric label', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       render(<StatusPanel />)
 
@@ -498,7 +601,7 @@ describe('StatusPanel', () => {
     })
 
     it('has tooltip triggers for all four metric labels', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       const { container } = render(<StatusPanel />)
 
@@ -516,7 +619,7 @@ describe('StatusPanel', () => {
 
   describe('tooltip keyboard accessibility', () => {
     it('tooltip triggers have tabIndex={0} for keyboard access', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
 
       const { container } = render(<StatusPanel />)
 
@@ -532,7 +635,7 @@ describe('StatusPanel', () => {
 
   describe('Last Synced display', () => {
     it('shows relative time when lastSyncedAt is set', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
@@ -546,7 +649,7 @@ describe('StatusPanel', () => {
     })
 
     it('shows "--" when lastSyncedAt is null', async () => {
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = null
 
@@ -562,7 +665,7 @@ describe('StatusPanel', () => {
   describe('sync section', () => {
     it('shows "Not configured" when sync has no peers', async () => {
       // Default mock has peers: [] — should show "Not configured"
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Not configured')).toBeInTheDocument()
@@ -571,7 +674,7 @@ describe('StatusPanel', () => {
     it('shows sync state indicator when peers exist', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Idle')).toBeInTheDocument()
@@ -584,7 +687,7 @@ describe('StatusPanel', () => {
     it('renders the full Sync panel (not "Not configured") when peers exist (#1076)', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       const { container } = render(<StatusPanel />)
       await screen.findByText('Materializer Status')
 
@@ -600,7 +703,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'error'
       mockSyncStoreState.error = 'Connection lost'
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Connection lost')).toBeInTheDocument()
@@ -617,7 +720,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peerId: 'P1' }]
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'Connection lost'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
         await screen.findByText('Materializer Status')
 
@@ -630,7 +733,7 @@ describe('StatusPanel', () => {
       it('does not render the retry button in non-error states', async () => {
         mockSyncStoreState.peers = [{ peerId: 'P1' }]
         mockSyncStoreState.state = 'idle'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
         await screen.findByText('Materializer Status')
         expect(screen.queryByTestId('sync-panel-retry')).not.toBeInTheDocument()
@@ -641,8 +744,10 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peerId: 'P1' }, { peerId: 'P2' }]
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'Connection lost'
-        // get_status (polling) + start_sync (per peer) all succeed.
-        mockedInvoke.mockResolvedValue(mockStatus)
+        // get_status (polling) + start_sync (per peer) all succeed. The
+        // catch-all this replaced handed `start_sync` a `StatusInfo`; it
+        // returns `SyncSessionInfo` (#4668).
+        stubInvoke({ get_status: () => mockStatus, start_sync: () => mockSyncSession })
         render(<StatusPanel />)
         await screen.findByText('Materializer Status')
 
@@ -670,7 +775,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peerId: 'P1' }]
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'Connection lost'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         const { container } = render(<StatusPanel />)
         await screen.findByText('Materializer Status')
         await screen.findByTestId('sync-panel-retry')
@@ -685,7 +790,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'syncing'
       mockSyncStoreState.opsReceived = 99
       mockSyncStoreState.opsSent = 17
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Peers')).toBeInTheDocument()
@@ -700,7 +805,7 @@ describe('StatusPanel', () => {
     it('shows "Syncing..." state label during active sync', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'syncing'
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
@@ -717,7 +822,7 @@ describe('StatusPanel', () => {
       it('renders a CheckCircle-style icon for the idle state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'idle'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
         await screen.findByText('Idle')
         expect(screen.getByTestId('sync-state-icon-idle')).toBeInTheDocument()
@@ -727,7 +832,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'boom'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
         await screen.findByText('Error')
         expect(screen.getByTestId('sync-state-icon-error')).toBeInTheDocument()
@@ -736,7 +841,7 @@ describe('StatusPanel', () => {
       it('renders a spinning RefreshCw icon for the syncing state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'syncing'
-        mockedInvoke.mockResolvedValue(mockStatus)
+        stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
         await screen.findByText('Syncing...')
         const icon = screen.getByTestId('sync-state-icon-syncing')
@@ -748,7 +853,7 @@ describe('StatusPanel', () => {
     it('shows tooltip on sync metric label hover', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      mockedInvoke.mockResolvedValue(mockStatus)
+      stubInvoke({ get_status: () => mockStatus })
       const user = userEvent.setup()
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')

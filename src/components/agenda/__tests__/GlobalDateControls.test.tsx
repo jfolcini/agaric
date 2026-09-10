@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { useJournalStore } from '@/stores/journal'
@@ -37,6 +38,25 @@ vi.mock('@/components/ui/calendar', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
+
+/**
+ * Both commands the calendar dropdown fires when it opens, overridable per
+ * test.
+ *
+ * #4668 — the catch-all this replaced resolved `[]` for BOTH, so
+ * `count_agenda_batch_by_source` — which returns a
+ * `Record<date, Record<source, count>>` — was being fed an array the backend
+ * cannot send.
+ */
+function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}): void {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      list_journal_pages_in_range: () => [],
+      count_agenda_batch_by_source: () => ({}),
+      ...handlers,
+    }),
+  )
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -64,7 +84,7 @@ beforeEach(() => {
   })
   // UseCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
-  mockedInvoke.mockResolvedValue([])
+  stubInvoke()
 })
 
 describe('GlobalDateControls', () => {
@@ -253,10 +273,13 @@ describe('GlobalDateControls', () => {
   })
 
   it('shows error toast when the page list fetch fails', async () => {
-    // The dropdown registers `useCalendarPageDates` before its own
-    // agenda-count effect, so `list_journal_pages_in_range` is the first IPC
-    // out and takes this positional rejection.
-    mockedInvoke.mockRejectedValueOnce(new Error('network error'))
+    // #4668 — the positional `mockRejectedValueOnce` this replaced relied on
+    // `useCalendarPageDates` registering before the dropdown's agenda-count
+    // effect, so the first IPC out took the rejection. Keying on the command
+    // says which fetch fails instead of assuming the order.
+    stubInvoke({
+      list_journal_pages_in_range: () => Promise.reject(new Error('network error')),
+    })
     const user = userEvent.setup()
 
     render(<GlobalDateControls />)
@@ -273,7 +296,9 @@ describe('GlobalDateControls', () => {
   })
 
   it('still renders controls when the page list fetch fails', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('backend unavailable'))
+    stubInvoke({
+      list_journal_pages_in_range: () => Promise.reject(new Error('backend unavailable')),
+    })
     const user = userEvent.setup()
 
     render(<GlobalDateControls />)
