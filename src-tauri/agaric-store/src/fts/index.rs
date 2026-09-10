@@ -446,16 +446,19 @@ pub async fn reindex_fts_for_ids(pool: &SqlitePool, ids: &[String]) -> Result<()
 ///
 /// This is an O(n) operation over all active blocks — it loads every block's
 /// content into memory, strips it, and re-inserts into the FTS table.
-/// This is the cold path: invoked at application boot and on explicit
-/// user request (e.g. "rebuild search index"), never incrementally —
-/// single-block updates go through [`update_fts_for_block`] instead.
+/// This is the cold path, reached only when the whole index is suspect: boot
+/// with an empty `fts_blocks`, an inbound sync that changed more blocks than
+/// the per-block fan-out allows (`materializer::dispatch`), and engine
+/// reprojection (`db/recovery`). Nothing exposes it to the user, and it never
+/// runs incrementally — single-block updates go through
+/// [`update_fts_for_block`] instead.
 ///
 /// D: the rebuild is split into `FTS_REINDEX_CHUNK`-sized batches
 /// with a fresh `BEGIN…COMMIT` per chunk. Holding a single writer
 /// transaction for a 100k-block vault used to block all other writers
 /// for several seconds, which is bad for boot UX and worse on Android.
 /// Chunked transactions release the writer lock between chunks so other
-/// writers (e.g. user edits during a manual rebuild) can interleave.
+/// writers (e.g. user edits during a rebuild) can interleave.
 ///
 /// The full DELETE happens once at the start in its own transaction, so
 /// readers briefly see an empty index during the rebuild — same as the
