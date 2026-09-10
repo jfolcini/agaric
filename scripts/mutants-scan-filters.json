@@ -1,0 +1,5 @@
+{
+  "agaric-store": "test(/(^|::)op(_log)?::/)",
+  "agaric-engine": "test(/reverse/) | test(/loro::engine/) | binary(reverse_tests) | binary(reverse_proptest_b1)",
+  "agaric-sync": "test(/sync_protocol/)"
+}
