@@ -85,10 +85,10 @@ export const pages: Record<string, string> = {
   'pageHeader.removeTag': 'Remove tag {{name}}',
   // #1423 — inherited (derived) tag chips. The aria description marks the
   // chip as derived for screen readers (styling alone is not color-only);
-  // the tooltip explains the "matches descendants" capability.
+  // the tooltip points at the one query surface that can match it (#4548).
   'pageHeader.inheritedTag': 'Inherited tag {{name}}',
   'pageHeader.inheritedTagHint':
-    'Inherited from a parent — querying this tag also matches descendants',
+    "Inherited from a parent block. The Tags view matches it only with 'Include inherited tags' turned on.",
   'pageHeader.searchTags': 'Search or create tag...',
   'pageHeader.searchTagsLabel': 'Search tags',
   'pageHeader.tagPicker': 'Tag picker',

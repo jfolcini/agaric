@@ -326,6 +326,13 @@ export const properties: Record<string, string> = {
   'tagFilter.prefixesLabel': 'Prefixes:',
   'tagFilter.prefixPillLabel': '{{prefix}}*',
   'tagFilter.removePrefixLabel': 'Remove prefix {{prefix}}',
+  // #4548 — the "Include inherited tags" switch. One flag for the whole query
+  // (`query_by_tags` / `query_by_tag_expr` take a single `include_inherited`),
+  // default off so an existing query keeps its result set.
+  'tagFilter.includeInherited': 'Include inherited tags',
+  'tagFilter.includeInheritedTooltip':
+    "Also match blocks nested under a tagged block. A tag on a block applies to every block beneath it, however deep — a tag on a page's first block matches the whole page. Only tags added to a block are inherited; a #tag typed in its text is not.",
+  'tagFilter.includingInherited': '(including inherited tags)',
   // #1426 — nested And/Or/Not composer (#1472 query_by_tag_expr IPC)
   'tagFilter.composer.show': 'Advanced',
   'tagFilter.composer.hide': 'Simple',

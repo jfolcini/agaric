@@ -5,6 +5,7 @@ import { axe } from 'vitest-axe'
 
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import type { TagEntry } from '@/hooks/useBlockTags'
+import { t } from '@/lib/i18n'
 
 vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
@@ -139,10 +140,14 @@ describe('PageTagSection inherited chips (#1423)', () => {
     expect(chip).toHaveClass('border-dashed')
 
     // Perceivable beyond color: the propagation icon + an aria label that
-    // names it as inherited, and a "matches descendants" tooltip title.
+    // names it as inherited, and a tooltip title that points at the switch
+    // which makes a tag filter match it (#4548) — never a claim that every
+    // tag query matches descendants unconditionally.
     expect(screen.getByTestId('inherited-icon')).toBeInTheDocument()
     expect(screen.getByLabelText(/inherited tag project/i)).toBeInTheDocument()
-    expect(chip).toHaveAttribute('title', expect.stringMatching(/matches descendants/i))
+    expect(chip).toHaveAttribute('title', t('pageHeader.inheritedTagHint'))
+    expect(chip).toHaveAttribute('title', expect.stringMatching(/include inherited tags/i))
+    expect(chip).not.toHaveAttribute('title', expect.stringMatching(/also matches descendants/i))
 
     // Inherited chips are NOT directly removable (the tag lives on an ancestor).
     expect(screen.queryByRole('button', { name: /remove tag project/i })).not.toBeInTheDocument()
