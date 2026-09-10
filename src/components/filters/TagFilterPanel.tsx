@@ -9,7 +9,7 @@
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ResultCard } from '@/components/common/ResultCard'
@@ -18,8 +18,10 @@ import { PageLink } from '@/components/pages/PageLink'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
@@ -67,6 +69,7 @@ function FilterFeedback({
   flat,
   selectedCount,
   mode,
+  includeInherited,
 }: {
   hasQuery: boolean
   loading: boolean
@@ -75,6 +78,8 @@ function FilterFeedback({
   flat: boolean
   selectedCount: number
   mode: 'and' | 'or' | 'not'
+  /** #4548 — say so when the count includes blocks matched through an ancestor's tag. */
+  includeInherited: boolean
 }): React.ReactElement | null {
   const { t } = useTranslation()
   if (!hasQuery) {
@@ -84,20 +89,38 @@ function FilterFeedback({
       </p>
     )
   }
-  if (loading || resultCount === 0) return null
+  if (resultCount === 0 && !loading) return null
   const matchText =
     resultCount === 1
       ? t('tagFilter.blockMatchOne', { count: resultCount })
       : t('tagFilter.blockMatchMany', { count: resultCount })
   return (
-    <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
-      {matchText}
-      {flat && selectedCount > 0 && (
+    // `aria-live`: flipping the inherited switch changes the count without any
+    // other visible cue, so a screen-reader user hears the new count (#4548).
+    // The element stays MOUNTED across the refetch — a live region inserted
+    // together with its content is not announced — so during `loading` it keeps
+    // the previous text rather than unmounting. A FIRST fetch has no previous
+    // text: `keepPreviousData` holds the prior key's rows, and the first query
+    // of a session has none, so it mounts busy and empty rather than claiming
+    // "0 blocks match" over the skeleton.
+    <p
+      className="text-sm text-muted-foreground"
+      data-testid="tag-filter-feedback"
+      aria-live="polite"
+      aria-busy={loading}
+    >
+      {resultCount > 0 && (
         <>
-          {' '}
-          {selectedCount}{' '}
-          {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
-          {mode.toUpperCase()})
+          {matchText}
+          {flat && selectedCount > 0 && (
+            <>
+              {' '}
+              {selectedCount}{' '}
+              {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
+              {mode.toUpperCase()})
+            </>
+          )}
+          {includeInherited && !loading && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}
     </p>
@@ -170,6 +193,47 @@ function FlatModeToggle({
 }
 
 /**
+ * #4548 — the "Include inherited tags" switch. Expression-level: both IPCs take
+ * ONE `include_inherited` for the whole query, so this is the only granularity
+ * the wire can express. Off by default so an existing query keeps its result
+ * set — with it on, a tag on a page's first block matches the whole page.
+ */
+function InheritedToggle({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const id = useId()
+  return (
+    <div className="flex items-center gap-2">
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        data-testid="tag-filter-include-inherited"
+      />
+      {/* The tooltip hangs off the LABEL: a `TooltipTrigger asChild` around the
+          switch hands it the trigger's own `data-state` ("closed"), which the
+          switch spreads over its "checked"/"unchecked" — and the track's fill
+          is keyed on exactly that attribute. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Label htmlFor={id} className="font-normal">
+            {t('tagFilter.includeInherited')}
+          </Label>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="max-w-xs">{t('tagFilter.includeInheritedTooltip')}</p>
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+/**
  * #1426 — run the active tag query. When `tagExpr` is set (the nested composer
  * is open and non-empty) it runs over the #1472 `query_by_tag_expr` IPC; else
  * the flat simple-mode `query_by_tags` runs. Extracted so the panel body stays
@@ -178,6 +242,7 @@ function FlatModeToggle({
 async function runTagQuery(
   tagExpr: TagExpr | null,
   flatParams: TagQueryParams,
+  includeInherited: boolean,
   spaceId: string | null,
   cursor?: string,
 ): Promise<PageResponse<BlockRow>> {
@@ -186,7 +251,14 @@ async function runTagQuery(
   const cursorArg = cursor ?? null
   if (tagExpr != null) {
     return unwrap(
-      await commands.queryByTagExpr(tagExpr, null, cursorArg, PAGINATION_LIMIT, scope, null),
+      await commands.queryByTagExpr(
+        tagExpr,
+        includeInherited,
+        cursorArg,
+        PAGINATION_LIMIT,
+        scope,
+        null,
+      ),
     )
   }
   return unwrap(
@@ -194,7 +266,7 @@ async function runTagQuery(
       flatParams.tagIds,
       flatParams.prefixes,
       flatParams.mode,
-      null,
+      includeInherited,
       cursorArg,
       PAGINATION_LIMIT,
       scope,
@@ -210,6 +282,10 @@ export function TagFilterPanel(): React.ReactElement {
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
   const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
+  // #4548 — off by default: an inherited match is invisible in the row, so the
+  // swollen result set is the failure a user cannot diagnose; too few results
+  // is the one they can (the switch is right there).
+  const [includeInherited, setIncludeInherited] = useState(false)
   // #1426 — tag-prefix search pills, surfaced into the query (the panel used to
   // hardcode `prefixes: []`). Each pill compiles to a `TagExpr::Prefix` leaf.
   const [prefixPills, setPrefixPills] = useState<string[]>([])
@@ -310,9 +386,9 @@ export function TagFilterPanel(): React.ReactElement {
     isFetchingNextPage,
   } = useInfiniteQuery(
     {
-      queryKey: ['tagFilterBlocks', currentSpaceId, tagExpr, flatParams],
+      queryKey: ['tagFilterBlocks', currentSpaceId, tagExpr, flatParams, includeInherited],
       queryFn: ({ pageParam }): Promise<PageResponse<BlockRow>> =>
-        runTagQuery(tagExpr, flatParams, currentSpaceId, pageParam),
+        runTagQuery(tagExpr, flatParams, includeInherited, currentSpaceId, pageParam),
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
       // The query only runs when there is an active query (selected tags, prefix
@@ -595,8 +671,12 @@ export function TagFilterPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* AND/OR/NOT mode toggle (flat default; hidden while the composer is open) */}
-      {composer == null && <FlatModeToggle mode={mode} onSetMode={setMode} />}
+      {/* AND/OR/NOT mode toggle (flat default; hidden while the composer is open)
+          and the #4548 inherited switch, which applies to both query shapes. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {composer == null && <FlatModeToggle mode={mode} onSetMode={setMode} />}
+        <InheritedToggle checked={includeInherited} onCheckedChange={setIncludeInherited} />
+      </div>
 
       {/* Filter feedback summary */}
       <FilterFeedback
@@ -606,6 +686,7 @@ export function TagFilterPanel(): React.ReactElement {
         flat={composer == null}
         selectedCount={selectedTags.length}
         mode={mode}
+        includeInherited={includeInherited}
       />
 
       {/* Matching tags from prefix search */}

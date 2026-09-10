@@ -26,6 +26,8 @@ The **Tags** view (and the Agenda tag filter) supports boolean expressions:
 
 A pill-based UI lets you toggle each clause; advanced users can type the expression directly.
 
+**Include inherited tags** (a Tags-view switch, off by default) widens the whole query to blocks nested under a tagged block: a tag on a block applies to every block beneath it, however deep, so a tag on a page's first block matches the entire page. Only tags added to a block are inherited — an inline `@` tag chip in a block's text is not. The page header shows inherited tags as dashed, italic chips; a plain tag query does not match them until the switch is on.
+
 ## Block & page links
 
 - **Insert a page link**: type `[[` to open the **BlockLinkPicker**. Pick a page or paste a title.

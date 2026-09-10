@@ -72,8 +72,8 @@ export function PageTagSection({
           // direct chip by an outlined (not solid) tone, reduced opacity,
           // italic name, and a propagation icon — not color alone. The
           // chip is NOT directly removable (the tag lives on an ancestor);
-          // the `title` + `aria-label` convey that querying it also matches
-          // descendants, so the affordance is perceivable by screen readers.
+          // the `title` + `aria-label` name it as inherited, so the
+          // distinction is perceivable by screen readers.
           <Badge
             key={tag.id}
             tone="outline"

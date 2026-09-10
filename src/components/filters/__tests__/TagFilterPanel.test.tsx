@@ -312,7 +312,7 @@ describe('TagFilterPanel', () => {
       tagIds: ['T1'],
       prefixes: [],
       mode: 'and',
-      includeInherited: null,
+      includeInherited: false,
       cursor: null,
       limit: 50,
       scope: { kind: 'global' },
@@ -363,7 +363,7 @@ describe('TagFilterPanel', () => {
       tagIds: ['T1'],
       prefixes: [],
       mode: 'and',
-      includeInherited: null,
+      includeInherited: false,
       cursor: 'cursor_abc',
       limit: 50,
       scope: { kind: 'global' },
@@ -457,6 +457,42 @@ describe('TagFilterPanel', () => {
       resolveQuery({ items: [], next_cursor: null, has_more: false, total_count: null })
       await vi.advanceTimersByTimeAsync(0)
     })
+  })
+
+  // The first query of a session has no previous rows for `keepPreviousData`
+  // to hold, so the live region mounts with nothing to say: it must not read
+  // "0 blocks match" over the loading skeleton for the whole IPC round trip.
+  it('states no count while the first fetch is pending, then the real one', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+    render(<TagFilterPanel />)
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+
+    let resolveQuery: (value: unknown) => void = () => {}
+    mockedInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQuery = resolve
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    const feedback = screen.getByTestId('tag-filter-feedback')
+    expect(feedback).toHaveAttribute('aria-busy', 'true')
+    expect(feedback).not.toHaveTextContent(/match/)
+
+    await act(async () => {
+      resolveQuery({
+        items: [makeBlock({ id: 'B1', content: 'one' }), makeBlock({ id: 'B2', content: 'two' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(feedback).toHaveAttribute('aria-busy', 'false')
+    expect(feedback).toHaveTextContent('2 blocks match 1 tag (AND)')
   })
 
   it('does not show results before any tag is selected', () => {
@@ -731,7 +767,7 @@ describe('TagFilterPanel', () => {
       tagIds: ['T1'],
       prefixes: [],
       mode: 'not',
-      includeInherited: null,
+      includeInherited: false,
       cursor: null,
       limit: 50,
       scope: { kind: 'global' },
@@ -1422,6 +1458,192 @@ describe('TagFilterPanel — nested composer (#1426)', () => {
     routeInvoke({})
     const { container } = render(<TagFilterPanel />)
     fireEvent.click(screen.getByTestId('tag-filter-composer-toggle'))
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ── #4548 — "Include inherited tags" switch ─────────────────────────────────
+
+describe('TagFilterPanel — include inherited (#4548)', () => {
+  const PARENT = makeBlock({ id: 'BLK_PARENT', content: 'tagged parent', parent_id: null })
+  const CHILD = makeBlock({ id: 'BLK_CHILD', content: 'untagged child', parent_id: 'BLK_PARENT' })
+
+  /**
+   * Route the mock the way the backend behaves for `parent #work > child`:
+   * the child is reachable ONLY through `block_tag_inherited`, so it joins the
+   * result set iff the request carries `includeInherited: true` (the backend
+   * half of this pair is the `tags_include_inherited_reaches_descendant`
+   * conformance query and `resolve_tag_with_inheritance_includes_descendants`).
+   */
+  function routeByInheritance(opts?: { rejectInherited?: boolean }): void {
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      const a = (args ?? {}) as { includeInherited?: boolean | null }
+      if (cmd === 'list_tags_by_prefix') {
+        return Promise.resolve([makeTag({ tag_id: 'T1', name: 'work', usage_count: 1 })])
+      }
+      if (cmd === 'query_by_tags' || cmd === 'query_by_tag_expr') {
+        if (a.includeInherited === true) {
+          if (opts?.rejectInherited) return Promise.reject(new Error('backend error'))
+          return Promise.resolve({ ...emptyPage, items: [PARENT, CHILD] })
+        }
+        return Promise.resolve({ ...emptyPage, items: [PARENT] })
+      }
+      if (cmd === 'batch_resolve') return Promise.resolve([])
+      return Promise.resolve(emptyPage)
+    })
+  }
+
+  function inheritedSwitch(): HTMLElement {
+    return screen.getByRole('switch', { name: t('tagFilter.includeInherited') })
+  }
+
+  async function selectWorkTag(): Promise<void> {
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+    await user.click(screen.getByRole('button', { name: /Add$/i }))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('renders the switch off by default, with a self-contained accessible name', () => {
+    routeByInheritance()
+    render(<TagFilterPanel />)
+
+    const sw = inheritedSwitch()
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    expect(sw).toHaveAttribute('id')
+    // The visible label is wired to the switch (clicking it toggles).
+    expect(screen.getByText(t('tagFilter.includeInherited'))).toHaveAttribute(
+      'for',
+      sw.getAttribute('id'),
+    )
+  })
+
+  it('off by default: a selected tag queries with includeInherited=false and shows only the tagged block', async () => {
+    routeByInheritance()
+    render(<TagFilterPanel />)
+    await selectWorkTag()
+
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], includeInherited: false })
+    })
+    expect(await screen.findByText('tagged parent')).toBeInTheDocument()
+    expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      '1 block matches 1 tag (AND)',
+    )
+    expect(screen.getByTestId('tag-filter-feedback')).not.toHaveTextContent(
+      t('tagFilter.includingInherited'),
+    )
+  })
+
+  it('turning the switch on re-runs the flat query with includeInherited=true and the descendant appears; off drops it again', async () => {
+    routeByInheritance()
+    render(<TagFilterPanel />)
+    await selectWorkTag()
+    expect(await screen.findByText('tagged parent')).toBeInTheDocument()
+
+    await user.click(inheritedSwitch())
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'true')
+    // The track's fill is keyed on `data-state`; a tooltip trigger wrapped
+    // around the switch overwrote it with its own.
+    expect(inheritedSwitch()).toHaveAttribute('data-state', 'checked')
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], includeInherited: true })
+    })
+    // The re-queried result set is what changes — not just the call shape.
+    expect(await screen.findByText('untagged child')).toBeInTheDocument()
+    expect(screen.getByText('tagged parent')).toBeInTheDocument()
+    const feedback = screen.getByTestId('tag-filter-feedback')
+    expect(feedback).toHaveTextContent(
+      `2 blocks match 1 tag (AND) ${t('tagFilter.includingInherited')}`,
+    )
+    expect(feedback).toHaveAttribute('aria-live', 'polite')
+
+    await user.click(inheritedSwitch())
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'false')
+    expect(inheritedSwitch()).toHaveAttribute('data-state', 'unchecked')
+    // The `false` key is still cached (`staleTime: Infinity`), so no second IPC:
+    // the visible set snaps back to the direct-only page.
+    await waitFor(() => {
+      expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      '1 block matches 1 tag (AND)',
+    )
+  })
+
+  it('is operable by keyboard alone (Tab to it, Space toggles)', async () => {
+    routeByInheritance()
+    render(<TagFilterPanel />)
+
+    inheritedSwitch().focus()
+    expect(inheritedSwitch()).toHaveFocus()
+    await user.keyboard(' ')
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'true')
+    await user.keyboard(' ')
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('applies to the nested composer too: query_by_tag_expr carries includeInherited=true', async () => {
+    routeByInheritance()
+    render(<TagFilterPanel />)
+
+    // The switch survives the composer swap (the AND/OR/NOT row does not).
+    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.queryByRole('button', { name: /^AND$/ })).not.toBeInTheDocument()
+    await user.click(inheritedSwitch())
+
+    const group = screen.getByTestId('tag-composer-group')
+    await user.click(within(group).getByRole('button', { name: t('tagFilter.composer.addTag') }))
+    const search = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
+    fireEvent.change(search, { target: { value: 'work' } })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(await screen.findByText('work'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await waitFor(() => {
+      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tag_expr')
+      expect(calls.at(-1)?.[1]).toMatchObject({
+        expr: { type: 'Tag', value: 'T1' },
+        includeInherited: true,
+      })
+    })
+    expect(await screen.findByText('untagged child')).toBeInTheDocument()
+    // Expression-level: no "(N tags, MODE)" detail, but the inherited note stays.
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      `2 blocks match ${t('tagFilter.includingInherited')}`,
+    )
+  })
+
+  it('toasts and keeps the previous results when the inherited query is rejected', async () => {
+    routeByInheritance({ rejectInherited: true })
+    render(<TagFilterPanel />)
+    await selectWorkTag()
+    expect(await screen.findByText('tagged parent')).toBeInTheDocument()
+
+    await user.click(inheritedSwitch())
+    await vi.advanceTimersByTimeAsync(0)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('tags.loadFailed'))
+    })
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'true')
+    expect(screen.queryByText('untagged child')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations with the switch on and results visible', async () => {
+    vi.useRealTimers()
+    routeByInheritance()
+    const { container } = render(<TagFilterPanel />)
+    fireEvent.click(inheritedSwitch())
+    expect(inheritedSwitch()).toHaveAttribute('aria-checked', 'true')
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
