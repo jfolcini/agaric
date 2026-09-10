@@ -25,7 +25,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -135,7 +135,10 @@ function walk(dir: string, out: string[] = []): string[] {
     if (statSync(full).isDirectory()) {
       if (entry !== 'node_modules') walk(full, out)
     } else if (/\.test\.tsx?$/.test(entry)) {
-      out.push(full)
+      // Posix-separated, like the baseline lists below: on Windows a raw
+      // `join` result matches nothing and every entry lands in BOTH halves.
+      // Same normalisation as the sibling `check-tauri-import-baseline.mjs`.
+      out.push(full.split(sep).join('/'))
     }
   }
   return out
