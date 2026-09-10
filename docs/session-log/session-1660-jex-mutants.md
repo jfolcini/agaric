@@ -52,6 +52,17 @@ One was verified empirically instead of by argument: `normalizeBody`'s
 predicted, because both paths return `''`. An argued gap that turns out to be
 killable is a test you owe; this one is not.
 
+**One of them was.** The list claimed `resolveFolderPath`'s `depth < 64` sits
+behind the `seen` set "that already bounds the walk". `seen` bounds *cycles*.
+A long enough ACYCLIC chain reaches the cap, so the mutants on it are killable
+— which makes the entry a test owed, not a gap.
+
+The review independently reached the opposite conclusion, that the counter is
+dead code and the three lines should go. Both `depth <= 64` and deleting the
+condition outright now redden the new 65-deep-chain test, so the counter is
+live and the suggested deletion would have been a silent behaviour change. The
+entry is gone from the accepted list and the test stands in its place.
+
 ## Falsification
 
 45 mutants, each applied to a copy of the source, suite run, restored and

@@ -23,8 +23,7 @@
  *    code cannot reach (`lines[i] ?? ''`, `known[mime] ?? 'bin'`, `.pop() ?? ''`);
  *  - a normalization applied twice — `parseJoplinTime`'s `.trim()` on a value
  *    `unserialize` already trimmed, `readOctalField`'s NUL/space skip that
- *    `Number.parseInt` tolerates anyway, `resolveFolderPath`'s `depth < 64`
- *    behind the `seen` set that already bounds the walk;
+ *    `Number.parseInt` tolerates anyway;
  *  - a guard whose failure is unobservable: a `Map` entry keyed `''` (every
  *    `id.length > 0` site) is never looked up, because every lookup key is
  *    non-empty;
@@ -574,13 +573,10 @@ function noteMember(id: string, title: string, body = ''): TarMember {
   return itemMember(id, joplinItem(content, { id, parent_id: '', type_: '1' }))
 }
 
-/** Concatenate byte runs into one archive. */
 describe('parseJex tar scan boundaries', () => {
   it('stops at the end-of-archive marker and ignores what follows it', () => {
     // Two archives back to back: everything past the first one's zero blocks is
     // no longer a member, so a padded or appended-to `.jex` yields no phantoms.
-    // Two complete archives back to back: everything after the first one's
-    // end-of-archive marker must be ignored.
     const real = buildTar([noteMember('a1'.repeat(16), 'Real Note')])
     const ghost = buildTar([noteMember('a2'.repeat(16), 'Ghost Note')])
     const archive = new Uint8Array(real.length + ghost.length)
@@ -733,6 +729,25 @@ describe('parseJex notebook hierarchy', () => {
       childNote('c6'.repeat(16), 'Nested', inner),
     ])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['My Projects/Nested'])
+  })
+
+  // The depth cap is not redundant with the `seen` set, which only stops
+  // CYCLES: a long enough acyclic chain reaches it, and this is what pins where
+  // it cuts. 65 notebooks deep, so the 65th is the one dropped.
+  it('caps a deep acyclic notebook chain at 64 segments', () => {
+    const id = (n: number) => n.toString(16).padStart(2, '0').repeat(16)
+    const chain = Array.from({ length: 65 }, (_, i) =>
+      folderMember(id(i), `N${i}`, i === 64 ? '' : id(i + 1)),
+    )
+    const archive = buildTar([...chain, childNote('cc'.repeat(16), 'Deep', id(0))])
+
+    const [title] = parseJex(archive).notes.map((n) => n.title)
+    const segments = (title ?? '').split('/')
+    expect(segments).toHaveLength(65) // 64 notebooks + the note itself
+    // Walked outermost-first, and N64 — the 65th — is the one the cap drops.
+    expect(segments[0]).toBe('N63')
+    expect(segments.at(-2)).toBe('N0')
+    expect(segments.at(-1)).toBe('Deep')
   })
 
   it('walks a notebook cycle once instead of repeating it to the depth cap', () => {
