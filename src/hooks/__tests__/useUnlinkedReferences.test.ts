@@ -102,6 +102,53 @@ describe('useUnlinkedReferences', () => {
     expect(calls).toBe(2)
   })
 
+  // The counter must not move `countIdentity`: a bump re-keys the query but
+  // the header keeps the count it knows until the new answer lands, else every
+  // typing burst on the page flashes "No Unlinked References" (#3733/#3735).
+  it('keeps the carried count while a structure-triggered refetch is in flight', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 12,
+      filtered_count: 12,
+      truncated: false,
+    }
+    let calls = 0
+    let releaseSecond: (value: typeof resp) => void = () => {}
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: () => {
+          calls += 1
+          if (calls === 1) return resp
+          return new Promise<typeof resp>((resolve) => {
+            releaseSecond = resolve
+          })
+        },
+      }),
+    )
+    const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
+    await waitFor(() => {
+      expect(result.current.totalCount).toBe(12)
+    })
+
+    act(() => {
+      recordGraphStructureChange()
+    })
+    await waitFor(() => {
+      expect(calls).toBe(2)
+    })
+    // Second fetch parked: the header still knows 12.
+    expect(result.current.totalCount).toBe(12)
+
+    await act(async () => {
+      releaseSecond({ ...resp, total_count: 13, filtered_count: 13 })
+    })
+    await waitFor(() => {
+      expect(result.current.totalCount).toBe(13)
+    })
+  })
+
   it('happy path: returns first-page groups, totalCount, truncated and hasMore', async () => {
     const resp = {
       groups: [
@@ -137,10 +184,10 @@ describe('useUnlinkedReferences', () => {
       'unlinkedReferences',
       null,
       'PAGE1',
-      getGraphStructureKey(),
       [],
       null,
       20,
+      getGraphStructureKey(),
     ])
   })
 
@@ -462,17 +509,15 @@ describe('useUnlinkedReferences', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    expect(result.current.queryKeyPrefix).toEqual([
-      'unlinkedReferences',
-      null,
-      'PAGE1',
+    expect(result.current.queryKeyPrefix).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
+    // It is exactly the read key minus the trailing group limit and structure
+    // counter, so `setQueriesData` prefix-matching cannot drift from where the
+    // hook reads.
+    expect(result.current.queryKey).toEqual([
+      ...result.current.queryKeyPrefix,
+      20,
       getGraphStructureKey(),
-      [],
-      null,
     ])
-    // It is exactly the read key minus the trailing group limit, so
-    // `setQueriesData` prefix-matching cannot drift from where the hook reads.
-    expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])
   })
 
   // #3316 item 2 (b) — `pageId` is part of the query key, so under the client's

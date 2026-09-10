@@ -129,8 +129,8 @@ export function UnlinkedReferences({
 
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
   // TanStack `useInfiniteQuery` (see `useUnlinkedReferences`). TanStack owns the
-  // page list, cursor, loading and error state; this is a read-only surface with
-  // no `invalidationKey` (the old `fetchGroups` never watched property events).
+  // page list, cursor, loading and error state; this is a read-only surface whose
+  // refresh axis is the graph-structure counter (see the hook).
   const {
     groups,
     totalCount,

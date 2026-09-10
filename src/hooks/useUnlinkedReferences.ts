@@ -10,12 +10,13 @@
  *
  * Sibling to `useBacklinkGroups` (LinkedReferences). The differences are
  * deliberate and called out inline:
- *  - NO `invalidationKey` in the query key (the old `fetchGroups` deps were
- *    `[pageId, filters, sort, t, currentSpaceId]` — no `useBlockPropertyEvents`),
- *    so there is no monotonic-key growth. #3316 item 2: that is NOT a reason to
- *    skip a bounded `gcTime` — `pageId` is in the key, so a session that visits
- *    N pages mints N entries. The hook now sets the same finite `gcTime` as
- *    `useBacklinkGroups`.
+ *  - The refresh axis is the graph-structure counter, not the property
+ *    counter: a mention becomes a link through a content edit, which fires no
+ *    property event. The counter sits at the TAIL of the read key, outside the
+ *    exported prefix, so a bump refetches without moving `countIdentity` (the
+ *    header keeps the count it knows while the new one loads) and the
+ *    prefix-matched optimistic removal still reaches every variant. Every bump
+ *    mints a key, so the finite `gcTime` below is what bounds the churn.
  *  - `totalCount`/`truncated` derive from the LAST page, not the first — the old
  *    component set BOTH unconditionally on every fetch (outside the cursor
  *    branch), unlike LinkedReferences' first-page-only rule.
@@ -135,17 +136,22 @@ export function useUnlinkedReferences(
   // A mention becomes a link (or a link is removed, un-linking a mention)
   // through content edits, which fire no property event; the graph-structure
   // counter is bumped on every local op and on `sync:complete`, so it is the
-  // key's refresh axis. Property changes do not move this list.
+  // refresh axis. It goes on the read key's tail, NOT in the prefix: the prefix
+  // is `countIdentity`, and moving it would drop the carried header count to
+  // "No Unlinked References" on every typing burst until the refetch lands.
   const { structureKey } = useGraphStructureEvents()
 
   // Exported so the optimistic "Link it" removal can target this exact cache
   // entry. `groupLimit` IS part of the key so expanding the panel refetches the
   // full page rather than showing the single group the collapsed fetch returned.
   const queryKeyPrefix = useMemo(
-    () => ['unlinkedReferences', spaceId, pageId, structureKey, filters, sort],
-    [spaceId, pageId, structureKey, filters, sort],
+    () => ['unlinkedReferences', spaceId, pageId, filters, sort],
+    [spaceId, pageId, filters, sort],
   )
-  const queryKey = useMemo(() => [...queryKeyPrefix, groupLimit], [queryKeyPrefix, groupLimit])
+  const queryKey = useMemo(
+    () => [...queryKeyPrefix, groupLimit, structureKey],
+    [queryKeyPrefix, groupLimit, structureKey],
+  )
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError, refetch } =
     useInfiniteQuery(
