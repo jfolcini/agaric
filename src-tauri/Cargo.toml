@@ -50,7 +50,7 @@ default-run = "agaric"
 # in the final binary.
 [package.metadata.cargo-machete]
 ignored = [
-    # #2621 Sync-D: the sync-only deps (mdns-sd, qrcode, if-addrs, jni,
+    # #2621 Sync-D: the sync-only deps (qrcode, if-addrs, jni,
     # ndk-context) moved to `agaric-sync/Cargo.toml` along with the code that
     # uses them; the mTLS-era ones (rcgen, tokio-tungstenite, tokio-rustls,
     # x509-parser) were deleted outright by the iroh cutover. What remains

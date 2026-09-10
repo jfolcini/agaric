@@ -14,9 +14,9 @@
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useMemo } from 'react'
 
-import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
+import { useInvalidateOnGraphStructure } from '@/hooks/useInvalidateOnGraphStructure'
 import { unwrap } from '@/lib/app-error'
 import type {
   BacklinkFilter,
@@ -92,20 +92,8 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     kind,
   } = params
 
-  // A `[[link]]` typed, pasted or synced fires no property event, so the
-  // graph-structure counter (bumped by the page-block store on every local op
-  // and by `sync:complete`) is what notices a new backlink while this panel is
-  // mounted. It INVALIDATES rather than joining the key: the counter moves at
-  // every typing pause, and a new key would drop the loaded pages, the expanded
-  // groups and the header count to a skeleton each time. Invalidation refetches
-  // the loaded pages in place; the first value is the mount, not a change.
-  const { structureKey } = useGraphStructureEvents()
-  const seenStructureKeyRef = useRef(structureKey)
-  useEffect(() => {
-    if (seenStructureKeyRef.current === structureKey) return
-    seenStructureKeyRef.current = structureKey
-    void queryClient.invalidateQueries({ queryKey: ['backlinkGroups', spaceId, targetId] })
-  }, [structureKey, spaceId, targetId])
+  const structurePrefix = useMemo(() => ['backlinkGroups', spaceId, targetId], [spaceId, targetId])
+  useInvalidateOnGraphStructure(structurePrefix)
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError } =
     useInfiniteQuery(

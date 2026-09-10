@@ -27,9 +27,9 @@
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 
-import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
+import { useInvalidateOnGraphStructure } from '@/hooks/useInvalidateOnGraphStructure'
 import { unwrap } from '@/lib/app-error'
 import type {
   BacklinkFilter,
@@ -142,19 +142,7 @@ export function useUnlinkedReferences(
   )
   const queryKey = useMemo(() => [...queryKeyPrefix, groupLimit], [queryKeyPrefix, groupLimit])
 
-  // A mention becomes a link (or a link is removed, un-linking a mention)
-  // through content edits, which fire no property event; the graph-structure
-  // counter (bumped on every local op and on `sync:complete`) is the refresh
-  // axis. Invalidate, do not re-key: the counter moves at every typing pause,
-  // and a new key would empty the list into a skeleton each time. The first
-  // value is the mount, not a change.
-  const { structureKey } = useGraphStructureEvents()
-  const seenStructureKeyRef = useRef(structureKey)
-  useEffect(() => {
-    if (seenStructureKeyRef.current === structureKey) return
-    seenStructureKeyRef.current = structureKey
-    void queryClient.invalidateQueries({ queryKey: queryKeyPrefix })
-  }, [structureKey, queryKeyPrefix])
+  useInvalidateOnGraphStructure(queryKeyPrefix)
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError, refetch } =
     useInfiniteQuery(
