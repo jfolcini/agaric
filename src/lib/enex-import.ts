@@ -47,9 +47,9 @@
  *      converge on the same output whatever it is;
  *   3. MD5's high length word (non-zero only for a resource ≥ 512 MB) and the
  *      one-past-the-end typed-array writes JS silently drops;
- *   4. values nothing observes: a `headingStyle` that is merely not `'setext'`
- *      (all Turndown checks), `createHTMLDocument`'s unused title, and the
- *      `mediaRefs` seed, since each ref is keyed by its own index.
+ * A fourth family — values nothing observes — is recorded at each site rather
+ * than listed here: a list naming code it does not sit on goes quietly wrong
+ * the first time that code moves.
  * Two guards against malformed ENML — the `<td>`/`<th>` cell filter and the
  * extension-detect anchor — survive on well-formed input by construction.
  */
@@ -159,6 +159,8 @@ const CRYPT_PLACEHOLDER =
  */
 function createEnmlTurndown(): TurndownService {
   const td = new TurndownService({
+    // Any value but `'setext'` behaves identically — every Turndown check is
+    // against that one (#4815).
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     bulletListMarker: '-',
@@ -526,12 +528,15 @@ function enmlToMarkdown(
   // Round-trip through an HTML document so the custom/void tags serialize
   // with explicit close tags (see the doc comment). Reading the en-note's
   // innerHTML strips the wrapper element itself.
+  // The title is never read — only this document's body is (#4815).
   const htmlDoc = document.implementation.createHTMLDocument('')
   const imported = htmlDoc.importNode(enNote, true) as Element
   // Rewrite `<en-todo>` → sentinel and `<en-media>` → indexed sentinel (with
   // the matching `![](path)` collected in `mediaRefs`) before serializing;
   // matched resources are appended to `used`. Keeping the resource path out of
   // the HTML avoids the DOM-text-reinterpreted-as-HTML flow CodeQL flags.
+  // Seeded empty or otherwise, each ref is keyed by its own index, so the
+  // starting contents cannot be observed (#4815).
   const mediaRefs: string[] = []
   transformEnmlDom(imported, resources, used, mediaRefs)
   const bodyHtml = imported.innerHTML

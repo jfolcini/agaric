@@ -64,10 +64,12 @@ fallbacks the type system forces but the code cannot reach; fallbacks whose
 stand-in value cannot matter; MD5's high length word, non-zero only for a
 resource ≥ 512 MB; and values nothing observes.
 
-Two sites carry their own comment because the argument is local —
-`media.remove()` (Turndown renders the leftover element as nothing either way)
-and `normalizeInlineCell` (Turndown re-collapses the text, so the run width and
-the trim are invisible, though the `|` substitution is not).
+Where the argument is about one specific line, it sits on that line instead of
+in the header — `media.remove()`, `headingStyle`, `createHTMLDocument`'s unused
+title, the `mediaRefs` seed, and `normalizeInlineCell`, whose comment says the
+run WIDTH is unobservable and points at the row filter for why the trim is not.
+A header list that names code it does not sit on goes quietly wrong the first
+time that code moves, which is the failure this session hit five times.
 
 A third started as a site comment and ended as a deletion. `if (enNote == null)
 return ''` is unreachable by the same argument as the three above, and the
