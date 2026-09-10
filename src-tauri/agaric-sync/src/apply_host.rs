@@ -250,14 +250,10 @@ mod contract_tests {
 
     use agaric_core::ulid::BlockId;
     use agaric_engine::materializer::Materializer;
-    use agaric_store::test_support::init_pool;
-    use sqlx::SqlitePool;
-    use tempfile::TempDir;
+    use agaric_store::test_support::test_pool;
 
     use super::ApplyHost;
     use super::test_support::RecordingApplyHost;
-
-    const CHANGED: &str = "APPLY_HOST_CONTRACT_1";
 
     async fn exercise<H: ApplyHost>(host: &H) {
         assert!(
@@ -269,7 +265,9 @@ mod contract_tests {
             None,
             "no root is registered on either host"
         );
-        host.enqueue_inbound_sync_rebuilds(&[BlockId::test_id(CHANGED)], &[])
+        // The id need not exist: the enqueue only arms the debounce and queues
+        // the per-block task, and nothing here observes what that task finds.
+        host.enqueue_inbound_sync_rebuilds(&[BlockId::test_id("APPLY_HOST_CONTRACT_1")], &[])
             .await
             .expect("an import with one changed block is accepted");
         host.enqueue_inbound_sync_rebuilds(&[], &[])
@@ -281,19 +279,6 @@ mod contract_tests {
             .expect("flush() succeeds");
     }
 
-    async fn pool_with_changed_block() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().expect("tempdir");
-        let pool = init_pool(&dir.path().join("contract.db"))
-            .await
-            .expect("init_pool");
-        sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', 'inbound text', 1)")
-            .bind(CHANGED)
-            .execute(&pool)
-            .await
-            .expect("seed the changed block");
-        (pool, dir)
-    }
-
     #[tokio::test]
     async fn the_double_honours_the_contract() {
         exercise(&RecordingApplyHost::new()).await;
@@ -301,7 +286,7 @@ mod contract_tests {
 
     #[tokio::test]
     async fn the_materializer_honours_the_contract() {
-        let (pool, _dir) = pool_with_changed_block().await;
+        let (pool, _dir) = test_pool().await;
         exercise(&Materializer::new(pool)).await;
     }
 }
