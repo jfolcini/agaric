@@ -102,7 +102,7 @@ describe('useUnlinkedReferences', () => {
     expect(calls).toBe(2)
   })
 
-  // The counter must not move `countIdentity`: a bump re-keys the query but
+  // The counter must not move `countIdentity`: a bump invalidates the query but
   // the header keeps the count it knows until the new answer lands, else every
   // typing burst on the page flashes "No Unlinked References" (#3733/#3735).
   it('keeps the carried count while a structure-triggered refetch is in flight', async () => {
