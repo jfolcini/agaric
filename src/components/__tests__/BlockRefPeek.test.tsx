@@ -302,6 +302,30 @@ describe('BlockRefPeek', () => {
 
   // "Open" borrows the chip's own navigation rather than growing a second
   // path to it, so the assertion is that the chip's handler ran.
+  // A hover peek over a chip in the block being edited: if Open took focus,
+  // the editor would blur, unmount the roving instance and the chip, and the
+  // click would land on a detached node.
+  it('Open does not move focus off the editor', async () => {
+    const onNavigate = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <>
+        <input data-testid="editor-stand-in" />
+        <Chips ids={[TARGET]} onNavigate={onNavigate} />
+      </>,
+    )
+    const editorStandIn = screen.getByTestId('editor-stand-in')
+    editorStandIn.focus()
+
+    const peek = await hoverOpen(user, TARGET)
+    const open = within(peek).getByRole('button', { name: 'Open' })
+    await user.pointer({ keys: '[MouseLeft>]', target: open })
+    expect(document.activeElement).toBe(editorStandIn)
+    await user.pointer({ keys: '[/MouseLeft]', target: open })
+
+    expect(onNavigate).toHaveBeenCalledWith(TARGET)
+  })
+
   it('routes Open through the chip and closes', async () => {
     const onNavigate = vi.fn()
     const user = userEvent.setup()

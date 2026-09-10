@@ -44,6 +44,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useBlockRefPeek } from '@/hooks/useBlockRefPeek'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
@@ -119,6 +120,15 @@ interface BlockRefPeekProps {
   container: HTMLElement | null
 }
 
+/**
+ * Action buttons must not take focus: a focus change blurs the editor, which
+ * unmounts the roving instance and the chip with it before the click can
+ * route through it.
+ */
+function keepEditorFocus(event: React.MouseEvent): void {
+  event.preventDefault()
+}
+
 export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactElement | null {
   const { t } = useTranslation()
   const { refId, anchorRect, fromKeyboard, peekRef, close, keepOpen, scheduleClose, activateChip } =
@@ -129,6 +139,9 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
   )
   const reducedMotion = usePrefersReducedMotion()
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+  // A pure read of the resolve cache: a nested `((ref))`, `[[link]]` or `#tag`
+  // inside the target renders its title instead of a truncated id.
+  const callbacks = useRichContentCallbacks()
 
   const { data } = useQuery(
     {
@@ -248,7 +261,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
             <p className="text-xs text-muted-foreground">{t('refPeek.empty')}</p>
           ) : (
             <div className="ref-peek-content text-sm">
-              {renderRichContent(data.content, { interactive: false })}
+              {renderRichContent(data.content, { interactive: false, ...callbacks })}
             </div>
           )}
           <div className="flex items-center justify-between gap-2 pt-1">
@@ -256,13 +269,19 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
               {t('refPeek.references', { count: data.refCount })}
             </span>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="xs" onClick={activateChip}>
+              <Button
+                variant="ghost"
+                size="xs"
+                onMouseDown={keepEditorFocus}
+                onClick={activateChip}
+              >
                 <ExternalLink aria-hidden="true" />
                 {t('refPeek.open')}
               </Button>
               <Button
                 variant="ghost"
                 size="xs"
+                onMouseDown={keepEditorFocus}
                 onClick={() => {
                   writeText(`((${refId}))`)
                     .then(() => {
