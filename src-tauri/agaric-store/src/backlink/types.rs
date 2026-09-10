@@ -102,6 +102,31 @@ pub enum BacklinkFilter {
     },
 }
 
+/// The two link shapes `block_links.kind` tells apart (migration 0119):
+/// `[[ULID]]` page links and `((ULID))` block references.
+///
+/// Not a [`BacklinkFilter`] variant: a compiled filter fragment is correlated
+/// on the SOURCE block alias `b` alone (`backlink/filters.rs`) and never sees
+/// the `block_links` row, so this predicate cannot be expressed there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkKind {
+    PageLink,
+    BlockRef,
+}
+
+impl LinkKind {
+    /// The `block_links.kind` column value. The one place the wire enum meets
+    /// the stored string, so the two cannot drift.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PageLink => "page_link",
+            Self::BlockRef => "block_ref",
+        }
+    }
+}
+
 /// Tagged union of sort modes for backlink queries.
 #[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(tag = "type")]

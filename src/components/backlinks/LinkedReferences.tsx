@@ -18,6 +18,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { SourcePageFilter } from '@/components/filters/SourcePageFilter'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useBacklinkGroups } from '@/hooks/useBacklinkGroups'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
@@ -26,7 +27,7 @@ import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { unwrap } from '@/lib/app-error'
-import type { BacklinkFilter, BacklinkSort } from '@/lib/bindings'
+import type { BacklinkFilter, BacklinkSort, LinkKind } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
@@ -41,12 +42,24 @@ function linkedRowDomId(blockId: string): string {
 }
 
 export interface LinkedReferencesProps {
-  pageId: string
+  /**
+   * The block backlinks point AT: the page id at the page root, or the zoomed
+   * block's id while a block is zoomed (#4551). `list_backlinks_grouped` takes
+   * any block id, so the panel needs no second query path.
+   */
+  targetId: string
   onNavigateToPage?: NavigateToPageFn | undefined
 }
 
+/** The three states of the link-kind segmented control, in render order. */
+const KIND_OPTIONS: ReadonlyArray<{ value: LinkKind | null; labelKey: string }> = [
+  { value: null, labelKey: 'references.kindAll' },
+  { value: 'page_link', labelKey: 'references.kindPageLinks' },
+  { value: 'block_ref', labelKey: 'references.kindBlockRefs' },
+]
+
 export function LinkedReferences({
-  pageId,
+  targetId,
   onNavigateToPage,
 }: LinkedReferencesProps): React.ReactElement | null {
   const { t } = useTranslation()
@@ -58,6 +71,7 @@ export function LinkedReferences({
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
+  const [kind, setKind] = useState<LinkKind | null>(null)
   // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
@@ -65,13 +79,14 @@ export function LinkedReferences({
   // Page-scoped filter/sort/source-page, reset by a render-phase adjust rather
   // than an effect (#4407). Comparing the PREVIOUS pageId forgets; storing the
   // current one would remember, and A → B → A would bring A's filters back.
-  const [filtersForPage, setFiltersForPage] = useState(pageId)
-  if (filtersForPage !== pageId) {
-    setFiltersForPage(pageId)
+  const [filtersForPage, setFiltersForPage] = useState(targetId)
+  if (filtersForPage !== targetId) {
+    setFiltersForPage(targetId)
     setFilters([])
     setSort(null)
     setSourcePageIncluded([])
     setSourcePageExcluded([])
+    setKind(null)
   }
 
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
@@ -80,13 +95,14 @@ export function LinkedReferences({
   // query key so a property-change event refetches (F-39).
   const { groups, totalCount, filteredCount, loading, hasMore, isFetchingMore, loadMore, isError } =
     useBacklinkGroups({
-      pageId,
+      targetId,
       filters,
       sort,
       sourcePageIncluded,
       sourcePageExcluded,
       spaceId: currentSpaceId,
       invalidationKey,
+      kind,
     })
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
@@ -113,21 +129,23 @@ export function LinkedReferences({
     () =>
       JSON.stringify([
         currentSpaceId,
-        pageId,
+        targetId,
         invalidationKey,
         filters,
         sort,
         sourcePageIncluded,
         sourcePageExcluded,
+        kind,
       ]),
     [
       currentSpaceId,
-      pageId,
+      targetId,
       invalidationKey,
       filters,
       sort,
       sourcePageIncluded,
       sourcePageExcluded,
+      kind,
     ],
   )
   const seededIdentityRef = useRef<string | null>(null)
@@ -295,7 +313,10 @@ export function LinkedReferences({
   // filter controls vanish. The loading branch below still renders so nothing
   // flashes mid-fetch.
   const hasActiveFilters =
-    filters.length > 0 || sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0
+    filters.length > 0 ||
+    sourcePageIncluded.length > 0 ||
+    sourcePageExcluded.length > 0 ||
+    kind !== null
   if (!loading && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
     return null
   }
@@ -336,6 +357,33 @@ export function LinkedReferences({
           </Badge>
         )}
       </div>
+
+      {/* The kind toggle sits OUTSIDE `ListViewState`, beside the header: that
+          machine swaps its children for a skeleton on every key change and for
+          `empty` when a kind matches nothing, either of which would unmount the
+          button just pressed — dropping keyboard focus to <body>, and leaving
+          no way back to "All" from an empty result. */}
+      {expanded && (
+        <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a segmented toggle: <fieldset>/<optgroup> would add form/list semantics these three buttons do not have
+          role="group"
+          aria-label={t('references.kindFilterLabel')}
+          className="linked-references-kind-filter mt-1 flex items-center gap-1 px-2"
+        >
+          {KIND_OPTIONS.map((opt) => (
+            <Button
+              key={opt.labelKey}
+              type="button"
+              size="xs"
+              variant={kind === opt.value ? 'secondary' : 'ghost'}
+              aria-pressed={kind === opt.value}
+              onClick={() => setKind(opt.value)}
+            >
+              {t(opt.labelKey)}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {expanded && (
         <ListViewState
@@ -399,6 +447,7 @@ export function LinkedReferences({
                   linkType="linked"
                   focusedBlockId={focusedBlockId}
                   rowDomId={linkedRowDomId}
+                  anchorRefId={targetId}
                 />
               </div>
 

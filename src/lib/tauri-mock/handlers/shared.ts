@@ -23,6 +23,7 @@ import { compareNocase, compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
+  classifyLinkKind,
   contentLinksTo,
   deriveLinkEdges,
   linkTokenRe,
@@ -310,7 +311,14 @@ export const returnEmptyPage = () => ({
 // snapshot builder can assert on the SAME derivation the handlers run instead
 // of re-declaring the regex. Re-exported here so the domain handler modules
 // keep their single "everything shared comes from ./shared" import.
-export { type MockLinkEdge, contentLinksTo, deriveLinkEdges, linkTokenRe, scanLinkTargets }
+export {
+  type MockLinkEdge,
+  classifyLinkKind,
+  contentLinksTo,
+  deriveLinkEdges,
+  linkTokenRe,
+  scanLinkTargets,
+}
 
 /**
  * The space a block's edges belong to: the space property of its OWNING page

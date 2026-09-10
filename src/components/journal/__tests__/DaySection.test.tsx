@@ -73,8 +73,8 @@ vi.mock('@/components/agenda/DonePanel', () => ({
 
 // ── Mock LinkedReferences ───────────────────────────────────────────
 vi.mock('@/components/backlinks/LinkedReferences', () => ({
-  LinkedReferences: (props: { pageId: string }) => (
-    <div data-testid="linked-references" data-page-id={props.pageId}>
+  LinkedReferences: (props: { targetId: string }) => (
+    <div data-testid="linked-references" data-page-id={props.targetId}>
       LinkedReferences
     </div>
   ),

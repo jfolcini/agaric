@@ -445,7 +445,7 @@ function DaySectionInner({
           </div>
           {entry.pageId && (
             <div id="journal-references-panel">
-              <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+              <LinkedReferences targetId={entry.pageId} onNavigateToPage={onNavigateToPage} />
             </div>
           )}
           <div id="journal-done-panel">

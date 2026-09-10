@@ -195,6 +195,54 @@ describe('useBlockZoom', () => {
   })
 
   // ── #716: Android back-chain integration ──────────────────────────
+  describe('onZoomChange (#4551)', () => {
+    it('reports the zoom root on zoom-in and null on zoom-out, once per transition', () => {
+      const onZoomChange = vi.fn()
+      const { result } = renderHook(() =>
+        useBlockZoom(allBlocks, allBlocks, NO_COLLAPSE, onZoomChange),
+      )
+
+      // Mount states the CURRENT zoom (the page root), so a caller that
+      // subscribes late still learns where it is without a transition.
+      expect(onZoomChange.mock.calls).toEqual([[null]])
+
+      act(() => {
+        result.current.zoomIn('B')
+      })
+      expect(onZoomChange.mock.calls).toEqual([[null], ['B']])
+
+      // B's parent A is in the list, so zoom-out lands one level up, not at
+      // the root — the report follows the zoom, not the button pressed.
+      act(() => {
+        result.current.zoomOut()
+      })
+      expect(onZoomChange.mock.calls).toEqual([[null], ['B'], ['A']])
+
+      act(() => {
+        result.current.zoomToRoot()
+      })
+      expect(onZoomChange.mock.calls).toEqual([[null], ['B'], ['A'], [null]])
+    })
+
+    it('does not re-report when only the callback identity changes', () => {
+      const seen: Array<string | null> = []
+      const { rerender, result } = renderHook(() =>
+        // A fresh closure every render — the un-memoized caller the ref guards
+        // against.
+        useBlockZoom(allBlocks, allBlocks, NO_COLLAPSE, (id) => seen.push(id)),
+      )
+
+      act(() => {
+        result.current.zoomIn('B')
+      })
+      expect(seen).toEqual([null, 'B'])
+
+      rerender()
+      rerender()
+      expect(seen).toEqual([null, 'B'])
+    })
+  })
+
   describe('back-chain registration (#716)', () => {
     beforeEach(() => {
       __resetBackHandlersForTests()

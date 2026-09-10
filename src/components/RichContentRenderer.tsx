@@ -78,6 +78,11 @@ export function renderRichContent(
     resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
     interactive?: boolean | undefined
     /**
+     * #4551 — the block this content is being rendered *about*. A chip naming
+     * it gets the `.ref-chip-anchor` highlight. See `RenderContext`.
+     */
+    anchorRefId?: string | undefined
+    /**
      * Preview/inline-only mode (#1533). When true, block-level nodes are
      * downgraded to inline text (no <h*>, <ol>/<ul>, <table>, <pre>,
      * <blockquote> or <div>) so the result is safe to place inside an inline

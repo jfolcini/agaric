@@ -22,6 +22,7 @@ import type {
   BacklinkGroup,
   BacklinkSort,
   GroupedBacklinkResponse,
+  LinkKind,
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -30,12 +31,19 @@ import { queryClient } from '@/lib/query-client'
 import { toSpaceScope } from '@/lib/space-scope'
 
 export interface UseBacklinkGroupsParams {
-  pageId: string
+  /**
+   * The block backlinks point AT. A page id at the page root; while a block
+   * is zoomed, that block's id (#4551) — `list_backlinks_grouped` is
+   * target-agnostic, so the same query serves both.
+   */
+  targetId: string
   filters: BacklinkFilter[]
   sort: BacklinkSort | null
   sourcePageIncluded: string[]
   sourcePageExcluded: string[]
   spaceId: string | null
+  /** #4551 — narrow to one link shape, or `null` for every shape. */
+  kind: LinkKind | null
   /**
    * Monotonic counter from `useBlockPropertyEvents`. Embedded in the query key
    * so a `block:properties-changed` event (bumping the key) starts a fresh
@@ -73,13 +81,14 @@ export interface UseBacklinkGroupsResult {
 
 export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkGroupsResult {
   const {
-    pageId,
+    targetId,
     filters,
     sort,
     sourcePageIncluded,
     sourcePageExcluded,
     spaceId,
     invalidationKey,
+    kind,
   } = params
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError } =
@@ -91,12 +100,13 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
         queryKey: [
           'backlinkGroups',
           spaceId,
-          pageId,
+          targetId,
           invalidationKey,
           filters,
           sort,
           sourcePageIncluded,
           sourcePageExcluded,
+          kind,
         ],
         queryFn: async ({ pageParam }): Promise<GroupedBacklinkResponse> => {
           try {
@@ -111,19 +121,20 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
             }
             return unwrap(
               await commands.listBacklinksGrouped(
-                pageId,
+                targetId,
                 allFilters.length > 0 ? allFilters : null,
                 sort,
                 pageParam ?? null,
                 PAGINATION_LIMIT,
                 toSpaceScope(spaceId),
+                kind,
               ),
             )
           } catch (err) {
             // Preserve the pre-migration component's observability: it logged
             // every fetch failure before surfacing it. Log here, then rethrow
             // so TanStack captures it into `isError`.
-            logger.error('useBacklinkGroups', 'Failed to load grouped backlinks', { pageId }, err)
+            logger.error('useBacklinkGroups', 'Failed to load grouped backlinks', { targetId }, err)
             throw err
           }
         },

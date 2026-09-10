@@ -103,7 +103,13 @@ pub async fn eval_backlink_query_grouped(
     sort: Option<BacklinkSort>,
     page: &PageRequest,
     space_id: Option<&str>,
+    kind: Option<LinkKind>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
+    // #4551 — the link-kind filter. Bound as the stored column string in
+    // every query below, so `Some` narrows to one shape and `None` is the
+    // no-op the `? IS NULL` arm answers.
+    let kind: Option<&'static str> = kind.map(LinkKind::as_str);
+
     // 1. `total_count` via SQL — never materialises the full base id set.
     //    The COUNT(*) subquery applies the same predicates as the pre-H1
     //    base-set fetch (target match, self-exclusion, deleted_at, space
@@ -136,10 +142,12 @@ pub async fn eval_backlink_query_grouped(
                AND b.deleted_at IS NULL \
                AND b.page_id IS NOT NULL \
                AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-               AND (?2 IS NULL OR b.space_id = ?2)",
+               AND (?2 IS NULL OR b.space_id = ?2) \
+               AND (?3 IS NULL OR bl.kind = ?3)",
         )
         .bind(block_id)
         .bind(space_id)
+        .bind(kind)
         .fetch_one(pool)
         .await?;
         usize::try_from(total_count_i64).unwrap_or(0)
@@ -238,7 +246,8 @@ pub async fn eval_backlink_query_grouped(
                        AND b.deleted_at IS NULL \
                        AND b.page_id IS NOT NULL \
                        AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-                       AND (? IS NULL OR b.space_id = ?){filter_clause}"
+                       AND (? IS NULL OR b.space_id = ?) \
+                       AND (? IS NULL OR bl.kind = ?){filter_clause}"
                 );
                 let mut fc_q =
                     sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
@@ -246,7 +255,9 @@ pub async fn eval_backlink_query_grouped(
                         .bind(block_id) // bl.target_id = ?
                         .bind(block_id) // bl.source_id != ?
                         .bind(space_id) // ? IS NULL
-                        .bind(space_id); // b.space_id = ?
+                        .bind(space_id) // b.space_id = ?
+                        .bind(kind) // ? IS NULL
+                        .bind(kind); // bl.kind = ?
                 for b in &cf.binds {
                     fc_q = match b {
                         FilterBind::Text(s) => fc_q.bind(s.clone()),
@@ -333,7 +344,8 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (? IS NULL OR b.space_id = ?){filter_clause}{keyset_clause} \
+           AND (? IS NULL OR b.space_id = ?) \
+           AND (? IS NULL OR bl.kind = ?){filter_clause}{keyset_clause} \
          GROUP BY b.page_id \
          ORDER BY (p.content IS NULL) ASC, p.content ASC, b.page_id ASC \
          LIMIT ?"
@@ -347,15 +359,18 @@ pub async fn eval_backlink_query_grouped(
     }
 
     // dynamic-sql (#2195): bare `?` placeholders bound left-to-right so the
-    // compiled filter fragment's binds interleave between the space clause
-    // and the keyset clause. Order: block_id ×3, space_id ×2, fragment
-    // binds, cursor binds (only when a cursor is present), then the limit.
+    // compiled filter fragment's binds interleave between the kind clause
+    // and the keyset clause. Order: block_id ×3, space_id ×2, kind ×2,
+    // fragment binds, cursor binds (only when a cursor is present), then the
+    // limit.
     let mut gq = sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(group_sql.as_str()))
         .bind(block_id) // tgt.id = ?
         .bind(block_id) // bl.target_id = ?
         .bind(block_id) // bl.source_id != ?
         .bind(space_id) // ? IS NULL
-        .bind(space_id); // b.space_id = ?
+        .bind(space_id) // b.space_id = ?
+        .bind(kind) // ? IS NULL
+        .bind(kind); // bl.kind = ?
     if let Some(cf) = compiled_filter.as_ref() {
         for b in &cf.binds {
             gq = match b {
@@ -406,9 +421,9 @@ pub async fn eval_backlink_query_grouped(
     let visible_pids: Vec<&str> = visible_groups.iter().map(|g| g.page_id.as_str()).collect();
     let visible_pids_json = serde_json::to_string(&visible_pids)?;
     // dynamic-sql (#2195): bare `?` placeholders bound left-to-right — the
-    // compiled filter fragment's binds interleave between the space clause
+    // compiled filter fragment's binds interleave between the kind clause
     // and the visible-page-id membership clause. Order: block_id ×3,
-    // space_id ×2, fragment binds, then the visible-pids JSON array.
+    // space_id ×2, kind ×2, fragment binds, then the visible-pids JSON array.
     let member_filter_clause = match compiled_filter.as_ref() {
         Some(cf) => format!(" AND ({})", cf.sql),
         None => String::new(),
@@ -422,7 +437,8 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (? IS NULL OR b.space_id = ?){member_filter_clause} \
+           AND (? IS NULL OR b.space_id = ?) \
+           AND (? IS NULL OR bl.kind = ?){member_filter_clause} \
            AND b.page_id IN (SELECT value FROM json_each(?))"
     );
     let mut mq = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(member_sql.as_str()))
@@ -430,7 +446,9 @@ pub async fn eval_backlink_query_grouped(
         .bind(block_id) // bl.target_id = ?
         .bind(block_id) // bl.source_id != ?
         .bind(space_id) // ? IS NULL
-        .bind(space_id); // b.space_id = ?
+        .bind(space_id) // b.space_id = ?
+        .bind(kind) // ? IS NULL
+        .bind(kind); // bl.kind = ?
     if let Some(cf) = compiled_filter.as_ref() {
         for b in &cf.binds {
             mq = match b {

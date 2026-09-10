@@ -98,6 +98,12 @@ function PageEditorInner({
   // wrong bound with an unbounded wait would have been a worse trade.
   const [revealNonce, setRevealNonce] = useState(0)
 
+  // #4551 — the block the tree is currently zoomed into, lifted out of
+  // `useBlockZoom` by BlockTree's `onZoomChange` callback so the
+  // linked-references panel below can target it. Local state, not a store
+  // field: nothing outside this page needs the value.
+  const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+
   // BlockTree reports the two DECIDABLE end states of a reveal it just ran
   // for `blockId`: `found: true` once the row is actually mounted, `found:
   // false` once BlockTree has determined it cannot reveal the target at all
@@ -323,6 +329,7 @@ function PageEditorInner({
           onNavigateToPage={onNavigateToPage}
           onRevealSettled={handleRevealSettled}
           revealNonce={revealNonce}
+          onZoomChange={setZoomedBlockId}
         />
       )}
 
@@ -363,7 +370,7 @@ function PageEditorInner({
           Wrapped in its own FeatureErrorBoundary so a malformed-ref crash
           in the backlink parser doesn't blank the host page (UX Tier 3). */}
       <FeatureErrorBoundary name="LinkedReferences">
-        <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />
+        <LinkedReferences targetId={zoomedBlockId ?? pageId} onNavigateToPage={onNavigateToPage} />
       </FeatureErrorBoundary>
 
       {/* Unlinked references — collapsed by default, below linked references.

@@ -118,6 +118,47 @@
     ],
     "properties": []
   },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "kind_all",
+      "rows": [
+        "B1#page_title=Home#truncated=false",
+        "B1->B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B1->B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B1->B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "filtered#count=3#truncated=false"
+      ],
+      "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "kind_page_link",
+      "rows": [
+        "B1#page_title=Home#truncated=false",
+        "B1->B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "filtered#count=1#truncated=false"
+      ],
+      "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "kind_block_ref",
+      "rows": [
+        "B1#page_title=Home#truncated=false",
+        "B1->B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B1->B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 2
+    }
+  ],
   "name": "block_ref_kind",
   "ops": [
     {
@@ -140,6 +181,49 @@
         "toText": "both [[000000000000000000000000S6]] and ((000000000000000000000000S6))"
       },
       "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S6",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "No `kind` argument: every shape. All three sources sit on page B1, so one group with three members — the control the two narrowed steps below are read against.",
+      "name": "kind_all"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "kind": "page_link",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`kind: page_link` keeps only B2. B4 carries BOTH token shapes on one pair and the single-row primary key resolves it to `block_ref`, so it is absent here — the case a mock classifying per token occurrence would get wrong. Both counts narrow with the rows.",
+      "name": "kind_page_link"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "kind": "block_ref",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "`kind: block_ref` keeps B3 and B4 and drops the page link B2.",
+      "name": "kind_block_ref"
     }
   ],
   "seed": {

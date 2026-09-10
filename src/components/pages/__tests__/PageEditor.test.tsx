@@ -29,17 +29,22 @@ let capturedOnRevealSettled: ((blockId: string, found: boolean) => void) | undef
 // PageEditor asks BlockTree for a fresh report rather than depending on
 // `setFocused` having changed something.
 let capturedRevealNonce: number | undefined
+// #4551 — the zoom report PageEditor lifts out of BlockTree to retarget the
+// linked-references panel.
+let capturedOnZoomChange: ((id: string | null) => void) | undefined
 vi.mock('@/components/editor/BlockTree', () => ({
   BlockTree: (props: {
     parentId?: string
     autoCreateFirstBlock?: boolean
     onRevealSettled?: (blockId: string, found: boolean) => void
     revealNonce?: number
+    onZoomChange?: (id: string | null) => void
   }) => {
     capturedParentId = props.parentId
     capturedAutoCreateFirstBlock = props.autoCreateFirstBlock
     capturedOnRevealSettled = props.onRevealSettled
     capturedRevealNonce = props.revealNonce
+    capturedOnZoomChange = props.onZoomChange
     return (
       <div
         data-testid="block-tree"
@@ -63,9 +68,9 @@ vi.mock('@/components/pages/PageHeader', () => ({
 // ── Mock panel components ───────────────────────────────────────────
 let capturedLinkedRefsPageId: string | undefined
 vi.mock('@/components/backlinks/LinkedReferences', () => ({
-  LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => {
-    capturedLinkedRefsPageId = props.pageId
-    return <div data-testid="linked-references" data-page-id={props.pageId} />
+  LinkedReferences: (props: { targetId: string; onNavigateToPage?: unknown }) => {
+    capturedLinkedRefsPageId = props.targetId
+    return <div data-testid="linked-references" data-page-id={props.targetId} />
   },
 }))
 
@@ -171,6 +176,7 @@ beforeEach(() => {
   capturedAutoCreateFirstBlock = undefined
   capturedOnRevealSettled = undefined
   capturedRevealNonce = undefined
+  capturedOnZoomChange = undefined
   capturedLinkedRefsPageId = undefined
   capturedPagesTreeSectionProps = undefined
   capturedUnlinkedRefsProps = undefined
@@ -232,12 +238,31 @@ describe('PageEditor', () => {
     expect(capturedParentId).toBe('PAGE_123')
   })
 
-  it('renders LinkedReferences with correct pageId', () => {
+  it('targets LinkedReferences at the page while nothing is zoomed', () => {
     render(<PageEditor pageId="PAGE_123" title="Test" />)
 
     const linkedRefs = screen.getByTestId('linked-references')
     expect(linkedRefs).toBeInTheDocument()
     expect(linkedRefs).toHaveAttribute('data-page-id', 'PAGE_123')
+    expect(capturedLinkedRefsPageId).toBe('PAGE_123')
+  })
+
+  // #4551 — the retarget, at the wiring layer the e2e spec exercises
+  // end-to-end: BlockTree reports the zoom, PageEditor points the panel at the
+  // zoomed block, and zooming back out restores the page.
+  it('retargets LinkedReferences at the zoomed block and back', () => {
+    render(<PageEditor pageId="PAGE_123" title="Test" />)
+    expect(capturedLinkedRefsPageId).toBe('PAGE_123')
+
+    act(() => {
+      capturedOnZoomChange?.('BLOCK_9')
+    })
+    expect(capturedLinkedRefsPageId).toBe('BLOCK_9')
+    expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'BLOCK_9')
+
+    act(() => {
+      capturedOnZoomChange?.(null)
+    })
     expect(capturedLinkedRefsPageId).toBe('PAGE_123')
   })
 

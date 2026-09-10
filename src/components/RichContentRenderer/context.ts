@@ -16,6 +16,13 @@ export interface RenderContext {
   readonly resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   readonly resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   readonly interactive?: boolean | undefined
+  /**
+   * #4551 — the block this content is being rendered *about*. A `[[ULID]]` or
+   * `((ULID))` chip naming it is the one that earned the row its place in a
+   * linked-references list, so it gets an anchor highlight
+   * (`.ref-chip-anchor`) to pick it out of the row's other chips.
+   */
+  readonly anchorRefId?: string | undefined
 }
 
 export const HEADING_CLASSES: Record<number, string> = {

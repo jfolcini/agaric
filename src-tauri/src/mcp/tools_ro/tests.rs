@@ -1317,6 +1317,7 @@ async fn list_backlinks_global_scope_parity() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .expect("inner call must succeed");

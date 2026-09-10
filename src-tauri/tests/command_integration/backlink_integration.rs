@@ -599,6 +599,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -648,6 +649,7 @@ async fn grouped_backlinks_empty_for_no_links() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -674,6 +676,7 @@ async fn grouped_backlinks_empty_block_id_returns_error() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await;
 
@@ -746,6 +749,7 @@ async fn grouped_backlinks_single_block_page() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -815,6 +819,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -897,6 +902,7 @@ async fn grouped_backlinks_excludes_deleted() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -916,6 +922,7 @@ async fn grouped_backlinks_excludes_deleted() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -997,6 +1004,7 @@ async fn grouped_backlinks_pagination() {
         None,
         Some(1),
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1014,6 +1022,7 @@ async fn grouped_backlinks_pagination() {
         resp1.next_cursor.clone(),
         Some(1),
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1034,6 +1043,7 @@ async fn grouped_backlinks_pagination() {
         resp2.next_cursor.clone(),
         Some(1),
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1157,6 +1167,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1179,6 +1190,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1271,6 +1283,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1362,6 +1375,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1464,6 +1478,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();
@@ -1611,6 +1626,7 @@ async fn grouped_backlinks_with_contains_filter() {
         None,
         None,
         &SpaceScope::Global,
+        None,
     )
     .await
     .unwrap();

@@ -44,13 +44,14 @@ function makeGroup(
 
 function baseParams(overrides: Partial<UseBacklinkGroupsParams> = {}): UseBacklinkGroupsParams {
   return {
-    pageId: 'PAGE1',
+    targetId: 'PAGE1',
     filters: [],
     sort: null,
     sourcePageIncluded: [],
     sourcePageExcluded: [],
     spaceId: null,
     invalidationKey: 0,
+    kind: null,
     ...overrides,
   }
 }

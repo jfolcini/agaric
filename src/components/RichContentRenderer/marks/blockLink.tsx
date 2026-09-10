@@ -63,6 +63,7 @@ export function renderBlockLink(
         'block-link-chip',
         clickable && 'cursor-pointer',
         status === 'deleted' && 'block-link-deleted',
+        linkId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-link-chip"
       title={title}
