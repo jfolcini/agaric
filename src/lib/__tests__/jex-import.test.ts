@@ -13,7 +13,25 @@
  *  - `jexNoteToMarkdown` stamps `source: joplin` frontmatter,
  *  - every resource-naming fallback (mime→extension table, id-named orphan
  *    binaries, collision disambiguation) and the item/tar-header shapes a
- *    hand-written export hits but a well-formed one does not (#4816).
+ *    hand-written export hits but a well-formed one does not (#4816),
+ *  - where the tar scan starts and stops, the notebook chain a note hangs off,
+ *    and the exact bytes `jexNoteToMarkdown` hands the markdown importer.
+ *
+ * ACCEPTED GAPS (#4816). The mutants still surviving here recur in five shapes,
+ * none of them worth a test — reach for one of these before writing another:
+ *  - the operand of a `??` or `!== undefined` the type system demands and the
+ *    code cannot reach (`lines[i] ?? ''`, `known[mime] ?? 'bin'`, `.pop() ?? ''`);
+ *  - a normalization applied twice — `parseJoplinTime`'s `.trim()` on a value
+ *    `unserialize` already trimmed, `readOctalField`'s NUL/space skip that
+ *    `Number.parseInt` tolerates anyway;
+ *  - a guard whose failure is unobservable: a `Map` entry keyed `''` (every
+ *    `id.length > 0` site) is never looked up, because every lookup key is
+ *    non-empty;
+ *  - `unserialize`'s blank-line branch versus its no-colon branch, which differ
+ *    only by whether a blank line joins `contentLines` — and `normalizeBody`
+ *    strips it either way;
+ *  - a tar header no writer emits: a member name filling all 100 bytes with no
+ *    NUL, an empty member name, a zero-length member as the final block.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -217,6 +235,9 @@ describe('parseJex', () => {
 })
 
 describe('jexNoteToMarkdown', () => {
+  // The whole string is asserted, not just its parts: a frontmatter block that
+  // is never closed swallows the body, and a body welded onto the closing `---`
+  // lands inside the frontmatter instead of on the page.
   it('emits frontmatter with ISO created/updated and source: joplin, then body', () => {
     const md = jexNoteToMarkdown({
       title: 'T',
@@ -225,11 +246,20 @@ describe('jexNoteToMarkdown', () => {
       updatedMs: Date.UTC(2022, 2, 4, 5, 6, 7),
       attachments: [],
     })
-    expect(md.startsWith('---\n')).toBe(true)
-    expect(md).toContain(`created: "${new Date(Date.UTC(2021, 0, 2, 3, 4, 5)).toISOString()}"`)
-    expect(md).toContain(`updated: "${new Date(Date.UTC(2022, 2, 4, 5, 6, 7)).toISOString()}"`)
-    expect(md).toContain('source: joplin')
-    expect(md).toContain('# Body')
+    expect(md).toBe(
+      [
+        '---',
+        `created: "${new Date(Date.UTC(2021, 0, 2, 3, 4, 5)).toISOString()}"`,
+        `updated: "${new Date(Date.UTC(2022, 2, 4, 5, 6, 7)).toISOString()}"`,
+        'source: joplin',
+        '---',
+        '',
+        '# Body',
+        '',
+        'text',
+        '',
+      ].join('\n'),
+    )
   })
 
   it('omits created/updated when null but always stamps source', () => {
@@ -240,9 +270,18 @@ describe('jexNoteToMarkdown', () => {
       updatedMs: null,
       attachments: [],
     })
-    expect(md).not.toContain('created:')
-    expect(md).not.toContain('updated:')
-    expect(md).toContain('source: joplin')
+    expect(md).toBe('---\nsource: joplin\n---\n\nbody\n')
+  })
+
+  it('emits frontmatter alone, with no trailing blank, for an empty body', () => {
+    const md = jexNoteToMarkdown({
+      title: 'T',
+      markdown: '',
+      createdMs: null,
+      updatedMs: null,
+      attachments: [],
+    })
+    expect(md).toBe('---\nsource: joplin\n---\n')
   })
 })
 
@@ -342,6 +381,23 @@ describe('parseJex resource naming', () => {
     ])
   })
 
+  it('keeps the extension the tar member carries over the metadata file_extension', () => {
+    // The bytes are what they are: the member's own suffix wins over metadata
+    // that disagrees with it, so the vault file is not renamed to a wrong type.
+    const id = '4e'.repeat(16)
+    const specs = [
+      { id, fileName: `${id}.jpg`, meta: { mime: 'image/png', file_extension: 'png' } },
+    ]
+    expect(embeddedAttachments(specs)).toEqual([{ path: `${id}.jpg`, mime: 'image/png' }])
+  })
+
+  it('keeps an orphan binary extension when no metadata item names one', () => {
+    const orphan = '3e'.repeat(16)
+    expect(embeddedAttachments([{ id: orphan, fileName: `${orphan}.png` }])).toEqual([
+      { path: `${orphan}.png`, mime: 'application/octet-stream' },
+    ])
+  })
+
   it('falls back to octet-stream when the metadata omits the mime, keeping its file_extension', () => {
     const id = '6f'.repeat(16)
     const specs = [{ id, fileName: id, meta: { file_extension: 'png' } }]
@@ -361,6 +417,22 @@ describe('parseJex resource naming', () => {
       },
     ]
     expect(embeddedAttachments(specs)).toEqual([{ path: 'diagram.png', mime: 'image/png' }])
+  })
+
+  it('reduces a resource title carrying a path to a clean basename', () => {
+    const id = '2e'.repeat(16)
+    const specs = [
+      {
+        id,
+        fileName: `${id}.png`,
+        meta: { mime: 'image/png', file_extension: 'png' },
+        // A title as Windows handed it over, with a stray control character.
+        // The title becomes a vault file path, so it keeps neither the
+        // directories nor anything unprintable.
+        metaTitle: 'C:\\photos\\my \u0001pic.png',
+      },
+    ]
+    expect(embeddedAttachments(specs)).toEqual([{ path: 'my pic.png', mime: 'image/png' }])
   })
 
   it('disambiguates resources whose titles claim the same vault path', () => {
@@ -480,5 +552,212 @@ describe('parseJex malformed item and header shapes', () => {
     )
     const archive = buildTar([{ ...item, typeflag: 0x37 }])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Contiguous'])
+  })
+
+  it('reads a member stored with the pre-USTAR NUL type flag', () => {
+    const noteId = '4f'.repeat(16)
+    const item = itemMember(
+      noteId,
+      joplinItem('Old Format', { id: noteId, parent_id: '', type_: '1' }),
+    )
+    const archive = buildTar([{ ...item, typeflag: 0x00 }])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Old Format'])
+  })
+})
+
+// --- Where the tar scan starts and stops ------------------------------------
+
+/** A root-level note item member, optionally with a body under the title. */
+function noteMember(id: string, title: string, body = ''): TarMember {
+  const content = body.length > 0 ? `${title}\n\n${body}` : title
+  return itemMember(id, joplinItem(content, { id, parent_id: '', type_: '1' }))
+}
+
+describe('parseJex tar scan boundaries', () => {
+  it('stops at the end-of-archive marker and ignores what follows it', () => {
+    // Two archives back to back: everything past the first one's zero blocks is
+    // no longer a member, so a padded or appended-to `.jex` yields no phantoms.
+    const real = buildTar([noteMember('a1'.repeat(16), 'Real Note')])
+    const ghost = buildTar([noteMember('a2'.repeat(16), 'Ghost Note')])
+    const archive = new Uint8Array(real.length + ghost.length)
+    archive.set(real, 0)
+    archive.set(ghost, real.length)
+    const { notes, skipped } = parseJex(archive)
+    expect(notes.map((n) => n.title)).toEqual(['Real Note'])
+    expect(skipped).toBe(0)
+  })
+
+  it('imports a final member whose data ends on the last byte of the archive', () => {
+    const last = 'b2'.repeat(16)
+    const props = { id: last, parent_id: '', type_: '1' }
+    // Pad the body so this member's data fills its 512-byte block exactly; with
+    // the end-of-archive blocks cut away, its data ends at the final byte.
+    const pad = 512 - joplinItem('Last\n\n', props).length
+    expect(pad).toBeGreaterThan(0)
+    const full = buildTar([
+      noteMember('b1'.repeat(16), 'First'),
+      itemMember(last, joplinItem(`Last\n\n${'x'.repeat(pad)}`, props)),
+    ])
+    const cutAtEndOfData = full.subarray(0, -1024)
+    expect(parseJex(cutAtEndOfData).notes.map((n) => n.title)).toEqual(['First', 'Last'])
+  })
+
+  it('drops a member whose declared data runs past the end of the archive', () => {
+    const full = buildTar([
+      noteMember('c1'.repeat(16), 'First'),
+      noteMember('c2'.repeat(16), 'Cut', 'x'.repeat(700)),
+    ])
+    // Header, data, header, then 100 of the second member's ~780 declared bytes:
+    // a half-read item must not surface, as a note or as a skipped count.
+    const { notes, skipped } = parseJex(full.subarray(0, 512 * 3 + 100))
+    expect(notes.map((n) => n.title)).toEqual(['First'])
+    expect(skipped).toBe(0)
+  })
+
+  it('does not read an extended-header record as an item', () => {
+    // A pax/GNU extended header ('x') carries tar metadata, not file content.
+    // Read as an item it parses as nothing, and a sound archive would report
+    // itself damaged.
+    const archive = buildTar([
+      noteMember('d1'.repeat(16), 'Real Note'),
+      {
+        name: `${'d2'.repeat(16)}.md`,
+        data: enc.encode('30 mtime=1700000000.0\n'),
+        typeflag: 0x78,
+      },
+    ])
+    const { notes, skipped } = parseJex(archive)
+    expect(notes.map((n) => n.title)).toEqual(['Real Note'])
+    expect(skipped).toBe(0)
+  })
+})
+
+// --- Item text shapes --------------------------------------------------------
+
+describe('parseJex item text shapes', () => {
+  it('counts a `.md` member that is not a Joplin item as skipped', () => {
+    const archive = buildTar([
+      noteMember('e1'.repeat(16), 'Real Note'),
+      itemMember('e2'.repeat(16), 'just some markdown, no metadata block\n'),
+    ])
+    const { notes, skipped } = parseJex(archive)
+    expect(notes.map((n) => n.title)).toEqual(['Real Note'])
+    expect(skipped).toBe(1)
+  })
+
+  it('parses an item whose file ends with a whitespace-only line', () => {
+    const noteId = 'e3'.repeat(16)
+    // Trailing blanks are dropped by trimmed value, not by emptiness: a final
+    // line of spaces must not be mistaken for the metadata/content separator.
+    const text = `${joplinItem('Trailing', { id: noteId, parent_id: '', type_: '1' })}   \n`
+    const { notes, skipped } = parseJex(buildTar([itemMember(noteId, text)]))
+    expect(skipped).toBe(0)
+    expect(notes.map((n) => n.title)).toEqual(['Trailing'])
+  })
+
+  it('skips an item that is nothing but blank lines instead of spinning on it', () => {
+    const { notes, skipped } = parseJex(buildTar([itemMember('e4'.repeat(16), '\n \n\n')]))
+    expect(notes).toEqual([])
+    expect(skipped).toBe(1)
+  })
+
+  it('trims the title line and the blank lines bracketing the body', () => {
+    const noteId = 'e5'.repeat(16)
+    const text = `  Spaced Title  \n   \nbody line  \n\ntype_: 1\nid: ${noteId}\n`
+    const { notes } = parseJex(buildTar([itemMember(noteId, text)]))
+    expect(notes[0]?.title).toBe('Spaced Title')
+    expect(notes[0]?.markdown).toBe('body line')
+  })
+
+  it('prefers the user-facing timestamps over the sync ones', () => {
+    // `created_time` is when the row appeared on this device; `user_created_time`
+    // is the note's own age. Picking the former dates every synced note to the
+    // day it synced.
+    const noteId = 'e6'.repeat(16)
+    const item = joplinItem('Timed', {
+      id: noteId,
+      parent_id: '',
+      created_time: '2019-01-01T00:00:00.000Z',
+      updated_time: '2019-02-02T00:00:00.000Z',
+      user_created_time: '2021-01-02T03:04:05.000Z',
+      user_updated_time: '2022-03-04T05:06:07.000Z',
+      type_: '1',
+    })
+    const { notes } = parseJex(buildTar([itemMember(noteId, item)]))
+    expect(notes[0]?.createdMs).toBe(Date.UTC(2021, 0, 2, 3, 4, 5))
+    expect(notes[0]?.updatedMs).toBe(Date.UTC(2022, 2, 4, 5, 6, 7))
+  })
+})
+
+// --- Notebook hierarchy → namespace path -------------------------------------
+
+/** A notebook (`type_: 2`) item member titled `title`, under `parentId`. */
+function folderMember(id: string, title: string, parentId = ''): TarMember {
+  return itemMember(id, joplinItem(title, { id, parent_id: parentId, type_: '2' }))
+}
+
+/** A note item member filed under notebook `parentId`. */
+function childNote(id: string, title: string, parentId: string): TarMember {
+  return itemMember(id, joplinItem(title, { id, parent_id: parentId, type_: '1' }))
+}
+
+describe('parseJex notebook hierarchy', () => {
+  it('nests notebooks into a namespace path, matching ids case-insensitively', () => {
+    const parent = 'A1'.repeat(16)
+    const child = 'B2'.repeat(16)
+    const archive = buildTar([
+      folderMember(parent, 'Parent'),
+      folderMember(child, 'Child', parent),
+      childNote('C3'.repeat(16), 'Deep', child),
+    ])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Parent/Child/Deep'])
+  })
+
+  it('leaves a note at the root when its notebook is missing from the archive', () => {
+    const archive = buildTar([childNote('d4'.repeat(16), 'Orphan', 'e5'.repeat(16))])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Orphan'])
+  })
+
+  it('collapses whitespace in a notebook title and skips an untitled notebook', () => {
+    const outer = 'a4'.repeat(16)
+    const inner = 'b5'.repeat(16)
+    const archive = buildTar([
+      folderMember(outer, 'My   Projects'),
+      // Metadata only, so this notebook has no title line to contribute — and
+      // must not contribute an empty namespace segment either.
+      itemMember(inner, `id: ${inner}\nparent_id: ${outer}\ntype_: 2\n`),
+      childNote('c6'.repeat(16), 'Nested', inner),
+    ])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['My Projects/Nested'])
+  })
+
+  // The depth cap is not redundant with the `seen` set, which only stops
+  // CYCLES: a long enough acyclic chain reaches it, and this is what pins where
+  // it cuts. 65 notebooks deep, so the 65th is the one dropped.
+  it('caps a deep acyclic notebook chain at 64 segments', () => {
+    const id = (n: number) => n.toString(16).padStart(2, '0').repeat(16)
+    const chain = Array.from({ length: 65 }, (_, i) =>
+      folderMember(id(i), `N${i}`, i === 64 ? '' : id(i + 1)),
+    )
+    const archive = buildTar([...chain, childNote('cc'.repeat(16), 'Deep', id(0))])
+
+    const [title] = parseJex(archive).notes.map((n) => n.title)
+    const segments = (title ?? '').split('/')
+    expect(segments).toHaveLength(65) // 64 notebooks + the note itself
+    // Walked outermost-first, and N64 — the 65th — is the one the cap drops.
+    expect(segments[0]).toBe('N63')
+    expect(segments.at(-2)).toBe('N0')
+    expect(segments.at(-1)).toBe('Deep')
+  })
+
+  it('walks a notebook cycle once instead of repeating it to the depth cap', () => {
+    const alpha = 'a7'.repeat(16)
+    const beta = 'b8'.repeat(16)
+    const archive = buildTar([
+      folderMember(alpha, 'Alpha', beta),
+      folderMember(beta, 'Beta', alpha),
+      childNote('c9'.repeat(16), 'Cycled', alpha),
+    ])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Beta/Alpha/Cycled'])
   })
 })

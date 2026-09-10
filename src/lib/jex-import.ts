@@ -313,10 +313,10 @@ function indexResources(
       candidate = `${id}.${ext}`
     }
     if (usedPaths.has(candidate)) {
+      // Every branch above ends the candidate `<stem>.<ext>` with a non-empty
+      // `ext`, so the dot is always there to splice the id prefix in front of.
       const dot = candidate.lastIndexOf('.')
-      const stem = dot === -1 ? candidate : candidate.slice(0, dot)
-      const suffix = dot === -1 ? '' : candidate.slice(dot)
-      candidate = `${stem}-${id.slice(0, 8)}${suffix}`
+      candidate = `${candidate.slice(0, dot)}-${id.slice(0, 8)}${candidate.slice(dot)}`
     }
     usedPaths.add(candidate)
     byId.set(id, { path: candidate, bytes, mime })
