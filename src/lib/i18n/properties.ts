@@ -331,7 +331,7 @@ export const properties: Record<string, string> = {
   // default off so an existing query keeps its result set.
   'tagFilter.includeInherited': 'Include inherited tags',
   'tagFilter.includeInheritedTooltip':
-    "Also match blocks nested under a tagged block. A tag on a block applies to every block beneath it, however deep — a tag on a page's first block matches the whole page. Only tags added to a block are inherited; a #tag typed in its text is not.",
+    "Also match blocks nested under a tagged block. A tag on a block applies to every block beneath it, however deep — a tag on a page's first block matches the whole page. Only tags added to a block are inherited; an inline @ tag chip in its text is not.",
   'tagFilter.includingInherited': '(including inherited tags)',
   // #1426 — nested And/Or/Not composer (#1472 query_by_tag_expr IPC)
   'tagFilter.composer.show': 'Advanced',

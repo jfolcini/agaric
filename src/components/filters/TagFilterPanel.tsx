@@ -120,7 +120,7 @@ function FilterFeedback({
               {mode.toUpperCase()})
             </>
           )}
-          {includeInherited && <> {t('tagFilter.includingInherited')}</>}
+          {includeInherited && !loading && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}
     </p>

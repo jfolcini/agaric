@@ -60,3 +60,13 @@ has a count. A test holds the first `query_by_tags` pending and asserts no
 "match" text, then the real count after resolution; removing the gate reddens
 it. Also deleted the `not.toHaveAttribute` in `PageTagSection.test.tsx` that
 the exact-equality assertion above it made unfalsifiable.
+
+## Round four
+
+The new hint said "a #tag typed in its text is not" inherited. Agaric's inline
+trigger is `@`, and a literal `#tag` produces no tag at all, so the caveat
+pointed away from the case it warns about: an inline `@` chip lands in
+`block_tag_refs`, which the resolver unions but never inherits. Both strings
+now say "an inline `@` tag chip". The "(including inherited tags)" fragment is
+also gated on `!loading`, so the previous key's count is never shown under the
+new label during the switch's round trip.
