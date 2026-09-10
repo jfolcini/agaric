@@ -74,8 +74,12 @@ return ''` is unreachable by the same argument as the three above, and the
 comment written to excuse it was worse than the line: it said "no input reaches
 this" and then claimed the line stops a rootless `<content>` throwing away the
 whole import — but `return ''` IS throwing it away. The `?? doc.documentElement`
-before it is what saves that case. Caught in review; the figures at the top were
-re-measured after it, which is where 93.39% became 93.78%.
+before it is what saves that case. Caught in review.
+
+The figures at the top are the only ones in this log, deliberately: the lane was
+re-measured after every review round (93.39% at the sweep's own last run, then
+93.78%, then 94.03%), and quoting the intermediate ones in a file that is
+immutable once merged leaves a reader unable to tell which run was final.
 
 ## Falsification, and the seven that came back
 
