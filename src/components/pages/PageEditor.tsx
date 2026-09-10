@@ -13,6 +13,7 @@ import { DonePanel } from '@/components/agenda/DonePanel'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
+import { BlockRefPeek } from '@/components/BlockRefPeek'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
@@ -385,6 +386,12 @@ function PageEditorInner({
 
       {/* Link preview tooltip — covers all external links in the page */}
       <LinkPreviewTooltip container={pageContainerEl} />
+
+      {/* Block-reference peek (#4551) — one delegated host for every
+          `((ULID))` chip on the page. The same container covers the editor
+          body, the linked-references list and the unlinked list, so a chip
+          anywhere below is served without a per-chip listener. */}
+      <BlockRefPeek container={pageContainerEl} />
     </div>
   )
 }

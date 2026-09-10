@@ -247,6 +247,28 @@ describe('BlockRef NodeView — mounted Editor, resolve-store title contract (#4
     expect(chip?.textContent).toBe('Title for UPD0002')
   })
 
+  // `useBlockRefPeek` parks the chip's `title` while a peek is open and marks
+  // the chip; `update()` runs on every keystroke in the block, so without the
+  // guard the native tooltip would come back over the open popover.
+  it('an update while the title is parked leaves it off', () => {
+    editor = createEditor({
+      resolveContent: (id) => `Title for ${id}`,
+      content: docWithRef('PARK0001'),
+    })
+    const chip = editor.view.dom.querySelector('[data-type="block-ref"]') as HTMLElement
+    chip.removeAttribute('title')
+    chip.setAttribute('data-peek-title-parked', '')
+
+    // An in-place attribute change keeps the NodeView instance and drives its
+    // `update()`, unlike `setContent`, which rebuilds the view.
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(1, undefined, { id: 'PARK0002' }))
+
+    const updated = editor.view.dom.querySelector('[data-type="block-ref"]') as HTMLElement
+    expect(updated).toBe(chip)
+    expect(updated.textContent).toBe('Title for PARK0002')
+    expect(updated.hasAttribute('title')).toBe(false)
+  })
+
   it('calls onNavigate with the block id on click', () => {
     const onNavigate = vi.fn()
     editor = createEditor({ onNavigate, content: docWithRef('CLICK0001') })

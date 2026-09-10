@@ -85,7 +85,6 @@ export function renderBlockRef(
       ? unresolvedBlockRefLabel(refId)
       : resolved
   const status = ctx.resolveBlockStatus?.(refId) ?? 'active'
-  const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockLink):
   // - clickable (handler AND interactive) → full affordances: role=link,
   //   tabIndex=0, key/click handlers, cursor-pointer.
@@ -107,6 +106,30 @@ export function renderBlockRef(
         refId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-ref-chip"
+      // #4551 — the same identity pair the TipTap NodeView already sets
+      // (`@/editor/extensions/block-ref.ts`), so ONE delegated selector,
+      // `[data-type="block-ref"][data-id]`, reaches the peek host from both
+      // the editor and here. Kind is already in the class name, so there is
+      // no `data-ref-kind`.
+      //
+      // Gated on `clickable`, not on `interactive`. Two things ride on that:
+      //  - A chip inside the peek cannot open a nested peek: `BlockRefPeek`
+      //    renders its target's content with `interactive: false`.
+      //  - The peek's `Open` action is the chip's OWN click handler
+      //    (`activateChip`). On a chip that has no handler the click bubbles
+      //    to whatever row encloses it — a backlink row navigates to the
+      //    REFERENCING block's page, the opposite of what `Open` promises —
+      //    so a chip without navigation must not be peekable at all.
+      // ARIA rides on the same condition: the inert arm is a `<span>` with no
+      // role, where these states are prohibited.
+      {...(clickable
+        ? {
+            'data-type': 'block-ref',
+            'data-id': refId,
+            'aria-haspopup': 'dialog' as const,
+            'aria-expanded': false,
+          }
+        : {})}
       // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`.
       //
       // #4228 replaced a Radix `<Tooltip>` here. That tooltip earned its place
@@ -120,13 +143,17 @@ export function renderBlockRef(
       // "show me the part max-width cut off", which is exactly what the sibling
       // chips (`renderBlockLink`) already do with a native `title=`.
       title={title}
-      {...deletedProps}
       {...interactiveProps}
     >
       {/* The `…` marker lives on this child, not the chip — the chip is
           `inline-flex` and `text-overflow` only applies to a block container
           (see `.block-ref-chip-label` in `src/index.css`). */}
       <span className="block-ref-chip-label">{title}</span>
+      {/* #4551 — the deleted marker is a visually-hidden CHILD, not an
+          `aria-label` override: the accessible name of a control must contain
+          its visible label (WCAG 2.5.3), and an override that reformats the
+          title breaks voice control on the chip's own text. */}
+      {status === 'deleted' && <span className="sr-only"> (deleted)</span>}
     </span>
   )
 }

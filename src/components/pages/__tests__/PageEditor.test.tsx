@@ -136,7 +136,12 @@ vi.mock('@/components/pages/PageMetadataBar', () => ({
 }))
 
 // ── Mock lucide-react ───────────────────────────────────────────────
-vi.mock('lucide-react', () => ({
+// Partial: #4551 pulled `RichContentRenderer` into PageEditor's import graph
+// (the block-ref peek renders the target's content), and its callout config
+// reads icons at module scope, so an exhaustive hand-written mock would have
+// to track that file.
+vi.mock('lucide-react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('lucide-react')>()),
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
 }))

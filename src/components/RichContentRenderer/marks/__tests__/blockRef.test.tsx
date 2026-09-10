@@ -151,11 +151,15 @@ describe('renderBlockRef — chip label reflects the stored title verbatim', () 
 })
 
 describe('renderBlockRef — deleted status', () => {
-  it('includes the (non-blank) title in the aria-label when deleted, not a bare " (deleted)"', () => {
+  it('names the deleted chip by its own visible label plus a hidden marker', () => {
     // #4228 — before the seed fix, newline-leading content produced an
-    // empty chipLabel, so the deleted aria-label degraded to " (deleted)"
-    // with no real text before it. The stored title is now non-blank, so
-    // the aria-label carries it.
+    // empty chipLabel, so the deleted name degraded to " (deleted)" with no
+    // real text before it. The stored title is now non-blank, so the name
+    // carries it.
+    //
+    // #4551 — and the marker is a visually-hidden CHILD, not an `aria-label`
+    // override: WCAG 2.5.3 requires the accessible name of a control to
+    // contain its visible label, which an override cannot guarantee.
     const title = normalizeBlockRefTitle('\nreal text')
     render(
       <>
@@ -170,8 +174,10 @@ describe('renderBlockRef — deleted status', () => {
       </>,
     )
     const chip = screen.getByTestId('block-ref-chip')
-    expect(chip.getAttribute('aria-label')).toBe(`${title} (deleted)`)
-    expect(chip.getAttribute('aria-label')).not.toBe(' (deleted)')
+    expect(chip).not.toHaveAttribute('aria-label')
+    expect(chip.textContent).toBe(`${title} (deleted)`)
+    expect(chip.querySelector('.block-ref-chip-label')?.textContent).toBe(title)
+    expect(chip.querySelector('.sr-only')?.textContent).toBe(' (deleted)')
   })
 })
 
