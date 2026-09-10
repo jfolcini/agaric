@@ -282,7 +282,13 @@ describe('useDuePanelData', () => {
       '2025-06-15',
       null,
       20,
-      expect.anything(),
+      // Not `expect.anything()`: the scope is the argument that keeps another
+      // space's projected recurrences out of this panel, and #4411 moved it
+      // from the retired wrapper to the call site, where nothing watched it.
+      // The hook's two `queryByProperty` calls carry a scope too and no spec
+      // here asserts any of their arguments — same shape, predates #4411, and
+      // closing it means writing tests this PR has no business writing.
+      { kind: 'active', space_id: 'SPACE_1' },
     )
   })
 

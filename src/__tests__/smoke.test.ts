@@ -45,13 +45,6 @@ describe('module smoke tests', () => {
     expect(typeof mod.searchBlocks).toBe('function')
   })
 
-  it('generated bindings export the commands the retired wrappers delegated to', async () => {
-    const { commands } = await import('@/lib/bindings')
-    expect(typeof commands.editBlock).toBe('function')
-    expect(typeof commands.deleteBlock).toBe('function')
-    expect(typeof commands.getBlock).toBe('function')
-  })
-
   // ── Markdown serializer ─────────────────────────────────────────────
 
   it('markdown serializer parse and serialize are importable and callable', async () => {
