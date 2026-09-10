@@ -3823,7 +3823,7 @@ fn batch_ops_for_wire_partitions_under_cap_2481() {
     let recs: Vec<OpTransfer> = (1..=5).map(mk).collect();
 
     // A cap that fits exactly one record → one batch per record.
-    let one = serde_json::to_string(&recs[0]).unwrap().len() + 2;
+    let one = super::operations::billed_bytes(&recs[0]);
     let batches = batch_ops_for_wire(recs.clone(), one);
     assert_eq!(
         batches.len(),
@@ -3839,6 +3839,20 @@ fn batch_ops_for_wire_partitions_under_cap_2481() {
             "record order is preserved across batches"
         );
     }
+
+    // The cap is inclusive: a batch that fills to EXACTLY `max_bytes` is not
+    // split, and one byte less is. Both halves are asserted, because a
+    // `>=` boundary passes the one-record cap above just as `>` does.
+    assert_eq!(
+        batch_ops_for_wire(recs.clone(), one * 2).len(),
+        3,
+        "two records fitting the cap exactly ride in one batch: 5 records → 2 + 2 + 1"
+    );
+    assert_eq!(
+        batch_ops_for_wire(recs.clone(), one * 2 - 1).len(),
+        5,
+        "one byte short of two records splits every pair apart again"
+    );
 
     // A huge cap → a single batch.
     let single = batch_ops_for_wire(recs, 10_000_000);
@@ -4883,6 +4897,51 @@ async fn out_of_order_records_are_reported_once_per_device_per_batch_3740() {
         logged.contains("count=4"),
         "the summarised line must carry how many records violated, or \
          throttling loses the magnitude. Captured: {logged}"
+    );
+}
+
+/// #3726 — a seq presented TWICE is idempotent redelivery, not a violation.
+///
+/// The precondition the detector guards is that a device's records arrive in
+/// non-descending `seq`, because a record arriving *below* the frontier this
+/// batch already moved past can never be re-offered. A record arriving *at*
+/// that frontier strands nothing: its own seq is the one already presented, so
+/// `INSERT OR IGNORE` matches the existing row and it lands in `already_held`.
+/// Counting it as out-of-order would put an `error!` on the one redelivery the
+/// path is designed to absorb, which is why the comparison is `<` and not
+/// `<=`.
+#[tokio::test]
+async fn duplicate_seq_is_already_held_not_out_of_order_3726() {
+    let device = "device-Z-3726-dup";
+    // Interleaved as 6, 6, 7, 7 so the repeat is always the highest seq so far:
+    // 6, 7, 6, 7 would make the second 6 a genuine violation and hide which
+    // comparison the counts came from.
+    let records: Vec<OpTransfer> = [6, 6, 7, 7]
+        .iter()
+        .map(|&s| foreign_op_transfer(device, s))
+        .collect();
+
+    let (pool, _dir) = test_pool().await;
+    let outcome =
+        crate::sync_protocol::ingest_replicated_batch(&pool, &records, "device-A", "device-peer")
+            .await;
+
+    assert_eq!(
+        outcome.out_of_order, 0,
+        "a re-presented seq equals the highest presented; it is redelivery, \
+         not a reordered batch"
+    );
+    assert_eq!(outcome.ingested, 2, "seq 6 and 7 each land exactly once");
+    assert_eq!(
+        outcome.already_held, 2,
+        "the second copy of each seq must be counted as already held"
+    );
+    assert_eq!(outcome.deferred, 0, "nothing faulted");
+    assert_eq!(outcome.rejected, 0, "nothing is corrupt");
+    assert_eq!(
+        count_replicated_ops(&pool).await,
+        2,
+        "the duplicates must not double-insert"
     );
 }
 
