@@ -592,9 +592,6 @@ pub async fn rebuild_pages_cache_counts_from_base(
         }
         sources.entry(page).or_default().insert(source_id.as_str());
     }
-    // A page with no cache row simply has no counts to write: the lookup here
-    // is the only membership check, rather than a gate above and a redundant
-    // unwrap here.
     for (page, distinct) in sources {
         if let Some(counts) = out.get_mut(page) {
             counts.inbound_link_count = i64::try_from(distinct.len()).unwrap_or(i64::MAX);
