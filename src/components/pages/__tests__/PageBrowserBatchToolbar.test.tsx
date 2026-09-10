@@ -35,20 +35,28 @@ import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { getStarredPages } from '@/lib/starred-pages'
-import { setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
-// Partial-mock the typed tauri lib so the bulk set-property path can be
+// Partial-mock the generated bindings so the bulk set-property path can be
 // asserted directly (ids/key/value) without threading through `invoke`. All
-// OTHER wrappers (trash/tag/space) keep their real implementation and still
-// hit the mocked `invoke`.
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
-  return { ...actual, setPropertyBatch: vi.fn() }
+// OTHER commands (trash/tag/space) keep their real implementation and still
+// hit the mocked `invoke`. #4411 — `setPropertyBatch` retired its `@/lib/tauri`
+// wrapper, so the spy resolves raw data and the mock wraps it in the
+// `{ status: 'ok', data }` envelope the real `unwrap` expects.
+const mockedSetPropertyBatch = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setPropertyBatch: (...args: unknown[]) =>
+        mockedSetPropertyBatch(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
 })
 
 const mockedInvoke = vi.mocked(invoke)
-const mockedSetPropertyBatch = vi.mocked(setPropertyBatch)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 

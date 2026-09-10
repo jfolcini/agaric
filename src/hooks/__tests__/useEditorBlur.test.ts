@@ -20,7 +20,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
-import { getPropertyDef } from '@/lib/tauri'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave
 // composed with useEditorBlur) and the #2675 inline-property tests (the
@@ -30,11 +29,10 @@ import { getPropertyDef } from '@/lib/tauri'
 // `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings`, and the
 // #2675 tests drive the real `commitInlineProperties`, which now calls
 // `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
-// `getPropertyDef` still backs BOTH the (still-wrapped) `@/lib/tauri` surface
-// and the `commands.*` surface so its `vi.mocked(...)` assertions keep working;
-// `saveDraft`/`deleteDraft` (#4411) and `setProperty` (#4412) retired their
-// `@/lib/tauri` wrappers so only `commands.*` is mocked for those — assert on
-// the bare `mockSaveDraft`/`mockDeleteDraft`/`mockSetProperty` spies instead.
+// `saveDraft`/`deleteDraft`/`getPropertyDef` (#4411) and `setProperty` (#4412)
+// retired their `@/lib/tauri` wrappers, so only `commands.*` is mocked — assert
+// on the bare `mockSaveDraft`/`mockDeleteDraft`/`mockGetPropertyDef`/
+// `mockSetProperty` spies.
 // All spies resolve the `{ status: 'ok', data }` shape.
 const {
   mockSaveDraft,
@@ -52,10 +50,6 @@ const {
   // #3278 — the checkbox-fold-on-blur tests drive the real `commitCheckboxState`,
   // which calls `commands.setTodoState`.
   mockSetTodoState: vi.fn(() => Promise.resolve({ status: 'ok', data: { todo_state: 'TODO' } })),
-}))
-
-vi.mock('@/lib/tauri', () => ({
-  getPropertyDef: mockGetPropertyDef,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -1577,7 +1571,7 @@ describe('useEditorBlur', () => {
     beforeEach(() => {
       // Re-arm the IPC mocks after the file-level clearAllMocks (which only
       // clears call records) so each test starts from the success defaults.
-      vi.mocked(getPropertyDef).mockResolvedValue({ status: 'ok', data: null } as never)
+      mockGetPropertyDef.mockResolvedValue({ status: 'ok', data: null } as never)
       mockSetProperty.mockResolvedValue({
         status: 'ok',
         data: { op_refs: [] },

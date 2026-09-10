@@ -19,21 +19,16 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  listProjectedAgenda: vi.fn(),
-  paginationLimit: (n: number) => n,
-  listProjectedAgendaLimit: (n: number) => n,
-  listBlocksLimit: (n: number) => n,
-}))
-
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty } = vi.hoisted(() => ({
-  mockedListBlocks: vi.fn(),
-  mockedBatchResolve: vi.fn(),
-  mockedQueryByProperty: vi.fn(),
-}))
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
+  vi.hoisted(() => ({
+    mockedListBlocks: vi.fn(),
+    mockedBatchResolve: vi.fn(),
+    mockedQueryByProperty: vi.fn(),
+    mockedListProjectedAgenda: vi.fn(),
+  }))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -46,6 +41,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
       queryByProperty: (...args: unknown[]) =>
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listProjectedAgenda: (...args: unknown[]) =>
+        mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -77,10 +74,8 @@ import type { BlockRow, PageResponse, ResolvedBlock } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { listProjectedAgenda } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
-const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedUseBlockPropertyEvents = vi.mocked(useBlockPropertyEvents)
 const mockedNotifyError = vi.mocked(notify.error)
 
@@ -283,7 +278,17 @@ describe('useDuePanelData', () => {
       expect(result.current.projectedEntries).toHaveLength(1)
     })
     expect(mockedListProjectedAgenda).toHaveBeenCalledWith(
-      expect.objectContaining({ startDate: '2025-06-15', endDate: '2025-06-15' }),
+      '2025-06-15',
+      '2025-06-15',
+      null,
+      20,
+      // Not `expect.anything()`: the scope is the argument that keeps another
+      // space's projected recurrences out of this panel, and #4411 moved it
+      // from the retired wrapper to the call site, where nothing watched it.
+      // The hook's two `queryByProperty` calls carry a scope too and no spec
+      // here asserts any of their arguments — same shape, predates #4411, and
+      // closing it means writing tests this PR has no business writing.
+      { kind: 'active', space_id: 'SPACE_1' },
     )
   })
 
@@ -894,7 +899,7 @@ describe('useDuePanelData', () => {
       mockedListProjectedAgenda.mockReturnValue(
         new Promise((_, rej) => {
           rejectProjected = rej
-        }) as ReturnType<typeof listProjectedAgenda>,
+        }),
       )
 
       const { unmount } = renderHook(() =>
@@ -1043,8 +1048,8 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       has_more: false,
       total_count: null,
     })
-    mockedListProjectedAgenda.mockImplementation(({ startDate }) =>
-      Promise.resolve(projectedFor(startDate as string)),
+    mockedListProjectedAgenda.mockImplementation((startDate: string) =>
+      Promise.resolve(projectedFor(startDate)),
     )
 
     const { result, rerender } = renderHook(
@@ -1116,7 +1121,7 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       if (!request.date) throw new Error('expected an agenda date')
       return Promise.resolve(blocksFor(request.date))
     })
-    mockedListProjectedAgenda.mockImplementation(({ startDate }) =>
+    mockedListProjectedAgenda.mockImplementation((startDate: string) =>
       Promise.resolve(projectedFor(startDate)),
     )
     mockedBatchResolve.mockImplementation((ids: string[]) => {

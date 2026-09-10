@@ -42,9 +42,6 @@ describe('module smoke tests', () => {
   it('tauri wrapper exports key command functions', async () => {
     const mod = await import('@/lib/tauri')
     expect(typeof mod.createBlock).toBe('function')
-    expect(typeof mod.editBlock).toBe('function')
-    expect(typeof mod.deleteBlock).toBe('function')
-    expect(typeof mod.getBlock).toBe('function')
     expect(typeof mod.searchBlocks).toBe('function')
   })
 

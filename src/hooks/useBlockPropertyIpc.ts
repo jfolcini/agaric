@@ -27,31 +27,43 @@
 import { useCallback } from 'react'
 
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow, WithOps } from '@/lib/bindings'
+import type {
+  BlockRow,
+  PageResponse,
+  PropertyDefinition,
+  PropertyRow,
+  WithOps,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { SetPropertyParams } from '@/lib/property-save-utils'
-import {
-  getProperties as getPropertiesIpc,
-  listPropertyDefs as listPropertyDefsIpc,
-} from '@/lib/tauri'
 
 export type { SetPropertyParams }
 
 export interface UseBlockPropertyIpcReturn {
   /** Fetch all property rows for the given block. Throws on IPC failure. */
-  getProperties: typeof getPropertiesIpc
-  /** Fetch every typed property definition (the vocabulary). Throws on IPC failure. */
-  listPropertyDefs: typeof listPropertyDefsIpc
+  getProperties: (blockId: string) => Promise<PropertyRow[]>
+  /**
+   * Fetch the first page of typed property definitions (the vocabulary).
+   * Throws on IPC failure.
+   *
+   * `list_property_defs` is cursor-paginated; the drawer this hook serves is
+   * single-page-by-design (the seeded vocabulary fits well under one page), so
+   * the cursor is not threaded.
+   */
+  listPropertyDefs: () => Promise<PageResponse<PropertyDefinition>>
   /** Write a single property row. Returns the updated `BlockRow` on success; throws on IPC failure. */
   setProperty: (params: SetPropertyParams) => Promise<WithOps<BlockRow>>
 }
 
 export function useBlockPropertyIpc(): UseBlockPropertyIpcReturn {
-  const getProperties = useCallback<typeof getPropertiesIpc>(
-    (blockId) => getPropertiesIpc(blockId),
+  const getProperties = useCallback(
+    async (blockId: string) => unwrap(await commands.getProperties(blockId)),
     [],
   )
-  const listPropertyDefs = useCallback<typeof listPropertyDefsIpc>(() => listPropertyDefsIpc(), [])
+  const listPropertyDefs = useCallback(
+    async () => unwrap(await commands.listPropertyDefs(null, null)),
+    [],
+  )
   const setProperty = useCallback(
     async (params: SetPropertyParams) =>
       unwrap(

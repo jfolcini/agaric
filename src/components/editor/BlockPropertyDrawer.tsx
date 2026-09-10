@@ -30,12 +30,12 @@ import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { announce } from '@/lib/announcer'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 export interface BlockPropertyDrawerProps {

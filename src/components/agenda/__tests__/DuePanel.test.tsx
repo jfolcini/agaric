@@ -26,22 +26,16 @@ import { clearProjectedCache } from '@/hooks/useDuePanelData'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
-vi.mock('@/lib/tauri', () => ({
-  listProjectedAgenda: vi.fn(),
-  getBlock: vi.fn(),
-  paginationLimit: (n: number) => n,
-  listProjectedAgendaLimit: (n: number) => n,
-  listBlocksLimit: (n: number) => n,
-}))
-
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // `@/lib/tauri` wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty } = vi.hoisted(() => ({
-  mockedListBlocks: vi.fn(),
-  mockedBatchResolve: vi.fn(),
-  mockedQueryByProperty: vi.fn(),
-}))
+const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
+  vi.hoisted(() => ({
+    mockedListBlocks: vi.fn(),
+    mockedBatchResolve: vi.fn(),
+    mockedQueryByProperty: vi.fn(),
+    mockedListProjectedAgenda: vi.fn(),
+  }))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -54,6 +48,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
       queryByProperty: (...args: unknown[]) =>
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listProjectedAgenda: (...args: unknown[]) =>
+        mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -107,12 +103,10 @@ import { toast } from 'sonner'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { DuePanel } from '@/components/agenda/DuePanel'
-import { listProjectedAgenda } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
-const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedToastError = vi.mocked(toast.error)
 
 const emptyResponse = {

@@ -39,7 +39,6 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import { editBlock, getBlock } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
@@ -281,7 +280,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       spaceId: string | null,
     ) => {
       try {
-        const resp = await editBlock(targetBlockId, previousContent)
+        const resp = unwrap(await commands.editBlock(targetBlockId, previousContent))
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
         if (isPage) renamePage(targetBlockId, previousContent, spaceId)
         notify.success(t('history.restoreUndone'))
@@ -328,7 +327,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         let previousContent: string | null = null
         let isPage = false
         try {
-          const current = await getBlock(blockId)
+          const current = unwrap(await commands.getBlock(blockId))
           previousContent = current.content ?? ''
           isPage = current.block_type === 'page'
         } catch (snapshotErr) {
@@ -340,7 +339,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           )
         }
 
-        const resp = await editBlock(blockId, toText)
+        const resp = unwrap(await commands.editBlock(blockId, toText))
         applyRestoredContentToStore(blockId, toText, resp.op_refs)
         // #4056 — a restored PAGE block's `content` IS its title. `editBlock`
         // only ever writes the raw block row, so without this the picker's

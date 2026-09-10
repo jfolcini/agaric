@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isConflict, unwrap } from '@/lib/app-error'
+import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import {
@@ -40,8 +41,7 @@ import {
   TAG_COLOR_PRESETS,
   tagColorForeground,
 } from '@/lib/tag-colors'
-import type { TagCacheRow } from '@/lib/tauri'
-import { createBlock, deleteBlock, deleteProperty, editBlock, purgeBlock } from '@/lib/tauri'
+import { createBlock } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -175,8 +175,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // (deleteBlock), then purged (purgeBlock). Without the soft-delete
         // step, the purge returns InvalidOperation: "must be soft-deleted
         // before purging" and the tag survives (BUG session 679).
-        await deleteBlock(tagId)
-        await purgeBlock(tagId)
+        unwrap(await commands.deleteBlock(tagId))
+        unwrap(await commands.purgeBlock(tagId))
         setTags((prev) => prev.filter((tag) => tag.tag_id !== tagId))
         useResolveStore.getState().set(tagId, '(deleted)', true)
         // #4007 — the `#` picker caches the tag list once per space and had
@@ -220,7 +220,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // `handleDeleteTag`'s capture above.
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
-        await editBlock(renameTarget.id, trimmed)
+        unwrap(await commands.editBlock(renameTarget.id, trimmed))
         setTags((prev) =>
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )
@@ -281,7 +281,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     })
     setColorPickerOpen(null)
     try {
-      await deleteProperty(tagId, 'color')
+      unwrap(await commands.deleteProperty(tagId, 'color'))
     } catch (err) {
       // localStorage already updated — property sync is best-effort
       logger.warn('TagList', 'failed to clear tag color via deleteProperty', { tagId }, err)

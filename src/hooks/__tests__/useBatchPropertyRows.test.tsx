@@ -39,7 +39,7 @@ import {
   useBatchPropertyRows,
   useBatchPropertyRowsLoading,
 } from '@/hooks/useBatchPropertyRows'
-import type { PropertyRow } from '@/lib/tauri'
+import type { PropertyRow } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -10,9 +10,9 @@
  * displayed rows.
  */
 
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
-import type { BlockRow, PropertyRow } from '@/lib/tauri'
 
 /** Prefix that marks a custom-property column key, keeping it distinct from
  * `BlockRow` field keys (so a custom property literally named `content` or

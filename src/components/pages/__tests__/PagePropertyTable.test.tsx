@@ -18,9 +18,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { AppError } from '@/lib/app-error'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { properties, propertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 

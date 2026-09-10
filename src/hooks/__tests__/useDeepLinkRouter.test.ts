@@ -65,9 +65,20 @@ vi.mock('@/stores/tabs', () => ({
   },
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  getBlock: (...args: unknown[]) => mockGetBlock(...args),
-}))
+// #4411 — `getBlock` retired its `@/lib/tauri` wrapper; the router calls
+// `commands.getBlock` and unwraps the `Result` envelope, so the spy
+// resolves/rejects with the bare `BlockRow` and the shim adds the envelope.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBlock: (...args: unknown[]) =>
+        mockGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/platform/deep-link', () => ({
   getCurrentDeepLink: (...args: unknown[]) => mockGetCurrentDeepLink(...args),

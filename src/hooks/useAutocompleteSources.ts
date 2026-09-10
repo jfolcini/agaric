@@ -36,9 +36,9 @@ import {
   propertyValuesQueryKey,
 } from '@/lib/property-values-cache'
 import { queryClient } from '@/lib/query-client'
+import { paginationLimit } from '@/lib/safe-limit'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
-import { getPropertyDef, paginationLimit } from '@/lib/tauri'
 
 export const STATE_VALUES = TASK_STATE_AUTOCOMPLETE_VALUES
 export const DATE_BUCKET_VALUES = [
@@ -203,7 +203,9 @@ export function useAutocompleteSources(
     // otherwise so the fetch never repeats for the same key.
     if (selectOptionsRef.current[propValueKey] === undefined) {
       let cancelled = false
-      getPropertyDef(propValueKey)
+      commands
+        .getPropertyDef(propValueKey)
+        .then(unwrap)
         .then((def) => {
           if (cancelled) return
           let opts: string[] | null = null

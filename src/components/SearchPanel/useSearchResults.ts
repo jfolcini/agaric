@@ -46,7 +46,7 @@ import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import type { BlockRow, PageResponse, SearchBlockRow } from '@/lib/tauri'
-import { getBlock, searchBlocks } from '@/lib/tauri'
+import { searchBlocks } from '@/lib/tauri'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
@@ -474,7 +474,7 @@ export function useSearchResults({
         }
         if (block.parent_id) {
           try {
-            const parent = await getBlock(block.parent_id)
+            const parent = unwrap(await commands.getBlock(block.parent_id))
             // A newer click superseded this one while the parent loaded.
             if (navGenerationRef.current !== gen) return
             addRecentPage(block.parent_id, parent.content ?? t('common.untitled'))

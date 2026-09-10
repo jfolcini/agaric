@@ -17,8 +17,10 @@ import {
   type ImageAlignment,
 } from '@/components/editor-toolbar/ImageResizeToolbar'
 import { useBatchPropertyRows, useBatchPropertyRowsLoading } from '@/hooks/useBatchPropertyRows'
+import { unwrap } from '@/lib/app-error'
+import type { PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { getBatchProperties, type PropertyRow } from '@/lib/tauri'
 
 export interface ImageProperties {
   imageWidth: string
@@ -84,7 +86,9 @@ export function useImageProperties(blockId: string, hasImageAttachments: boolean
     // Fallback path (no provider): one batched IPC for all three image
     // properties instead of three single-key getProperty round-trips.
     let cancelled = false
-    getBatchProperties([blockId])
+    commands
+      .getBatchProperties([blockId])
+      .then(unwrap)
       .then((byBlock) => {
         if (cancelled) return
         applyImageProps(byBlock[blockId] ?? [])

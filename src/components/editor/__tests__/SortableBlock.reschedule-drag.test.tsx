@@ -70,7 +70,6 @@ vi.mock('@/components/editor/EditableBlock', () => ({
 // Mock tauri IPC surface SortableBlock's descendants touch on mount/interact.
 vi.mock('@/lib/tauri', () => ({
   setProperty: vi.fn().mockResolvedValue({}),
-  getPropertyDef: vi.fn().mockResolvedValue(null),
   listBlocks: vi
     .fn()
     .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null }),

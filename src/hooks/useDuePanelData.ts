@@ -34,20 +34,19 @@ import { useTranslation } from 'react-i18next'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useToday } from '@/hooks/useToday'
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow, PageResponse, ResolvedBlock } from '@/lib/bindings'
+import type {
+  ActiveProjectedAgendaEntry,
+  BlockRow,
+  PageResponse,
+  ResolvedBlock,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
+import { listBlocksLimit, listProjectedAgendaLimit, paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
-import type { ProjectedAgendaEntry } from '@/lib/tauri'
-import {
-  listBlocksLimit,
-  listProjectedAgenda,
-  listProjectedAgendaLimit,
-  paginationLimit,
-} from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
@@ -69,7 +68,7 @@ export function extractUlidRefs(text: string): string[] {
 const PROJECTED_CACHE_TTL_MS = 30_000 // 30 seconds
 
 interface ProjectedCacheEntry {
-  entries: ProjectedAgendaEntry[]
+  entries: ActiveProjectedAgendaEntry[]
   timestamp: number
 }
 
@@ -206,7 +205,7 @@ export interface UseDuePanelDataReturn {
   hasMore: boolean
   totalCount: number
   pageTitles: Map<string, string>
-  projectedEntries: ProjectedAgendaEntry[]
+  projectedEntries: ActiveProjectedAgendaEntry[]
   projectedLoading: boolean
   overdueBlocks: BlockRow[]
   upcomingBlocks: BlockRow[]
@@ -244,7 +243,7 @@ export function useDuePanelData({
   // its result (and skips the title merge) if it no longer matches, so a stale
   // loadMore can't repopulate the just-cleared list with old-date blocks.
   const requestIdRef = useRef(0)
-  const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
+  const [projectedEntries, setProjectedEntries] = useState<ActiveProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
   // #738 sub-3 — track the previous `invalidationKey` so the projected
   // cache is cleared ONLY when a property event actually fires (the key
@@ -569,7 +568,7 @@ export function useDuePanelData({
       projectedCache.clear()
     }
 
-    const resolveProjectedTitles = (entries: ProjectedAgendaEntry[]) => {
+    const resolveProjectedTitles = (entries: ActiveProjectedAgendaEntry[]) => {
       const idsToResolve = collectResolveIds(entries.map((entry) => entry.block))
       return resolveAndMergeTitles(
         idsToResolve,
@@ -616,12 +615,15 @@ export function useDuePanelData({
     // needs today's projected entries, which fit comfortably under the
     // limit, so this hook is first-page-only by design — `next_cursor`
     // and `has_more` are intentionally ignored.
-    listProjectedAgenda({
-      startDate: date,
-      endDate: date,
-      limit: listProjectedAgendaLimit(20),
-      spaceId: currentSpaceId,
-    })
+    commands
+      .listProjectedAgenda(
+        date,
+        date,
+        null,
+        listProjectedAgendaLimit(20),
+        toSpaceScope(currentSpaceId),
+      )
+      .then(unwrap)
       .then((response) => {
         if (!stale) {
           const entries = response.items

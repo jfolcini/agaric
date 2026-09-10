@@ -2,7 +2,7 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
-import type { PropertyFilter as WirePropertyFilter } from '@/lib/bindings'
+import type { BlockRow, FilterExpr, PropertyFilter as WirePropertyFilter } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
@@ -11,9 +11,8 @@ import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
+import { listBlocksLimit, paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
-import type { BlockRow, FilterExpr } from '@/lib/tauri'
-import { listBlocksLimit, paginationLimit, runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of items per paginated request. */
@@ -241,12 +240,14 @@ export async function fetchRichInlineQuery(
   pageCursor?: string,
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
-  const response = await runAdvancedQuery({
-    spaceId: spaceId ?? '',
-    filter,
-    limit: PAGE_SIZE,
-    ...(pageCursor != null ? { cursor: pageCursor } : {}),
-  })
+  const response = unwrap(
+    await commands.runAdvancedQuery({
+      spaceId: spaceId ?? '',
+      filter,
+      limit: PAGE_SIZE,
+      ...(pageCursor != null ? { cursor: pageCursor } : {}),
+    }),
+  )
   return {
     items: response.rows as unknown as BlockRow[],
     nextCursor: response.nextCursor,

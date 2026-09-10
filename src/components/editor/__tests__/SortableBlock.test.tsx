@@ -223,7 +223,6 @@ const mockDeleteProperty = vi.fn().mockResolvedValue({})
 const mockLoadPageSubtree = vi.fn().mockResolvedValue({ blocks: [] })
 vi.mock('@/lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
-  getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
 }))
 

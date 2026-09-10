@@ -33,7 +33,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 // lib/tauri is imported transitively (BlockListItem → useBlockReschedule);
 // stub the IPC surface so the module loads under happy-dom.
 vi.mock('@/lib/tauri', () => ({
-  getBlock: vi.fn(),
   reschedule: vi.fn(),
 }))
 

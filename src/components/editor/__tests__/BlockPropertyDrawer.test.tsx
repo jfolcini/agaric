@@ -18,8 +18,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 

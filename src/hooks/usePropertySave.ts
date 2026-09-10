@@ -11,11 +11,11 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { announce } from '@/lib/announcer'
+import type { PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
 import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
-import type { PropertyRow } from '@/lib/tauri'
 
 export interface UsePropertySaveOptions {
   /** Block or page ID to operate on. When null, save/delete are no-ops. */

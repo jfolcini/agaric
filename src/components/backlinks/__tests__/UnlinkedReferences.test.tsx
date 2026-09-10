@@ -53,16 +53,14 @@ const {
   mockListPropertyKeys,
   mockListTagsByPrefix,
   mockListUnlinkedReferences,
+  mockEditBlock,
 } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
   mockListTagsByPrefix: vi.fn(),
   mockListUnlinkedReferences: vi.fn(),
   mockGetPageAliases: vi.fn(),
   mockBatchResolve: vi.fn(),
-}))
-
-vi.mock('@/lib/tauri', () => ({
-  editBlock: vi.fn(),
+  mockEditBlock: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -78,6 +76,8 @@ vi.mock('@/lib/bindings', async () => {
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPageAliases: (...args: unknown[]) =>
         mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
+      editBlock: (...args: unknown[]) =>
+        mockEditBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
       // Backs `useBacklinkResolution`, which turns the `[[ULID]]` tokens in a
       // matched block's content into real titles.
       batchResolve: (...args: unknown[]) =>
@@ -157,10 +157,9 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { editBlock } from '@/lib/tauri'
 
 const mockedListUnlinked = mockListUnlinkedReferences
-const mockedEditBlock = vi.mocked(editBlock)
+const mockedEditBlock = mockEditBlock
 const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = mockGetPageAliases

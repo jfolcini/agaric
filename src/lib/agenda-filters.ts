@@ -15,15 +15,13 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { PageResponse, PropertyFilter, TagFilterExpr } from '@/lib/bindings'
+import type { BlockRow, PageResponse, PropertyFilter, TagFilterExpr } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
 import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/space-scope'
-import type { BlockRow } from '@/lib/tauri'
-import { listUndatedTasks } from '@/lib/tauri'
 
 /**
  * Per-page limit for agenda queries — pinned to `PageRequest::new`'s
@@ -186,7 +184,9 @@ async function fetchUnfilteredAgendaPage(
           .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
     state.undated !== undefined
-      ? listUndatedTasks({ cursor: state.undated ?? undefined, limit: AGENDA_QUERY_LIMIT, spaceId })
+      ? commands
+          .listUndatedTasks(state.undated ?? null, AGENDA_QUERY_LIMIT, toSpaceScope(spaceId))
+          .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
   ])
 

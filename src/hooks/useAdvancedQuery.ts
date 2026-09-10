@@ -28,9 +28,6 @@ import { useCallback, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { t } from '@/lib/i18n'
-import { logger } from '@/lib/logger'
-import { queryClient } from '@/lib/query-client'
 import type {
   AdvancedQueryRequest,
   AggregateResult,
@@ -41,8 +38,10 @@ import type {
   GroupSpec,
   QueryGroup,
   SortKey,
-} from '@/lib/tauri'
-import { runAdvancedQuery } from '@/lib/tauri'
+} from '@/lib/bindings'
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of rows per paginated request. */
@@ -268,7 +267,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
             trimmedFulltext,
             pageParam,
           )
-          const response = await runAdvancedQuery(request)
+          const response = unwrap(await commands.runAdvancedQuery(request))
 
           // GROUPED mode: the engine returns `groups` (and leaves `rows`
           // empty), paginating over groups via the same cursor. Resolve the

@@ -29,19 +29,18 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
 import { unwrap } from '@/lib/app-error'
+import type {
+  BacklinkFilter,
+  BacklinkGroup,
+  BacklinkSort,
+  GroupedBacklinkResponse,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import type {
-  BacklinkFilter,
-  BacklinkGroup,
-  BacklinkSort,
-  GroupedBacklinkResponse,
-} from '@/lib/tauri'
-import { editBlock } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -295,7 +294,7 @@ export function UnlinkedReferences({
         return
       }
       try {
-        await editBlock(blockId, newContent)
+        unwrap(await commands.editBlock(blockId, newContent))
         // Optimistic removal. `groups`/`totalCount` are now derived from the
         // query cache, so the old `setGroups(...)` + `setTotalCount(prev-1)` is
         // reproduced by rewriting the cached pages in place: strip the linked
