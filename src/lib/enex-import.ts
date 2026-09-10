@@ -36,6 +36,23 @@
  * {@link transformEnmlDom} and {@link enmlToMarkdown}.
  *
  * DEFERRED (separate follow-up): Joplin `.jex` import.
+ *
+ * ACCEPTED MUTATION GAPS (#4815). The mutants still surviving here are
+ * equivalent — no input this module can be handed distinguishes them — and are
+ * left as gaps rather than chased with tests that pin nothing:
+ *   1. fallbacks that cannot fire: the `?? ''` / `?? 'bin'` the type system
+ *      forces on `Node.textContent`, `Array.pop()`, an in-bounds index, and a
+ *      key already guarded by an `in` check;
+ *   2. fallbacks whose stand-in value cannot matter, because a mime with no
+ *      subtype, an empty or unparseable body, and a hash matching no resource
+ *      converge on the same output whatever it is;
+ *   3. MD5's high length word (non-zero only for a resource ≥ 512 MB) and the
+ *      one-past-the-end typed-array writes JS silently drops;
+ *   4. values nothing observes: a `headingStyle` that is merely not `'setext'`
+ *      (all Turndown checks), `createHTMLDocument`'s unused title, and the
+ *      `mediaRefs` seed, since each ref is keyed by its own index.
+ * Two guards against malformed ENML — the `<td>`/`<th>` cell filter and the
+ * extension-detect anchor — survive on well-formed input by construction.
  */
 
 import TurndownService from 'turndown'
@@ -244,7 +261,6 @@ function md5Hex(input: Uint8Array): string {
  */
 function decodeResourceData(raw: string): Uint8Array | null {
   const clean = raw.replace(/[^A-Za-z0-9+/=]/g, '')
-  if (clean.length === 0) return null
   try {
     const bin = atob(clean)
     const bytes = new Uint8Array(bin.length)
@@ -340,10 +356,10 @@ function uniqueResourcePath(
   if (!used.has(candidate)) return candidate
   // Filename collision across distinct resources — disambiguate with a short
   // hash prefix on the stem so both survive as distinct vault files.
+  // `candidate` always carries an extension — one was appended above when the
+  // file-name had none — so the dot is always found.
   const dot = candidate.lastIndexOf('.')
-  const stem = dot === -1 ? candidate : candidate.slice(0, dot)
-  const suffix = dot === -1 ? '' : candidate.slice(dot)
-  return `${stem}-${hash.slice(0, 8)}${suffix}`
+  return `${candidate.slice(0, dot)}-${hash.slice(0, 8)}${candidate.slice(dot)}`
 }
 
 /**
@@ -387,11 +403,15 @@ function transformEnmlDom(
     todo.replaceWith(sentinel)
   }
   for (const media of Array.from(root.querySelectorAll('en-media'))) {
+    // A missing or blank hash simply matches nothing: every key is a 32-char
+    // MD5 hex digest.
     const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
-    const resource = hash.length > 0 ? resources.get(hash) : undefined
+    const resource = resources.get(hash)
     if (resource === undefined) {
       // No matching resource (dangling hash / unsupported inline media): drop
       // the reference rather than leaking `<en-media>` markup into the body.
+      // Turndown happens to render the leftover element as nothing too, so
+      // this is the stated contract rather than an observable transform.
       media.remove()
       continue
     }
@@ -440,6 +460,8 @@ function findLeafNestedTable(root: Element): Element | null {
 function normalizeInlineCell(text: string): string {
   // Collapse all whitespace (incl. newlines) to single spaces and neutralize
   // `|` (which would otherwise open a spurious column in the OUTER pipe row).
+  // Only the collapse itself is observable: Turndown re-collapses the text it
+  // emits into the outer cell, so the run width and the trim are not (#4815).
   return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 }
 
@@ -494,6 +516,9 @@ function enmlToMarkdown(
   const doc = new DOMParser().parseFromString(trimmed, 'application/xml')
   if (doc.querySelector('parsererror') !== null) return ''
   const enNote = doc.querySelector('en-note') ?? doc.documentElement
+  // A document that parsed without a `<parsererror>` always has a root
+  // element, so no input reaches this (#4815) — it is one line that keeps a
+  // rootless `<content>` from throwing away the whole import.
   if (enNote == null) return ''
 
   // Round-trip through an HTML document so the custom/void tags serialize
