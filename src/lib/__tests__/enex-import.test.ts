@@ -18,6 +18,14 @@
  * missing-`<data>` / missing-`<mime>` fallbacks, one attachment per resource
  * however many `<en-media>` reference it, and the empty/malformed-`<content>`
  * degradations.
+ *
+ * What a real export looks like (#4815): every element pretty-printed, so each
+ * text run carries the indentation; base64 wrapped across lines; the mime
+ * table's extension per type; file-names that are Windows paths, traversals or
+ * carry control characters; a resource embedded twice; and an MD5 payload on a
+ * block boundary. Bodies are asserted WHOLE wherever a mutant could corrupt
+ * the prose around what the importer rewrites (the embed splice, the task
+ * markers, the en-crypt callouts, the frontmatter).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -89,23 +97,6 @@ describe('parseEnex', () => {
     expect(note.markdown).toContain('const x = 1;')
   })
 
-  it('maps <en-todo> to task markers and drops <en-media>', () => {
-    const enml =
-      '<div><en-todo checked="true"/>Done thing</div>' +
-      '<div><en-todo checked="false"/>Pending thing</div>' +
-      '<div>See <en-media hash="abc123" type="image/png"/> here</div>'
-    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
-
-    const note = at(parseEnex(xml))
-    expect(note.markdown).toContain('- [x] Done thing')
-    expect(note.markdown).toContain('- [ ] Pending thing')
-    // The en-media reference is dropped, leaving only the surrounding text.
-    expect(note.markdown).not.toContain('en-media')
-    expect(note.markdown).not.toContain('abc123')
-    expect(note.markdown).toContain('See')
-    expect(note.markdown).toContain('here')
-  })
-
   it('yields one EnexNote per <note>', () => {
     const xml = enex(
       `<note><title>First</title><content>${content('<p>a</p>')}</content></note>`,
@@ -124,7 +115,9 @@ describe('parseEnex', () => {
     )
 
     const notes = parseEnex(xml)
-    expect(at(notes, 0).title).toBe(UNTITLED_PLACEHOLDER)
+    // The literal, not the constant: the placeholder becomes the imported page
+    // NAME, so an empty one would leave the note unnamed.
+    expect(at(notes, 0).title).toBe('Untitled')
     expect(at(notes, 1).title).toBe(UNTITLED_PLACEHOLDER)
   })
 
@@ -137,6 +130,48 @@ describe('parseEnex', () => {
     const note = at(parseEnex(xml))
     expect(note.createdMs).toBeNull()
     expect(note.updatedMs).toBeNull()
+  })
+
+  it('rejects a timestamp with anything around it rather than parsing the middle', () => {
+    // The stamp must be the WHOLE value: a run of digits embedded in other text
+    // is not an Evernote timestamp, and dating a note from it would silently
+    // invent a wrong created/updated property.
+    const cases = ['x20210102T030405Z', '20210102T030405Zx', '2021-01-02T03:04:05Z']
+    const xml = enex(
+      ...cases.map(
+        (raw) =>
+          `<note><title>T</title><content>${content('<p>a</p>')}</content>` +
+          `<created>${raw}</created></note>`,
+      ),
+    )
+
+    expect(parseEnex(xml).map((n) => n.createdMs)).toEqual([null, null, null])
+  })
+
+  it('imports a pretty-printed note the same as a compact one', () => {
+    // Every real .enex is indented, so each element's text run carries the
+    // pretty-printer's newlines. They must not leak into the page name, the
+    // tags or the dates — and a tag that is only whitespace is not a tag.
+    const xml = enex(
+      `<note>
+        <title>
+          My Note
+        </title>
+        <content>${content('<p>Body</p>')}</content>
+        <created>
+          20210102T030405Z
+        </created>
+        <tag>
+          work
+        </tag>
+        <tag>   </tag>
+      </note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.title).toBe('My Note')
+    expect(note.tags).toEqual(['work'])
+    expect(note.createdMs).toBe(Date.UTC(2021, 0, 2, 3, 4, 5))
   })
 
   it('throws a clear error on malformed XML', () => {
@@ -190,10 +225,73 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     expect(Array.from(att.bytes)).toEqual(HELLO_BYTES)
   })
 
-  it('matches a case-insensitive en-media hash and infers a name from the mime', () => {
-    // No file-name on the resource ⇒ path falls back to `<md5>.<ext>`, and an
-    // UPPERCASE en-media hash still matches (both sides are lowercased).
-    const enml = `<div><en-media hash="${HELLO_MD5.toUpperCase()}" type="image/png"/></div>`
+  it('splices the embed into the body text without disturbing the rest of it', () => {
+    // The embed is spliced in AFTER Turndown runs, keyed by an index written
+    // between two sentinel characters. Here the note's own digits run straight
+    // into that index on both sides, so assert the WHOLE body: a splice that
+    // keys off anything looser eats the user's numbers.
+    const enml = `<div>Step 2 of 3<en-media hash="${HELLO_MD5}" type="image/png"/>4 done</div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource(HELLO_B64, 'image/png', 'pic.png')}</note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('Step 2 of 3![](pic.png)4 done')
+  })
+
+  it('decodes a resource whose base64 is wrapped across lines', () => {
+    // Evernote wraps a resource's base64 payload at a fixed width, so the
+    // `<data>` text run is full of newlines and indentation. They are not part
+    // of the payload: strip them, or every attachment in a real export fails
+    // to decode and silently disappears.
+    const wrapped = `\n        ${HELLO_B64.slice(0, 4)}\n        ${HELLO_B64.slice(4)}\n      `
+    const enml = `<div><en-media hash="${HELLO_MD5}" type="image/png"/></div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource(wrapped, 'image/png', 'wrapped.png')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(['wrapped.png'])
+    expect(Array.from(note.attachments[0]?.bytes ?? [])).toEqual(HELLO_BYTES)
+  })
+
+  it('matches a resource whose length lands on an MD5 block boundary', () => {
+    // MD5 pads to 56 bytes mod 64; a 56-byte resource is the case where the
+    // length field no longer fits and a SECOND block must be emitted. Get the
+    // padding wrong and the digest is wrong, which shows up not as an error
+    // but as an attachment that silently matches nothing. The hash below comes
+    // from an independent MD5 implementation, not from this module.
+    const b64 = 'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE='
+    const md5 = 'a2f3e2024931bd470555002aa5ccc010'
+    const enml = `<div><en-media hash="${md5}" type="application/pdf"/></div>`
+    const xml = enex(
+      `<note><title>T</title><content>${content(enml)}</content>` +
+        `${resource(b64, 'application/pdf', 'block.pdf')}</note>`,
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(['block.pdf'])
+    expect(note.attachments[0]?.bytes).toHaveLength(56)
+  })
+
+  it('drops an <en-media> that carries no hash at all', () => {
+    // Inline media Evernote never resolved: there is nothing to match, so the
+    // reference goes away and the surrounding prose closes over it.
+    const enml = '<div>Before <en-media type="image/png"/> after</div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments).toHaveLength(0)
+    expect(note.markdown).toBe('Before after')
+  })
+
+  it('matches a case-insensitive, whitespace-padded en-media hash and infers a name from the mime', () => {
+    // No file-name on the resource ⇒ path falls back to `<md5>.<ext>`. An
+    // UPPERCASE hash still matches (both sides are lowercased), and so does one
+    // an indented .enex has padded — XML attribute-value normalization turns
+    // the pretty-printer's newlines into spaces inside the attribute.
+    const enml = `<div><en-media hash=" ${HELLO_MD5.toUpperCase()} " type="image/png"/></div>`
     const xml = enex(
       `<note><title>T</title><content>${content(enml)}</content>` +
         `${resource(HELLO_B64, 'image/png')}</note>`,
@@ -212,12 +310,10 @@ describe('parseEnex — <resource>/<en-media> attachments (#2513)', () => {
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
     const note = at(parseEnex(xml))
-    // No attachment, no leaked markup, and the surrounding text survives.
+    // No attachment, no leaked markup, and the surrounding text closes over
+    // the dropped reference.
     expect(note.attachments).toHaveLength(0)
-    expect(note.markdown).not.toContain('en-media')
-    expect(note.markdown).not.toContain('deadbeef')
-    expect(note.markdown).toContain('Before')
-    expect(note.markdown).toContain('after')
+    expect(note.markdown).toBe('Before after')
   })
 
   it('does not orphan-crash on a resource that no en-media references', () => {
@@ -264,6 +360,12 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
     f: { b64: 'Zg==', md5: '8fa14cdd754f91cc6554c9e71929cce7' },
     g: { b64: 'Zw==', md5: 'b2f5ff47436671b6e533d8dc3614845d' },
     h: { b64: 'aA==', md5: '2510c39011c5be704182423e3a695e91' },
+    i: { b64: 'aQ==', md5: '865c0c0b4ab0e063e5caa3387c1a8741' },
+    j: { b64: 'ag==', md5: '363b122c528f54df4a0446b6bab05515' },
+    k: { b64: 'aw==', md5: '8ce4b16b22b58894aa86c421e8759df3' },
+    l: { b64: 'bA==', md5: '2db95e8e1a9267b7a1188556b2013b33' },
+    m: { b64: 'bQ==', md5: '6f8f57715090da2632453988d9a1501b' },
+    n: { b64: 'bg==', md5: '7b8b965ad4bca0e41ab51de7b31363a1' },
   } as const
 
   /** A `<resource>` block with every child optional (missing `<data>`/`<mime>`). */
@@ -286,6 +388,37 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
       `<note><title>T</title><content>${content(enml)}</content>${resources.join('')}</note>`,
     )
   }
+
+  it('gives each supported mime the extension its viewer expects', () => {
+    // A nameless resource is written to the vault as `<md5>.<ext>`, and that
+    // extension is all the OS has to open the file with. The subtype is NOT a
+    // good enough guess for the common types — `audio/mpeg` is `.mp3`, not
+    // `.mpeg`; `image/jpeg` is `.jpg`; `text/plain` is `.txt` — so the mapping
+    // is pinned here type by type.
+    const cases = [
+      { byte: BYTE.a, mime: 'image/png', ext: 'png' },
+      { byte: BYTE.b, mime: 'image/jpeg', ext: 'jpg' },
+      { byte: BYTE.c, mime: 'image/jpg', ext: 'jpg' },
+      { byte: BYTE.d, mime: 'image/gif', ext: 'gif' },
+      { byte: BYTE.e, mime: 'image/webp', ext: 'webp' },
+      { byte: BYTE.f, mime: 'image/svg+xml', ext: 'svg' },
+      { byte: BYTE.g, mime: 'image/bmp', ext: 'bmp' },
+      { byte: BYTE.h, mime: 'image/tiff', ext: 'tiff' },
+      { byte: BYTE.i, mime: 'application/pdf', ext: 'pdf' },
+      { byte: BYTE.j, mime: 'audio/mpeg', ext: 'mp3' },
+      { byte: BYTE.k, mime: 'audio/mp4', ext: 'm4a' },
+      { byte: BYTE.l, mime: 'audio/wav', ext: 'wav' },
+      { byte: BYTE.m, mime: 'video/mp4', ext: 'mp4' },
+      { byte: BYTE.n, mime: 'text/plain', ext: 'txt' },
+    ]
+    const xml = noteWith(
+      cases.map((c) => ref(c.byte.md5)).join(''),
+      ...cases.map((c) => res({ b64: c.byte.b64, mime: c.mime })),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(cases.map((c) => `${c.byte.md5}.${c.ext}`))
+  })
 
   it('derives an extension from an unknown mime, falling back to .bin', () => {
     // None of these mimes is in the known-mime table, so the extension comes
@@ -325,6 +458,41 @@ describe('parseEnex — resource paths, mime fallbacks and en-media dedupe (#251
     expect(note.attachments.map((a) => a.path)).toEqual(['photo.png', 'already.png'])
     expect(note.markdown).toContain('![](photo.png)')
     expect(note.markdown).toContain('![](already.png)')
+  })
+
+  it('reduces a resource file-name to a clean basename', () => {
+    // The file-name is authored by the export, and it becomes a path in the
+    // user's vault: a Windows path, a traversal prefix, the pretty-printer's
+    // indentation and any control character in it must not survive into that
+    // path — only the basename does.
+    const xml = noteWith(
+      ref(BYTE.a.md5) + ref(BYTE.b.md5) + ref(BYTE.c.md5),
+      res({ b64: BYTE.a.b64, mime: 'image/png', fileName: 'C:\\Users\\me\\my report\t.png' }),
+      res({ b64: BYTE.b.b64, mime: 'image/png', fileName: '../../../etc/passwd.png' }),
+      res({ b64: BYTE.c.b64, mime: 'image/png', fileName: '\n      spaced.png\n    ' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual([
+      'my report.png',
+      'passwd.png',
+      'spaced.png',
+    ])
+  })
+
+  it('ships one attachment for two resources that hold the same bytes', () => {
+    // Evernote embeds the same image twice as two <resource> blocks with
+    // different names. They have one MD5, so they are one vault file — the
+    // first name wins and the second block adds nothing.
+    const xml = noteWith(
+      ref(BYTE.d.md5),
+      res({ b64: BYTE.d.b64, mime: 'image/png', fileName: 'first.png' }),
+      res({ b64: BYTE.d.b64, mime: 'image/png', fileName: 'second.png' }),
+    )
+
+    const note = at(parseEnex(xml))
+    expect(note.attachments.map((a) => a.path)).toEqual(['first.png'])
+    expect(note.markdown).toBe('![](first.png)')
   })
 
   it('disambiguates two distinct resources that share one file-name', () => {
@@ -418,6 +586,17 @@ describe('parseEnex — notes whose <content> yields no body', () => {
     expect(notes.map((n) => n.markdown)).toEqual(['', ''])
   })
 
+  it('converts a <content> whose root element is not <en-note>', () => {
+    // ENML is supposed to be wrapped in <en-note>, but an export that wraps it
+    // in anything else still has a body — take the document element rather
+    // than dropping the note's content on the floor.
+    const xml = enex(
+      `<note><title>T</title><content><![CDATA[<div><p>rootless body</p></div>]]></content></note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('rootless body')
+  })
+
   it('imports a note whose ENML is malformed, with an empty body', () => {
     // The `<content>` payload is not well-formed XML (`<p>` never closes). The
     // ENML is dropped, but the note itself — title, tags, timestamps — still
@@ -440,8 +619,11 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     // A task list authored as `<li><en-todo/>text</li>` must become a native
     // GFM task item (`- [ ] `/`- [x] `), NOT a bullet wrapping a task
     // (`- - [ ] `) nor a wide-indented `-   [ ]` — Agaric's task parser needs
-    // exactly `- [ ]`.
+    // exactly `- [ ]`. The list is preceded by prose, as a real note's is, so
+    // the fold has to happen on every line of the body and not only on one
+    // that starts it.
     const enml =
+      '<p>intro</p>' +
       '<ul>' +
       '<li><en-todo checked="false"/>pending</li>' +
       '<li><en-todo checked="true"/>done</li>' +
@@ -449,33 +631,66 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
     const note = at(parseEnex(xml))
-    expect(note.markdown).toContain('- [ ] pending')
-    expect(note.markdown).toContain('- [x] done')
-    // No bullet-wrapping-a-task and no over-indented marker.
-    expect(note.markdown).not.toContain('- - [')
-    expect(note.markdown).not.toContain('-   [')
-    // Each task is its own line — assert the whole body, exactly.
-    expect(note.markdown).toBe('- [ ] pending\n- [x] done')
+    // Exactly, so a bullet wrapping a task or an over-indented marker fails
+    // here rather than needing its own negative assertion.
+    expect(note.markdown).toBe('intro\n\n- [ ] pending\n- [x] done')
   })
 
-  it('still renders a standalone <en-todo> (outside a list) as a task line', () => {
-    // The <li> handling must not regress the div-wrapped form (existing test).
-    const enml = '<div><en-todo checked="true"/>Done thing</div>'
+  it('still renders standalone <en-todo>s (outside a list) as task lines', () => {
+    // The <li> handling must not regress the div-wrapped form, and EVERY
+    // checkbox converts — a note has more than one todo in it.
+    const enml =
+      '<div><en-todo checked="true"/>Done thing</div>' +
+      '<div><en-todo checked="true"/>Done twice</div>' +
+      '<div><en-todo checked="false"/>Pending thing</div>' +
+      '<div><en-todo checked="false"/>Pending twice</div>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
     const note = at(parseEnex(xml))
-    expect(note.markdown).toBe('- [x] Done thing')
+    expect(note.markdown).toBe(
+      '- [x] Done thing\n\n- [x] Done twice\n\n- [ ] Pending thing\n\n- [ ] Pending twice',
+    )
+  })
+
+  it('leaves no trailing whitespace after an empty checkbox at the end of a note', () => {
+    // An unlabelled checkbox is the last thing in the body, so its marker's
+    // trailing space would end the imported document — and land in the block.
+    const enml = '<div>text</div><div><en-todo checked="true"/></div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    expect(at(parseEnex(xml)).markdown).toBe('text\n\n- [x]')
+  })
+
+  it('unescapes the entities a CDATA body carries into the markdown', () => {
+    // The `<content>` payload is CDATA, so the ENML inside it is re-escaped
+    // before the outer XML parse and unescaped after. Losing that round trip
+    // eats every `&` and `<` in the user's prose.
+    const xml = enex(
+      `<note><title>T</title><content><![CDATA[<en-note><p>Tom &amp; Jerry &lt;3</p></en-note>]]></content></note>`,
+    )
+
+    expect(at(parseEnex(xml)).markdown).toBe('Tom & Jerry <3')
   })
 
   it('renders a nested <table> as inline text without corrupting the outer table', () => {
     // GFM pipe tables cannot nest; the inner table is flattened to a single
     // safe inline run inside the outer cell (cells by ` / `, rows by ` ; `) so
-    // the OUTER table structure stays valid and NO data is dropped.
+    // the OUTER table structure stays valid and NO data is dropped. The nested
+    // table is pretty-printed as an export's is, one cell spans two lines, one
+    // carries a `|`, and one row is empty — each of which would break the
+    // OUTER row if it reached it unflattened.
     const enml =
       '<table><thead><tr><th>H1</th><th>H2</th></tr></thead><tbody>' +
       '<tr><td>a</td><td>' +
-      '<table><thead><tr><th>N1</th><th>N2</th></tr></thead>' +
-      '<tbody><tr><td>x</td><td>y</td></tr></tbody></table>' +
+      `<table>
+        <thead><tr><th>N 1</th><th>N2</th></tr></thead>
+        <tbody>
+          <tr><td>  x
+             y  </td><td>p|q</td></tr>
+          <tr><td></td></tr>
+          <tr><td>   </td><td>	</td></tr>
+        </tbody>
+      </table>` +
       '</td></tr></tbody></table>'
     const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
 
@@ -484,12 +699,44 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
     // Outer table: header row, separator row, one data row — intact.
     expect(lines[0]).toBe('| H1 | H2 |')
     expect(lines[1]).toBe('| --- | --- |')
-    expect(lines[2]).toBe('| a | N1 / N2 ; x / y |')
+    // The two-line cell is one run of single spaces, the `|` became a `/` so it
+    // opens no column in the outer row, and neither the EMPTY row nor the
+    // WHITESPACE-ONLY one adds a ` ; ` slot — the latter pins both the cell
+    // trim and `flattenNestedTable`'s row filter.
+    expect(lines[2]).toBe('| a | N 1 / N2 ; x y / p/q |')
     // Exactly the three table lines — the nested table did not leak extra
     // rows/pipes into the document.
     expect(lines).toHaveLength(3)
-    // Every nested cell value survives (nothing dropped).
-    for (const value of ['N1', 'N2', 'x', 'y']) expect(note.markdown).toContain(value)
+  })
+
+  it('flattens tables nested three deep from the inside out', () => {
+    // The innermost table has to be linearized FIRST: flatten an outer one
+    // while it still holds a table and the inner cells collapse into each
+    // other with no separator at all.
+    const enml =
+      '<table><thead><tr><th>H</th></tr></thead><tbody><tr><td>' +
+      '<table><tbody><tr><td>m1</td><td>' +
+      '<table><tbody><tr><td>i1</td><td>i2</td></tr></tbody></table>' +
+      '</td></tr></tbody></table>' +
+      '</td></tr></tbody></table>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const lines = at(parseEnex(xml))
+      .markdown.split('\n')
+      .filter((l) => l.trim().length > 0)
+    expect(lines).toEqual(['| H |', '| --- |', '| m1 / i1 / i2 |'])
+  })
+
+  it('replaces every <en-crypt> block with a callout, not just the first', () => {
+    // A note can hold several encrypted blocks; a second one left unconverted
+    // would keep a private-use sentinel character in the imported text.
+    const enml =
+      '<div>a<en-crypt cipher="RC2">FIRSTCIPHER</en-crypt>b<en-crypt cipher="RC2">SECONDCIPHER</en-crypt>c</div>'
+    const xml = enex(`<note><title>T</title><content>${content(enml)}</content></note>`)
+
+    const callout =
+      '> [!warning] Encrypted content was omitted during import (Evernote en-crypt block).'
+    expect(at(parseEnex(xml)).markdown).toBe(`a\n\n${callout}\n\nb\n\n${callout}\n\nc`)
   })
 
   it('replaces an <en-crypt> block with a callout and never leaks the ciphertext', () => {
@@ -528,6 +775,10 @@ describe('parseEnex — advanced ENML fidelity (#2513)', () => {
 })
 
 describe('enexNoteToMarkdown', () => {
+  // The composed document is what the markdown importer parses, so it is
+  // asserted whole: a frontmatter block that does not close, a tag line glued
+  // to the body, or a missing blank line between them all change what the
+  // importer makes of the note.
   it('emits frontmatter with ISO created/updated and source, tags, then body', () => {
     const md = enexNoteToMarkdown({
       title: 'T',
@@ -538,20 +789,20 @@ describe('enexNoteToMarkdown', () => {
       attachments: [],
     })
 
-    expect(md).toContain('---\n')
-    expect(md).toContain(`created: "${new Date(Date.UTC(2021, 0, 2, 3, 4, 5)).toISOString()}"`)
-    expect(md).toContain(`updated: "${new Date(Date.UTC(2022, 2, 4, 5, 6, 7)).toISOString()}"`)
-    expect(md).toContain('source: evernote')
-    // Single-word tag stays `#tag`; multi-word uses the `#[[…]]` form.
-    expect(md).toContain('#work')
-    expect(md).toContain('#[[Multi Word]]')
-    // Body follows.
-    expect(md).toContain('# Body')
-    // Frontmatter opens the document.
-    expect(md.startsWith('---\n')).toBe(true)
+    expect(md).toBe(
+      '---\n' +
+        'created: "2021-01-02T03:04:05.000Z"\n' +
+        'updated: "2022-03-04T05:06:07.000Z"\n' +
+        'source: evernote\n' +
+        '---\n' +
+        '\n' +
+        '#work #[[Multi Word]]\n' +
+        '\n' +
+        '# Body\n\ntext\n',
+    )
   })
 
-  it('omits created/updated when null but always stamps source', () => {
+  it('omits created/updated when null, and the tag line when there are no tags', () => {
     const md = enexNoteToMarkdown({
       title: 'T',
       markdown: 'body',
@@ -561,22 +812,36 @@ describe('enexNoteToMarkdown', () => {
       attachments: [],
     })
 
-    expect(md).not.toContain('created:')
-    expect(md).not.toContain('updated:')
-    expect(md).toContain('source: evernote')
+    expect(md).toBe('---\nsource: evernote\n---\n\nbody\n')
   })
 
-  it('omits the tag line when there are no tags', () => {
+  it('emits frontmatter alone for a note with no tags and no body', () => {
     const md = enexNoteToMarkdown({
       title: 'T',
-      markdown: 'body',
+      markdown: '',
       tags: [],
       createdMs: null,
       updatedMs: null,
       attachments: [],
     })
 
-    expect(md).not.toContain('#')
+    expect(md).toBe('---\nsource: evernote\n---\n')
+  })
+
+  it('renders each tag as one token, whatever whitespace it carries', () => {
+    // Evernote tag names are free text and a pretty-printed <tag> keeps its
+    // line breaks. A token with whitespace left in it truncates at the first
+    // space, so the note lands under the wrong tag — or none.
+    const md = enexNoteToMarkdown({
+      title: 'T',
+      markdown: 'body',
+      tags: ['work', 'Multi\n        Word', '  padded  '],
+      createdMs: null,
+      updatedMs: null,
+      attachments: [],
+    })
+
+    expect(md).toBe('---\nsource: evernote\n---\n\n#work #[[Multi Word]] #padded\n\nbody\n')
   })
 })
 

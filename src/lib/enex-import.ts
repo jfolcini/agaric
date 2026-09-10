@@ -36,6 +36,22 @@
  * {@link transformEnmlDom} and {@link enmlToMarkdown}.
  *
  * DEFERRED (separate follow-up): Joplin `.jex` import.
+ *
+ * ACCEPTED MUTATION GAPS (#4815). The mutants still surviving here are
+ * equivalent — no input this module can be handed distinguishes them — and are
+ * left as gaps rather than chased with tests that pin nothing:
+ *   1. fallbacks that cannot fire: the `?? ''` the type system forces on
+ *      `Node.textContent`, `Array.pop()` and an in-bounds index;
+ *   2. fallbacks whose stand-in value cannot matter, because a mime with no
+ *      subtype, an empty or unparseable body, and a hash matching no resource
+ *      converge on the same output whatever it is;
+ *   3. MD5's high length word (non-zero only for a resource ≥ 512 MB) and the
+ *      one-past-the-end typed-array writes JS silently drops;
+ * A fourth family — values nothing observes — is recorded at each site rather
+ * than listed here: a list naming code it does not sit on goes quietly wrong
+ * the first time that code moves.
+ * Two guards against malformed ENML — the `<td>`/`<th>` cell filter and the
+ * extension-detect anchor — survive on well-formed input by construction.
  */
 
 import TurndownService from 'turndown'
@@ -143,6 +159,8 @@ const CRYPT_PLACEHOLDER =
  */
 function createEnmlTurndown(): TurndownService {
   const td = new TurndownService({
+    // Any value but `'setext'` behaves identically — every Turndown check is
+    // against that one (#4815).
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     bulletListMarker: '-',
@@ -244,7 +262,6 @@ function md5Hex(input: Uint8Array): string {
  */
 function decodeResourceData(raw: string): Uint8Array | null {
   const clean = raw.replace(/[^A-Za-z0-9+/=]/g, '')
-  if (clean.length === 0) return null
   try {
     const bin = atob(clean)
     const bytes = new Uint8Array(bin.length)
@@ -273,7 +290,8 @@ function mimeToExt(mime: string): string {
     'video/mp4': 'mp4',
     'text/plain': 'txt',
   }
-  if (mime in known) return known[mime] ?? 'bin'
+  const hit = known[mime]
+  if (hit !== undefined) return hit
   const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
   return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
 }
@@ -340,10 +358,10 @@ function uniqueResourcePath(
   if (!used.has(candidate)) return candidate
   // Filename collision across distinct resources — disambiguate with a short
   // hash prefix on the stem so both survive as distinct vault files.
+  // `candidate` always carries an extension — one was appended above when the
+  // file-name had none — so the dot is always found.
   const dot = candidate.lastIndexOf('.')
-  const stem = dot === -1 ? candidate : candidate.slice(0, dot)
-  const suffix = dot === -1 ? '' : candidate.slice(dot)
-  return `${stem}-${hash.slice(0, 8)}${suffix}`
+  return `${candidate.slice(0, dot)}-${hash.slice(0, 8)}${candidate.slice(dot)}`
 }
 
 /**
@@ -387,11 +405,15 @@ function transformEnmlDom(
     todo.replaceWith(sentinel)
   }
   for (const media of Array.from(root.querySelectorAll('en-media'))) {
+    // A missing or blank hash simply matches nothing: every key is a 32-char
+    // MD5 hex digest.
     const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
-    const resource = hash.length > 0 ? resources.get(hash) : undefined
+    const resource = resources.get(hash)
     if (resource === undefined) {
       // No matching resource (dangling hash / unsupported inline media): drop
       // the reference rather than leaking `<en-media>` markup into the body.
+      // Turndown happens to render the leftover element as nothing too, so
+      // this is the stated contract rather than an observable transform.
       media.remove()
       continue
     }
@@ -440,6 +462,8 @@ function findLeafNestedTable(root: Element): Element | null {
 function normalizeInlineCell(text: string): string {
   // Collapse all whitespace (incl. newlines) to single spaces and neutralize
   // `|` (which would otherwise open a spurious column in the OUTER pipe row).
+  // The trim is load-bearing — see `flattenNestedTable`'s row filter. Only the
+  // run WIDTH is unobservable, because Turndown re-collapses what it emits.
   return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 }
 
@@ -459,8 +483,12 @@ function flattenNestedTable(table: Element): string {
       const name = c.tagName.toLowerCase()
       return name === 'td' || name === 'th'
     })
-    const line = cells.map((c) => normalizeInlineCell(c.textContent ?? '')).join(' / ')
-    if (line.length > 0) rows.push(line)
+    // Keep the row only if a CELL has content. Testing the joined line instead
+    // lets a row of empty cells through on the ` / ` separators alone, which
+    // emits a stray ` ; / ` slot in the outer cell — and drops a one-cell empty
+    // row while keeping a two-cell one (#4815).
+    const texts = cells.map((c) => normalizeInlineCell(c.textContent ?? ''))
+    if (texts.some((t) => t.length > 0)) rows.push(texts.join(' / '))
   }
   return rows.join(' ; ')
 }
@@ -493,18 +521,22 @@ function enmlToMarkdown(
 
   const doc = new DOMParser().parseFromString(trimmed, 'application/xml')
   if (doc.querySelector('parsererror') !== null) return ''
+  // A rootless `<content>` falls back to the document element, which a parse
+  // without a `<parsererror>` always has.
   const enNote = doc.querySelector('en-note') ?? doc.documentElement
-  if (enNote == null) return ''
 
   // Round-trip through an HTML document so the custom/void tags serialize
   // with explicit close tags (see the doc comment). Reading the en-note's
   // innerHTML strips the wrapper element itself.
+  // The title is never read — only this document's body is (#4815).
   const htmlDoc = document.implementation.createHTMLDocument('')
   const imported = htmlDoc.importNode(enNote, true) as Element
   // Rewrite `<en-todo>` → sentinel and `<en-media>` → indexed sentinel (with
   // the matching `![](path)` collected in `mediaRefs`) before serializing;
   // matched resources are appended to `used`. Keeping the resource path out of
   // the HTML avoids the DOM-text-reinterpreted-as-HTML flow CodeQL flags.
+  // Seeded empty or otherwise, each ref is keyed by its own index, so the
+  // starting contents cannot be observed (#4815).
   const mediaRefs: string[] = []
   transformEnmlDom(imported, resources, used, mediaRefs)
   const bodyHtml = imported.innerHTML
