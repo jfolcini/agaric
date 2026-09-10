@@ -837,7 +837,7 @@ pub(crate) fn handle_mdns_init_result(
             // for the quoted literal, so a `\`-continued literal would not match and the
             // message would be silently redacted out of every bug report.
             tracing::info!(
-                "mDNS disabled: no first-ever pair is possible; already-paired peers may still use a cached address"
+                "mDNS disabled: automatic discovery is off; a first-ever pair needs the QR payload, and already-paired peers may still use a cached address"
             );
             event_sink.on_sync_event(SyncEvent::MdnsDisabled {
                 reason: reason.clone(),

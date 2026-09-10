@@ -74,10 +74,12 @@ pub const MDNS_SERVICE_NAME: &str = "agaricv1";
 /// `UserData` is set first so the record the `add` publishes already carries the name.
 ///
 /// # Errors
-/// [`AppError::InvalidOperation`] if the platform refuses the multicast sockets (iOS, or
-/// Android without the WiFi multicast lock), if `device_id` does not fit a TXT record,
-/// or if the endpoint is already closed. The reason chain is flattened into the message,
-/// because the crate's top-level error says only which service failed.
+/// [`AppError::InvalidOperation`] if the platform refuses the multicast sockets (the iOS
+/// sandbox does), if `device_id` does not fit a TXT record, or if the endpoint is already
+/// closed. Android without the WiFi multicast lock is NOT an error here: the sockets open
+/// and `attach` succeeds, but the kernel never delivers a packet to them, so discovery is
+/// silent (see `sync_daemon::android_multicast`). The reason chain is flattened
+/// into the message, because the crate's top-level error says only which service failed.
 ///
 /// # Panics
 /// Outside a tokio runtime: the crate spawns its actor on `Handle::current()`.
