@@ -40,9 +40,8 @@
  * ACCEPTED MUTATION GAPS (#4815). The mutants still surviving here are
  * equivalent — no input this module can be handed distinguishes them — and are
  * left as gaps rather than chased with tests that pin nothing:
- *   1. fallbacks that cannot fire: the `?? ''` / `?? 'bin'` the type system
- *      forces on `Node.textContent`, `Array.pop()`, an in-bounds index, and a
- *      key already guarded by an `in` check;
+ *   1. fallbacks that cannot fire: the `?? ''` the type system forces on
+ *      `Node.textContent`, `Array.pop()` and an in-bounds index;
  *   2. fallbacks whose stand-in value cannot matter, because a mime with no
  *      subtype, an empty or unparseable body, and a hash matching no resource
  *      converge on the same output whatever it is;
@@ -289,7 +288,8 @@ function mimeToExt(mime: string): string {
     'video/mp4': 'mp4',
     'text/plain': 'txt',
   }
-  if (mime in known) return known[mime] ?? 'bin'
+  const hit = known[mime]
+  if (hit !== undefined) return hit
   const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
   return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
 }
@@ -460,9 +460,10 @@ function findLeafNestedTable(root: Element): Element | null {
 function normalizeInlineCell(text: string): string {
   // Collapse all whitespace (incl. newlines) to single spaces and neutralize
   // `|` (which would otherwise open a spurious column in the OUTER pipe row).
-  // The `|` substitution and the collapse are both observable; the run WIDTH
-  // and the trim are not, because Turndown re-collapses the text it emits into
-  // the outer cell (#4815).
+  // The trim is load-bearing: `flattenNestedTable` keeps a row on
+  // `line.length > 0`, so a row of whitespace-only cells would survive as
+  // `' / '` and emit a stray ` ; ` slot in the outer cell. Only the run WIDTH
+  // is unobservable, because Turndown re-collapses what it emits (#4815).
   return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 }
 
@@ -482,8 +483,12 @@ function flattenNestedTable(table: Element): string {
       const name = c.tagName.toLowerCase()
       return name === 'td' || name === 'th'
     })
-    const line = cells.map((c) => normalizeInlineCell(c.textContent ?? '')).join(' / ')
-    if (line.length > 0) rows.push(line)
+    // Keep the row only if a CELL has content. Testing the joined line instead
+    // lets a row of empty cells through on the ` / ` separators alone, which
+    // emits a stray ` ; / ` slot in the outer cell — and drops a one-cell empty
+    // row while keeping a two-cell one (#4815).
+    const texts = cells.map((c) => normalizeInlineCell(c.textContent ?? ''))
+    if (texts.some((t) => t.length > 0)) rows.push(texts.join(' / '))
   }
   return rows.join(' ; ')
 }

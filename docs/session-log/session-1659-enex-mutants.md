@@ -1,10 +1,30 @@
-# Session 1659 — enex-import: 79.4% → 93.8%
+# Session 1659 — enex-import: 79.4% → 94.0%
 
 Mutation findings for `src/lib/enex-import.ts` (#4815): 8 with no coverage, 89
-survivors. After: **5 no-coverage, 23 survivors, score 93.78%** — re-measured
-after the review deletion below rather than adjusted by arithmetic. The 28 that
-remain are exactly the set judged not worth killing; nothing is left
-unclassified.
+survivors. After: **4 no-coverage, 23 survivors, score 94.03%** — re-measured
+after each review round rather than adjusted by arithmetic. The 27 that remain
+are exactly the set judged not worth killing; nothing is left unclassified.
+
+## A comment wrong three times, and the defect underneath it
+
+`normalizeInlineCell`'s comment claimed its `.trim()` was unobservable. Review
+disputed it twice; the second time the argument was a concrete mechanism, so
+the third round tested it instead of rewording it again. Dropping the `.trim()`
+passed all 47 tests — unpinned, not unobservable.
+
+Writing the fixture that pins it found a real defect one level over.
+`flattenNestedTable` kept a row on `line.length > 0`, testing the JOINED line —
+so a nested row of empty cells survived on its ` / ` separators alone and
+emitted a stray ` ; / ` slot into the outer cell. It also meant a one-cell
+empty row was dropped while a two-cell one was kept.
+
+The filter now asks whether a CELL has content. Both the trim and the new
+filter are pinned: reverting either reddens the nested-table test.
+
+`mimeToExt`'s `known[mime] ?? 'bin'` behind an `in` guard was the same
+unreachable-fallback shape this sweep deleted three times elsewhere; a
+`const hit = known[mime]` lookup removes it, and with it one of the four
+families the module doc had to argue for.
 
 ## Three of them were killed by deleting code, not by adding tests
 
