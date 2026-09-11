@@ -339,7 +339,7 @@ export function BlockListRenderer({
                     <SortableBlockWrapper
                       key={block.id}
                       block={block}
-                      focusedBlockId={focusedBlockId}
+                      isFocused={focusedBlockId === block.id}
                       isSelected={selectedSet.has(block.id)}
                       viewport={viewport}
                       rovingEditor={rovingEditor}

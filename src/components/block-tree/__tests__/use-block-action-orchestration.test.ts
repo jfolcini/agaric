@@ -205,6 +205,52 @@ describe('useBlockActionOrchestration handleFocusNext', () => {
 
     expect(params.setFocused).not.toHaveBeenCalled()
   })
+
+  // #4959 — `collapsedVisible` is the MOUNTED list; at the mount cap ArrowDown
+  // used to dead-end with rows still below it.
+  describe('at the mount boundary', () => {
+    it('reveals and focuses the first row past the mount cap', () => {
+      const hidden = makeBlock({ id: 'D', depth: 0, content: 'Delta' })
+      const revealNextMounted = vi.fn(() => hidden as FlatBlock | null)
+      const params = makeDefaultParams({ focusedBlockId: 'C', revealNextMounted })
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+      act(() => {
+        result.current.handleFocusNext()
+      })
+
+      expect(revealNextMounted).toHaveBeenCalledTimes(1)
+      expect(params.setFocused).toHaveBeenCalledWith('D')
+      expect(params.rovingEditor.mount).toHaveBeenCalledWith('D', 'Delta')
+    })
+
+    it('stays a no-op at the true last row (nothing left to reveal)', () => {
+      const revealNextMounted = vi.fn(() => null)
+      const params = makeDefaultParams({ focusedBlockId: 'C', revealNextMounted })
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+      act(() => {
+        result.current.handleFocusNext()
+      })
+
+      expect(revealNextMounted).toHaveBeenCalledTimes(1)
+      expect(params.setFocused).not.toHaveBeenCalled()
+      expect(params.rovingEditor.mount).not.toHaveBeenCalled()
+    })
+
+    it('does not reveal while mounted rows remain below the focused one', () => {
+      const revealNextMounted = vi.fn(() => null)
+      const params = makeDefaultParams({ focusedBlockId: 'B', revealNextMounted })
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+      act(() => {
+        result.current.handleFocusNext()
+      })
+
+      expect(revealNextMounted).not.toHaveBeenCalled()
+      expect(params.setFocused).toHaveBeenCalledWith('C')
+    })
+  })
 })
 
 describe('useBlockActionOrchestration handleDeleteBlock', () => {

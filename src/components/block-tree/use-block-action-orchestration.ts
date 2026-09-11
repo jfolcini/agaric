@@ -178,6 +178,13 @@ export interface UseBlockActionOrchestrationParams {
    * backend's `delete_block` cascade.
    */
   blocks: FlatBlock[]
+  /**
+   * #4959 — mount the first row past the mount cap and return it (`null` when
+   * none). `collapsedVisible` stops AT the cap, so ArrowDown on the last mounted
+   * row was a dead end. A callback rather than the uncapped list keeps the
+   * `MountedBlocks` brand gate intact. Optional: callers with no cap omit it.
+   */
+  revealNextMounted?: () => FlatBlock | null
   rovingEditor: Pick<
     RovingEditorHandle,
     | 'editor'
@@ -257,6 +264,7 @@ export function useBlockActionOrchestration({
   focusedBlockId,
   collapsedVisible,
   blocks,
+  revealNextMounted,
   rovingEditor,
   setFocused,
   handleFlush,
@@ -420,14 +428,18 @@ export function useBlockActionOrchestration({
 
   const handleFocusNext = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx >= 0 && idx < collapsedVisible.length - 1) {
-      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
-      setFocused(nextBlock.id)
-      rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
-      const preview = nextBlock.content?.slice(0, 50) ?? ''
-      announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
-    }
-  }, [collapsedVisible, focusedBlockId, setFocused, t])
+    if (idx < 0) return
+    // #4959 — at the last MOUNTED row, reveal the row past the mount cap and
+    // step onto it; the reveal and the focus batch into one render, so the row
+    // mounts already focused.
+    const nextBlock: FlatBlock | null | undefined =
+      idx < collapsedVisible.length - 1 ? collapsedVisible[idx + 1] : revealNextMounted?.()
+    if (!nextBlock) return
+    setFocused(nextBlock.id)
+    rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
+    const preview = nextBlock.content?.slice(0, 50) ?? ''
+    announce(t('announce.editingBlock', { preview: preview || t('announce.emptyBlock') }))
+  }, [collapsedVisible, focusedBlockId, revealNextMounted, setFocused, t])
 
   const handleDeleteBlock = useCallback(
     (opts?: DeleteBlockOpts) => {

@@ -62,7 +62,7 @@ function makeProps(
 ): React.ComponentProps<typeof SortableBlockWrapper> {
   return {
     block: makeBlock({ id: 'BLK001', content: 'Hello', depth: 0 }),
-    focusedBlockId: null,
+    isFocused: false,
     isSelected: false,
     projected: null,
     activeId: null,
@@ -146,7 +146,7 @@ describe('SortableBlockWrapper', () => {
       subscribeWindow: () => () => {},
       getWindowVersion: () => 0,
     }
-    const { container } = renderInList(makeProps({ viewport, focusedBlockId: 'BLK001' }))
+    const { container } = renderInList(makeProps({ viewport, isFocused: true }))
 
     // Focused block is never virtualized
     expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
@@ -379,7 +379,7 @@ describe('SortableBlockWrapper', () => {
   it('tints the over-row independent of focus state (#991)', () => {
     const { container } = renderInList(
       makeProps({
-        focusedBlockId: 'BLK001',
+        isFocused: true,
         activeId: 'BLK999',
         overId: 'BLK001',
         projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
