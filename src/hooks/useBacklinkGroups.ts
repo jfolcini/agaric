@@ -16,6 +16,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { useInvalidateOnCounter } from '@/hooks/useInvalidateOnCounter'
 import { useInvalidateOnGraphStructure } from '@/hooks/useInvalidateOnGraphStructure'
 import { unwrap } from '@/lib/app-error'
 import type {
@@ -46,11 +47,10 @@ export interface UseBacklinkGroupsParams {
   /** #4551 — narrow to one link shape, or `null` for every shape. */
   kind: LinkKind | null
   /**
-   * Monotonic counter from `useBlockPropertyEvents`. Embedded in the query key
-   * so a `block:properties-changed` event (bumping the key) starts a fresh
-   * query and refetches — reproducing the old component's F-39 behaviour where
-   * `invalidationKey` sat in `fetchGroups`'s deps to force a refetch. Paired
-   * with a finite `gcTime` (below) so the per-bump key churn stays bounded.
+   * Monotonic counter from `useBlockPropertyEvents`. A refresh axis, not part of
+   * what is queried, so it invalidates the key prefix instead of joining the key
+   * (#4962): in the key, a TODO ticked on any other page dropped the panel to a
+   * skeleton and lost every Load-more page.
    */
   invalidationKey: number
 }
@@ -78,6 +78,8 @@ export interface UseBacklinkGroupsResult {
   isFetchingMore: boolean
   loadMore: () => void
   isError: boolean
+  /** Re-run the current query. Drives the panel's error-state Retry (#4962). */
+  refetch: () => void
 }
 
 export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkGroupsResult {
@@ -92,20 +94,24 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     kind,
   } = params
 
-  const structurePrefix = useMemo(() => ['backlinkGroups', spaceId, targetId], [spaceId, targetId])
-  useInvalidateOnGraphStructure(structurePrefix)
+  // Both refresh axes invalidate this prefix rather than joining the key; see
+  // `useInvalidateOnCounter`.
+  const invalidationPrefix = useMemo(
+    () => ['backlinkGroups', spaceId, targetId],
+    [spaceId, targetId],
+  )
+  useInvalidateOnGraphStructure(invalidationPrefix)
+  useInvalidateOnCounter(invalidationKey, invalidationPrefix)
 
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError } =
+  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError, refetch } =
     useInfiniteQuery(
       {
         // TanStack hashes query keys deterministically, so passing the
-        // arrays/objects directly is fine. `invalidationKey` reproduces the
-        // "refetch when block properties change" behaviour (F-39).
+        // arrays/objects directly is fine.
         queryKey: [
           'backlinkGroups',
           spaceId,
           targetId,
-          invalidationKey,
           filters,
           sort,
           sourcePageIncluded,
@@ -148,15 +154,12 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
-        // Override the client's `gcTime: Infinity` for THIS hook. Because the
-        // monotonic `invalidationKey` is part of the query key, every property
-        // change mints a new key; under an infinite gcTime those superseded
-        // entries (now observer-less) would never be collected and accumulate
-        // unbounded over a long session. A finite gcTime bounds that: the
-        // ACTIVE query (current `invalidationKey`) always has an observer while
-        // the panel is mounted and is never collected, but each prior key's
-        // entry is evicted 5 min after it goes inactive. `staleTime: Infinity`
-        // is still inherited, so this changes nothing about refetch timing.
+        // Override the client's `gcTime: Infinity` for THIS hook, as
+        // `useUnlinkedReferences` does: `targetId`, `filters`, `sort` and `kind`
+        // are in the key, so a session that visits N pages or tries N filter
+        // combinations leaves N observer-less entries an infinite gcTime would
+        // never collect. `staleTime: Infinity` is still inherited, so refetch
+        // timing is unchanged — only the eviction of inactive entries.
         gcTime: 5 * 60 * 1000,
       },
       queryClient,
@@ -197,6 +200,10 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
+  const retry = useCallback(() => {
+    void refetch()
+  }, [refetch])
+
   return {
     groups,
     totalCount,
@@ -206,5 +213,6 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
     isFetchingMore: isFetchingNextPage,
     loadMore,
     isError,
+    refetch: retry,
   }
 }

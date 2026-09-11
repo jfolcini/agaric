@@ -17,7 +17,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useBacklinkGroups, type UseBacklinkGroupsParams } from '@/hooks/useBacklinkGroups'
 import { queryClient } from '@/lib/query-client'
 
@@ -215,7 +215,7 @@ describe('useBacklinkGroups', () => {
     ).length
     expect(callsBefore).toBeGreaterThanOrEqual(1)
 
-    // Bumping invalidationKey changes the query key -> a fresh query + refetch.
+    // Bumping invalidationKey invalidates the prefix -> a refetch.
     rerender({ invalidationKey: 1 })
 
     await waitFor(() => {
@@ -223,6 +223,78 @@ describe('useBacklinkGroups', () => {
         (c) => c[0] === 'list_backlinks_grouped',
       ).length
       expect(callsAfter).toBeGreaterThan(callsBefore)
+    })
+  })
+
+  // #4962 — the F-39 test above asserts only that a second IPC fires, which was
+  // just as true when the counter sat in the query key. This pins the
+  // difference: the refetch happens IN PLACE, so a TODO ticked on some other
+  // page no longer drops the panel to a skeleton and loses its Load-more pages.
+  it('#4962: an invalidationKey bump refetches in place, keeping the loaded pages', async () => {
+    const page1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 3,
+      filtered_count: 3,
+      truncated: false,
+    }
+    const page2 = {
+      groups: [makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 0,
+      filtered_count: 0,
+      truncated: false,
+    }
+    // The refetch the bump triggers is parked, so the assertions below run while
+    // it is IN FLIGHT — the exact window the old re-key painted a skeleton in.
+    const parked = deferred<typeof page1>()
+    let calls = 0
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_backlinks_grouped: (args) => {
+          calls++
+          if (calls === 3) return parked.promise
+          return args['cursor'] == null ? page1 : page2
+        },
+      }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ invalidationKey }) => useBacklinkGroups(baseParams({ invalidationKey })),
+      { initialProps: { invalidationKey: 0 } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    await act(async () => {
+      result.current.loadMore()
+    })
+    await waitFor(() => {
+      expect(result.current.isFetchingMore).toBe(false)
+    })
+    expect(result.current.groups.map((g) => g.page_id)).toEqual(['P1', 'P2'])
+    expect(calls).toBe(2)
+
+    rerender({ invalidationKey: 1 })
+
+    // The bump does refetch ...
+    await waitFor(() => {
+      expect(calls).toBeGreaterThanOrEqual(3)
+    })
+    // ... but in place: no skeleton, both loaded pages and the header count
+    // still on screen while the refetch is in flight.
+    expect(result.current.loading).toBe(false)
+    expect(result.current.groups.map((g) => g.page_id)).toEqual(['P1', 'P2'])
+    expect(result.current.totalCount).toBe(3)
+
+    await act(async () => {
+      parked.resolve(page1)
+    })
+    await waitFor(() => {
+      expect(result.current.groups.map((g) => g.page_id)).toEqual(['P1', 'P2'])
     })
   })
 
