@@ -734,7 +734,7 @@ jobs:
         # ones needing a toolchain it does not install. Adding a line is the
         # deliberate act; the cost of forgetting is a test that runs nowhere,
         # which is the defect class #4544 itself is about.
-        run: node --test scripts/pr-diff-base.test.mjs
+        run: node --test scripts/pr-diff-base.test.mjs scripts/check-workflow-liveness.test.mjs
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; rejects packages whose registry-side Sigstore
