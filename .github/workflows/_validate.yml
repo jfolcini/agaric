@@ -1275,10 +1275,12 @@ jobs:
         # remove-after-markers is included so a docs-only PR gets the same
         # `.md` REMOVE AFTER coverage the full `lint` job gives every other
         # PR (#4147) — it needs no toolchain beyond the Node/git already set
-        # up above.
+        # up above. architecture-citations and dead-symbol-citations are here
+        # for the same reason: both are Node-only whole-tree `.md` scans, so
+        # `docs/architecture/*.md` is exactly their input.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers
+        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers architecture-citations dead-symbol-citations
 
       - name: Run lychee link check (pre-push-staged hook)
         # lychee is staged `pre-push` in prek.toml, so it needs the explicit

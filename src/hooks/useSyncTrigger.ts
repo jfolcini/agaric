@@ -7,6 +7,7 @@ import { commands } from '@/lib/bindings'
 import type { PeerRef } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { startSync } from '@/lib/ipc-helpers'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 // #3715 — moved down to `lib` when the pairing mutation queue became its
@@ -414,7 +415,9 @@ export function useSyncTrigger() {
         void commands
           .flushAllDrafts()
           .then(unwrap)
-          .catch(() => {})
+          .catch((err: unknown) => {
+            logger.warn('useSyncTrigger', 'background draft flush failed', undefined, err)
+          })
       }
     }
 

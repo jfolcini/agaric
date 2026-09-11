@@ -112,7 +112,7 @@ lint:
 lint-fix:
     npm run lint:fix
 
-# Typecheck all four tsconfig projects (tsc -b --noEmit). Bare `npx tsc --noEmit` checks NOTHING — see AGENTS.md.
+# Typecheck every tsconfig project (tsc -b --noEmit). Bare `npx tsc --noEmit` checks NOTHING — see AGENTS.md.
 [group('lint')]
 typecheck:
     npm run typecheck
