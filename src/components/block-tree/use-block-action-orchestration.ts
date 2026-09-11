@@ -447,10 +447,28 @@ export function useBlockActionOrchestration({
         notify.error(t('blockTree.cannotDeleteLastBlock'))
         return
       }
-      deleteInProgress.current = true
       const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
+      const prevBlock =
+        idx > 0 ? (collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]) : null
+      // #4958 — a blank block WITH children reads as empty to the roving editor,
+      // and the backend delete cascades, so reparent the children first exactly
+      // as the merge handlers do (#1342). Planned from the FULL tree: the
+      // collapsed projection hides a collapsed block's children.
+      if (!prevBlock && blocks.some((b) => (b.parent_id ?? null) === focusedBlockId)) {
+        // Nothing above to adopt them: the delete does not proceed, mirroring
+        // the merge handlers' `idx <= 0` bail.
+        return
+      }
+      const reparent = prevBlock ? planChildReparent(blocks, focusedBlockId, prevBlock.id) : null
+      deleteInProgress.current = true
       rovingEditorRef.current.unmount()
-      remove(focusedBlockId)
+      const removal =
+        prevBlock && reparent
+          ? moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex).then(() =>
+              remove(focusedBlockId),
+            )
+          : remove(focusedBlockId)
+      removal
         .catch((err: unknown) => {
           // The store toasts its own delete failure; this catch exists for the
           // BlockTree verifying wrapper (which THROWS when the block is still
@@ -466,8 +484,7 @@ export function useBlockActionOrchestration({
           deleteInProgress.current = false
         })
       announce(t('announce.blockDeleted'))
-      if (idx > 0) {
-        const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
+      if (prevBlock) {
         setFocused(prevBlock.id)
         // #752 — honour the caller's cursor-placement hint (Backspace on an
         // empty block lands the caret at the END of the previous block, the
@@ -489,6 +506,8 @@ export function useBlockActionOrchestration({
     [
       focusedBlockId,
       collapsedVisible,
+      blocks,
+      moveBlocks,
       remove,
       setFocused,
       t,
