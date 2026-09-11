@@ -3460,7 +3460,14 @@ async fn test_list_block_history_multi_device_pagination() {
     .await;
 
     // Paginate with limit=1 so every op lands on its own page.
-    // Expected order: (seq DESC, device_id DESC) → (2,B), (2,A), (1,B), (1,A)
+    //
+    // #4964 — the keyset leads on `created_at`, so the answer is the ops in
+    // reverse chronological order: B2 (03:00), B1 (02:00), A2 (01:00), A1
+    // (00:00). The timestamps above deliberately make that DIFFER from the
+    // old bare-`seq` order, which put A's seq-2 op from 01:00 ahead of B's
+    // seq-1 op from 02:00 — i.e. it ranked the two devices by their lifetime
+    // op counts. Either order returns the same four rows, so only the
+    // sequence below can tell them apart.
     let mut all_entries: Vec<(i64, String)> = Vec::new();
     let mut cursor = None;
     loop {
@@ -3482,26 +3489,26 @@ async fn test_list_block_history_multi_device_pagination() {
         4,
         "all 4 ops must be returned (2 devices \u{d7} 2 seq values)"
     );
-    // Ordered by (seq DESC, device_id DESC)
+    // Ordered by (created_at DESC, seq DESC, device_id DESC)
     assert_eq!(
         all_entries[0],
         (2, "device-B".into()),
-        "first: seq=2, device-B"
+        "first: 03:00 — seq=2, device-B"
     );
     assert_eq!(
         all_entries[1],
-        (2, "device-A".into()),
-        "second: seq=2, device-A"
+        (1, "device-B".into()),
+        "second: 02:00 — seq=1, device-B"
     );
     assert_eq!(
         all_entries[2],
-        (1, "device-B".into()),
-        "third: seq=1, device-B"
+        (2, "device-A".into()),
+        "third: 01:00 — seq=2, device-A"
     );
     assert_eq!(
         all_entries[3],
         (1, "device-A".into()),
-        "fourth: seq=1, device-A"
+        "fourth: 00:00 — seq=1, device-A"
     );
 }
 

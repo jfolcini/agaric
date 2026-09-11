@@ -7,10 +7,18 @@ use agaric_core::ulid::BlockId;
 /// List op-log history for a specific block, paginated.
 ///
 /// Returns all ops whose payload contains the given `block_id`, ordered by
-/// `(seq DESC, device_id DESC)` (newest first).  The cursor stores `seq` and
-/// `device_id` (in the `id` field) for correct keyset pagination across
-/// multiple devices — the op_log PK is `(device_id, seq)` and `seq` alone
-/// is not globally unique.
+/// `(created_at DESC, seq DESC, device_id DESC)` (newest first) — the
+/// sibling `list_page_history`'s keyset, so the two History sheets answer
+/// the same question the same way. The cursor is `Cursor::for_history_full`:
+/// `created_at` in the reused `deleted_at` slot, `seq`, and `device_id` in
+/// `id`.
+///
+/// #4964 — this used to order on `(seq DESC, device_id DESC)` alone, which
+/// is not a time order in a multi-device vault: `seq` is allocated per
+/// device (the op_log PK is `(device_id, seq)`), so a peer's replicated
+/// rows — which reach this query unfiltered — were ranked by that device's
+/// lifetime op count. A device paired last week sorted below every op of a
+/// long-lived one regardless of when either happened.
 ///
 /// B.2: queries the native `block_id` column (migration 0030)
 /// directly, replacing the old `LIKE` pre-filter + `json_extract`
@@ -35,7 +43,9 @@ use agaric_core::ulid::BlockId;
 /// no-cursor branch never participates in row comparison. If a future
 /// change introduces seq `0` as a per-device sentinel op, this default
 /// would silently treat it as already-seen — switch `cursor_seq` to
-/// `Option<i64>` and bind it directly at that point.
+/// `Option<i64>` and bind it directly at that point. `created_at` needs no
+/// such sentinel: like the sibling, a cursor that carries no `created_at`
+/// is refused rather than defaulted.
 ///
 /// # Attachment ops (#4336)
 ///
@@ -73,12 +83,27 @@ pub async fn list_block_history(
     // `id` in the cursor stores `device_id` for history queries — it is the
     // tie-breaker because the op_log PK is `(device_id, seq)`. The
     // `cursor_seq = 0` sentinel in the no-cursor branch is safe per the
-    // Doc-block above (op_log seq starts at 1).
-    let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, &str) =
-        match page.after.as_ref() {
-            Some(c) => (Some(1), c.seq.unwrap_or(0), &c.id),
-            None => (None, 0, ""),
-        };
+    // Doc-block above (op_log seq starts at 1). `deleted_at` carries
+    // `created_at` as a String (see `Cursor` docs) against an INTEGER
+    // epoch-ms column, so it is parsed back here — the sibling's binding,
+    // verbatim.
+    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
+        Option<i64>,
+        i64,
+        i64,
+        &str,
+    ) = match page.after.as_ref() {
+        Some(c) => {
+            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
+                AppError::validation("cursor missing created_at for block history query".into())
+            })?;
+            let created_at = created_at_str.parse::<i64>().map_err(|e| {
+                AppError::validation(format!("cursor created_at not an integer: {e}"))
+            })?;
+            (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
+        }
+        None => (None, 0, 0, ""),
+    };
 
     let rows = sqlx::query_as!(
         HistoryEntry,
@@ -100,22 +125,29 @@ pub async fn list_block_history(
          ) \
            AND (?6 IS NULL OR ol.op_type = ?6) \
            AND (?2 IS NULL OR ( \
-                ol.seq < ?3 OR (ol.seq = ?3 AND ol.device_id < ?5))) \
-         ORDER BY ol.seq DESC, ol.device_id DESC \
+                ol.created_at < ?7 \
+                OR (ol.created_at = ?7 AND ol.seq < ?3) \
+                OR (ol.created_at = ?7 AND ol.seq = ?3 AND ol.device_id < ?5))) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
          LIMIT ?4",
-        block_id,         // ?1
-        cursor_flag,      // ?2
-        cursor_seq,       // ?3
-        fetch_limit,      // ?4
-        cursor_device_id, // ?5
-        op_type_filter,   // ?6
+        block_id,          // ?1
+        cursor_flag,       // ?2
+        cursor_seq,        // ?3
+        fetch_limit,       // ?4
+        cursor_device_id,  // ?5
+        op_type_filter,    // ?6
+        cursor_created_at, // ?7
     )
     .fetch_all(pool)
     .await?;
 
     build_page_response(rows, page.limit, |last| {
-        // device_id as tie-breaker
-        Cursor::for_history_seq(last.device_id.clone(), last.seq)
+        // reuse deleted_at slot for created_at — see Cursor docs
+        Cursor::for_history_full(
+            last.device_id.clone(),
+            last.created_at.to_string(),
+            last.seq,
+        )
     })
 }
 

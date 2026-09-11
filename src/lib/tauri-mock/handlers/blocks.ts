@@ -244,8 +244,7 @@ function listBlocksLimit(raw: unknown): number {
  * them at once: `Cursor::for_history_full` puts `created_at` in `deleted_at`,
  * `seq` in `seq` and `device_id` in `id` — the "composite overload" the
  * `Cursor` doc block names, and the reason the struct has never grown a field
- * per query. `list_block_history` is the two-component case (`seq`, then
- * `device_id` in `id`, via `Cursor::for_history_seq`).
+ * per query. `list_block_history` shares that keyset since #4964.
  */
 type CursorSlot = 'position' | 'deleted_at' | 'seq'
 

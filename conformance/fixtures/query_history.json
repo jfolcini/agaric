@@ -1,5 +1,5 @@
 {
-  "description": "#3824 — READ-command differential over the two op-log history listings, `list_page_history` and `get_block_history`. Both were waived as 'op-log entries are digested (not compared per entry) by the #763 snapshot', and behind that waiver the mock had stopped implementing them: `list_page_history` (`handlers/history.ts`) read NEITHER `pageId` nor `opTypeFilter` nor `cursor` nor `limit` — it answered every request with the whole space-filtered op log under `{ next_cursor: null, has_more: false }`, so per-page history WAS global history and every page was the first page — and `get_block_history` was an unconditional empty page. The #3870 / #4849 shape, on a command with three shipped user-visible defects behind it (#4247/#4278, #4277, #4328). The backend is `agaric-store/src/pagination/history.rs`: `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?limit + 1` over the `Cursor::for_history_full` composite keyset (`deleted_at` carries `created_at`, `id` carries `device_id`) for the page listing, and `ORDER BY ol.seq DESC, ol.device_id DESC` over `Cursor::for_history_seq` for the block one. A row's TOKEN is its `op_type` plus `is_replicated`, and that is the whole per-entry vocabulary these steps can have: `device_id`, `seq` and `created_at` are identities each stack generates independently, and `payload` is a JSON blob carrying stack-local ids and free text (the row-token grammar refuses both). So the ops are chosen to make `op_type` DISCRIMINATE — page B1 ends with a `delete_block` its child ops do not share, page B4's subtree carries the only `set_property`, and the paging steps run over B3, whose two ops have different types — rather than to be typical. NOT pinned, and not pinnable here: the `delete_attachment` / `rename_attachment` two-probe disjunct both queries carry (`history.rs:289-297`). It is not a missing fixture — the mock's attachment handlers (`handlers/attachments.ts`) append NO op-log row at all, so there is no attachment op on the mock side for the disjunct to admit or reject, and mirroring the SQL without the ops would add a branch nothing can enter. Closing that means giving the mock's attachment writes an op log, which is a write-path change to three commands the harness waives outright ('attachments blob store outside the conformance snapshot scope').",
+  "description": "#3824 — READ-command differential over the two op-log history listings, `list_page_history` and `get_block_history`. Both were waived as 'op-log entries are digested (not compared per entry) by the #763 snapshot', and behind that waiver the mock had stopped implementing them: `list_page_history` (`handlers/history.ts`) read NEITHER `pageId` nor `opTypeFilter` nor `cursor` nor `limit` — it answered every request with the whole space-filtered op log under `{ next_cursor: null, has_more: false }`, so per-page history WAS global history and every page was the first page — and `get_block_history` was an unconditional empty page. The #3870 / #4849 shape, on a command with three shipped user-visible defects behind it (#4247/#4278, #4277, #4328). The backend is `agaric-store/src/pagination/history.rs`: both listings are `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?limit + 1` over the `Cursor::for_history_full` composite keyset (`deleted_at` carries `created_at`, `id` carries `device_id`) since #4964 — the block listing used to lead on `seq` alone, which ranks a multi-device vault by each device's lifetime op count. A row's TOKEN is its `op_type` plus `is_replicated`, and that is the whole per-entry vocabulary these steps can have: `device_id`, `seq` and `created_at` are identities each stack generates independently, and `payload` is a JSON blob carrying stack-local ids and free text (the row-token grammar refuses both). So the ops are chosen to make `op_type` DISCRIMINATE — page B1 ends with a `delete_block` its child ops do not share, page B4's subtree carries the only `set_property`, and the paging steps run over B3, whose two ops have different types — rather than to be typical. NOT pinned, and not pinnable here: the `delete_attachment` / `rename_attachment` two-probe disjunct both queries carry (`history.rs:289-297`). It is not a missing fixture — the mock's attachment handlers (`handlers/attachments.ts`) append NO op-log row at all, so there is no attachment op on the mock side for the disjunct to admit or reject, and mirroring the SQL without the ops would add a branch nothing can enter. Closing that means giving the mock's attachment writes an op log, which is a write-path change to three commands the harness waives outright ('attachments blob store outside the conformance snapshot scope').",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -206,7 +206,7 @@
       "total_count": null
     },
     {
-      "cursor": "v1:{id,seq}",
+      "cursor": "v1:{deleted_at,id,seq}",
       "error": null,
       "has_more": true,
       "name": "block_history_page_1",
@@ -417,7 +417,7 @@
         "opTypeFilter": null
       },
       "command": "get_block_history",
-      "comment": "`ol.block_id = ?1` selects one block, not its page: B2's two edits, newest `seq` first, with B3's and B5's ops excluded even though B3 is its sibling under the same page. Before #3824 this command was a constant empty page, so this step is the difference between a handler and a stub.",
+      "comment": "`ol.block_id = ?1` selects one block, not its page: B2's two edits, newest first, with B3's and B5's ops excluded even though B3 is its sibling under the same page. Before #3824 this command was a constant empty page, so this step is the difference between a handler and a stub.",
       "name": "block_history_one_block_only"
     },
     {
@@ -428,7 +428,7 @@
         "opTypeFilter": null
       },
       "command": "get_block_history",
-      "comment": "First page over B3, whose two ops have DIFFERENT types — the `delete_block` alone here — so page 1 and page 2 are told apart by their rows and not only by `has_more`. The cursor is `Cursor::for_history_seq`'s `{id, seq}`: `seq` is the keyset and `id` carries `device_id`, because the op_log PK is `(device_id, seq)` and `seq` alone is not globally unique.",
+      "comment": "First page over B3, whose two ops have DIFFERENT types — the `delete_block` alone here — so page 1 and page 2 are told apart by their rows and not only by `has_more`. The cursor is `Cursor::for_history_full`'s `{deleted_at, id, seq}` — `deleted_at` carries `created_at`, `id` carries `device_id` — which is the half of #4964 this fixture CAN pin: the block listing minted the two-slot `{id, seq}` while it keyed on `seq` alone. The other half, that a low-`seq` device's NEWER op now outranks a high-`seq` device's older one, is not pinnable here — every fixture op is appended by the one harness device, so `seq` and `created_at` never disagree. `test_list_block_history_multi_device_pagination` (`agaric-store/src/pagination/tests.rs`) is what pins the order itself.",
       "name": "block_history_page_1"
     },
     {
@@ -439,7 +439,7 @@
         "opTypeFilter": null
       },
       "command": "get_block_history",
-      "comment": "Resumes on `ol.seq < ?` — the older `edit_block`, and the end of the listing. An ignored cursor re-serves the `delete_block` and reddens on the row.",
+      "comment": "Resumes on the three-arm `created_at`/`seq`/`device_id` predicate — the older `edit_block`, and the end of the listing. An ignored cursor re-serves the `delete_block` and reddens on the row.",
       "cursor_from": "block_history_page_1",
       "name": "block_history_page_2"
     },
