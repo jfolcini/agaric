@@ -27,8 +27,14 @@ import { cn } from '@/lib/utils'
 export interface SortableBlockWrapperProps {
   /** The flat block to render at this row. */
   block: FlatBlock
-  /** Currently focused block id (null if none). */
-  focusedBlockId: string | null
+  /**
+   * True when this row holds the editor focus.
+   *
+   * #4959 — a boolean, not the page's `focusedBlockId`: that id is the same
+   * value for all N rows and changes on every focus move, so the `React.memo`
+   * below re-rendered every mounted row when exactly two rows changed.
+   */
+  isFocused: boolean
   /** True if this block is part of the active multi-selection. */
   isSelected: boolean
 
@@ -76,7 +82,7 @@ export interface SortableBlockWrapperProps {
 
 function SortableBlockWrapperInner({
   block,
-  focusedBlockId,
+  isFocused,
   isSelected,
   projected = null,
   activeId = null,
@@ -91,8 +97,6 @@ function SortableBlockWrapperInner({
   siblingPosinset,
   properties,
 }: SortableBlockWrapperProps): React.ReactElement {
-  const isFocused = focusedBlockId === block.id
-
   // #1267 — read ONLY this row's drag-derived state via a per-id external-store
   // subscription (the `DragStateStore` published by BlockListRenderer). A bare
   // pointer-move that doesn't change this row's snapshot no longer re-renders

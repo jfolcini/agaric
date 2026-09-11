@@ -1009,6 +1009,15 @@ export function BlockTree({
     // source's hidden children.
     collapsedVisible: zoomedVisible,
     blocks,
+    // #4959 — `zoomedVisible` stops at the mount cap, so focus-next needs this
+    // to walk past it: mount the first hidden row and hand it back so the same
+    // reveal-then-focus the #3276 jump path uses covers arrow navigation too.
+    revealNextMounted: useCallback(() => {
+      const next = uncappedZoomedVisible[zoomedVisible.length]
+      if (!next) return null
+      revealIndex(zoomedVisible.length)
+      return next
+    }, [uncappedZoomedVisible, zoomedVisible.length, revealIndex]),
     rovingEditor,
     setFocused,
     handleFlush,

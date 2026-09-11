@@ -24,13 +24,10 @@
  * semantics of expanding a collapsed block (nothing renders until asked
  * for), just keyed on position instead of collapse state.
  *
- * ## Envelope (provisional — see docs/architecture/editor-and-content.md
- * § Mount envelope)
+ * ## Envelope
  * `INITIAL_MOUNT_LIMIT` rows mount on first render; `MOUNT_LIMIT_STEP` more
- * mount per "Show more" click. These numbers are a conservative safety
- * rail, NOT a measured cliff — #2467's "Measure" phase (bench fixture at
- * 1K/5K/10K blocks/page) has not been run. Do not treat them as tuned;
- * revisit once real mount-time / keystroke-latency numbers exist.
+ * mount per "Show more" click. Both are measured — `docs/architecture/editor-and-content.md`
+ * § "Measured envelope (#2467 Measure phase)" has the numbers and the fixture.
  *
  * ## What this deliberately does NOT do
  * - No true virtualization (DOM recycling for offscreen-but-mounted rows
@@ -56,10 +53,10 @@ import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks, ZoomedBlocks } from '@/lib/zoom-scope'
 
 /**
- * Provisional per-page mount ceiling (#2467). Unmeasured — see file header.
- * Chosen well below the ~10K-mounted-fiber cliff the architecture review
- * flagged, and comfortably above typical page sizes so it stays invisible
- * for the vast majority of pages.
+ * Per-page mount ceiling (#2467) — measured as conservative in
+ * `docs/architecture/editor-and-content.md` § "Measured envelope (#2467 Measure phase)",
+ * and comfortably above typical page sizes so it stays invisible for the vast
+ * majority of pages.
  */
 export const INITIAL_MOUNT_LIMIT = 500
 
