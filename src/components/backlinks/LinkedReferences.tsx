@@ -91,19 +91,28 @@ export function LinkedReferences({
 
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
   // TanStack `useInfiniteQuery` (see `useBacklinkGroups`). TanStack owns the
-  // page list, cursor, loading and error state; `invalidationKey` sits in the
-  // query key so a property-change event refetches (F-39).
-  const { groups, totalCount, filteredCount, loading, hasMore, isFetchingMore, loadMore, isError } =
-    useBacklinkGroups({
-      targetId,
-      filters,
-      sort,
-      sourcePageIncluded,
-      sourcePageExcluded,
-      spaceId: currentSpaceId,
-      invalidationKey,
-      kind,
-    })
+  // page list, cursor, loading and error state; `invalidationKey` drives an
+  // invalidate, not a re-key (F-39, #4962).
+  const {
+    groups,
+    totalCount,
+    filteredCount,
+    loading,
+    hasMore,
+    isFetchingMore,
+    loadMore,
+    isError,
+    refetch,
+  } = useBacklinkGroups({
+    targetId,
+    filters,
+    sort,
+    sourcePageIncluded,
+    sourcePageExcluded,
+    spaceId: currentSpaceId,
+    invalidationKey,
+    kind,
+  })
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
@@ -124,29 +133,21 @@ export function LinkedReferences({
   // `page_id`s to expanded without clobbering existing (user) toggles. A ref
   // tracks the current query's identity: when it changes, the next non-empty
   // `groups` is a fresh first page and re-seeds; growth within the same query is
-  // an append.
+  // an append. `invalidationKey` is deliberately absent (#4962): a property write
+  // refetches the SAME query, so what comes back is the user's expanded groups,
+  // not a fresh first page.
   const queryIdentity = useMemo(
     () =>
       JSON.stringify([
         currentSpaceId,
         targetId,
-        invalidationKey,
         filters,
         sort,
         sourcePageIncluded,
         sourcePageExcluded,
         kind,
       ]),
-    [
-      currentSpaceId,
-      targetId,
-      invalidationKey,
-      filters,
-      sort,
-      sourcePageIncluded,
-      sourcePageExcluded,
-      kind,
-    ],
+    [currentSpaceId, targetId, filters, sort, sourcePageIncluded, sourcePageExcluded, kind],
   )
   const seededIdentityRef = useRef<string | null>(null)
   // useLayoutEffect (not useEffect) so the seed is applied after the DOM commit
@@ -182,17 +183,14 @@ export function LinkedReferences({
   }, [groups, queryIdentity])
 
   // Clear the resolution cache on every fetch-identity change so stale resolved
-  // `[[ULID]]`/`#[ULID]` titles don't leak across pages OR survive a property
-  // change that renamed a linked target. The pre-migration load effect ran
-  // `clearCache()` before each refetch, and its `fetchGroups` dep set was
-  // exactly this identity (space/page/invalidationKey/filters/sort/sourcePage) —
-  // so keying on `queryIdentity` preserves that: an `invalidationKey` bump
-  // (F-39) re-resolves titles, matching old behaviour, rather than letting a
-  // renamed target stay stale for the 5-minute resolution TTL. `clearCache` is
-  // stable (useCallback []).
+  // `[[ULID]]`/`#[ULID]` titles don't leak across pages, and on every property
+  // change, which can flip a resolved target's TODO status inside the 5-minute
+  // resolution TTL. `invalidationKey` stays a dep HERE after leaving
+  // `queryIdentity` (#4962): re-resolving titles is cheap, re-seeding the
+  // expanded groups is not. `clearCache` is stable (useCallback []).
   useEffect(() => {
     clearCache()
-  }, [queryIdentity, clearCache])
+  }, [queryIdentity, invalidationKey, clearCache])
 
   // Load tags on mount (B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid
@@ -311,13 +309,14 @@ export function LinkedReferences({
   // panel (user decision, live UX review). When filters are active, keep the
   // full panel visible so the user can clear/adjust filters — otherwise the
   // filter controls vanish. The loading branch below still renders so nothing
-  // flashes mid-fetch.
+  // flashes mid-fetch, and `isError` keeps the panel so a failed read shows the
+  // retry card instead of reading as "nothing links here" (#4962).
   const hasActiveFilters =
     filters.length > 0 ||
     sourcePageIncluded.length > 0 ||
     sourcePageExcluded.length > 0 ||
     kind !== null
-  if (!loading && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
+  if (!loading && !isError && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
     return null
   }
 
@@ -400,6 +399,8 @@ export function LinkedReferences({
             />
           }
           empty={null}
+          error={isError && t('references.loadFailed')}
+          onRetry={refetch}
         >
           {() => (
             <div className="linked-references-content mt-1 space-y-2">

@@ -1595,8 +1595,12 @@ describe('LinkedReferences', () => {
   // Error path tests (mockRejectedValue coverage)
   // ---------------------------------------------------------------------------
 
-  // 35. initial backlinks load failure: shows toast and renders nothing
-  it('error: initial backlinks load failure shows toast and renders nothing', async () => {
+  // 35. initial backlinks load failure: toast AND the retry card. The panel used
+  // to suppress itself here (empty panels are clutter), but a failed read is
+  // indistinguishable from an empty one at the DOM, so vanishing told the reader
+  // "nothing links to this page" — the one conclusion a failure must not license
+  // (#4962).
+  it('error: initial backlinks load failure shows the toast and a retry card', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
       if (cmd === 'batch_resolve') return []
@@ -1620,11 +1624,50 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
     })
 
-    // Empty panels are clutter (live UX review): the panel renders nothing
-    // when empty (even after error) instead of an EmptyState placeholder.
-    expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
-    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
+    // The panel stays, and says the load failed instead of asserting emptiness.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(t('references.loadFailed'))
+    expect(container.querySelector('.linked-references')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
     expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // 35b. A retry card whose button does nothing is the same dead end with an
+  // extra click: recovery used to require navigating away and back (#4962).
+  it('error: clicking Retry re-issues the read and renders the backlinks', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'first block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    let backlinkCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        backlinkCalls++
+        if (backlinkCalls === 1) return Promise.reject(new Error('backend unavailable'))
+        return resp
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    renderLinkedReferences({ targetId: 'PAGE1' })
+
+    await user.click(await screen.findByRole('button', { name: t('action.retry') }))
+
+    // The durable effect: the backlinks the failed read hid are on screen, and
+    // the error card is gone.
+    expect(await screen.findByText('first block')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(backlinkCalls).toBe(2)
   })
 
   // 36. pagination failure: shows toast and preserves existing groups
