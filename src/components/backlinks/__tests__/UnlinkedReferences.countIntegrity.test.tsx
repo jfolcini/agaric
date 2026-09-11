@@ -292,16 +292,15 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
       // and `empty`, so React patches that element in place instead of swapping
       // it. A handle captured the moment `data-testid` appears therefore reads
       // back as "Loading…" (testid gone) if the panel re-enters loading before
-      // the assertion runs — which is how this reddened on CI. Wait for the
-      // settled TEXT, re-querying each time, and never hold the node across an
-      // await. The budget is above RTL's 1 s default because this file runs
-      // close to a minute under a loaded box, and the CI red was exactly that.
-      await waitFor(
-        () =>
-          expect(screen.getByTestId('unlinked-references-error')).toHaveTextContent(
-            t('unlinkedRefs.loadFailed'),
-          ),
-        { timeout: 5000 },
+      // the assertion runs — which is how this reddened on CI, under a
+      // graph-structure bump leaked from the "Link it" test (`src/test-setup.ts`
+      // now disarms the counters between tests). Wait for the settled TEXT,
+      // re-querying each time; no explicit timeout, the suite's 8 s
+      // `asyncUtilTimeout` already covers a loaded box.
+      await waitFor(() =>
+        expect(screen.getByTestId('unlinked-references-error')).toHaveTextContent(
+          t('unlinkedRefs.loadFailed'),
+        ),
       )
       expect(screen.getByTestId('unlinked-references-error')).toHaveAttribute('role', 'alert')
       expect(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') })).toBeInTheDocument()
