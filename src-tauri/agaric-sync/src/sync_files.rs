@@ -506,9 +506,10 @@ async fn maybe_link_local_blob(
     if blob_path == own_fs_path {
         return false;
     }
-    // Repoint the row so reads resolve the shared bytes. Best-effort: if the
-    // UPDATE fails we still return false-equivalent by not suppressing the
-    // request would be safer, but the bytes ARE present, so treat as held.
+    // Repoint the row so reads resolve the shared bytes. Best-effort: a failed
+    // UPDATE still counts as held, because the bytes ARE present under the blob
+    // path and re-requesting them over the wire would buy nothing; the row keeps
+    // failing the caller's size check, so a later pass retries the repoint.
     // dynamic-sql: static SQL; runtime query matches this sync module's existing runtime-query style (get_attachment_fs_path etc.).
     let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
         .bind(&blob_path)
@@ -1685,12 +1686,10 @@ pub async fn request_and_receive_files(
     let files_total = ids.len() as u64;
     let mut bytes_total: u64 = 0;
     if progress.is_some() && files_total > 0 {
-        for id in &ids {
-            if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
-                bytes_total =
-                    bytes_total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
-            }
-        }
+        // #2200 (Tier-2): one `json_each(?)` IN query instead of the former
+        // per-attachment N+1. Same tally set + missing-id handling — see
+        // `pretally_bytes_total`.
+        bytes_total = pretally_bytes_total(pool, &ids).await;
         if let Some(p) = progress {
             p.emit("receiving", 0, files_total, 0, bytes_total);
         }

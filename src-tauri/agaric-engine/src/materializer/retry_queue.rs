@@ -777,9 +777,9 @@ pub(crate) async fn clear_on_success(
     // is pure waste. Consult the pending-retry gauge and skip the DELETE
     // entirely when it says there is nothing to clear. The gauge is only
     // ever read to SKIP work, so its bias is safe: a stale-high value costs
-    // one idempotent (0-row) DELETE, and a stale-low value self-heals
-    // because the periodic sweeper re-clears any leftover row on its next
-    // pass (see the gauge's field docs in metrics.rs).
+    // one idempotent (0-row) DELETE, and a stale-low value costs redundant
+    // idempotent re-runs of a leftover row's task until the gauge lifts —
+    // never a lost task (see `metrics.rs`, `pending_retry_rows`).
     if !metrics.has_pending_retry_rows() {
         return Ok(());
     }

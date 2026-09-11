@@ -227,13 +227,16 @@ fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
 
 /// Resolve a peer's network address: prefer mDNS-discovered address,
 /// fall back to cached `last_address` from peer_refs.
+///
+/// A `None` is logged here because every call site drops it silently, so a paired
+/// peer that resolves to nothing is skipped on every round with no trace of why.
 pub fn resolve_peer_address(
     peer_id: &str,
     last_address: Option<&str>,
     endpoint_id: Option<&str>,
     discovered: &DiscoveredPeers,
 ) -> Option<DiscoveredPeer> {
-    discovered
+    let resolved = discovered
         .get(peer_id)
         .map(|(dp, _)| dp.clone())
         .or_else(|| {
@@ -253,7 +256,18 @@ pub fn resolve_peer_address(
             // arrives.
             let key = endpoint_id?.parse::<EndpointId>().ok()?;
             build_fallback_peer(peer_id, last_address?, Some(key))
-        })
+        });
+    if resolved.is_none() {
+        // Kept on ONE line and byte-identical to its `STABLE_MESSAGES` entry in
+        // `commands::bug_report`, so a bug report keeps it verbatim.
+        tracing::warn!(
+            peer_id,
+            has_endpoint_id = endpoint_id.is_some(),
+            has_last_address = last_address.is_some(),
+            "paired peer resolved to no dialable address, skipping sync (not discovered by mDNS and no usable cached endpoint id + address)"
+        );
+    }
+    resolved
 }
 
 /// The peers Branch B (`wait_for_debounced_change`) should attempt this round.
