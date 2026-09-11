@@ -5,13 +5,17 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { setListStyle } from '@/lib/list-style'
 import { useUndoStore } from '@/stores/undo'
 
@@ -106,6 +110,19 @@ describe('useSlashCommandStructural — headings', () => {
     await result.current.exact['h1']?.(ctx, { id: 'h1', label: 'Heading 1' })
     // #2468 — the edit's captured op_refs ride along for ref-addressed undo.
     expect(onNewAction).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
+  })
+
+  // #4963 — `applyContentEdit` writes through the command and patches the
+  // store by hand, so it never reaches the reducer that bumps the counter. The
+  // rewritten content is what the graph's edges and the reference panels are
+  // derived from, and every structural slash command goes through it.
+  it('a content-rewriting slash command bumps the graph-structure counter', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx()
+    _resetGraphStructureEventsForTest()
+    await result.current.exact['h1']?.(ctx, { id: 'h1', label: 'Heading 1' })
+
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })
 })
 

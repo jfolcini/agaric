@@ -142,9 +142,11 @@
  * This module does NOT touch the resolve store: `@/stores/resolve` is the
  * source of truth for chip titles and each mutating surface already writes it
  * (see `@/stores/page-rename` for the rename fan-out). This bus is only about
- * the two picker list caches.
+ * the two picker list caches, plus the graph-structure bump that rides on
+ * {@link notifyPagesRemoved} (#4963).
  */
 
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 
 /** The entities whose display names the pickers cache. */
@@ -457,6 +459,9 @@ export function notifyPagesRemoved(
   for (const id of scoped) everywhere.delete(id)
   const total = scoped.size + everywhere.size
   if (total === 0) return
+  // #4963 — every page removal converges here, and the graph, the reference
+  // panels and the journal badges read the structure counter, not this bus.
+  recordGraphStructureChange()
   // The budget is measured over BOTH cohorts: they are one synchronous
   // fan-out to the same listeners, and a per-cohort check would wave through
   // twice the cap.

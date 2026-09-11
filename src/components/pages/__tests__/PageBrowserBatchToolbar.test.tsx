@@ -36,6 +36,10 @@ import {
 } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -216,6 +220,37 @@ describe('PageBrowserBatchToolbar', () => {
     // The list refreshes again so the restored pages reappear.
     await waitFor(() => {
       expect(onMutated).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  // #4963 — `onMutated` refreshes THIS list; the graph, the reference panels
+  // and the journal badge counts read the structure counter instead, and the
+  // trash bumps it through `notifyPagesRemoved` while the undo has no such
+  // shared publisher.
+  it('the Undo bumps the graph-structure counter', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      delete_blocks_by_ids: () => trashReply(SELECTED),
+      restore_blocks_by_ids: () => ({ affected_count: SELECTED.length }),
+    })
+    renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalled()
+    })
+
+    // Reset AFTER the trash: it drops the trash's own bump and its pending
+    // debounce, so the count below can only have come from the restore.
+    _resetGraphStructureEventsForTest()
+    const call = mockedToastSuccess.mock.calls.at(-1)
+    ;(call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action?.onClick?.()
+
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(1)
     })
   })
 

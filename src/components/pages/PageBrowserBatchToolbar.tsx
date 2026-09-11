@@ -51,6 +51,7 @@ import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -221,6 +222,9 @@ export function PageBrowserBatchToolbar({
           // #4007 — the restored pages must become offerable again in the
           // `[[` picker, whose cache dropped them on the trash below.
           invalidateNameCaches()
+          // #4963 — the trash bumped via `notifyPagesRemoved`; the undo has no
+          // shared publisher.
+          recordGraphStructureChange()
           notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
         })
         .catch((err: unknown) => {

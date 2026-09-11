@@ -15,6 +15,7 @@ import type { DocNode } from '@/editor/types'
 import { unwrap } from '@/lib/app-error'
 import type { OpRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useUndoStore } from '@/stores/undo'
@@ -49,6 +50,9 @@ export async function applyContentEdit(
 ): Promise<void> {
   try {
     const resp = unwrap(await commands.editBlock(ctx.blockId, newContent))
+    // #4963 — bypasses the store reducer that bumps the counter; a `[[link]]`
+    // dropped by the conversion is a graph edge gone.
+    recordGraphStructureChange()
     // Heading/callout/numbered-list/divider slash commands
     // must clear the redo stack just like every other content-edit
     // mutation in `pageStore.edit()`. Pre-fix this was missing, so a

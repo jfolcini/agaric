@@ -40,6 +40,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -155,6 +156,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           // available here (`deletedTarget.title`, used two lines up) — it is
           // the latch, not a missing title, that rules an insert out.
           invalidateNameCaches()
+          // #4963 — the delete bumped via `notifyPagesRemoved`; the undo has no
+          // shared publisher.
+          recordGraphStructureChange()
           deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))
         })
