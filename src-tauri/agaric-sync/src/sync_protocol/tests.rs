@@ -855,15 +855,24 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
 }
 
 /// Receiving a ResetRequired message transitions to ResetRequired state.
+///
+/// #4960: and reports it as `Progress { state: "reset_required" }`, not as an
+/// `Error`. It is a side-exit into the snapshot catch-up, which usually
+/// succeeds — an `Error` here toasted the user about a sync that then worked.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_handles_reset_required() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
+    let sink = Arc::new(RecordingEventSink::new());
     let mut orch = SyncOrchestrator::new(
         pool,
         "local-dev".into(),
         std::sync::Arc::new(materializer.clone()),
-    );
+    )
+    .with_event_sink(Box::new(sink.clone()));
 
     let _start = orch.start().await.unwrap();
     let response = orch
@@ -880,6 +889,18 @@ async fn orchestrator_handles_reset_required() {
         orch.session().state,
         SyncState::ResetRequired,
         "state should be ResetRequired after receiving reset message"
+    );
+
+    let events = sink.events();
+    assert!(
+        !events.iter().any(|e| matches!(e, SyncEvent::Error { .. })),
+        "#4960: ResetRequired must not emit a SyncEvent::Error, got {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "reset_required")),
+        "#4960: ResetRequired must emit Progress {{ state: \"reset_required\" }}, got {events:?}"
     );
 
     materializer.shutdown();

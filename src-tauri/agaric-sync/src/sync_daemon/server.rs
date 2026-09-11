@@ -521,11 +521,11 @@ async fn handle_incoming_sync_inner(
         _ => None,
     };
     let Some((heads, offered_proof, offered_device_name, stated_device_id)) = opening_parts else {
-        // Log the variant only (`discriminant`, the convention in
+        // Log the variant name only (`variant_name`, the convention in
         // `session_state_machine::handle_message`) — never the payload.
         tracing::warn!(
             %endpoint_id,
-            msg = ?std::mem::discriminant(&opening),
+            msg = opening.variant_name(),
             "rejecting sync: first message was not a HeadExchange"
         );
         return reject(

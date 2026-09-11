@@ -137,8 +137,9 @@ pub async fn try_offer_loro_snapshot_catchup(
 
     if messages.is_empty() {
         // Nothing to catch the initiator up with. Send a terminal
-        // `SyncComplete` so it stops waiting on the wire; it records this
-        // as a non-progress event and retries on the next scheduled sync.
+        // `SyncComplete` so it stops waiting on the wire; it ends the session
+        // successfully with nothing merged and retries on the next scheduled
+        // sync (#4960).
         tracing::info!(
             peer_id = %remote_device_id,
             "loro-snapshot catch-up: responder has no exportable space state to offer"
@@ -252,9 +253,11 @@ fn catchup_peer_identity<'a>(
 /// Reads the responder's first post-`ResetRequired` message under an explicit
 /// [`RECV_TIMEOUT`] — QUIC gives a receive no clock of its own — and hands a
 /// [`SyncMessage::LoroSync`] to `receive_loro_snapshot_catchup`, which merges
-/// each per-space snapshot into the local engine and reprojects SQL. Any other
-/// variant returns [`AppError::InvalidOperation`] so the caller records a sync
-/// failure (same treatment as a malformed delta exchange).
+/// each per-space snapshot into the local engine and reprojects SQL. A
+/// terminal [`SyncMessage::SyncComplete`] means the responder had nothing
+/// exportable to offer and returns `Ok(())` (#4960). Any other variant returns
+/// [`AppError::InvalidOperation`] so the caller records a sync failure (same
+/// treatment as a malformed delta exchange).
 ///
 /// # peer_refs bookkeeping
 ///
@@ -336,12 +339,34 @@ pub async fn try_receive_snapshot_catchup(
             )
             .await
         }
+        // #4960: the responder had nothing exportable and ended the catch-up
+        // with its terminal frame. Erroring here booked a backoff failure and a
+        // toast on a pair that could then never converge.
+        SyncMessage::SyncComplete { .. } => {
+            tracing::info!(
+                peer_id = %remote_device_id,
+                "snapshot catch-up: peer had nothing to catch us up with"
+            );
+            // The one terminal event of this session for this role (#2539):
+            // the orchestrator ends in `ResetRequired` and emits none itself,
+            // so without this the UI keeps the `reset_required` state it last
+            // saw. `changed_blocks: Some(0)` is the converged no-op that keeps
+            // the frontend silent (#4305) — nothing was merged.
+            event_sink.on_sync_event(SyncEvent::Complete {
+                remote_device_id: remote_device_id.to_string(),
+                ops_received: 0,
+                ops_sent: 0,
+                changed_page_ids: Vec::new(),
+                changed_blocks: Some(0),
+            });
+            Ok(())
+        }
         SyncMessage::Error { message } => Err(AppError::InvalidOperation(format!(
             "peer reported error instead of a snapshot catch-up: {message}"
         ))),
         other => Err(AppError::InvalidOperation(format!(
-            "expected LoroSync after ResetRequired, got {:?}",
-            std::mem::discriminant(&other)
+            "expected LoroSync after ResetRequired, got {}",
+            other.variant_name()
         ))),
     }
 }
@@ -473,8 +498,8 @@ async fn receive_loro_snapshot_catchup(
             }
             other => {
                 return Err(AppError::InvalidOperation(format!(
-                    "loro-snapshot catch-up: expected another LoroSync frame, got {:?}",
-                    std::mem::discriminant(&other)
+                    "loro-snapshot catch-up: expected another LoroSync frame, got {}",
+                    other.variant_name()
                 )));
             }
         }

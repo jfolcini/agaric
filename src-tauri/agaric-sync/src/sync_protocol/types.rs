@@ -868,6 +868,31 @@ pub enum SyncMessage {
     FileTransferComplete,
 }
 
+impl SyncMessage {
+    /// The variant's name, for logs and protocol-mismatch messages.
+    ///
+    /// #4960: these sites used to print `std::mem::discriminant`, which
+    /// renders as `Discriminant(<ordinal>)` — a number that shifts the moment
+    /// a variant is inserted, so an archived log decodes to the wrong frame.
+    /// Carries the same payload secrecy: the name only, never a field.
+    pub const fn variant_name(&self) -> &'static str {
+        match self {
+            Self::HeadExchange { .. } => "HeadExchange",
+            Self::LoroSync { .. } => "LoroSync",
+            Self::LoroSyncChunked { .. } => "LoroSyncChunked",
+            Self::OpLogBatch { .. } => "OpLogBatch",
+            Self::OpLogBatchChunked { .. } => "OpLogBatchChunked",
+            Self::ResetRequired { .. } => "ResetRequired",
+            Self::SyncComplete { .. } => "SyncComplete",
+            Self::Error { .. } => "Error",
+            Self::FileRequest { .. } => "FileRequest",
+            Self::FileOffer { .. } => "FileOffer",
+            Self::FileReceived { .. } => "FileReceived",
+            Self::FileTransferComplete => "FileTransferComplete",
+        }
+    }
+}
+
 /// Current phase of the sync state machine.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncState {

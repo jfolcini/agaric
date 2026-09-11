@@ -36,14 +36,19 @@ async fn try_receive_snapshot_catchup_errors_on_unexpected_message() {
     let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Responder protocol-violates: sends SyncComplete instead of the
+    // Responder protocol-violates: sends a file-transfer frame instead of the
     // LoroSync snapshot after ResetRequired. One framed message, sent before the
     // receive starts — the initiator's read is bounded by `RECV_TIMEOUT`
     // now, so it has to actually find something on the stream.
+    //
+    // #4960: `SyncComplete` used to be the frame here, which made this test
+    // vacuous once that became the legitimate "nothing to offer" terminator.
+    // `FileRequest` belongs to the post-`SyncComplete` sub-flow and is never
+    // valid in a catch-up.
     send_sync_message(
         &mut server.send,
-        &SyncMessage::SyncComplete {
-            last_hash: "deadbeef".into(),
+        &SyncMessage::FileRequest {
+            attachment_ids: vec!["01HZ000000000000000000ATT0".into()],
         },
     )
     .await
@@ -67,9 +72,109 @@ async fn try_receive_snapshot_catchup_errors_on_unexpected_message() {
                 msg.contains("expected LoroSync"),
                 "error message must mention the expected message type, got {msg:?}"
             );
+            // #4960: the frame we got is named, not printed as the ordinal
+            // `Discriminant(8)` — which shifts whenever a variant is inserted,
+            // so an archived log would decode to the wrong frame.
+            assert!(
+                msg.contains("FileRequest"),
+                "error message must name the offending variant, got {msg:?}"
+            );
         }
         other => panic!("expected InvalidOperation, got {other:?}"),
     }
+
+    materializer.shutdown();
+}
+
+// -----------------------------------------------------------------
+// Initiator side: responder had nothing to offer → Ok, no error event
+// -----------------------------------------------------------------
+
+/// #4960: a responder whose engine registry is empty ends the catch-up with a
+/// terminal `SyncComplete`. The initiator must treat that as "the peer had
+/// nothing to catch us up with" — `Ok(())`, no `SyncEvent::Error` — instead of
+/// failing the session and booking a backoff the next attempt would repeat
+/// forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn try_receive_snapshot_catchup_accepts_empty_offer() {
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let materializer = Materializer::new(init_pool.clone());
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_registry = LoroEngineRegistry::new();
+
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let recorder = Arc::new(RecordingEventSink::new());
+    let init_sink: Arc<dyn SyncEventSink> = recorder.clone();
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // The real responder half, not a hand-written frame: what it sends on an
+    // empty registry is exactly what this test pins the initiator against.
+    let (offer_res, recv_res) = tokio::join!(
+        try_offer_loro_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &resp_pool,
+            &resp_registry,
+            &resp_sink,
+            REMOTE_DEV,
+            LOCAL_DEV,
+        ),
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &init_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+    );
+
+    assert_eq!(
+        offer_res.expect("offer must succeed with nothing to send"),
+        LoroCatchupSent {
+            spaces_sent: 0,
+            bytes_sent: 0
+        },
+        "empty registry must report nothing sent"
+    );
+    recv_res.expect("an empty catch-up is not a sync failure");
+    let events = recorder.events();
+    let errors: Vec<&SyncEvent> = events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Error { .. }))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "an empty catch-up must emit no SyncEvent::Error, got {errors:?}"
+    );
+    // #2539: exactly one terminal event per session per role, and on this path
+    // the orchestrator emits none — without it the UI stays on the
+    // `reset_required` state it last saw. `Some(0)` keeps it silent (#4305).
+    let completes: Vec<&SyncEvent> = events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Complete { .. }))
+        .collect();
+    assert_eq!(
+        completes.len(),
+        1,
+        "an empty catch-up must emit exactly one SyncEvent::Complete, got {events:?}"
+    );
+    assert!(
+        matches!(
+            completes[0],
+            SyncEvent::Complete {
+                changed_blocks: Some(0),
+                ..
+            }
+        ),
+        "nothing was merged, so the Complete must report zero changed blocks, got {:?}",
+        completes[0]
+    );
 
     materializer.shutdown();
 }
