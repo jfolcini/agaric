@@ -539,8 +539,12 @@ export const propertiesHandlers = {
         }
         // #3830 — ONE source per (date, block): `agenda_cache`'s PK is
         // `(date, block_id)` and `column:due_date` outranks `column:scheduled_date`
-        // in `DESIRED_AGENDA_SQL`. The unmodelled `property:`/`tag:` sources both
-        // outrank these, so nothing modelled here can be shadowed.
+        // in `DESIRED_AGENDA_SQL`. Only those two column sources are modelled
+        // here. `DESIRED_AGENDA_SQL` also derives `property:<key>` (from any
+        // `block_properties.value_date`) and `tag:<tag_id>`, and both outrank the
+        // columns — so a block carrying a custom date property on the same day
+        // as its `due_date` is `property:<key>` on the backend and
+        // `column:due_date` here.
         const source =
           b['due_date'] === dateStr
             ? 'column:due_date'

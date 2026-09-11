@@ -110,6 +110,12 @@ export const history: Record<string, string> = {
   'trash.emptyTrashPartial_other':
     'Removed {{count}} items before an error interrupted emptying trash',
   'trash.restoreAllFailed': 'Failed to restore all items',
+  // Same chunked-commit shape as `emptyTrashPartial`: rows really came back
+  // before the failing chunk, so `restoreAllFailed` would understate it.
+  'trash.restoreAllPartial_one':
+    'Restored {{count}} item before an error interrupted restoring all',
+  'trash.restoreAllPartial_other':
+    'Restored {{count}} items before an error interrupted restoring all',
   'trash.selectItemLabel': 'Select {{content}}',
   'trash.listLabel': 'Trash items',
   'trash.fromPage': 'from: {{page}}',

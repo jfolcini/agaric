@@ -900,6 +900,25 @@ describe('LinkedReferences', () => {
     })
   })
 
+  // 16b. The skeleton is the panel saying "not known yet"; a "0 References"
+  // header above it says "known, and there are none" — the same false claim
+  // #4968 removed from the retry card, one state earlier.
+  it('loading: the header does not claim zero while the first read is pending', async () => {
+    mockedInvoke.mockImplementation(() => new Promise(() => {}))
+
+    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/0 References/)).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: t('common.collapse', { section: t('references.panelLabel') }),
+      }),
+    ).toBeInTheDocument()
+  })
+
   // 17. error handling: shows toast on fetch error
   it('error handling: shows toast on fetch error', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {

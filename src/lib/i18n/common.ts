@@ -183,6 +183,10 @@ export const common: Record<string, string> = {
   'announce.emptyTrashPartial_other':
     'Trash partially emptied — {{count}} items permanently deleted before an error interrupted it',
   'announce.restoreAllFailed': 'Restore all failed',
+  'announce.restoreAllPartial_one':
+    'Restore all partially completed — {{count}} item restored before an error interrupted it',
+  'announce.restoreAllPartial_other':
+    'Restore all partially completed — {{count}} items restored before an error interrupted it',
   'announce.restoreFailed': 'Restore failed',
   'announce.purgeFailed': 'Purge failed',
   'announce.batchRestoreFailed': 'Batch restore failed',

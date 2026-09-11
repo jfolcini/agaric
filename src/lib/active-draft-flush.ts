@@ -22,17 +22,18 @@
  *
  * Scope note (flagged, not silently decided): this flushes the CONTENT
  * commit path only — the same one the idle debounce uses. It intentionally
- * mirrors that debounce's own skip for a block currently containing an
- * unparsed inline `key:: value` property line (deferred to blur's
- * property-aware flush — see `useDebouncedContentCommit`'s doc comment) and
- * does not replicate the checkbox/multi-paragraph-split handling that only
- * runs on unmount (`useBlockFlush`, `useEditorBlur`, and `persistUnmount` in
- * EditableBlock all share that decision chain — see `unmount-flush.ts`,
- * #3278). Those are both rarer at export time than the "typed text, hit the
- * export shortcut without blurring" race this closes, and a full
- * cross-component flush-all covering every save path would be a much larger
- * refactor (there is no shared store/context between `BlockTree` and
- * `PageHeader` today).
+ * mirrors that debounce's own skips, so three block shapes flush NOTHING and
+ * export at their previously committed text: a block holding an unparsed
+ * inline `key:: value` property line, one whose markdown splits into several
+ * blocks, and one whose markdown leads with a GFM task marker. All three are
+ * left to blur's classifying flush, which is the only path that handles them
+ * (`useBlockFlush`, `useEditorBlur`, and `persistUnmount` in EditableBlock
+ * share that decision chain — see `unmount-flush.ts`, #3278; the latter two
+ * skips are `commitNow`'s, #4976). Accepted trade, same class as #2675: all
+ * three are rarer at export time than the "typed text, hit the export
+ * shortcut without blurring" race this closes, and a full cross-component
+ * flush-all covering every save path would be a much larger refactor (there
+ * is no shared store/context between `BlockTree` and `PageHeader` today).
  */
 
 interface Registration {

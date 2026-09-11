@@ -50,7 +50,7 @@ import { useBlockDatePicker } from '@/components/block-tree/use-block-date-picke
 import { useBlockDnD } from '@/components/block-tree/use-block-dnd'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import { useBlockLinkResolve } from '@/components/block-tree/use-block-link-resolve'
-import { useBlockMountLimit } from '@/components/block-tree/use-block-mount-limit'
+import { MOUNT_LIMIT_STEP, useBlockMountLimit } from '@/components/block-tree/use-block-mount-limit'
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
@@ -1010,12 +1010,15 @@ export function BlockTree({
     collapsedVisible: zoomedVisible,
     blocks,
     // #4959 — `zoomedVisible` stops at the mount cap, so focus-next needs this
-    // to walk past it: mount the first hidden row and hand it back so the same
-    // reveal-then-focus the #3276 jump path uses covers arrow navigation too.
+    // to walk past it: mount the next batch and hand back its first row, so the
+    // same reveal-then-focus the #3276 jump path uses covers arrow navigation
+    // too. A whole `MOUNT_LIMIT_STEP`, not one row: each reveal re-identifies
+    // `mountedVisible` and rebuilds `mountCapExcludedIds` over the full page,
+    // so revealing per keystroke pays that scan on every ArrowDown.
     revealNextMounted: useCallback(() => {
       const next = uncappedZoomedVisible[zoomedVisible.length]
       if (!next) return null
-      revealIndex(zoomedVisible.length)
+      revealIndex(zoomedVisible.length + MOUNT_LIMIT_STEP - 1)
       return next
     }, [uncappedZoomedVisible, zoomedVisible.length, revealIndex]),
     rovingEditor,

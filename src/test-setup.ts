@@ -168,18 +168,15 @@ afterEach(() => {
 // so the green path is no slower.
 configure({ asyncUtilTimeout: 8000 })
 
-// Disarm the two module-level invalidation counters between tests. Both carry
-// a 150 ms trailing debounce, so a bump armed by one test's last click settled
-// inside the NEXT test and refetched its errored query into a skeleton
+// Disarm the module-level graph-structure counter between tests: its 150 ms
+// trailing debounce meant a bump armed by one test's last click settled inside
+// the NEXT test and refetched its errored query into a skeleton
 // (`UnlinkedReferences.countIntegrity` reddened twice on CI this way after
-// #4967). Registered BEFORE RTL `cleanup()` so under `sequence.hooks: 'stack'`
-// it runs after it, once the subscribing components are unmounted. The property
-// reset is imported dynamically on purpose: a static import would instantiate
-// `@tauri-apps/api/event` before a test file's `vi.mock` of it applies.
-afterEach(async () => {
+// #4967). On ENTRY, like the two guards above: a throwing teardown hook aborts
+// the rest of the `afterEach` chain, so resetting on the way out is a reset a
+// failing test can skip.
+beforeEach(() => {
   _resetGraphStructureEventsForTest()
-  const { _resetBlockPropertyEventsForTest } = await import('@/lib/block-property-events')
-  _resetBlockPropertyEventsForTest()
 })
 
 // RTL auto-cleanup relies on a global `afterEach`, which isn't available
