@@ -10,10 +10,11 @@
  * `[[link]]`, or block insert/delete/move. Those are exactly the mutations that
  * change the graph, so the graph stayed stale until the TTL elapsed.
  *
- * This counter is the correct axis: it is bumped from the app's own
- * local-mutation path (`src/stores/page-blocks.ts` — every CRUD op funnels
- * through `notifyUndoNewAction`, plus `appendBlock`) and on remote ops
- * (`sync:complete` in `src/hooks/useSyncEvents.ts`). Unlike
+ * This counter is the correct axis: every local mutator that adds or removes a
+ * node or an edge bumps it — delete, restore, batch delete, history revert, the
+ * structural slash edits, `notifyPagesRemoved` — and so does an applied remote
+ * batch (`sync:complete` in `src/hooks/useSyncEvents.ts`). `grep
+ * recordGraphStructureChange` is the list; do not re-enumerate it here. Unlike
  * `block-property-events.ts` there is NO Tauri listener: the signal originates
  * in FE code, not a backend event, so a successful local op or an applied sync
  * batch increments it directly.

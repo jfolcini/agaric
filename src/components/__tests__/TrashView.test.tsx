@@ -2125,6 +2125,60 @@ describe('TrashView', () => {
     })
   })
 
+  // #4967 follow-up — `restoreAllDeletedInSpace` chunks the drain and each
+  // chunk is its own committed transaction, so a later chunk failing leaves the
+  // earlier chunk's rows restored. The failure toast is still the right toast,
+  // but the picker name caches and the graph both have to learn about the rows
+  // that ARE back, or they keep hiding pages that are no longer in the trash.
+  // Fixture shape (and the 60s budget) mirror the partial-purge tests above:
+  // provoking a second chunk needs MAX_TRASH_BATCH_IDS + 1 real rows.
+  it('invalidates the name caches and the graph when an early restore-all chunk committed before a later one failed', async () => {
+    const user = userEvent.setup()
+    _resetGraphStructureEventsForTest()
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
+      i === 0
+        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
+        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
+    )
+    let restoreCalls = 0
+    stubInvoke({
+      list_trash: () => ({
+        items: trashItems,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => {
+        restoreCalls += 1
+        if (restoreCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
+        throw new Error('db error on second chunk')
+      },
+      trash_descendant_counts: () => ({}),
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      render(<TrashView />)
+
+      await screen.findByText('item 1')
+      await user.click(screen.getByTestId('trash-restore-all-btn'))
+      const dialog = screen.getByRole('alertdialog')
+      await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to restore all items')
+      })
+      expect(restoreCalls).toBe(2)
+      // The two invalidations the failure path used to skip.
+      await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+    } finally {
+      unsubscribe()
+    }
+  }, 60_000)
+
   it('relabeled batch buttons say Restore Selected / Purge Selected', async () => {
     const user = userEvent.setup()
     mockListAndResolve([makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })])
