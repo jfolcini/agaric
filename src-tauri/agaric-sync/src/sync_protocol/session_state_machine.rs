@@ -618,12 +618,12 @@ impl SyncOrchestrator {
     /// [`SyncState::Failed`] and return an error.
     ///
     /// Instrumented with a `sync_msg` span tagged by current state
-    /// and incoming message discriminant so protocol-level log lines can be
+    /// and incoming message variant name so protocol-level log lines can be
     /// correlated within an outer `sync{peer=ULID}` session span.
     #[tracing::instrument(
         skip_all,
         name = "sync_msg",
-        fields(state = ?self.state, msg = ?std::mem::discriminant(&msg)),
+        fields(state = ?self.state, msg = msg.variant_name()),
     )]
     #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub async fn handle_message(
@@ -636,9 +636,9 @@ impl SyncOrchestrator {
             // Terminal states reject everything
             (SyncState::Complete | SyncState::Failed(_), _) => {
                 return Err(AppError::InvalidOperation(format!(
-                    "sync session already in terminal state {:?}, cannot handle {:?}",
+                    "sync session already in terminal state {:?}, cannot handle {}",
                     self.state,
-                    std::mem::discriminant(&msg),
+                    msg.variant_name(),
                 )));
             }
             // Error and ResetRequired are always accepted (protocol signals)
@@ -1167,9 +1167,22 @@ impl SyncOrchestrator {
             SyncMessage::ResetRequired { reason } => {
                 self.state = SyncState::ResetRequired;
                 self.session.state = SyncState::ResetRequired;
-                self.emit(crate::sync_events::SyncEvent::Error {
-                    message: reason,
+                // #4960: a side-exit into the snapshot catch-up, not a failure
+                // — the catch-up that follows usually satisfies it, and an
+                // `Error` here showed the user a toast for a sync that then
+                // succeeded. `reason` is the responder's diagnostic, so it
+                // goes to the log rather than into a `Progress` event the
+                // frontend would render as a message.
+                tracing::info!(
+                    peer_id = %self.session.remote_device_id,
+                    %reason,
+                    "peer requires a reset; handing off to the snapshot catch-up"
+                );
+                self.emit(crate::sync_events::SyncEvent::Progress {
+                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
                     remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
                 });
                 Ok(None)
             }

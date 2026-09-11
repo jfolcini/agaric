@@ -1363,8 +1363,8 @@ pub async fn receive_request_and_send_files(
         }
         other => {
             tracing::warn!(
-                "expected FileRequest during file transfer, got {:?}",
-                std::mem::discriminant(&other)
+                "expected FileRequest during file transfer, got {}",
+                other.variant_name()
             );
             // Graceful degradation: skip file transfer
             return Ok(stats);
@@ -1533,8 +1533,8 @@ pub async fn receive_request_and_send_files(
             other => {
                 tracing::warn!(
                     attachment_id,
-                    "expected FileReceived, got {:?}",
-                    std::mem::discriminant(&other)
+                    "expected FileReceived, got {}",
+                    other.variant_name()
                 );
             }
         }
@@ -1986,8 +1986,8 @@ pub async fn request_and_receive_files(
             }
             other => {
                 tracing::warn!(
-                    "unexpected message during file receive: {:?}",
-                    std::mem::discriminant(&other)
+                    "unexpected message during file receive: {}",
+                    other.variant_name()
                 );
                 break;
             }
