@@ -1069,9 +1069,8 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // the `page_blocks` recursive CTE and IGNORES `space_id` (a page is
         // itself space-bound), `__all__` scopes by `blocks.space_id` instead.
         // Both are `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id
-        // DESC` over the `Cursor::for_history_full` composite keyset;
-        // `list_block_history` is `ORDER BY ol.seq DESC, ol.device_id DESC`
-        // over `Cursor::for_history_seq`.
+        // DESC` over the `Cursor::for_history_full` composite keyset, and so
+        // is `list_block_history` since #4964.
         //
         // `HISTORY_ATTRS` and the `op_type` head are the whole per-entry
         // vocabulary these two can have — see the constant's doc comment.

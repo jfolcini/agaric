@@ -534,7 +534,8 @@ pub struct HistoryEntry {
 /// A single cursor type is shared across all queries:
 /// - `position` — set by `list_children` (keyset on `position, id`).
 /// - `deleted_at` — set by `list_trash` (keyset on `deleted_at, id`).
-/// - `seq` — set by `list_block_history` (keyset on `seq, device_id`).
+/// - `seq` — set by both history listings (with `created_at` in `deleted_at`,
+///   #4964).
 ///   For history queries `id` stores `device_id` as the tie-breaker
 ///   because the op_log PK is `(device_id, seq)`.
 /// - `rank` — set by `search_fts` (keyset on `rank, id` with epsilon
@@ -729,19 +730,6 @@ impl Cursor {
             position: None,
             deleted_at,
             seq: None,
-            rank: None,
-        }
-    }
-
-    /// Cursor keyed on `(seq, device_id)` — used by `list_block_history`
-    /// where `id` stores the op-log `device_id` tiebreaker.
-    #[must_use]
-    pub fn for_history_seq(device_id: String, seq: i64) -> Self {
-        Self {
-            id: device_id,
-            position: None,
-            deleted_at: None,
-            seq: Some(seq),
             rank: None,
         }
     }

@@ -163,22 +163,24 @@ function historyEntries(keep: (entry: MockOpLogEntry) => boolean): Record<string
   }))
 }
 
-/** `(created_at, seq, device_id)` — `list_page_history`'s `ORDER BY`, read
- *  descending through {@link compareSortKeysDesc}. */
-function pageHistoryKey(row: Record<string, unknown>): SortKey {
+/** `(created_at, seq, device_id)` — the `ORDER BY` BOTH history listings
+ *  share (#4964), read descending through {@link compareSortKeysDesc}.
+ *  `list_block_history` used to lead on `seq` alone, which ranks a
+ *  multi-device vault by each device's lifetime op count because the op_log
+ *  PK is `(device_id, seq)`. */
+function historyKey(row: Record<string, unknown>): SortKey {
   return [row['created_at'] as string, row['seq'] as number, row['device_id'] as string]
 }
 
-/** `(seq, device_id)` — `list_block_history`'s `ORDER BY`. */
-function blockHistoryKey(row: Record<string, unknown>): SortKey {
-  return [row['seq'] as number, row['device_id'] as string]
-}
-
 export const historyHandlers = {
-  // `ORDER BY ol.seq DESC, ol.device_id DESC LIMIT ?limit + 1` over a
-  // `Cursor::for_history_seq` `{seq, id}` keyset, where the cursor's `id` slot
-  // carries `device_id` — the op_log PK is `(device_id, seq)` and `seq` alone
-  // is not globally unique (`pagination::list_block_history`).
+  // `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT
+  // ?limit + 1` over the `Cursor::for_history_full` `{deleted_at, seq, id}`
+  // keyset — the sibling's, verbatim (#4964), where `deleted_at` carries
+  // `created_at` and `id` carries `device_id`. Keying on `seq` first, as this
+  // did, ranks a multi-device vault by each device's lifetime op count: the
+  // op_log PK is `(device_id, seq)`, so `seq` is per-device and a peer paired
+  // last week sorts below every op of a long-lived device
+  // (`pagination::list_block_history`).
   //
   // #3824 — this used to be an UNCONDITIONAL empty page, waived on the grounds
   // that "browser-mode callers don't currently exercise per-block history", so
@@ -197,11 +199,11 @@ export const historyHandlers = {
     const rows = historyEntries((o) => opBlockId(o) === blockId && matchesOpType(o, opTypeFilter))
     return paginateKeyset(
       rows,
-      blockHistoryKey,
+      historyKey,
       pageRequestLimit(a['limit']),
       a['cursor'],
       null,
-      ['seq'],
+      ['deleted_at', 'seq'],
       compareSortKeysDesc,
     )
   },
@@ -240,7 +242,7 @@ export const historyHandlers = {
     const rows = historyEntries((o) => inScope(o) && matchesOpType(o, opTypeFilter))
     return paginateKeyset(
       rows,
-      pageHistoryKey,
+      historyKey,
       pageRequestLimit(a['limit']),
       a['cursor'],
       null,
