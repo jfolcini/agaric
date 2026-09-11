@@ -624,6 +624,8 @@ export function TrashView(): React.ReactElement {
         loadError={isError && !isFetching && t('trash.loadFailed')}
         onRetryLoad={reload}
         debouncedFilter={debouncedFilter}
+        hasMore={hasMore}
+        onLoadMore={loadMore}
         focusedIndex={focusedIndex}
         selectedIds={selected}
         descendantCounts={descendantCounts}
@@ -636,18 +638,6 @@ export function TrashView(): React.ReactElement {
         onRequestPurge={setConfirmPurgeId}
         getPageLabel={getPageLabel}
       />
-
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="trash-load-more w-full"
-          onClick={loadMore}
-          disabled={loading}
-        >
-          {loading ? t('trash.loadingMessage') : t('trash.loadMoreButton')}
-        </Button>
-      )}
 
       <TrashPurgeDialog
         blockId={confirmPurgeId}

@@ -5,6 +5,8 @@
  * filtered "no match" empty state, and renders one TrashRowItem per
  * filtered block. Extracted from TrashView.tsx so the
  * orchestrator only composes the filter bar / toolbar / list / dialogs.
+ * It also owns the shared `LoadMoreButton`, so the no-match state and the
+ * loaded list never show two copies of it (#4965).
  *
  * Virtualized (#740): each `TrashRowItem` runs a heavy
  * `renderRichContent` parse plus two `TooltipProvider`s, so rendering
@@ -26,6 +28,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
+import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { TrashRowItem } from '@/components/TrashView/TrashRowItem'
 import { Button } from '@/components/ui/button'
@@ -56,6 +59,9 @@ interface TrashListViewProps {
   /** Re-run the failed trash load. Rendered as the error card's Retry. */
   onRetryLoad?: (() => void) | undefined
   debouncedFilter: string
+  /** More trashed rows sit behind the cursor than the filter can see. */
+  hasMore: boolean
+  onLoadMore: () => void
   focusedIndex: number
   selectedIds: Set<string>
   descendantCounts: Record<string, number>
@@ -83,6 +89,8 @@ export function TrashListView({
   loadError,
   onRetryLoad,
   debouncedFilter,
+  hasMore,
+  onLoadMore,
   focusedIndex,
   selectedIds,
   descendantCounts,
@@ -139,79 +147,92 @@ export function TrashListView({
         debouncedFilter && filteredBlocks.length === 0 ? (
           <EmptyState
             icon={Search}
-            message={t('trash.noMatchMessage')}
+            // Name the basis when the filter only saw the loaded pages, so
+            // "no match" doesn't read as "purged" (#4965).
+            message={
+              hasMore
+                ? t('trash.noMatchLoadedMessage', { count: blocks.length })
+                : t('trash.noMatchMessage')
+            }
             action={
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={onClearFilter}
-                data-testid="trash-clear-filter-btn"
-              >
-                <X className="h-3 w-3" />
-                {t('trash.clearFilter')}
-              </Button>
+              <div className="mt-4 flex flex-col items-stretch gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onClearFilter}
+                  data-testid="trash-clear-filter-btn"
+                >
+                  <X className="h-3 w-3" />
+                  {t('trash.clearFilter')}
+                </Button>
+                <LoadMoreButton hasMore={hasMore} loading={loading} onLoadMore={onLoadMore} />
+              </div>
             }
           />
         ) : (
-          <ScrollArea
-            viewportRef={(node: HTMLDivElement | null) => {
-              scrollParentRef.current = node
-              if (typeof ref === 'function') ref(node)
-              else if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = node
-            }}
-            viewportClassName="trash-view-scroll max-h-[calc(100dvh-260px)]"
-            viewportProps={{
-              className: 'trash-view-list',
-              role: 'grid',
-              'aria-label': t('trash.listLabel'),
-              tabIndex: 0,
-              ...(focusedIndex >= 0 && filteredBlocks[focusedIndex]
-                ? { 'aria-activedescendant': `trash-item-${filteredBlocks[focusedIndex].id}` }
-                : {}),
-            }}
-          >
-            {/* Sized spacer: total height of all rows so the scrollbar
-                reflects the full list while only the windowed slice is
-                mounted. Each `TrashRowItem` is itself absolutely
-                positioned at its virtual offset (mirrors DonePanel /
-                PageBrowser, where the `role="row"` element IS the
-                positioned + measured node so it stays a direct grid child). */}
-            <div
-              className="trash-view-list-inner relative"
-              style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%' }}
+          <>
+            <ScrollArea
+              viewportRef={(node: HTMLDivElement | null) => {
+                scrollParentRef.current = node
+                if (typeof ref === 'function') ref(node)
+                else if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = node
+              }}
+              viewportClassName="trash-view-scroll max-h-[calc(100dvh-260px)]"
+              viewportProps={{
+                className: 'trash-view-list',
+                role: 'grid',
+                'aria-label': t('trash.listLabel'),
+                tabIndex: 0,
+                ...(focusedIndex >= 0 && filteredBlocks[focusedIndex]
+                  ? { 'aria-activedescendant': `trash-item-${filteredBlocks[focusedIndex].id}` }
+                  : {}),
+              }}
             >
-              {virtualizer.getVirtualItems().map((virtualRow) => {
-                const block = filteredBlocks[virtualRow.index]
-                if (!block) return null
-                return (
-                  <TrashRowItem
-                    key={virtualRow.key}
-                    block={block}
-                    isSelected={selectedIds.has(block.id)}
-                    isFocused={virtualRow.index === focusedIndex}
-                    pageLabel={getPageLabel(block)}
-                    descendantCount={descendantCounts[block.id] ?? 0}
-                    callbacks={callbacks}
-                    onTagClick={onTagClick}
-                    onRowClick={onRowClick}
-                    onToggleSelection={onToggleSelection}
-                    onRestore={onRestore}
-                    onRequestPurge={onRequestPurge}
-                    rowRef={virtualizer.measureElement}
-                    dataIndex={virtualRow.index}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
-                  />
-                )
-              })}
-            </div>
-          </ScrollArea>
+              {/* Sized spacer: total height of all rows so the scrollbar
+                  reflects the full list while only the windowed slice is
+                  mounted. Each `TrashRowItem` is itself absolutely
+                  positioned at its virtual offset (mirrors DonePanel /
+                  PageBrowser, where the `role="row"` element IS the
+                  positioned + measured node so it stays a direct grid child). */}
+              <div
+                className="trash-view-list-inner relative"
+                style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%' }}
+              >
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const block = filteredBlocks[virtualRow.index]
+                  if (!block) return null
+                  return (
+                    <TrashRowItem
+                      key={virtualRow.key}
+                      block={block}
+                      isSelected={selectedIds.has(block.id)}
+                      isFocused={virtualRow.index === focusedIndex}
+                      pageLabel={getPageLabel(block)}
+                      descendantCount={descendantCounts[block.id] ?? 0}
+                      callbacks={callbacks}
+                      onTagClick={onTagClick}
+                      onRowClick={onRowClick}
+                      onToggleSelection={onToggleSelection}
+                      onRestore={onRestore}
+                      onRequestPurge={onRequestPurge}
+                      rowRef={virtualizer.measureElement}
+                      dataIndex={virtualRow.index}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            </ScrollArea>
+            {/* Rendered here, not in the orchestrator, so the no-match empty
+                state above owns the only other copy of this control. */}
+            <LoadMoreButton hasMore={hasMore} loading={loading} onLoadMore={onLoadMore} />
+          </>
         )
       }
     </ListViewState>

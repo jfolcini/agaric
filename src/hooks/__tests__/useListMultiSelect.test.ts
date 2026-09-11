@@ -9,7 +9,8 @@
  *  - clearSelection empties set
  *  - handleRowClick with shift key triggers rangeSelect
  *  - handleRowClick with ctrl/meta key triggers toggle
- *  - items change resets selection
+ *  - items change prunes the selection to the ids still listed
+ *  - a paginated append / a re-sort of the same ids keeps the selection
  *  - filterPredicate prevents toggle of non-selectable items
  *  - rangeSelect skips non-selectable items
  */
@@ -272,6 +273,85 @@ describe('useListMultiSelect', () => {
     expect(result.current.selected.has('a')).toBe(true)
     expect(result.current.selected.has('b')).toBe(true)
     expect(result.current.lastClickedId).toBe('b')
+  })
+
+  it('keeps the selection when a page is appended (Load more)', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items.slice(0, 2) } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+      result.current.toggleSelection('b')
+    })
+    expect(result.current.selected.size).toBe(2)
+
+    // "Load more" appends a page: the id set grows, the selected rows stay.
+    rerender({ hookItems: items })
+
+    expect(result.current.selected.size).toBe(2)
+    expect(result.current.selected.has('a')).toBe(true)
+    expect(result.current.selected.has('b')).toBe(true)
+    expect(result.current.lastClickedId).toBe('b')
+  })
+
+  it('keeps the selection when the same ids are re-sorted', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+      result.current.toggleSelection('b')
+    })
+    expect(result.current.selected.size).toBe(2)
+
+    rerender({ hookItems: [...items].toReversed() })
+
+    expect(result.current.selected.size).toBe(2)
+    expect(result.current.selected.has('a')).toBe(true)
+    expect(result.current.selected.has('b')).toBe(true)
+    expect(result.current.lastClickedId).toBe('b')
+  })
+
+  it('drops only the ids that left the list', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+      result.current.toggleSelection('b')
+    })
+    expect(result.current.selected.size).toBe(2)
+    expect(result.current.lastClickedId).toBe('b')
+
+    // 'b' is gone (restored on another device); a batch purge must never carry
+    // it, so the pruned selection is exactly the ids still on screen (#3283).
+    rerender({
+      hookItems: [
+        { id: 'a', name: 'Alpha' },
+        { id: 'z', name: 'Zulu' },
+      ],
+    })
+
+    expect(Array.from(result.current.selected)).toEqual(['a'])
+    expect(result.current.lastClickedId).toBe(null)
   })
 
   it('shift-click propagates removal state', () => {

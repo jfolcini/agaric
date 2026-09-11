@@ -9,7 +9,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 export interface UseListMultiSelectOptions<T> {
   items: T[]
@@ -36,18 +36,21 @@ export function useListMultiSelect<T>({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [lastClickedId, setLastClickedId] = useState<string | null>(null)
 
-  // Reset on a change of the item ID set, not of its length: a filter swap can
-  // land the same row count, and the carried-over ids then feed a batch purge
-  // that hard-deletes rows the user never saw selected (#3283).
-  const idSignature = items.map(getItemId).join('\u0000')
+  // Prune to the live ids instead of clearing, so appending a page or
+  // re-sorting keeps the selection the user built (#4965) while a row that
+  // left the list still leaves it: selection-within-items is what keeps a batch
+  // purge from hard-deleting rows the user never saw selected (#3283).
+  const ids = useMemo(() => items.map(getItemId), [items, getItemId])
+  const idSignature = ids.join('\u0000')
   const prevIdSignatureRef = useRef(idSignature)
   useEffect(() => {
     if (idSignature !== prevIdSignatureRef.current) {
-      setSelected(new Set())
-      setLastClickedId(null)
+      const live = new Set(ids)
+      setSelected((prev) => new Set([...prev].filter((id) => live.has(id))))
+      setLastClickedId((prev) => (prev != null && live.has(prev) ? prev : null))
     }
     prevIdSignatureRef.current = idSignature
-  }, [idSignature])
+  }, [idSignature, ids])
 
   // Keep a ref to `selected` so handleRowClick can read current state without
   // adding `selected` to its dependency array (avoids re-creating on every change).
