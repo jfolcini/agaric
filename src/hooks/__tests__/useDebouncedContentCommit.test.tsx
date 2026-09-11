@@ -175,6 +175,70 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
     expect(markCommitted).toHaveBeenCalledExactlyOnceWith('use std::vector<int> here')
   })
 
+  // #4957 — the same argument as the property guard above, for the other two
+  // blur-time classifications. Committing here rebases the delta baseline
+  // (`markCommitted`), so blur's `unmount()` reports no delta and
+  // `runUnmountFlush` never reaches its split / checkbox-fold branch.
+  it('defers to the flush for multi-block content (#4957)', async () => {
+    const { handle, markCommitted, state } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'a\n\nb\n\nc',
+      original: '',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).not.toHaveBeenCalled()
+    expect(markCommitted).not.toHaveBeenCalled()
+    expect(state.original).toBe('')
+  })
+
+  it('defers to the flush for a leading GFM task marker (#4957)', async () => {
+    const { handle, markCommitted, state } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: '- [ ] buy milk',
+      original: '',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).not.toHaveBeenCalled()
+    expect(markCommitted).not.toHaveBeenCalled()
+    expect(state.original).toBe('')
+  })
+
+  it('still commits a plain single-paragraph edit (#4957 negative arm)', async () => {
+    const { handle, markCommitted, state } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'buy milk - [ ] not at the start',
+      original: '',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'buy milk - [ ] not at the start')
+    expect(markCommitted).toHaveBeenCalledExactlyOnceWith('buy milk - [ ] not at the start')
+    expect(state.original).toBe('buy milk - [ ] not at the start')
+  })
+
   it('does not commit when the active block switched away (stale fire)', async () => {
     const { handle } = makeHandle({ activeBlockId: 'OTHER', markdown: 'x', original: '' })
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)

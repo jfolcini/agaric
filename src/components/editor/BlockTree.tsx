@@ -1021,6 +1021,7 @@ export function BlockTree({
     rovingEditor,
     setFocused,
     handleFlush,
+    pageStore,
     // The store's `remove` swallows its own errors (it logs + toasts and
     // resolves void, never rejects), so a failed delete_block would let the
     // merge handlers report success and leave the merged text duplicated in

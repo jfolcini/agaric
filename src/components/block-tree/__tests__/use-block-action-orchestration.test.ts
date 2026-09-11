@@ -19,6 +19,7 @@ import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
+import { createPageBlockStore } from '@/stores/page-blocks'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/editor/markdown-serializer', () => ({
@@ -30,6 +31,16 @@ vi.mock('@/editor/markdown-serializer', () => ({
 }))
 vi.mock('@/editor/types', () => ({
   pmEndOfFirstBlock: vi.fn(() => 1),
+}))
+// #4957 — the restructure handlers' post-flush remount baseline is gated on the
+// SHARED `shouldSplitOnBlur` predicate. The file-level `parse` mock above always
+// yields a single-paragraph doc, so the real predicate could never report a
+// split here; this stands in for it. Defaults to `false`, leaving every other
+// test in this file on the verbatim-capture path it already asserts.
+const mockShouldSplitOnBlur = vi.fn((_md: string) => false)
+vi.mock('@/editor/content-delta', async (importActual) => ({
+  ...(await importActual<typeof import('@/editor/content-delta')>()),
+  shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
 }))
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -71,6 +82,11 @@ type OrchestrationParams = Parameters<typeof useBlockActionOrchestration>[0]
  */
 const mountScoped = (blocks: readonly FlatBlock[]): MountedBlocks => blocks as MountedBlocks
 
+// #4957 — a REAL per-page store: the remount baseline reads `blocksById` after
+// the flush, so a stub Map would pin the helper against itself rather than
+// against the store the split actually writes to.
+let pageStore: ReturnType<typeof createPageBlockStore>
+
 function makeDefaultParams(
   overrides?: Partial<Omit<OrchestrationParams, 'collapsedVisible'>> & {
     collapsedVisible?: FlatBlock[]
@@ -110,6 +126,7 @@ function makeDefaultParams(
     },
     setFocused: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
+    pageStore,
     remove: vi.fn(async () => {}),
     moveBlocks: vi.fn(async () => {}),
     edit: vi.fn(async () => true),
@@ -127,6 +144,9 @@ function makeDefaultParams(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockShouldSplitOnBlur.mockReturnValue(false)
+  pageStore = createPageBlockStore('PAGE_1')
+  pageStore.setState({ loading: false })
 })
 
 describe('useBlockActionOrchestration handleFocusPrev', () => {
@@ -542,6 +562,106 @@ describe('useBlockActionOrchestration handleIndent', () => {
     })
 
     expect(params.indent).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * #4957 — the post-flush remount baseline.
+ *
+ * A multi-block capture makes `handleFlush` take `runUnmountFlush`'s split
+ * branch: `splitBlock` truncates the source to line 1 (synchronously, before
+ * its first `await`) and creates siblings for the rest. Remounting the FULL
+ * capture handed the editor the pre-split text as its new baseline, so the next
+ * keystroke re-committed lines 2..N that already existed as siblings.
+ *
+ * `handleFlush` is the injected mock here, so it stands in for the split by
+ * writing line 1 to the store the way the real reducer does.
+ */
+describe('useBlockActionOrchestration remount baseline after a split flush (#4957)', () => {
+  const CAPTURE = 'line1\nline2\nline3'
+
+  function makeSplitParams(overrides?: { capture?: string; splits?: boolean }) {
+    const capture = overrides?.capture ?? CAPTURE
+    const splits = overrides?.splits ?? true
+    mockShouldSplitOnBlur.mockImplementation((md: string) => splits && md === capture)
+    pageStore.setState({ blocks: [makeBlock({ id: 'B', depth: 0, content: capture })] })
+    const params = makeDefaultParams({
+      rovingEditor: {
+        ...makeDefaultParams().rovingEditor,
+        activeBlockId: 'B',
+        getMarkdown: vi.fn(() => capture as string | null),
+      },
+      // Stands in for the split branch's synchronous first-line write.
+      handleFlush: vi.fn(() => {
+        pageStore.setState({ blocks: [makeBlock({ id: 'B', depth: 0, content: 'line1' })] })
+        return capture as string | null
+      }),
+    })
+    return params
+  }
+
+  it('handleIndent remounts the store line 1, not the pre-split capture', async () => {
+    const params = makeSplitParams()
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleIndent()
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'line1')
+  })
+
+  it('handleIndentById remounts the store line 1, not the pre-split capture', async () => {
+    const params = makeSplitParams()
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleIndentById('B')
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'line1')
+  })
+
+  it('handleMoveUp remounts the store line 1, not the pre-split capture', async () => {
+    const params = makeSplitParams()
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleMoveUp()
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'line1')
+  })
+
+  it('remounts the capture verbatim when the flush did not split', async () => {
+    const params = makeSplitParams({ capture: 'just one line', splits: false })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleIndent()
+    })
+
+    // The store now holds 'line1' (the stand-in flush always writes it), so a
+    // helper that ignored `shouldSplitOnBlur` and always read the store would
+    // fail here.
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'just one line')
+  })
+
+  it('remounts the capture when the block is not in this page store (#4550 embed)', async () => {
+    const params = makeSplitParams()
+    // The flush returns without splitting for a foreign block; model that by
+    // leaving the store without the row.
+    params.handleFlush = vi.fn(() => {
+      pageStore.setState({ blocks: [] })
+      return null as string | null
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      result.current.handleIndent()
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', CAPTURE)
   })
 })
 

@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
+import { shouldSplitOnBlur } from '@/editor/content-delta'
 import { parse } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { pmEndOfFirstBlock } from '@/editor/types'
@@ -15,6 +16,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
+import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 
 /**
  * Scroll the block's DOM node into view after a reorder so the
@@ -198,6 +200,11 @@ export interface UseBlockActionOrchestrationParams {
   >
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
+  /**
+   * #4957 — page store API, read for the post-flush remount baseline (see
+   * {@link useBlockActionOrchestration}'s `remountBaseline`).
+   */
+  pageStore: ReturnType<typeof usePageBlockStoreApi>
   remove: (id: string) => Promise<void>
   /**
    * #1342 — reparent a contiguous run of blocks (in document order) under a
@@ -268,6 +275,7 @@ export function useBlockActionOrchestration({
   rovingEditor,
   setFocused,
   handleFlush,
+  pageStore,
   remove,
   moveBlocks,
   edit,
@@ -528,6 +536,21 @@ export function useBlockActionOrchestration({
     ],
   )
 
+  /**
+   * #4957 — what the restructure handlers remount with after `handleFlush()`.
+   * A multi-block capture was split: `splitBlock` wrote line 1 into the store
+   * synchronously, so remounting the full capture would re-commit lines 2..N
+   * that now exist as siblings. The `?? captured` covers a block another page's
+   * store owns (#4550 embeds), which the flush leaves unsplit.
+   */
+  const remountBaseline = useCallback(
+    (blockId: string, captured: string): string =>
+      shouldSplitOnBlur(captured)
+        ? (pageStore.getState().blocksById.get(blockId)?.content ?? captured)
+        : captured,
+    [pageStore],
+  )
+
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
     const blockId = focusedBlockId
@@ -537,8 +560,8 @@ export function useBlockActionOrchestration({
     // outcome — a no-op (already at outermost level) or a backend rejection
     // must not announce a phantom "indented".
     void announceMoveResult(indent(blockId), t, 'announce.blockIndented')
-    rovingEditorRef.current.mount(blockId, content)
-  }, [focusedBlockId, handleFlush, indent, t])
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [focusedBlockId, handleFlush, indent, remountBaseline, t])
 
   const handleDedent = useCallback(() => {
     if (!focusedBlockId) return
@@ -546,8 +569,8 @@ export function useBlockActionOrchestration({
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     void announceMoveResult(dedent(blockId), t, 'announce.blockDedented')
-    rovingEditorRef.current.mount(blockId, content)
-  }, [focusedBlockId, handleFlush, dedent, t])
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [focusedBlockId, handleFlush, dedent, remountBaseline, t])
 
   const handleMoveUp = useCallback(() => {
     if (!focusedBlockId) return
@@ -559,8 +582,8 @@ export function useBlockActionOrchestration({
     void announceMoveResult(moveUp(blockId), t, 'announce.blockMovedUp', () =>
       scrollFocusedBlockIntoView(blockId),
     )
-    rovingEditorRef.current.mount(blockId, content)
-  }, [focusedBlockId, handleFlush, moveUp, t])
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [focusedBlockId, handleFlush, moveUp, remountBaseline, t])
 
   const handleMoveDown = useCallback(() => {
     if (!focusedBlockId) return
@@ -570,8 +593,8 @@ export function useBlockActionOrchestration({
     void announceMoveResult(moveDown(blockId), t, 'announce.blockMovedDown', () =>
       scrollFocusedBlockIntoView(blockId),
     )
-    rovingEditorRef.current.mount(blockId, content)
-  }, [focusedBlockId, handleFlush, moveDown, t])
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [focusedBlockId, handleFlush, moveDown, remountBaseline, t])
 
   const handleIndentById = useCallback(
     (id: string) => {
@@ -586,11 +609,11 @@ export function useBlockActionOrchestration({
         'announce.blockIndented',
       )
       if (content !== null) {
-        rovingEditorRef.current.mount(id, content)
+        rovingEditorRef.current.mount(id, remountBaseline(id, content))
       }
       return result
     },
-    [focusedBlockId, handleFlush, indent, t],
+    [focusedBlockId, handleFlush, indent, remountBaseline, t],
   )
 
   const handleDedentById = useCallback(
@@ -606,11 +629,11 @@ export function useBlockActionOrchestration({
         'announce.blockDedented',
       )
       if (content !== null) {
-        rovingEditorRef.current.mount(id, content)
+        rovingEditorRef.current.mount(id, remountBaseline(id, content))
       }
       return result
     },
-    [dedent, focusedBlockId, handleFlush, t],
+    [dedent, focusedBlockId, handleFlush, remountBaseline, t],
   )
 
   const handleMoveUpById = useCallback(
@@ -627,11 +650,11 @@ export function useBlockActionOrchestration({
         () => scrollFocusedBlockIntoView(id),
       )
       if (content !== null) {
-        rovingEditorRef.current.mount(id, content)
+        rovingEditorRef.current.mount(id, remountBaseline(id, content))
       }
       return result
     },
-    [focusedBlockId, handleFlush, moveUp, t],
+    [focusedBlockId, handleFlush, moveUp, remountBaseline, t],
   )
 
   const handleMoveDownById = useCallback(
@@ -648,11 +671,11 @@ export function useBlockActionOrchestration({
         () => scrollFocusedBlockIntoView(id),
       )
       if (content !== null) {
-        rovingEditorRef.current.mount(id, content)
+        rovingEditorRef.current.mount(id, remountBaseline(id, content))
       }
       return result
     },
-    [focusedBlockId, handleFlush, moveDown, t],
+    [focusedBlockId, handleFlush, moveDown, remountBaseline, t],
   )
 
   /**
