@@ -713,10 +713,6 @@ export const commands = {
 	compactOpLogCmd: (retentionDays: number) => typedError<CompactionResult, AppError>(__TAURI_INVOKE("compact_op_log_cmd", { retentionDays })),
 	/**  Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`]. */
 	restorePageToOp: (pageId: string, targetDeviceId: string, targetSeq: number) => typedError<RestoreToOpResult, AppError>(__TAURI_INVOKE("restore_page_to_op", { pageId, targetDeviceId, targetSeq })),
-	/**  Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`]. */
-	restoreAllDeleted: () => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_all_deleted")),
-	/**  Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`]. */
-	purgeAllDeleted: () => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_all_deleted")),
 	/**
 	 *  Tauri command: batch-count cascade-deleted descendants per trash root.
 	 *  Delegates to [`trash_descendant_counts_inner`].
@@ -803,8 +799,6 @@ export const commands = {
 	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
 	/**  Tauri command: return the current MCP RO status for the Settings tab. */
 	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
-	/**  Tauri command: return the default socket path for the current platform. */
-	getMcpSocketPath: () => typedError<string, AppError>(__TAURI_INVOKE("get_mcp_socket_path")),
 	/**
 	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
 	 *  the serve task accordingly.
@@ -854,11 +848,6 @@ export const commands = {
 	getMcpRecentActivity: () => typedError<ActivityEntry_Serialize[], AppError>(__TAURI_INVOKE("get_mcp_recent_activity")),
 	/**  Tauri command: return the current MCP RW status for the Settings tab. */
 	getMcpRwStatus: () => typedError<McpRwStatus, AppError>(__TAURI_INVOKE("get_mcp_rw_status")),
-	/**
-	 *  Tauri command: return the default RW socket path for the current
-	 *  platform. Same shape as [`get_mcp_socket_path`].
-	 */
-	getMcpRwSocketPath: () => typedError<string, AppError>(__TAURI_INVOKE("get_mcp_rw_socket_path")),
 	/**
 	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
 	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds

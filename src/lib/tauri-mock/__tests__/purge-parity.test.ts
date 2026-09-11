@@ -179,20 +179,6 @@ describe('#3091 purge parity', () => {
     })
   })
 
-  describe('empty-trash (purge_all_deleted) cleans satellites uniformly', () => {
-    it('removes tag_id-side rows on surviving blocks when a deleted tag is emptied', () => {
-      // B (live) is tagged with A; A is soft-deleted then trash is emptied.
-      blockTags.set(B, new Set([A]))
-      blockTagRefs.set(B, new Set([A]))
-      dispatch('delete_block', { blockId: A })
-      const res = dispatch('purge_all_deleted', {}) as { affected_count: number }
-      expect(res.affected_count).toBe(1)
-      expect(blocks.has(A)).toBe(false)
-      expect(blockTags.get(B)?.has(A) ?? false).toBe(false)
-      expect(blockTagRefs.get(B)?.has(A) ?? false).toBe(false)
-    })
-  })
-
   describe('purge_blocks_by_ids cleans satellites uniformly', () => {
     it('removes tag_id-side rows on surviving blocks', () => {
       blockTags.set(B, new Set([A]))

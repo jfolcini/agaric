@@ -3261,14 +3261,6 @@ describe('get_mcp_status', () => {
   })
 })
 
-describe('get_mcp_socket_path', () => {
-  it('returns a string', () => {
-    const path = invoke('get_mcp_socket_path', {})
-    expect(typeof path).toBe('string')
-    expect((path as string).length).toBeGreaterThan(0)
-  })
-})
-
 describe('mcp_set_enabled', () => {
   it('returns null', () => {
     // Real backend signature returns `null` (the binding is `() => null`),
@@ -3296,14 +3288,6 @@ describe('get_mcp_rw_status', () => {
     expect(status['enabled']).toBe(false)
     expect(typeof status['socket_path']).toBe('string')
     expect(status['active_connections']).toBe(0)
-  })
-})
-
-describe('get_mcp_rw_socket_path', () => {
-  it('returns a string', () => {
-    const path = invoke('get_mcp_rw_socket_path', {})
-    expect(typeof path).toBe('string')
-    expect((path as string).length).toBeGreaterThan(0)
   })
 })
 

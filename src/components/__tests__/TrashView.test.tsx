@@ -1536,7 +1536,7 @@ describe('TrashView', () => {
   })
 
   // When more pages remain, the dialog must NOT claim a precise count
-  // (purge_all_deleted ignores pagination and wipes everything in trash).
+  // (the purge drains the whole space's trash, not just the loaded pages).
   it('empty-trash dialog uses paginated copy when more pages remain', async () => {
     const user = userEvent.setup()
     mockListAndResolve(
@@ -1564,11 +1564,10 @@ describe('TrashView', () => {
     ).not.toBeInTheDocument()
   })
 
-  // #2544 — Empty Trash must scope to the active space: it must never call
-  // the unscoped `purge_all_deleted` command, and must purge exactly the
-  // ids the space-scoped `list_trash` reported (mirroring the per-row /
-  // multi-select `purge_blocks_by_ids` path), not some other set.
-  it('calls purge_blocks_by_ids (never purge_all_deleted) with the space-scoped ids on Empty Trash confirmation', async () => {
+  // #2544 — Empty Trash must scope to the active space: it must purge
+  // exactly the ids the space-scoped `list_trash` reported (mirroring the
+  // per-row / multi-select `purge_blocks_by_ids` path), not some other set.
+  it('calls purge_blocks_by_ids with the space-scoped ids on Empty Trash confirmation', async () => {
     const user = userEvent.setup()
     stubInvoke({
       list_trash: () => ({
@@ -1600,7 +1599,6 @@ describe('TrashView', () => {
         blockIds: ['B1', 'B2'],
       })
     })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_all_deleted')
   })
 
   // #2544 (core regression) — models a real two-space backend: `list_trash`
@@ -1970,10 +1968,9 @@ describe('TrashView', () => {
     ).toBeInTheDocument()
   })
 
-  // #2544 — Restore All must scope to the active space: it must never
-  // call the unscoped `restore_all_deleted` command, and must restore
+  // #2544 — Restore All must scope to the active space: it must restore
   // exactly the ids the space-scoped `list_trash` reported.
-  it('calls restore_blocks_by_ids (never restore_all_deleted) with the space-scoped ids on Restore All confirmation', async () => {
+  it('calls restore_blocks_by_ids with the space-scoped ids on Restore All confirmation', async () => {
     const user = userEvent.setup()
     // #4963 — see the batch-restore test: the reset makes the counter
     // assertion at the end this restore's alone.
@@ -2009,7 +2006,6 @@ describe('TrashView', () => {
         blockIds: ['B1', 'B2'],
       })
     })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_all_deleted')
     // #4963 — everything it brought back is in the graph again.
     await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })

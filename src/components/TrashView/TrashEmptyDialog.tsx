@@ -14,7 +14,8 @@ interface TrashEmptyDialogProps {
   /**
    * When `true`, the loaded `itemCount` understates the true backend
    * count (more pages remain). The dialog switches to copy that doesn't claim
-   * an exact number, since `purge_all_deleted` ignores pagination.
+   * an exact number, since the purge drains the whole space's trash, not
+   * just the loaded pages.
    */
   hasMore?: boolean
   onOpenChange: (open: boolean) => void

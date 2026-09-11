@@ -1,6 +1,7 @@
 //! Tauri commands backing the Settings "Agent access" tab.
 //!
-//! Three commands are exposed to the frontend:
+//! Three commands are exposed to the frontend, each with an RW twin, plus
+//! `get_mcp_recent_activity`, which reads the shared activity ring:
 //!
 //! - `get_mcp_status` — returns `{ enabled, socket_path, active_connections }`
 //!   for the RO toggle + activity-feed badge. Reads the `mcp-ro-enabled`
@@ -16,8 +17,6 @@
 //!   in-flight connection's `select!` branch wakes and the handler drops
 //!   the socket. Subsequent connects succeed — the kill switch is a
 //!   one-shot, not a toggle.
-//! - `get_mcp_socket_path` — pure path resolver for the Settings "Copy"
-//!   button (no DB access, no lifecycle state).
 //!
 //! Each command has an `inner_*` helper that takes the pieces of state it
 //! needs as plain arguments so the unit tests do not need a full Tauri
@@ -329,14 +328,6 @@ pub async fn get_mcp_status(
     Ok(get_mcp_status_inner(&app_data_dir, lifecycle.inner()))
 }
 
-/// Tauri command: return the default socket path for the current platform.
-#[tauri::command]
-#[specta::specta]
-pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
-    Ok(get_mcp_socket_path_inner(&app_data_dir))
-}
-
 /// Tauri command: disconnect every in-flight MCP connection.
 ///
 /// Fires the `McpLifecycle` disconnect signal — every connection's
@@ -532,15 +523,6 @@ pub async fn get_mcp_rw_status(
 ) -> Result<McpRwStatus, AppError> {
     let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
     Ok(get_mcp_rw_status_inner(&app_data_dir, &lifecycle.inner().0))
-}
-
-/// Tauri command: return the default RW socket path for the current
-/// platform. Same shape as [`get_mcp_socket_path`].
-#[tauri::command]
-#[specta::specta]
-pub async fn get_mcp_rw_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
-    let app_data_dir = app_data_dir_from_handle(&app).map_err(sanitize_internal_error)?;
-    Ok(get_mcp_rw_socket_path_inner(&app_data_dir))
 }
 
 /// Tauri command: disconnect every in-flight RW MCP connection.

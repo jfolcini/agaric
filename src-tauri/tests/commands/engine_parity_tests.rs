@@ -9,7 +9,7 @@
 //!
 //! * a mid-batch rejection in `move_blocks_batch` / `create_blocks_batch`
 //!   must not leave earlier ops applied in the engine (R2/R22);
-//! * `purge_block` / `purge_all_deleted` must drop the purged subtree
+//! * `purge_block` / `purge_all_deleted_inner` must drop the purged subtree
 //!   from the engine like `purge_blocks_by_ids` does (R10/R24, #1257);
 //! * a create rejected by cross-space validation must not leave a
 //!   phantom committed block in the engine (R25);
@@ -218,7 +218,7 @@ async fn create_blocks_batch_mid_batch_rejection_leaves_engine_in_lockstep_with_
 }
 
 // ======================================================================
-// R10/R24 — single purge_block / purge_all_deleted must drop the purged
+// R10/R24 — single purge_block / purge_all_deleted_inner must drop the purged
 // subtree from the engine (like purge_blocks_by_ids does, #1257)
 // ======================================================================
 

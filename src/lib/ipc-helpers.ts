@@ -144,16 +144,14 @@ async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
 /**
  * Restore every soft-deleted block in `spaceId`.
  *
- * #2544 — the backend's `restore_all_deleted` command is intentionally
- * NOT called here: it takes no `space_id` and would resurrect trashed
- * blocks across EVERY space, not just the one the Trash view displays
- * (and the one its confirmation dialog counted). Instead this drains the
- * already space-scoped `list_trash` cursor chain for `spaceId` (mirroring
- * the "ignore the frontend's own load-more frontier, act on everything in
- * trash" semantics `purge_all_deleted` used to provide, just space-scoped)
- * and hands the resulting root ids to `restore_blocks_by_ids` — the same
- * space-safe path the per-row and multi-select restore actions already
- * use — chunked to the backend's batch-size cap.
+ * #2544 — there is deliberately no unscoped "restore everything" IPC: it
+ * would resurrect trashed blocks across EVERY space, not just the one the
+ * Trash view displays (and the one its confirmation dialog counted). So
+ * this drains the already space-scoped `list_trash` cursor chain for
+ * `spaceId` — everything in trash, not just the frontend's own load-more
+ * frontier — and hands the resulting root ids to `restore_blocks_by_ids`,
+ * the same space-safe path the per-row and multi-select restore actions
+ * already use, chunked to the backend's batch-size cap.
  *
  * A chunk failing part-way through throws {@link PartialPurgeError} carrying
  * what the earlier chunks restored, for the same reason the purge drain does:
@@ -234,11 +232,10 @@ export class PartialPurgeError extends Error {
 /**
  * Permanently purge every soft-deleted block in `spaceId`. Irreversible.
  *
- * #2544 — mirrors {@link restoreAllDeletedInSpace}'s rationale: the
- * backend's `purge_all_deleted` command is unscoped and would destroy
- * trash in every space, not just the active one shown (and confirmed) by
- * the Trash view's "Empty trash" dialog. Scoped here the same way, via
- * `purge_blocks_by_ids`.
+ * #2544 — mirrors {@link restoreAllDeletedInSpace}'s rationale: an
+ * unscoped "purge everything" IPC would destroy trash in every space, not
+ * just the active one shown (and confirmed) by the Trash view's "Empty
+ * trash" dialog. Scoped here the same way, via `purge_blocks_by_ids`.
  *
  * #3835 — a chunk failing part-way through (e.g. `InvalidOperation` from a
  * concurrently-restored id, or any other backend rejection) throws

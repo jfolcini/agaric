@@ -94,10 +94,10 @@ pub use blocks::{
     first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, list_blocks,
     list_blocks_inner, list_trash, list_trash_inner, move_block, move_block_inner,
     move_blocks_batch, move_blocks_batch_inner, move_blocks_to_space, move_blocks_to_space_inner,
-    purge_all_deleted, purge_all_deleted_inner, purge_block, purge_block_inner,
-    purge_blocks_by_ids, purge_blocks_by_ids_inner, restore_all_deleted, restore_all_deleted_inner,
-    restore_block, restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
-    trash_descendant_counts, trash_descendant_counts_inner,
+    purge_all_deleted_inner, purge_block, purge_block_inner, purge_blocks_by_ids,
+    purge_blocks_by_ids_inner, restore_all_deleted_inner, restore_block, restore_block_inner,
+    restore_blocks_by_ids, restore_blocks_by_ids_inner, trash_descendant_counts,
+    trash_descendant_counts_inner,
 };
 pub use bug_report::{
     BugReport, LogFileEntry, RetryQueueSummary, collect_bug_report_metadata,
@@ -130,11 +130,11 @@ pub use link_metadata::{
 };
 pub use logging::log_frontend;
 pub use mcp::{
-    McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_socket_path,
-    get_mcp_rw_socket_path_inner, get_mcp_rw_status, get_mcp_rw_status_inner, get_mcp_socket_path,
-    get_mcp_socket_path_inner, get_mcp_status, get_mcp_status_inner, mcp_disconnect_all,
-    mcp_disconnect_all_inner, mcp_rw_disconnect_all, mcp_rw_disconnect_all_inner,
-    mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled, mcp_set_enabled_inner,
+    McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_socket_path_inner,
+    get_mcp_rw_status, get_mcp_rw_status_inner, get_mcp_socket_path_inner, get_mcp_status,
+    get_mcp_status_inner, mcp_disconnect_all, mcp_disconnect_all_inner, mcp_rw_disconnect_all,
+    mcp_rw_disconnect_all_inner, mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled,
+    mcp_set_enabled_inner,
 };
 pub use pages::{
     ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading,

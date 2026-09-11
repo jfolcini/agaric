@@ -1006,7 +1006,7 @@ pub async fn write_cohort_deleted_at_json(
 }
 
 /// Clear `deleted_at` on EVERY tombstoned row (bulk "restore all"). Returns
-/// the number of rows restored. (`crud::restore_all_deleted`.)
+/// the number of rows restored. (`crud::restore_all_deleted_inner`.)
 pub async fn clear_all_deleted_at(conn: &mut sqlx::SqliteConnection) -> Result<u64, AppError> {
     // dynamic-sql: byte-identical to the former app-crate literal.
     Ok(
@@ -1021,7 +1021,7 @@ pub async fn clear_all_deleted_at(conn: &mut sqlx::SqliteConnection) -> Result<u
 /// Rebuild `page_id` for the whole table after a bulk restore: pages
 /// self-reference, then a single recursive walk propagates each page's id
 /// down to its non-page descendants. Byte-identical to the former two
-/// app-crate statements (`crud::restore_all_deleted`, #346/P7). No
+/// app-crate statements (`crud::restore_all_deleted_inner`, #346/P7). No
 /// `deleted_at` filter is needed — nothing is deleted at this point.
 pub async fn rebuild_all_page_ids(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     // dynamic-sql: two byte-identical static literals.
