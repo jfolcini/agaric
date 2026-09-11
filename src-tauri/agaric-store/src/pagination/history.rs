@@ -4,6 +4,35 @@ use super::{Cursor, HistoryEntry, PageRequest, PageResponse, build_page_response
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 
+/// The keyset both history listings share, bound as
+/// `(cursor_flag, created_at, seq, device_id)`. `id` carries `device_id`
+/// because the `op_log` PK is `(device_id, seq)`; `deleted_at` carries
+/// `created_at` as a String (see `Cursor` docs) and is parsed back here
+/// against the INTEGER epoch-ms column. The `seq = 0` sentinel in the
+/// no-cursor branch is safe because `op_log.seq` starts at 1.
+fn history_cursor_binds(page: &PageRequest) -> Result<(Option<i64>, i64, i64, &str), AppError> {
+    match page.after.as_ref() {
+        Some(c) => {
+            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
+                AppError::validation("cursor missing created_at for history query".into())
+            })?;
+            let created_at = created_at_str.parse::<i64>().map_err(|e| {
+                AppError::validation(format!("cursor created_at not an integer: {e}"))
+            })?;
+            Ok((Some(1), created_at, c.seq.unwrap_or(0), &c.id))
+        }
+        None => Ok((None, 0, 0, "")),
+    }
+}
+
+fn history_cursor(last: &HistoryEntry) -> Cursor {
+    Cursor::for_history_full(
+        last.device_id.clone(),
+        last.created_at.to_string(),
+        last.seq,
+    )
+}
+
 /// List op-log history for a specific block, paginated.
 ///
 /// Returns all ops whose payload contains the given `block_id`, ordered by
@@ -80,30 +109,8 @@ pub async fn list_block_history(
     // `BlockId` newtype rather than missing every row.
     let block_id = block_id.as_str();
 
-    // `id` in the cursor stores `device_id` for history queries — it is the
-    // tie-breaker because the op_log PK is `(device_id, seq)`. The
-    // `cursor_seq = 0` sentinel in the no-cursor branch is safe per the
-    // Doc-block above (op_log seq starts at 1). `deleted_at` carries
-    // `created_at` as a String (see `Cursor` docs) against an INTEGER
-    // epoch-ms column, so it is parsed back here — the sibling's binding,
-    // verbatim.
-    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
-        Option<i64>,
-        i64,
-        i64,
-        &str,
-    ) = match page.after.as_ref() {
-        Some(c) => {
-            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
-                AppError::validation("cursor missing created_at for block history query".into())
-            })?;
-            let created_at = created_at_str.parse::<i64>().map_err(|e| {
-                AppError::validation(format!("cursor created_at not an integer: {e}"))
-            })?;
-            (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
-        }
-        None => (None, 0, 0, ""),
-    };
+    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id) =
+        history_cursor_binds(page)?;
 
     let rows = sqlx::query_as!(
         HistoryEntry,
@@ -141,14 +148,7 @@ pub async fn list_block_history(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| {
-        // reuse deleted_at slot for created_at — see Cursor docs
-        Cursor::for_history_full(
-            last.device_id.clone(),
-            last.created_at.to_string(),
-            last.seq,
-        )
-    })
+    build_page_response(rows, page.limit, history_cursor)
 }
 
 /// List op-log history for all blocks descended from a page, paginated.
@@ -253,28 +253,8 @@ pub async fn list_page_history(
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    // Cursor: reuse `deleted_at` field for `created_at` and `seq` + `id` for device_id
-    // #109 Phase 2: `op_log.created_at` is INTEGER epoch-ms. The opaque
-    // `Cursor.deleted_at` slot still carries it as a String (see Cursor
-    // docs); parse it back to i64 here before binding against the
-    // INTEGER column.
-    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
-        Option<i64>,
-        i64,
-        i64,
-        &str,
-    ) = match page.after.as_ref() {
-        Some(c) => {
-            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
-                AppError::validation("cursor missing created_at for page history query".into())
-            })?;
-            let created_at = created_at_str.parse::<i64>().map_err(|e| {
-                AppError::validation(format!("cursor created_at not an integer: {e}"))
-            })?;
-            (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
-        }
-        None => (None, 0, 0, ""),
-    };
+    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id) =
+        history_cursor_binds(page)?;
 
     if page_id == "__all__" {
         // Global history: query all ops without page-scoping CTE.
@@ -350,13 +330,7 @@ pub async fn list_page_history(
         .fetch_all(pool)
         .await?;
 
-        return build_page_response(rows, page.limit, |last| {
-            Cursor::for_history_full(
-                last.device_id.clone(),
-                last.created_at.to_string(),
-                last.seq,
-            )
-        });
+        return build_page_response(rows, page.limit, history_cursor);
     }
 
     // IX3 (#4335 review item 2) — EQP-verified (sqlite3 3.50.6, real
@@ -474,12 +448,5 @@ pub async fn list_page_history(
     .fetch_all(pool)
     .await?;
 
-    build_page_response(rows, page.limit, |last| {
-        // reuse deleted_at slot for created_at — see Cursor docs
-        Cursor::for_history_full(
-            last.device_id.clone(),
-            last.created_at.to_string(),
-            last.seq,
-        )
-    })
+    build_page_response(rows, page.limit, history_cursor)
 }

@@ -313,12 +313,12 @@ function slotSentinel(slot: CursorSlot): string | number {
  * the query pages from that sentinel key instead of refusing the request.
  * Rejecting a missing slot here made the mock STRICTER than production in the
  * opposite direction from the one this harness exists to close (#3942 review
- * note 3). The `deleted_at` slot is the exception, on both queries that read
- * it: `pagination::list_trash` REFUSES a cursor without it (`cursor missing
- * deleted_at for trash query`) and so does `pagination::list_page_history`
- * (`cursor missing created_at for page history query`), where this decodes
- * `['', …]` and serves from the sentinel. Neither stack mints such a cursor, so
- * the gap is unreachable and left open.
+ * note 3). The `deleted_at` slot is the exception, on all three queries that
+ * read it: `pagination::list_trash` REFUSES a cursor without it (`cursor
+ * missing deleted_at for trash query`) and so do `pagination::list_page_history`
+ * and `list_block_history` (`cursor missing created_at for history query`),
+ * where this decodes `['', …]` and serves from the sentinel. Neither stack
+ * mints such a cursor, so the gap is unreachable and left open.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
