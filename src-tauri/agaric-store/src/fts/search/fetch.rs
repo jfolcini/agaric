@@ -425,33 +425,24 @@ pub(super) async fn execute_fts_fetch(
     })
 }
 
-/// Test-only: expose the FTS5 SELECT prefix the runtime would emit for
-/// a given `with_snippet` choice. Used to assert that `snippet(` is
-/// absent when the downstream pipeline will clear `row.snippet`.
-///
-/// Returns just the first `format!` shape — the dynamic per-filter
-/// `AND` clauses are appended after this prefix and don't change the
-/// `snippet(` presence question.
+/// Test-only: the SQL [`build_fts_fetch`] really emits for a given
+/// `with_snippet` choice, with every structural filter empty — so the
+/// string is exactly the invariant prefix, read from production rather
+/// than restated. Used to assert that `snippet(` is absent when the
+/// downstream pipeline will clear `row.snippet`, and that the cursor
+/// keyset keeps the relative rank epsilon (#1598).
 #[cfg(test)]
 pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
-    let snippet_select = if with_snippet {
-        SNIPPET_SQL_PROJECTION
-    } else {
-        "NULL as snippet"
-    };
-    format!(
-        r"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at,
-                b.todo_state, b.priority, b.due_date, b.scheduled_date,
-                b.page_id,
-                {snippet_select},
-                fts.rank as search_rank
-         FROM fts_blocks fts
-         JOIN blocks b ON b.id = fts.block_id
-         WHERE fts_blocks MATCH ?1
-           AND b.deleted_at IS NULL
-           AND (?2 IS NULL
-                OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
-                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))",
+    build_fts_fetch(
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &MetadataPredicates::default(),
+        with_snippet,
+        None,
     )
+    .sql
 }

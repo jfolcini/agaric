@@ -165,11 +165,16 @@ pub struct QueueMetrics {
     ///
     /// Correctness bias: this gauge is only ever consulted to SKIP work, so
     /// bounded inaccuracy is safe by construction. A stale-HIGH value costs
-    /// at most one idempotent (0-row) DELETE. A stale-LOW value self-heals:
-    /// the periodic sweeper re-clears any leftover rows on its next pass and
-    /// `note_retry_rows_deleted` re-floors the gauge. It is seeded from a
-    /// real `COUNT(*)` at sweeper boot and thereafter maintained
-    /// incrementally by `note_retry_row_inserted` / `note_retry_rows_deleted`.
+    /// at most one idempotent (0-row) DELETE. It is seeded from a real
+    /// `COUNT(*)` at sweeper boot and thereafter maintained incrementally by
+    /// `note_retry_row_inserted` / `note_retry_rows_deleted`.
+    ///
+    /// A stale-LOW value is reachable — `reindex_restored_cohort_links` seeds
+    /// rows with `metrics: None` (`handlers/apply.rs`) — and does NOT self-heal
+    /// through the sweeper, which DELETEs only what it retires: a durable
+    /// success is cleared solely by the gauge-gated `clear_on_success`. Cost is
+    /// one redundant idempotent re-run per minute until the gauge lifts (at the
+    /// latest, the next boot's `COUNT(*)` seed). Never a lost task.
     pub pending_retry_rows: AtomicU64,
     /// #2509: count of persistent-enqueue events (calls to
     /// [`super::retry_queue::record_failure`] that landed a row) whose task

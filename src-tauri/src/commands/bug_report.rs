@@ -282,6 +282,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "debounced-change peer task panicked",
     "mDNS initialization failed (peer discovery disabled)",
     "peer announced no endpoint id, skipping sync (nothing to dial)",
+    "paired peer resolved to no dialable address, skipping sync (not discovered by mDNS and no usable cached endpoint id + address)",
     "failed to save peer address",
     "sync session failed",
     "initiator file transfer failed (non-fatal)",

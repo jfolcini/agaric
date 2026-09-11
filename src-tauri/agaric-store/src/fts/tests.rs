@@ -5116,9 +5116,10 @@ async fn toggle_on_post_filter_keeps_match_beyond_preview_cap() {
 }
 /// Verify the SQL builder omits the `snippet(fts_blocks,
 /// …)` call when the toggle bundle will trigger a post-filter that
-/// clears `row.snippet` anyway. Asserts on the emitted SQL string via
-/// the test-only `fts_select_prefix_for_test` accessor — cheaper and
-/// more direct than a runtime SQL trace.
+/// clears `row.snippet` anyway. Asserts on the SQL the production
+/// builder emits, read back through the test-only
+/// `fts_select_prefix_for_test` accessor — cheaper and more direct than
+/// a runtime SQL trace.
 #[test]
 fn partitioned_snippet_skipped_when_post_filter_clears_it() {
     use super::search::fts_select_prefix_for_test;
@@ -5150,9 +5151,9 @@ fn partitioned_snippet_skipped_when_post_filter_clears_it() {
 /// #1598: the FTS cursor keyset must scale the rank epsilon by the cursor
 /// magnitude (a RELATIVE band `1e-9 * MAX(1.0, ABS(?3))`), not a fixed
 /// `1e-9`, so pagination stays correct independent of bm25's numeric scale.
-/// Pins the production-mirror SQL (byte-identical to the live query) so a
-/// revert to the scale-coupled fixed epsilon fails CI — the inline-SQL
-/// predicate tests don't guard the `fetch.rs` production path.
+/// Pins the SQL `build_fts_fetch` itself emits, so a revert to the
+/// scale-coupled fixed epsilon fails CI — the inline-SQL predicate tests
+/// don't guard the `fetch.rs` production path.
 #[test]
 fn fts_cursor_predicate_uses_relative_rank_epsilon_1598() {
     use super::search::fts_select_prefix_for_test;
