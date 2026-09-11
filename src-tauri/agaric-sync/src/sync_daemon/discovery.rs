@@ -228,8 +228,10 @@ fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
 /// Resolve a peer's network address: prefer mDNS-discovered address,
 /// fall back to cached `last_address` from peer_refs.
 ///
-/// A `None` is logged here because every call site drops it silently, so a paired
-/// peer that resolves to nothing is skipped on every round with no trace of why.
+/// A `None` is logged here because both call sites drop it silently — the
+/// periodic round's `if let Some(peer)` (`session_supervisor.rs`) and
+/// [`peers_for_change_round`]'s `filter_map` below — so a paired peer that
+/// resolves to nothing is skipped on every round with no trace of why.
 pub fn resolve_peer_address(
     peer_id: &str,
     last_address: Option<&str>,

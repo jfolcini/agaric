@@ -2334,7 +2334,10 @@ describe('count_backlinks_batch', () => {
     }) as Record<string, number>
     // BLOCK_QN_1 links to PAGE_GETTING_STARTED
     expect(result[SEED_IDS.PAGE_GETTING_STARTED]).toBeGreaterThanOrEqual(1)
-    expect(result[SEED_IDS.TAG_IDEA]).toBe(0)
+    // ABSENT, not zero: the backend builds this map from a `GROUP BY
+    // bl.target_id`, which never emits an empty group (#3830, pinned by
+    // `query_backlinks.json`'s `backlink_counts_per_page`).
+    expect(result[SEED_IDS.TAG_IDEA]).toBeUndefined()
   })
 })
 
@@ -3322,19 +3325,23 @@ describe('mcp_rw_disconnect_all', () => {
 // ---------------------------------------------------------------------------
 
 describe('trash_descendant_counts', () => {
-  it('counts a soft-deleted child under a soft-deleted parent', () => {
-    // Seed two soft-deleted blocks: a parent and its direct child.
+  it('counts the cascade cohort of a soft-deleted parent', () => {
     const parent = invoke('create_block', {
       blockType: 'content',
       content: 'trash-parent',
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as Record<string, unknown>
-    const child = invoke('create_block', {
+    invoke('create_block', {
       blockType: 'content',
       content: 'trash-child',
       parentId: parent['id'] as string,
-    }) as Record<string, unknown>
-    invoke('delete_block', { blockId: child['id'] as string })
+    })
+    // ONE delete, so parent and child share a `deleted_at`. The child used to
+    // be deleted FIRST here, which the mock counted as a descendant and the
+    // backend does not: `trash_descendant_counts`' CTE follows only edges whose
+    // `deleted_at` equals the ROOT's, so a child tombstoned in an earlier
+    // cohort leaves the root at zero — and a zero root is omitted (#3830,
+    // pinned by `query_keyed_counts.json`'s `trash_descendant_cohort_counts`).
     invoke('delete_block', { blockId: parent['id'] as string })
 
     const result = invoke('trash_descendant_counts', {

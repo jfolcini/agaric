@@ -446,6 +446,77 @@ fn map_rows_tokens(v: &Value, token: &dyn Fn(&Value) -> String) -> Vec<String> {
     })
 }
 
+/// Project a keyed COUNT map — the answer shape of `count_backlinks_batch`
+/// (`HashMap<page_id, usize>`), `trash_descendant_counts`
+/// (`HashMap<root_id, u64>`) and `count_agenda_batch_by_source` (the nested
+/// `HashMap<date, HashMap<source, usize>>`) — into one `<key>#count=<n>` token
+/// per entry, `<key>-><subkey>#count=<n>` for the nested form (#3830).
+///
+/// These three were waived from the read differential for one shared reason:
+/// "a keyed count map, not the canonical block-id rows the query projection
+/// binds". The [`RawResult`] rows are a LIST of tokens, not a row set, so the
+/// generalisation of `count_trash`'s `count_trash#value=<n>` — the whole answer
+/// IS the token — is one token per map entry. The KEY is the token HEAD rather
+/// than an attribute NAME because [`relabel_token`] rewrites heads (and both
+/// sides of an `->` head) through the canonical `Bn` map and never touches an
+/// attribute name: `count_backlinks_batch` is keyed by PAGE ID, which is
+/// stack-local until it is relabeled.
+///
+/// The nested level reuses the `->` of [`map_row_tokens`] rather than inventing
+/// a separator, so the grammar — and its aliasing refusals — is the one already
+/// documented at "Row tokens". Both segments go through [`token_head`], so a
+/// key carrying `#` or `->` is refused instead of aliasing.
+///
+/// A key the caller ASKED for and the backend answers nothing for is simply
+/// absent: all three `*_inner`s build their map from a `GROUP BY`, so a page
+/// with no backlinks, a trash root with no cascade cohort and a date with no
+/// agenda rows are OMITTED rather than carried as a zero. That distinction is
+/// the whole content of a step that requests such a key — a reimplementation
+/// that answers `0` for it projects one token more than the backend does.
+///
+/// Sorted by token, which is sorted by key: a `HashMap` has no order on either
+/// stack, so the projection imposes one instead of making every step take the
+/// `unordered` opt-out. The sort runs BEFORE [`relabel_token`], so a fixture
+/// whose map keys are OP-CREATED ids (a random ULID here, a mock-local id
+/// there) would still need that opt-out; every key a fixture uses today is a
+/// seed id or a fixture-authored date, identical on both stacks.
+fn count_map_tokens(v: &Value) -> Vec<String> {
+    let mut out: Vec<String> = v.as_object().map_or_else(Vec::new, |map| {
+        map.iter()
+            .flat_map(|(k, entry)| {
+                let head = token_head("count map key", k);
+                match entry.as_object() {
+                    Some(inner) => inner
+                        .iter()
+                        .map(|(sub, count)| {
+                            format!(
+                                "{head}->{}#count={}",
+                                token_head("count map key", sub),
+                                attr_value("count", Some(count))
+                            )
+                        })
+                        .collect(),
+                    None => vec![format!("{head}#count={}", attr_value("count", Some(entry)))],
+                }
+            })
+            .collect()
+    });
+    out.sort();
+    out
+}
+
+/// [`count_map_tokens`] as a [`RawResult`]: a keyed count map has no pagination
+/// envelope, so all three scalars are structurally absent, exactly as they are
+/// for `count_trash`'s bare `i64`.
+fn count_map_result(v: &Value) -> RawResult {
+    RawResult {
+        rows: count_map_tokens(v),
+        has_more: None,
+        total_count: None,
+        next_cursor: None,
+    }
+}
+
 /// Project `AdvancedQueryResponse.groups` — the GROUPED-mode payload (#3833
 /// item 2).
 ///
@@ -977,6 +1048,21 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 &|row| row_token(row, "id", BLOCK_ATTRS),
             )
         }
+        // The backlink BADGE's counts (#3830): `HashMap<page_id, count>` over
+        // the same `block_links JOIN blocks` the listings read, `GROUP BY
+        // bl.target_id` with the source's `deleted_at IS NULL` and the space
+        // filter applied to the SOURCE block. A page with no surviving
+        // incoming link is absent from the map rather than carried as a zero —
+        // see [`count_map_tokens`].
+        "count_backlinks_batch" => {
+            let counts = count_backlinks_batch_inner(
+                pool,
+                arg_req::<Vec<PageId>>(args, "pageIds"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            count_map_result(&serde_json::to_value(&counts).expect("serialize count map"))
+        }
         // ── Op-log history (#3824) ──
         //
         // `list_page_history` runs one of two queries: a real `page_id` walks
@@ -1069,6 +1155,29 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── The calendar's per-day agenda counts (#3830) ──
+        //
+        // NOT wall-clock dependent, which is what the old waiver hid behind:
+        // `dates` is an explicit argument and the command is a `GROUP BY date,
+        // source` over `agenda_cache JOIN blocks`. Its clock-bound sibling
+        // `list_projected_agenda` stays waived.
+        //
+        // `agenda_cache` is materialized, so a step needs the dates to arrive
+        // through OPS (`set_due_date` / `set_scheduled_date` enqueue
+        // `RebuildAgendaCache`) rather than through a seed. The cache's PK is
+        // `(date, block_id)` and `DESIRED_AGENDA_SQL` keeps the
+        // HIGHEST-precedence source for a block that has several on one date,
+        // so a block due AND scheduled on the same day counts ONCE, under
+        // `column:due_date`.
+        "count_agenda_batch_by_source" => {
+            let counts = count_agenda_batch_by_source_inner(
+                pool,
+                arg_req::<Vec<String>>(args, "dates"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            count_map_result(&serde_json::to_value(&counts).expect("serialize count map"))
+        }
         // ── Trash roots and the unpaginated page listings (#3829) ──
         "list_trash" => {
             let scope: SpaceScope = arg_req(args, "scope");
@@ -1104,6 +1213,20 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 total_count: None,
                 next_cursor: None,
             }
+        }
+        // The trash listing's per-root cascade badge (#3830): a per-root
+        // recursive CTE that follows `parent_id` edges sharing the ROOT's
+        // `deleted_at`, `COUNT(*) - 1` to drop the root itself
+        // (`pagination::trash_descendant_counts`). Two omissions carry the
+        // behaviour: a root whose cohort holds only itself is dropped by the
+        // `count > 0` guard, and a LIVE root never seeds the CTE at all
+        // (`rb.deleted_at IS NOT NULL`). Unscoped — the command takes no
+        // `scope`, only the ids the listing just served.
+        "trash_descendant_counts" => {
+            let counts =
+                trash_descendant_counts_inner(pool, arg_req::<Vec<String>>(args, "rootIds"))
+                    .await?;
+            count_map_result(&serde_json::to_value(&counts).expect("serialize count map"))
         }
         "list_all_pages_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
@@ -2199,7 +2322,15 @@ pub(super) mod reader_delegation_tests {
     // plus `build_page_response`. Neither def reader declares a missing key on
     // a miss — the writing twin is `create_property_def_inner`, which is not a
     // read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 38;
+    // #3830 (keyed counts) wired `count_backlinks_batch`,
+    // `trash_descendant_counts` and `count_agenda_batch_by_source`: a
+    // `GROUP BY` SELECT each, over `block_links JOIN blocks`
+    // (`commands/queries.rs`), a recursive CTE over `blocks`
+    // (`agaric-store/src/pagination/trash.rs`) and `agenda_cache JOIN blocks`
+    // (`commands/agenda.rs`). The agenda one READS the materialized cache and
+    // never rebuilds it — the writer is the `RebuildAgendaCache` task. Writer
+    // set unchanged.
+    const SWEPT_ARM_COUNT: usize = 41;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

@@ -1382,11 +1382,17 @@ export const blocksHandlers = {
   // Grouped backlinks + unlinked references
   // ---------------------------------------------------------------------------
 
+  // Mirrors `pagination::trash_descendant_counts`: seeded only from a
+  // tombstoned root, following edges that share the root's `deleted_at`, so a
+  // count is the root's own cascade COHORT; zero-count roots are omitted. All
+  // three were divergences (#3830, `trash_descendant_cohort_counts`).
   trash_descendant_counts: (args) => {
     const a = args as Record<string, unknown>
     const rootIds = (a['rootIds'] as string[]) ?? []
     const result: Record<string, number> = {}
     for (const rootId of rootIds) {
+      const cohort = blocks.get(rootId)?.['deleted_at'] ?? null
+      if (cohort === null) continue
       let count = 0
       const queue: string[] = [rootId]
       const seen = new Set<string>([rootId])
@@ -1396,12 +1402,13 @@ export const blocksHandlers = {
           const id = b['id'] as string
           if (seen.has(id)) continue
           if (b['parent_id'] !== parent) continue
+          if (b['deleted_at'] !== cohort) continue
           seen.add(id)
-          if (b['deleted_at']) count++
+          count++
           queue.push(id)
         }
       }
-      result[rootId] = count
+      if (count > 0) result[rootId] = count
     }
     return result
   },

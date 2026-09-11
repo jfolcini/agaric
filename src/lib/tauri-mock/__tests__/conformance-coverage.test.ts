@@ -418,16 +418,17 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // `list_property_values` are in `query_tag_and_property_listings.json` (#3827).
 
   // ── Links / backlinks ──
-  // The EDGES are pinned twice (the snapshot's `page_links`, and the
-  // `list_page_links` query step); these commands' grouping, filtering and
-  // counting on top of them are not.
+  // Nothing is waived here any more. The EDGES were always pinned twice (the
+  // snapshot's `page_links`, and the `list_page_links` query step); these
+  // commands' grouping, filtering and counting on top of them now are too.
   //
-  // `get_backlinks` is NOT waived: it answers with a plain `PageResponse`, so
-  // its ordering, `deleted_at` filter and `{id}` keyset are query steps in
-  // `query_backlinks.json` (#4667).
-  count_backlinks_batch:
-    'returns `HashMap<page_id, count>` — a keyed count map, not the canonical ' +
-    'block-id rows the query projection binds',
+  // `get_backlinks` answers with a plain `PageResponse`, so its ordering,
+  // `deleted_at` filter and `{id}` keyset are query steps in
+  // `query_backlinks.json` (#4667). `count_backlinks_batch` is in the SAME
+  // fixture (#3830): its `HashMap<page_id, count>` projects one
+  // `<page>#count=<n>` token per entry (the `count-map` row location), which
+  // caught the divergence the waiver was covering — the mock answered a zero
+  // for a page nothing links to, where the backend's `GROUP BY` omits the key.
   // `list_backlinks_grouped` / `list_unlinked_references` are NOT waived
   // either: their `GroupedBacklinkResponse` is bound by the `backlink-groups`
   // row location and driven by `query_backlinks_grouped.json` (#4667).
@@ -443,13 +444,13 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   //
   // Only `list_projected_agenda` is wall-clock dependent — its `_inner` takes
   // `chrono::Local::now().date_naive()` and threads it through the recurrence
-  // projection. `count_agenda_batch_by_source` is a plain `agenda_cache`
-  // lookup keyed by its EXPLICIT `dates` argument (agenda.rs
-  // `count_agenda_batch_by_source_inner`); no clock is involved, and the real
-  // blocker is the shape it answers with.
-  count_agenda_batch_by_source:
-    'returns nested `HashMap<date, HashMap<source, count>>` — a keyed count map with ' +
-    'no row identity the query projection can bind (NOT wall-clock: `dates` is explicit)',
+  // projection. `count_agenda_batch_by_source` is NOT waived (#3830): it is a
+  // plain `agenda_cache` lookup keyed by its EXPLICIT `dates` argument
+  // (agenda.rs `count_agenda_batch_by_source_inner`), and its nested
+  // `date -> source -> count` map projects `<date>-><source>#count=<n>` tokens
+  // in `query_keyed_counts.json`. The dates reach `agenda_cache` through
+  // `set_due_date` / `set_scheduled_date` OPS, which is what a query step over
+  // a materialized table needs.
   list_projected_agenda:
     'wall-clock dependent: `list_projected_agenda_inner` anchors the `.+` / `++` ' +
     'recurrence projection (and the cache-freshness horizon) to `chrono::Local::now()`',
@@ -466,9 +467,14 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     "mock's answer is a constant no query step could bind to the backend's",
 
   // ── Trash ──
-  trash_descendant_counts:
-    'returns `HashMap<root_id, count>` — a keyed count map, not the canonical ' +
-    'block-id rows the query projection binds',
+  // Nothing is waived here either. `list_trash` and `count_trash` are steps in
+  // `query_trash_and_page_listings.json` (#3829, #3830), and
+  // `trash_descendant_counts` — the per-root cascade badge beside that
+  // listing — is one in `query_keyed_counts.json` (#3830), projecting
+  // `<root>#count=<n>` per entry. Its waiver was covering two real divergences:
+  // the mock counted every tombstone under a root rather than the root's own
+  // `deleted_at` COHORT, and answered for a LIVE root the backend's CTE never
+  // seeds from.
 
   // ── Op log / history / time travel ──
   //
@@ -714,8 +720,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'compute_block_vs_current_diff',
   'compute_edit_diff',
   'compute_reconciliation_report',
-  'count_agenda_batch_by_source',
-  'count_backlinks_batch',
   'export_page_markdown',
   'get_compaction_status',
   'get_link_metadata',
@@ -730,7 +734,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'list_spaces',
   'read_attachment_meta',
   'resolve_page_by_alias',
-  'trash_descendant_counts',
 ]
 
 function notYetPinned(

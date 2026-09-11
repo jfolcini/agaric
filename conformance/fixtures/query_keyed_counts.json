@@ -1,0 +1,438 @@
+{
+  "description": "#3830 — the READ differential over the three KEYED COUNT commands, the last group whose waivers all read 'returns a keyed count map, not the canonical block-id rows the query projection binds'. `count_trash` answered that for a BARE scalar (`count_trash#value=<n>`); the generalisation is one token per map entry, `<key>#count=<n>`, with the nested `date -> source -> count` map spelled `<date>-><source>#count=<n>` (`count_map_tokens` / `countMapTokens`). The seed exists to make the counts DISCRIMINATE: three delete cohorts of different depths for `trash_descendant_counts` (one of them a root whose only child was tombstoned by an earlier op, so it has no descendant in its OWN cohort), and four dated blocks for `count_agenda_batch_by_source`, one of them due and scheduled on the same day so the `(date, block_id)` precedence rule is visible. The dates arrive through OPS rather than the seed because `agenda_cache` is materialized: `set_due_date` / `set_scheduled_date` enqueue `RebuildAgendaCache`, a seed insert would not. `count_backlinks_batch`, the third command of the group, is driven by `query_backlinks.json` instead — that fixture's link set already discriminates.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "cascade root",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "cascade child",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "cascade grandchild",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "lone root",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "child deleted first",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "shallow root",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "shallow child",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B7",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "due alpha",
+        "deleted_at": null,
+        "due_date": "2026-07-01",
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "due beta",
+        "deleted_at": null,
+        "due_date": "2026-07-01",
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "scheduled gamma",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": "2026-07-01",
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "due and scheduled on one day",
+        "deleted_at": null,
+        "due_date": "2026-07-02",
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": "2026-07-02",
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "trash_descendant_cohort_counts",
+      "rows": ["B2#count=2", "B7#count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "agenda_counts_by_date_and_source",
+      "rows": [
+        "2026-07-01->column:due_date#count=2",
+        "2026-07-01->column:scheduled_date#count=1",
+        "2026-07-02->column:due_date#count=1"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "agenda_counts_global_scope",
+      "rows": [
+        "2026-07-01->column:due_date#count=2",
+        "2026-07-01->column:scheduled_date#count=1",
+        "2026-07-02->column:due_date#count=1"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "agenda_rejects_malformed_date",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_keyed_counts",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S9",
+        "date": "2026-07-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S10",
+        "date": "2026-07-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "date": "2026-07-01"
+      },
+      "command": "set_scheduled_date"
+    },
+    {
+      "args": {
+        "blockId": "S12",
+        "date": "2026-07-02"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S12",
+        "date": "2026-07-02"
+      },
+      "command": "set_scheduled_date"
+    },
+    {
+      "args": {
+        "blockId": "S6"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "rootIds": ["S2", "S7", "S5", "S1"]
+      },
+      "command": "trash_descendant_counts",
+      "comment": "Four roots asked about, two answered. S2 counts TWO (S3 and S4, tombstoned by its cascade in the same `deleted_at` cohort) and S7 counts ONE (S8) — different counts, so a mock that answers the same number for every key differs on one of them. S5 is ABSENT: its only child S6 was deleted by an EARLIER op, so S6 sits in a different cohort and the recursive CTE's `c.deleted_at = d.batch_deleted_at` join refuses to follow the edge; the `count > 0` guard then drops the key entirely rather than reporting 0. S1 is absent for a second, independent reason — it is LIVE, and `rb.deleted_at IS NOT NULL` never seeds the walk from it, so a mock that walks a live root's subtree counting tombstones answers seven here.",
+      "name": "trash_descendant_cohort_counts"
+    },
+    {
+      "args": {
+        "dates": ["2026-07-01", "2026-07-02", "2026-07-03"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_agenda_batch_by_source",
+      "comment": "The nested map, one token per (date, source). 2026-07-01 holds TWO `column:due_date` rows (S9, S10) and ONE `column:scheduled_date` (S11) — differing counts under one key. 2026-07-02 holds ONE: S12 is both due and scheduled that day, and `agenda_cache`'s PK is `(date, block_id)`, so `DESIRED_AGENDA_SQL`'s priority order keeps the higher-precedence `column:due_date` row and drops the scheduled one — a mock that counts the two columns independently answers a second source here. 2026-07-03 is absent: a date with no rows is omitted, not carried as an empty map.",
+      "name": "agenda_counts_by_date_and_source"
+    },
+    {
+      "args": {
+        "dates": ["2026-07-01", "2026-07-02"],
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "count_agenda_batch_by_source",
+      "comment": "The harness has one space, so `Global` (`?2 IS NULL`) selects the same rows and the counts are unchanged. What it pins is that this command SERVES `Global` unscoped rather than refusing it the way `count_trash` does.",
+      "name": "agenda_counts_global_scope"
+    },
+    {
+      "args": {
+        "dates": ["2026-7-1"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_agenda_batch_by_source",
+      "comment": "`count_agenda_batch_by_source_inner` validates every date before it queries (`validate_date_format`), and chrono's `%Y-%m-%d` would otherwise accept the unpadded form. Only the SHAPE is pinned here: a calendar-invalid but well-shaped date (2026-02-30) is refused by chrono on the backend, which the mock's regex mirror does not model.",
+      "expect_error": "validation",
+      "name": "agenda_rejects_malformed_date"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "cascade root",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "cascade child",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "cascade grandchild",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "lone root",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "child deleted first",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "shallow root",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "shallow child",
+        "id": "S8",
+        "parent_id": "S7",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "due alpha",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "due beta",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "scheduled gamma",
+        "id": "S11",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "due and scheduled on one day",
+        "id": "S12",
+        "parent_id": "S1",
+        "position": 7
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -513,6 +513,16 @@ export const propertiesHandlers = {
   count_agenda_batch_by_source: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
+    // #3830 — `count_agenda_batch_by_source_inner` runs `validate_date_format`
+    // over every date before it queries, so a malformed date REFUSES rather
+    // than answering an empty map. Only the SHAPE is mirrored here: the
+    // backend then hands the string to chrono, which also rejects a
+    // calendar-invalid date (2026-02-30) this regex accepts.
+    for (const d of dates) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        throw validationRejection(`expected YYYY-MM-DD format with calendar-valid date, got '${d}'`)
+      }
+    }
     // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_by_source_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
@@ -527,12 +537,17 @@ export const propertiesHandlers = {
           const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
           if (ownerSpace !== spaceId) continue
         }
-        if (b['due_date'] === dateStr) {
-          sources['column:due_date'] = (sources['column:due_date'] ?? 0) + 1
-        }
-        if (b['scheduled_date'] === dateStr) {
-          sources['column:scheduled_date'] = (sources['column:scheduled_date'] ?? 0) + 1
-        }
+        // #3830 — ONE source per (date, block): `agenda_cache`'s PK is
+        // `(date, block_id)` and `column:due_date` outranks `column:scheduled_date`
+        // in `DESIRED_AGENDA_SQL`. The unmodelled `property:`/`tag:` sources both
+        // outrank these, so nothing modelled here can be shadowed.
+        const source =
+          b['due_date'] === dateStr
+            ? 'column:due_date'
+            : b['scheduled_date'] === dateStr
+              ? 'column:scheduled_date'
+              : null
+        if (source !== null) sources[source] = (sources[source] ?? 0) + 1
       }
       if (Object.keys(sources).length > 0) {
         result[dateStr] = sources
