@@ -251,6 +251,22 @@
         "B7#parent_id=B6#page_id=B6#position=1#deleted_at=null"
       ],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "backlink_counts_per_page",
+      "rows": ["B1#count=3", "B9#count=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "backlink_counts_global_scope",
+      "rows": ["B1#count=3", "B9#count=1"],
+      "total_count": null
     }
   ],
   "name": "query_backlinks",
@@ -383,6 +399,29 @@
       "command": "get_backlinks",
       "comment": "`Global` is the unscoped cross-space listing (`scope.as_filter_param()` binds NULL), not a refusal — unlike `list_trash`, which rejects it. One space in the harness, so the ROWS cannot tell scoped from unscoped; what this pins is that the request is served at all.",
       "name": "backlinks_global_scope"
+    },
+    {
+      "args": {
+        "pageIds": ["S1", "S9", "S6"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_backlinks_batch",
+      "comment": "The badge counts beside the listing above, over the SAME edges (#3830). Three per key, and each is a different decision: S1 counts THREE (S3, S4, S7) — S5 unlinked and S8's edge survives its tombstone in `page_links` but its source is dropped by `b.deleted_at IS NULL`, so a mock counting the raw edge set answers four; S9 counts ONE even though S9 itself is deleted, because the filter is on the SOURCE block and not the target (#4853); and S6 is ABSENT rather than zero — the map is a `GROUP BY`, so a key nobody links to never appears. A mock that seeds every requested id with 0 projects a third token here.",
+      "name": "backlink_counts_per_page"
+    },
+    {
+      "args": {
+        "pageIds": ["S1", "S9", "S6"],
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "count_backlinks_batch",
+      "comment": "Mirrors `backlinks_global_scope` one command over: the harness has one space, so `Global` selects the same source blocks and the counts are unchanged. What it pins is that `count_backlinks_batch` SERVES `Global` unscoped (`?2 IS NULL`) rather than refusing it the way `count_trash` does — the two count commands answer the same-shaped question with opposite scope contracts.",
+      "name": "backlink_counts_global_scope"
     }
   ],
   "seed": {

@@ -208,6 +208,16 @@ type RowsLocation =
    */
   | { readonly kind: 'value'; readonly head: string }
   /**
+   * #3830 — the response IS a keyed COUNT map: `HashMap<K, number>`
+   * (`count_backlinks_batch`, `trash_descendant_counts`) or the nested
+   * `HashMap<K, HashMap<K2, number>>` (`count_agenda_batch_by_source`). Each
+   * entry projects `<key>#count=<n>`, `<key>-><subkey>#count=<n>` for the
+   * nested form — see {@link countMapTokens}, the mirror of `count_map_tokens`
+   * in the Rust twin, which carries the rationale. `token` is inert for this
+   * shape, as it is for `value`: there is no row to build one from.
+   */
+  | { readonly kind: 'count-map' }
+  /**
    * The response holds several `PageResponse` partitions under `keys` (#3823 —
    * `search_blocks_partitioned`'s `{ pages, blocks }`). Every row carries its
    * partition as an attribute and each partition closes with its own
@@ -464,6 +474,31 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // the token is the value itself and both scalars stay `null` (#3830).
   count_trash: {
     rows: { kind: 'value', head: 'count_trash' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // The trash listing's per-root cascade badge, beside the listing it
+  // annotates (#3830): a keyed count map, so the token is `<root>#count=<n>`
+  // and both scalars stay `null`. Unscoped — the command takes only ids.
+  trash_descendant_counts: {
+    rows: { kind: 'count-map' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // The backlink badge's counts (#3830), the same keyed-count shape over
+  // `block_links`.
+  count_backlinks_batch: {
+    rows: { kind: 'count-map' },
+    token: ID_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // The calendar's per-day agenda counts (#3830) — the NESTED keyed map
+  // (`date -> source -> count`), projected `<date>-><source>#count=<n>`.
+  count_agenda_batch_by_source: {
+    rows: { kind: 'count-map' },
     token: ID_TOKEN,
     hasMoreKey: null,
     totalKey: null,
@@ -1030,6 +1065,7 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
       return response == null ? [] : [response]
     }
     case 'value':
+    case 'count-map':
     case 'map-of-row':
     case 'map-of-rows':
     case 'partitions':
@@ -1143,9 +1179,41 @@ export function backlinkGroupTokens(response: unknown, token: TokenSpec): string
   return out
 }
 
+/**
+ * #3830 — project a keyed COUNT map into one `<key>#count=<n>` token per entry,
+ * `<key>-><subkey>#count=<n>` for the nested form. Mirror of `count_map_tokens`
+ * in the Rust twin, which carries the rationale: why the key is the token HEAD
+ * (only heads are relabeled), why the nested level reuses the `->` of the
+ * map-of-row projections, why an unanswered key is ABSENT rather than zero, and
+ * why the tokens are sorted here rather than through the `unordered` opt-out.
+ *
+ * Module-local, unlike {@link groupTokens} and {@link backlinkGroupTokens}:
+ * those two are exported because no fixture drives them and an unreached
+ * projector is worth nothing. This one is driven by four steps across
+ * `query_backlinks.json` and `query_keyed_counts.json`, flat and nested.
+ */
+function countMapTokens(response: unknown): string[] {
+  const map = (response ?? {}) as Record<string, unknown>
+  if (typeof map !== 'object') return []
+  const out: string[] = []
+  for (const [key, entry] of Object.entries(map)) {
+    if (typeof entry === 'object' && entry !== null && !Array.isArray(entry)) {
+      for (const [sub, count] of Object.entries(entry as Record<string, unknown>)) {
+        out.push(`${key}->${sub}#count=${attrValue('count', count)}`)
+      }
+      continue
+    }
+    out.push(`${key}#count=${attrValue('count', entry)}`)
+  }
+  return out.toSorted()
+}
+
 function rawRows(response: unknown, shape: WireShape): string[] {
   if (shape.rows.kind === 'value') {
     return [`${shape.rows.head}#value=${attrValue('value', response)}`]
+  }
+  if (shape.rows.kind === 'count-map') {
+    return countMapTokens(response)
   }
   if (shape.rows.kind === 'partitions') {
     return partitionRows(response, shape.rows.keys, shape.token)

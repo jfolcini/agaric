@@ -265,7 +265,9 @@ export const linksHandlers = {
           inSpaceScope(b, spaceId) &&
           contentLinksTo(b['content'] as string | null, pid),
       ).length
-      result[pid] = count
+      // #3830 — a page nothing links to is ABSENT, not 0: the backend's `GROUP
+      // BY bl.target_id` never emits an empty group (callers default `?? 0`).
+      if (count > 0) result[pid] = count
     }
     return result
   },

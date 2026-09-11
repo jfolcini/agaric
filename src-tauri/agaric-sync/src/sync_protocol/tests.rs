@@ -3840,18 +3840,15 @@ fn batch_ops_for_wire_partitions_under_cap_2481() {
         );
     }
 
-    // The cap is inclusive: a batch that fills to EXACTLY `max_bytes` is not
-    // split, and one byte less is. Both halves are asserted, because a
-    // `>=` boundary passes the one-record cap above just as `>` does.
+    // The cap is inclusive: a batch filling to EXACTLY `max_bytes` is not
+    // split. This is the whole boundary — a `>` implementation splits here and
+    // answers 5 — so the one-byte-short twin that used to sit beside it was
+    // redundant: it answers 5 under both comparisons and killed no mutant
+    // (#4954).
     assert_eq!(
         batch_ops_for_wire(recs.clone(), one * 2).len(),
         3,
         "two records fitting the cap exactly ride in one batch: 5 records → 2 + 2 + 1"
-    );
-    assert_eq!(
-        batch_ops_for_wire(recs.clone(), one * 2 - 1).len(),
-        5,
-        "one byte short of two records splits every pair apart again"
     );
 
     // A huge cap → a single batch.
