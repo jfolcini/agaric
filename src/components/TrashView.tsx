@@ -475,6 +475,11 @@ export function TrashView(): React.ReactElement {
         invalidateNameCaches()
         recordGraphStructureChange()
         reload()
+        clearSelection()
+        setConfirmRestoreAll(false)
+        notify.error(t('trash.restoreAllPartial', { count: err.affectedCount }))
+        announce(t('announce.restoreAllPartial', { count: err.affectedCount }))
+        return
       }
       notify.error(t('trash.restoreAllFailed'))
       announce(t('announce.restoreAllFailed'))

@@ -300,10 +300,11 @@ export function LinkedReferences({
     [groups],
   )
 
-  // #4968 — on a failed initial read `totalCount` is 0, and "0 References" over
-  // the retry card is the "nothing links here" claim the card exists to stop.
+  // #4968 — before the first read lands `totalCount` is 0, and "0 References"
+  // over the skeleton or the retry card is the "nothing links here" claim
+  // neither is making yet.
   const headerLabel =
-    isError && groups.length === 0
+    (isError || loading) && groups.length === 0
       ? t('references.panelLabel')
       : totalCount === 1
         ? t('references.headerOne')

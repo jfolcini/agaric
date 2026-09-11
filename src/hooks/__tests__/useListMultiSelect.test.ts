@@ -300,6 +300,29 @@ describe('useListMultiSelect', () => {
     expect(result.current.lastClickedId).toBe('b')
   })
 
+  // An append drops nothing, so the prune has nothing to do; handing back a
+  // fresh equal Set commits a state update — and re-renders every consumer of
+  // `selected` — once per page the user loads.
+  it('does not replace the selection Set when the append dropped nothing', () => {
+    const { result, rerender } = renderHook(
+      ({ hookItems }: { hookItems: TestItem[] }) =>
+        useListMultiSelect<TestItem>({
+          items: hookItems,
+          getItemId: (item) => item.id,
+        }),
+      { initialProps: { hookItems: items.slice(0, 2) } },
+    )
+
+    act(() => {
+      result.current.toggleSelection('a')
+    })
+    const before = result.current.selected
+
+    rerender({ hookItems: items })
+
+    expect(result.current.selected).toBe(before)
+  })
+
   it('keeps the selection when the same ids are re-sorted', () => {
     const { result, rerender } = renderHook(
       ({ hookItems }: { hookItems: TestItem[] }) =>

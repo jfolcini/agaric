@@ -2195,9 +2195,14 @@ describe('TrashView', () => {
   // earlier chunk's rows restored. The failure toast is still the right toast,
   // but the picker name caches and the graph both have to learn about the rows
   // that ARE back, or they keep hiding pages that are no longer in the trash.
+  // And the toast has to say so too: "Failed to restore all items" over a
+  // thousand rows that DID come back is the same understatement
+  // `trash.emptyTrashPartial` exists to stop on the purge side.
   // Fixture shape (and the 60s budget) mirror the partial-purge tests above:
   // provoking a second chunk needs MAX_TRASH_BATCH_IDS + 1 real rows.
   it('invalidates the name caches and the graph when an early restore-all chunk committed before a later one failed', async () => {
+    const { announce } = await import('@/lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     _resetGraphStructureEventsForTest()
     const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
@@ -2233,8 +2238,14 @@ describe('TrashView', () => {
       await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
 
       await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Failed to restore all items')
+        expect(toast.error).toHaveBeenCalledWith(
+          `Restored ${MAX_TRASH_BATCH_IDS} items before an error interrupted restoring all`,
+        )
       })
+      expect(mockedAnnounce).toHaveBeenCalledWith(
+        `Restore all partially completed — ${MAX_TRASH_BATCH_IDS} items restored before an error interrupted it`,
+      )
+      expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
       expect(restoreCalls).toBe(2)
       // The two invalidations the failure path used to skip.
       await waitFor(() => expect(getGraphStructureKey()).toBe(1))

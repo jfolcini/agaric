@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
@@ -65,8 +65,14 @@ vi.mock('@/editor/use-roving-editor', () => ({
   }),
 }))
 
+// The real keymap needs a live ProseMirror editor, which `useRovingEditor` is
+// mocked away above. Capturing the callback bundle instead lets the
+// mount-boundary case below drive the ArrowDown handler itself.
+let lastKeyboardCallbacks: { onFocusNext?: () => void } = {}
 vi.mock('@/editor/use-block-keyboard', () => ({
-  useBlockKeyboard: () => {},
+  useBlockKeyboard: (_editor: unknown, callbacks: { onFocusNext?: () => void }) => {
+    lastKeyboardCallbacks = callbacks
+  },
 }))
 
 vi.mock('@/lib/announcer', () => ({
@@ -297,6 +303,31 @@ describe('BlockTree mount envelope (#2467)', () => {
     await user.click(getBoundaryButton())
     await user.click(getBoundaryButton())
 
+    expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(total)
+    expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
+  })
+
+  // #4959 follow-up — ArrowDown at the boundary reveals a whole
+  // `MOUNT_LIMIT_STEP` batch, not the single row it needs. Each reveal
+  // re-identifies `mountedVisible` and rebuilds `mountCapExcludedIds` over the
+  // full page, so a per-row reveal would pay that scan on every keystroke of a
+  // held ArrowDown.
+  it('reveals a whole batch when focus-next crosses the mount boundary', async () => {
+    const total = INITIAL_MOUNT_LIMIT + 5
+    pageStore.setState({ blocks: makeFlatBlocks(total), loading: false })
+    useBlockStore.setState({ focusedBlockId: `BLK_${INITIAL_MOUNT_LIMIT - 1}` })
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+
+    await act(async () => {
+      lastKeyboardCallbacks.onFocusNext?.()
+    })
+
+    // The focused target alone would come back via the #3276 reveal effect;
+    // the rest of the batch only mounts if the reveal was batch-sized.
+    expect(screen.getByTestId(`sortable-block-BLK_${INITIAL_MOUNT_LIMIT}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`sortable-block-BLK_${total - 1}`)).toBeInTheDocument()
     expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(total)
     expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
   })

@@ -9,7 +9,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface UseListMultiSelectOptions<T> {
   items: T[]
@@ -40,17 +40,24 @@ export function useListMultiSelect<T>({
   // re-sorting keeps the selection the user built (#4965) while a row that
   // left the list still leaves it: selection-within-items is what keeps a batch
   // purge from hard-deleting rows the user never saw selected (#3283).
-  const ids = useMemo(() => items.map(getItemId), [items, getItemId])
-  const idSignature = ids.join('\u0000')
+  const idSignature = items.map(getItemId).join('\u0000')
   const prevIdSignatureRef = useRef(idSignature)
   useEffect(() => {
     if (idSignature !== prevIdSignatureRef.current) {
-      const live = new Set(ids)
-      setSelected((prev) => new Set([...prev].filter((id) => live.has(id))))
+      // `idSignature` IS the live id list, joined on a separator no id can
+      // contain — splitting it back keeps `items`/`getItemId` (fresh on every
+      // render) out of this effect's deps.
+      const live = new Set(idSignature === '' ? [] : idSignature.split('\u0000'))
+      // A load-more append drops nothing, so returning `prev` unchanged keeps
+      // the reference — and spares every consumer a render per page loaded.
+      setSelected((prev) => {
+        const next = new Set([...prev].filter((id) => live.has(id)))
+        return next.size === prev.size ? prev : next
+      })
       setLastClickedId((prev) => (prev != null && live.has(prev) ? prev : null))
     }
     prevIdSignatureRef.current = idSignature
-  }, [idSignature, ids])
+  }, [idSignature])
 
   // Keep a ref to `selected` so handleRowClick can read current state without
   // adding `selected` to its dependency array (avoids re-creating on every change).

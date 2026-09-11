@@ -476,7 +476,10 @@ export function useBlockActionOrchestration({
       // collapsed projection hides a collapsed block's children.
       if (!prevBlock && blocks.some((b) => (b.parent_id ?? null) === focusedBlockId)) {
         // Nothing above to adopt them: the delete does not proceed, mirroring
-        // the merge handlers' `idx <= 0` bail.
+        // the merge handlers' `idx <= 0` bail. Say so — a Backspace that
+        // silently does nothing reads as a broken key.
+        notify.error(t('blockTree.cannotDeleteParentAtTop'))
+        announce(t('blockTree.cannotDeleteParentAtTop'))
         return
       }
       const reparent = prevBlock ? planChildReparent(blocks, focusedBlockId, prevBlock.id) : null
