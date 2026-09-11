@@ -36,7 +36,7 @@
     "android:dev": "cargo tauri android dev",
     "android:build": "cargo tauri android build",
     "tauri": "tauri",
-    "tauri:build": "cargo tauri build && [ \"$(uname)\" = Linux ] && bash scripts/fix-appimage-icons.sh || true"
+    "tauri:build": "cargo tauri build && { [ \"$(uname)\" != Linux ] || bash scripts/fix-appimage-icons.sh; }"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

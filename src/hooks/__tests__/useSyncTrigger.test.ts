@@ -48,6 +48,7 @@ import { mapPeerRefToInfo, resetReportedSyncFailures, useSyncTrigger } from '@/h
 import { announce } from '@/lib/announcer'
 import type { PeerRef, SyncSessionInfo } from '@/lib/bindings'
 import { startSync } from '@/lib/ipc-helpers'
+import { logger } from '@/lib/logger'
 import { useSyncStore } from '@/stores/sync'
 
 /**
@@ -1158,6 +1159,27 @@ describe('useSyncTrigger', () => {
       })
 
       expect(mockFlushAllDrafts).toHaveBeenCalledTimes(1)
+    })
+
+    it('on hidden: logs a failed flush instead of swallowing it', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const err = new Error('database is locked')
+      mockFlushAllDrafts.mockRejectedValue(err)
+
+      renderHook(() => useSyncTrigger())
+
+      await act(async () => {
+        setVisibility('hidden')
+        await Promise.resolve()
+      })
+
+      expect(warn).toHaveBeenCalledWith(
+        'useSyncTrigger',
+        'background draft flush failed',
+        undefined,
+        err,
+      )
     })
 
     it('removes the visibilitychange listener on unmount', async () => {
