@@ -374,6 +374,50 @@ describe('TrashView', () => {
     expect(screen.getByText('item 2')).toBeInTheDocument()
   })
 
+  // #4965 — the shared LoadMoreButton replaced a hand-rolled <Button> that
+  // only swapped its label, leaving a screen reader with no busy state.
+  it('Load More button reports aria-busy while a page is in flight', async () => {
+    const user = userEvent.setup()
+    let releasePage2: (() => void) | undefined
+    let callCount = 0
+    stubInvoke({
+      list_trash: async () => {
+        callCount++
+        if (callCount === 1) {
+          return {
+            items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+            next_cursor: 'cursor_page2',
+            has_more: true,
+            total_count: null,
+          }
+        }
+        await new Promise<void>((resolve) => {
+          releasePage2 = resolve
+        })
+        return {
+          items: [makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      },
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+    })
+
+    render(<TrashView />)
+
+    await user.click(await screen.findByRole('button', { name: /Load more/i }))
+
+    const busyBtn = await screen.findByRole('button', { name: /Loading/i })
+    expect(busyBtn).toHaveAttribute('aria-busy', 'true')
+
+    await act(async () => {
+      releasePage2?.()
+    })
+    expect(await screen.findByText('item 2')).toBeInTheDocument()
+  })
+
   it('hides Load More button when no more pages', async () => {
     stubInvoke({
       list_trash: () => emptyPage,
@@ -1245,6 +1289,27 @@ describe('TrashView', () => {
       expect(screen.getByText('No matching deleted items')).toBeInTheDocument()
     })
     expect(screen.getByTestId('trash-clear-filter-btn')).toBeInTheDocument()
+  })
+
+  // #4965 — the filter is an in-memory pass over the loaded pages, so with a
+  // page still behind the cursor "no match" must not read as "purged".
+  it('no-match names the loaded basis and offers Load more when pages remain', async () => {
+    const user = userEvent.setup()
+    mockListAndResolve(
+      [makeBlock({ id: 'B1', content: 'apple pie', deleted_at: 1736899200000 })],
+      true,
+    )
+
+    render(<TrashView />)
+
+    await screen.findByText('apple pie')
+    await user.type(screen.getByTestId('trash-filter-input'), 'xyz')
+
+    const emptyState = await screen.findByRole('region', {
+      name: 'No matching deleted items (1 loaded, more available)',
+    })
+    expect(within(emptyState).getByTestId('trash-clear-filter-btn')).toBeInTheDocument()
+    expect(within(emptyState).getByRole('button', { name: /Load more/i })).toBeInTheDocument()
   })
 
   it('clear button resets filter', async () => {

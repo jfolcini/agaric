@@ -72,8 +72,6 @@ export const history: Record<string, string> = {
   'trash.restoreButton': 'Restore',
   'trash.purgeButton': 'Purge',
   'trash.purgeTooltip': 'Permanently delete (cannot be undone)',
-  'trash.loadingMessage': 'Loading...',
-  'trash.loadMoreButton': 'Load more',
   'trash.permanentlyDeleteTitle': 'Permanently delete?',
   'trash.permanentlyDeleteDescription':
     'This action cannot be undone. This block will be permanently deleted.',
@@ -144,6 +142,11 @@ export const history: Record<string, string> = {
   'trash.filterPlaceholder': 'Filter deleted items (root content)...',
   'trash.showingCount': 'Showing {{filtered}} of {{total}} deleted items',
   'trash.noMatchMessage': 'No matching deleted items',
+  // The filter runs in memory over the loaded pages only, so with more pages
+  // behind "Load more" a no-match can just mean "not on this page" (#4965).
+  'trash.noMatchLoadedMessage_one': 'No matching deleted items ({{count}} loaded, more available)',
+  'trash.noMatchLoadedMessage_other':
+    'No matching deleted items ({{count}} loaded, more available)',
   'trash.clearFilter': 'Clear filter',
   'trash.itemsInBatch_one': '+{{count}} block',
   'trash.itemsInBatch_other': '+{{count}} blocks',
