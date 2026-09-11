@@ -122,6 +122,7 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
         rovingEditor: handle,
         setFocused,
         handleFlush,
+        pageStore: store,
         remove: store.getState().remove,
         moveBlocks: store.getState().moveBlocks,
         edit: store.getState().edit,
