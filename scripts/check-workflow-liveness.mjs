@@ -458,9 +458,9 @@ export function classifyWorkflow({
     }
   }
 
-  const completed = considered.find((r) => r.status === 'completed')
+  const completed = judgedRun(considered)
   if (!completed) {
-    return `no-completed-run (newest ${event} run is \`${considered[0]?.status ?? 'none at all'}\` and none of the last ${considered.length} has completed)`
+    return `no-completed-run (newest ${event} run is \`${considered[0]?.status ?? 'none at all'}\` and none of the last ${considered.length} has completed, superseded cancelled runs aside)`
   }
   if (completed.conclusion === 'success') return 'success'
   return `failure (newest completed ${event} run concluded \`${completed.conclusion ?? 'unknown'}\`)`
@@ -499,10 +499,22 @@ export function classifyWorkflow({
  * function no longer has a return path for data it could not read.
  */
 export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
-  const completed = orderedRuns({ runs, workflow, excludeRunId }).find(
-    (r) => r.status === 'completed',
+  return judgedRun(orderedRuns({ runs, workflow, excludeRunId }))?.databaseId ?? null
+}
+
+/**
+ * The run a lane is judged on: the newest COMPLETED one, skipping a
+ * `cancelled` run that a newer run supersedes. GitHub keeps one pending run
+ * per concurrency group and cancels the older pending one when a newer trigger
+ * queues, so on a busy merge day `ci.yml`'s `main` runs conclude `cancelled`
+ * by design and the newer run is the verdict (#3388). A cancelled run with
+ * nothing newer is still judged as cancelled: nothing followed it. Shared by
+ * `classifyWorkflow` and `newestCompletedRunId` so the two cannot disagree.
+ */
+function judgedRun(ordered) {
+  return ordered.find(
+    (r, i) => r.status === 'completed' && !(r.conclusion === 'cancelled' && i > 0),
   )
-  return completed?.databaseId ?? null
 }
 
 /**
