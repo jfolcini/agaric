@@ -307,6 +307,152 @@ describe('useBlockActionOrchestration handleDeleteBlock', () => {
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
   })
 
+  // #4958 — the roving editor holds only the focused block's OWN text, so a
+  // blank parent reads as "empty" and Backspace routes here instead of to the
+  // merge path. Without a reparent the store (and the backend cascade behind
+  // it) takes the whole subtree down with the block; when the parent is
+  // collapsed nothing on screen warns that more than one row is going.
+  //
+  // These cases drive a tiny mutable model of the store so the assertion is on
+  // re-queried tree state (each child's `parent_id`), not on a spy: `remove`
+  // cascades to descendants the way `page-blocks-reducers.remove` +
+  // `delete_block` do, and `moveBlocks` reparents.
+  describe('reparents children on delete (#4958)', () => {
+    function modelStore(params: ReturnType<typeof makeDefaultParams>, tree: FlatBlock[]) {
+      params.moveBlocks = vi.fn(async (ids: string[], newParentId: string | null) => {
+        for (const block of tree) {
+          if (ids.includes(block.id)) block.parent_id = newParentId
+        }
+      })
+      params.remove = vi.fn(async (id: string) => {
+        const doomed = new Set([id])
+        // Transitive closure over parent_id — the backend's cascade soft-delete.
+        for (let grew = true; grew;) {
+          grew = false
+          for (const block of tree) {
+            const parent = block.parent_id ?? null
+            if (parent !== null && doomed.has(parent) && !doomed.has(block.id)) {
+              doomed.add(block.id)
+              grew = true
+            }
+          }
+        }
+        const survivors = tree.filter((block) => !doomed.has(block.id))
+        tree.length = 0
+        tree.push(...survivors)
+      })
+    }
+
+    const blankParentTree = (): FlatBlock[] => [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: '' }),
+      makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+      makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
+    ]
+
+    it('keeps a COLLAPSED blank parent’s children, reparented onto the previous block', async () => {
+      const params = makeDefaultParams()
+      const tree = blankParentTree()
+      params.blocks = tree
+      // B is collapsed: its children never reach the visible projection, so
+      // one Backspace would silently take two hidden rows with it.
+      params.collapsedVisible = mountScoped([
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+      ])
+      modelStore(params, tree)
+
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+      await act(async () => {
+        result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      })
+
+      expect(tree.map((b) => b.id)).toEqual(['A', 'B1', 'B2'])
+      expect(tree.filter((b) => b.parent_id === 'A').map((b) => b.id)).toEqual(['B1', 'B2'])
+      expect(params.setFocused).toHaveBeenCalledWith('A')
+    })
+
+    it('keeps an EXPANDED blank parent’s children too (plan reads the full tree)', async () => {
+      const params = makeDefaultParams()
+      const tree = blankParentTree()
+      params.blocks = tree
+      // Expanded: the children are visible rows, so `collapsedVisible` — and
+      // with it the post-delete focus target — differs from the collapsed case.
+      params.collapsedVisible = mountScoped(blankParentTree())
+      modelStore(params, tree)
+
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+      await act(async () => {
+        result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      })
+
+      expect(tree.map((b) => b.id)).toEqual(['A', 'B1', 'B2'])
+      expect(tree.filter((b) => b.parent_id === 'A').map((b) => b.id)).toEqual(['B1', 'B2'])
+    })
+
+    it('refuses the delete when a blank parent has no row above to adopt its children', async () => {
+      const params = makeDefaultParams({ focusedBlockId: 'B' })
+      const tree = [
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+      ]
+      params.blocks = tree
+      params.collapsedVisible = mountScoped([
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+      ])
+      modelStore(params, tree)
+
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+      await act(async () => {
+        result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      })
+
+      expect(tree.map((b) => b.id)).toEqual(['B', 'B1', 'C'])
+      expect(params.remove).not.toHaveBeenCalled()
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+    })
+
+    // `BlockTree` hands the hook a `moveBlocks` wrapper that re-reads the tree
+    // and THROWS when a child did not land under the new parent, so a failed
+    // reparent must not be followed by the remove that would cascade onto it.
+    it('does not remove the block when the reparent fails', async () => {
+      const params = makeDefaultParams()
+      const tree = blankParentTree()
+      params.blocks = tree
+      params.collapsedVisible = mountScoped([
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: '' }),
+      ])
+      modelStore(params, tree)
+      params.moveBlocks = vi.fn(async () => {
+        throw new Error('reparent incomplete')
+      })
+
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+      await act(async () => {
+        result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      })
+
+      expect(tree.map((b) => b.id)).toEqual(['A', 'B', 'B1', 'B2'])
+      expect(params.remove).not.toHaveBeenCalled()
+      expect(mockedLoggerWarn).toHaveBeenCalled()
+    })
+
+    it('does NOT reparent when the deleted block is childless', async () => {
+      const params = makeDefaultParams()
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+      await act(async () => {
+        result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+      })
+
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      expect(params.remove).toHaveBeenCalledWith('B')
+    })
+  })
+
   it('does not delete when delete is already in progress', () => {
     const params = makeDefaultParams()
     // Make remove block so deleteInProgress stays true within the same synchronous act
