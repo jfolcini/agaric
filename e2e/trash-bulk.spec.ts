@@ -21,19 +21,15 @@ import {
  * search filter.
  *
  * Unlike the History-view gap (#2705), the mock backs ALL of these flows
- * with real state mutation — `restore_all_deleted` / `purge_all_deleted`
- * (handlers.ts ~2138-2158) and `restore_blocks_by_ids` /
- * `purge_blocks_by_ids` (handlers.ts ~2165-2203) all mutate the shared
- * in-memory `blocks` map, and the TrashView "Restore all" / "Empty trash"
- * header actions actually call `restoreAllDeletedInSpace` /
- * `purgeAllDeletedInSpace` (`src/lib/ipc-helpers.ts`), which drain
- * `listTrash` and hand the ids to `restoreBlocksByIds` / `purgeBlocksByIds`
- * — the SAME space-scoped IPCs the batch-toolbar path uses (NOT the
- * unscoped `restore_all_deleted` / `purge_all_deleted` commands — see the
- * #2544 rationale comment on those functions). So every test below
- * asserts genuine end-state (trash list count, restored/purged blocks
- * reappearing or staying gone on their origin page), not just dialog
- * wiring.
+ * with real state mutation — `restore_blocks_by_ids` /
+ * `purge_blocks_by_ids` mutate the shared in-memory `blocks` map, and the
+ * TrashView "Restore all" / "Empty trash" header actions actually call
+ * `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace`
+ * (`src/lib/ipc-helpers.ts`), which drain `listTrash` and hand the ids to
+ * `restoreBlocksByIds` / `purgeBlocksByIds` — the SAME space-scoped IPCs
+ * the batch-toolbar path uses, per #2544. So every test below asserts
+ * genuine end-state (trash list count, restored/purged blocks reappearing
+ * or staying gone on their origin page), not just dialog wiring.
  */
 
 test.describe('Trash bulk restore/purge', () => {

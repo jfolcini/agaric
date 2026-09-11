@@ -346,7 +346,7 @@ pub async fn reindex_restored_cohort_links(
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for id in cohort.iter().chain(ancestors.iter()) {
         // The seed sits in the descendant cohort AND (for a
-        // `restore_all_deleted` style call) can repeat across groups; the
+        // `restore_all_deleted_inner` style call) can repeat across groups; the
         // reindex is idempotent but not free, so dedupe rather than repeat.
         if !seen.insert(id.as_str()) {
             continue;

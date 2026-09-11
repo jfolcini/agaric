@@ -750,7 +750,7 @@ pub async fn restore_deleted_ancestor_chain(
 /// tombstone sat in the OLD space's trash while its parent had moved to the
 /// new one; and (b) every `page_id` / `space_id` consumer the moment the block
 /// is RESTORED — alive again, naming a page it no longer belongs to.
-/// `restore_all_deleted` carries a hand-rolled whole-table `page_id` backfill
+/// `restore_all_deleted_inner` carries a hand-rolled whole-table `page_id` backfill
 /// whose comment named exactly this bug (see `commands/blocks/crud.rs`). That
 /// backfill is NOT made dead by this change and is deliberately left alone: it
 /// is a fixpoint over the whole table, so it also covers drift this walk

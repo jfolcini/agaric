@@ -261,9 +261,6 @@ macro_rules! agaric_commands {
             $crate::commands::compaction::compact_op_log_cmd,
             // Point-in-time restore (F-26)
             $crate::commands::history::restore_page_to_op,
-            // Bulk trash operations (B-46)
-            $crate::commands::blocks::crud::restore_all_deleted,
-            $crate::commands::blocks::crud::purge_all_deleted,
             // Trash descendant counts
             $crate::commands::blocks::queries::trash_descendant_counts,
             // Trash count badge (ViewDispatcher trash badge) — pushes the count
@@ -282,14 +279,12 @@ macro_rules! agaric_commands {
             $crate::commands::reconciliation::compute_reconciliation_report,
             // MCP — Settings "Agent access" tab
             $crate::commands::mcp::get_mcp_status,
-            $crate::commands::mcp::get_mcp_socket_path,
             $crate::commands::mcp::mcp_set_enabled,
             $crate::commands::mcp::mcp_disconnect_all,
             // MCP activity ring read surface (#695)
             $crate::commands::mcp::get_mcp_recent_activity,
             // MCP RW (slice 2)
             $crate::commands::mcp::get_mcp_rw_status,
-            $crate::commands::mcp::get_mcp_rw_socket_path,
             $crate::commands::mcp::mcp_rw_set_enabled,
             $crate::commands::mcp::mcp_rw_disconnect_all,
             // Spaces (Phase 1 + Phase 2 + Phase 6)

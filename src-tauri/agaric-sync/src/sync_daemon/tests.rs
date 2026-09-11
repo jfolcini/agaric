@@ -286,91 +286,6 @@ fn shutdown_notifies_waiter() {
 }
 
 #[test]
-fn cancel_active_sync_sets_flag_while_session_active() {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let scheduler = Arc::new(SyncScheduler::new());
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: scheduler.clone(),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
-    assert!(
-        !cancel.load(Ordering::Acquire),
-        "cancel flag must start false"
-    );
-    // #2537: the cancel only latches while a session is live.
-    let _activity = scheduler.begin_session_activity();
-    daemon.cancel_active_sync();
-    assert!(
-        cancel.load(Ordering::Acquire),
-        "cancel_active_sync must set the flag while a session is active"
-    );
-}
-
-/// #2537: with NO live session there is nothing to cancel — and nothing
-/// that would ever reset the flag (the only resetters are the per-session
-/// cancel guards). `cancel_active_sync` must therefore be a no-op instead
-/// of latching `true` forever and instantly failing every future inbound
-/// responder session.
-#[test]
-fn cancel_active_sync_is_noop_without_active_session() {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: Arc::new(SyncScheduler::new()),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
-    daemon.cancel_active_sync();
-    assert!(
-        !cancel.load(Ordering::Acquire),
-        "#2537: cancel with no active session must NOT latch the shared flag"
-    );
-}
-
-#[test]
-fn shutdown_and_cancel_are_independent() {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let scheduler = Arc::new(SyncScheduler::new());
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: scheduler.clone(),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
-    daemon.shutdown();
-    assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
-
-    let _activity = scheduler.begin_session_activity();
-    daemon.cancel_active_sync();
-    assert!(cancel.load(Ordering::Acquire), "cancel must now be set");
-}
-
-#[test]
-fn cancel_flag_clear_after_session() {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let scheduler = Arc::new(SyncScheduler::new());
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: scheduler.clone(),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
-    let _activity = scheduler.begin_session_activity();
-    daemon.cancel_active_sync();
-    assert!(cancel.load(Ordering::Acquire), "cancel must be set");
-
-    // Simulate what try_sync_with_peer does after the session ends
-    cancel.store(false, Ordering::Release);
-    assert!(!cancel.load(Ordering::Acquire), "cancel must be cleared");
-}
-
-#[test]
 fn shared_event_sink_concurrent_emission() {
     let inner = Arc::new(RecordingEventSink::new());
     let shared = Arc::new(SharedEventSink(inner.clone()));
@@ -396,27 +311,6 @@ fn shared_event_sink_concurrent_emission() {
         inner.events().len(),
         4,
         "all 4 concurrent events must be captured"
-    );
-}
-
-#[test]
-fn cancel_is_idempotent() {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let scheduler = Arc::new(SyncScheduler::new());
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: scheduler.clone(),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
-    let _activity = scheduler.begin_session_activity();
-    daemon.cancel_active_sync();
-    daemon.cancel_active_sync();
-    daemon.cancel_active_sync();
-    assert!(
-        cancel.load(Ordering::Acquire),
-        "flag must remain set after multiple calls"
     );
 }
 
@@ -2858,149 +2752,6 @@ fn resolve_peer_address_prefers_discovered_over_fallback() {
 }
 
 // ======================================================================
-// T-16e — format_peer_address tests
-// ======================================================================
-
-#[test]
-fn format_peer_address_formats_single_ipv4() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.10".parse().unwrap()],
-        port: 9443,
-    };
-    let result = format_peer_address(&peer);
-    assert_eq!(
-        result,
-        Some("192.168.1.10:9443".to_string()),
-        "must format as ip:port"
-    );
-}
-
-#[test]
-fn format_peer_address_returns_none_for_empty_addresses() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec![],
-        port: 9443,
-    };
-    let result = format_peer_address(&peer);
-    assert!(result.is_none(), "must return None for empty addresses");
-}
-
-#[test]
-fn format_peer_address_uses_first_address_when_multiple() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.10".parse().unwrap(), "10.0.0.1".parse().unwrap()],
-        port: 8080,
-    };
-    let result = format_peer_address(&peer);
-    assert_eq!(
-        result,
-        Some("192.168.1.10:8080".to_string()),
-        "must use the first address when multiple are available"
-    );
-}
-
-// ======================================================================
-// Format_peer_addresses (multi-address try-all)
-// ======================================================================
-
-/// Empty address list ⇒ empty `Vec` (callers can `.is_empty()`).
-#[test]
-fn format_peer_addresses_returns_empty_when_no_addresses() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec![],
-        port: 9443,
-    };
-    assert!(
-        format_peer_addresses(&peer).is_empty(),
-        "empty address list must return empty Vec"
-    );
-}
-
-/// When mDNS announces IPv6 link-local before IPv4, the formatter
-/// reorders so IPv4 is tried first — that is the whole point of the
-/// Fix.
-#[test]
-fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec![
-            // IPv6 link-local listed first in the mDNS announcement.
-            "fe80::1".parse().unwrap(),
-            "192.168.1.10".parse().unwrap(),
-        ],
-        port: 8080,
-    };
-    let result = format_peer_addresses(&peer);
-    assert_eq!(
-        result,
-        vec![
-            "192.168.1.10:8080".to_string(),
-            "[fe80::1]:8080".to_string()
-        ],
-        "IPv4 must be tried before IPv6 link-local"
-    );
-}
-
-/// IPv6 unicast non-link-local sits between IPv4 and link-local.
-#[test]
-fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec![
-            "fe80::1".parse().unwrap(),
-            "2001:db8::1".parse().unwrap(),
-            "10.0.0.5".parse().unwrap(),
-        ],
-        port: 9443,
-    };
-    let result = format_peer_addresses(&peer);
-    assert_eq!(
-        result,
-        vec![
-            "10.0.0.5:9443".to_string(),
-            "[2001:db8::1]:9443".to_string(),
-            "[fe80::1]:9443".to_string(),
-        ],
-        "priority order is IPv4 → IPv6 unicast → IPv6 link-local"
-    );
-}
-
-/// Within a single tier, the original mDNS order must be preserved
-/// — important so a deterministic announcement produces a deterministic
-/// connection sequence.
-#[test]
-fn format_peer_addresses_preserves_within_tier_order() {
-    let peer = mdns::DiscoveredPeer {
-        device_id: "DEV".into(),
-        endpoint_id: None,
-        addresses: vec![
-            "192.168.1.20".parse().unwrap(),
-            "192.168.1.10".parse().unwrap(),
-        ],
-        port: 8080,
-    };
-    let result = format_peer_addresses(&peer);
-    assert_eq!(
-        result,
-        vec![
-            "192.168.1.20:8080".to_string(),
-            "192.168.1.10:8080".to_string()
-        ],
-        "announcement order preserved within each priority tier"
-    );
-}
-
-// ======================================================================
 // Expiry eviction
 // ======================================================================
 
@@ -3095,65 +2846,6 @@ async fn daemon_start_and_shutdown() {
         },
         std::time::Duration::from_millis(800),
         "daemon_start_and_shutdown: handle.is_finished()",
-    )
-    .await;
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn daemon_cancel_does_not_trigger_shutdown() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let cancel = Arc::new(AtomicBool::new(false));
-
-    let endpoint_secret = SecretKey::generate();
-
-    let daemon = SyncDaemon::start(
-        pool.clone(),
-        "TEST_DEV2".to_string(),
-        std::sync::Arc::new(mat.clone()),
-        scheduler,
-        endpoint_secret,
-        sink,
-        cancel,
-    )
-    .await
-    .expect("daemon should start");
-
-    // Cancel active sync (should not affect daemon lifecycle)
-    daemon.cancel_active_sync();
-
-    // No observable predicate available — sleep retained.
-    // cancel_active_sync() is a fire-and-forget atomic store; the
-    // observable "daemon noticed and is still alive" requires a tick
-    // through the select! loop with no production-side signal.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // Assert the daemon loop is still alive before shutdown — otherwise
-    // this test cannot distinguish "cancel left the daemon running" from
-    // "cancel wrongly killed the daemon loop", since shutdown() + the
-    // closing wait_for() below would pass identically either way.
-    assert!(
-        daemon.handle.as_ref().is_some_and(|h| !h.is_finished()),
-        "cancel_active_sync must not terminate the daemon loop"
-    );
-
-    // Daemon should still be running — shutdown it cleanly
-    daemon.shutdown();
-    // Poll until the spawned task finishes; 4× cap on the
-    // original 200 ms guess.
-    wait_for(
-        || {
-            daemon
-                .handle
-                .as_ref()
-                .is_none_or(tokio::task::JoinHandle::is_finished)
-        },
-        std::time::Duration::from_millis(800),
-        "daemon_cancel_does_not_trigger_shutdown: handle.is_finished()",
     )
     .await;
 
@@ -9737,7 +9429,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
 /// must be a no-op — and a subsequent inbound responder session must
 /// SUCCEED, not instantly fail with "sync cancelled".
 ///
-/// Before the fix, `cancel_active_sync` latched the daemon-wide
+/// Before the fix, the user cancel latched the daemon-wide
 /// `AtomicBool` unconditionally and the ONLY resetter was the
 /// initiator-side `CancelGuard` (armed only after an outbound connection
 /// established), so a cancel with no active initiator session poisoned
@@ -9759,19 +9451,13 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
     let space = agaric_store::space::SpaceId::from_trusted("01HZ2537SPACEXXXXXXXXXXXXX");
 
     // Shared daemon-wide state: ONE cancel flag + ONE scheduler, exactly as
-    // production wires them into both the daemon handle and the responder.
+    // production wires them into both `cancel_sync_inner` and the responder.
     let cancel = Arc::new(AtomicBool::new(false));
     let scheduler = Arc::new(SyncScheduler::new());
-    let daemon = SyncDaemon {
-        shutdown_notify: Arc::new(Notify::new()),
-        cancel: cancel.clone(),
-        scheduler: scheduler.clone(),
-        handle: None,
-        activation: DaemonActivation::default(),
-    };
 
     // ── (a) cancel with NO active session ────────────────────────────
-    daemon.cancel_active_sync();
+    // What `commands::sync_cmds::cancel_sync_inner` does.
+    scheduler.request_cancel(&cancel);
     assert!(
         !cancel.load(Ordering::Acquire),
         "#2537: cancel with no active session must NOT latch the shared flag"

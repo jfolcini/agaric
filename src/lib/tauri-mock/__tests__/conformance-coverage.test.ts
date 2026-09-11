@@ -236,8 +236,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   restore_blocks_by_ids: 'batch of restore_block (restore_block.json)',
   set_property_batch: 'batch of set_property; covered by set-property-batch.test.ts',
   set_todo_state_batch: 'batch of set_todo_state (agenda_basic.json)',
-  purge_all_deleted: 'iterates purge_block over all tombstones (purge_block.json)',
-  restore_all_deleted: 'iterates restore_block over all tombstones (restore_block.json)',
 
   // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
   // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
@@ -529,8 +527,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   is_flatpak: 'no domain state — packaging/environment probe',
   get_mcp_status: 'no domain state — MCP server runtime status',
   get_mcp_rw_status: 'no domain state — MCP server runtime status',
-  get_mcp_socket_path: 'no domain state — MCP transport path',
-  get_mcp_rw_socket_path: 'no domain state — MCP transport path',
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
 }
 
@@ -655,8 +651,6 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
   'is_flatpak',
   'get_mcp_status',
   'get_mcp_rw_status',
-  'get_mcp_socket_path',
-  'get_mcp_rw_socket_path',
   'get_mcp_recent_activity',
 ])
 
@@ -693,12 +687,10 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'import_markdown',
   'move_blocks_batch',
   'move_blocks_to_space',
-  'purge_all_deleted',
   'purge_blocks_by_ids',
   'quick_capture_block',
   'redo_page_op',
   'rename_attachment',
-  'restore_all_deleted',
   'restore_blocks_by_ids',
   'restore_page_to_op',
   'revert_ops',

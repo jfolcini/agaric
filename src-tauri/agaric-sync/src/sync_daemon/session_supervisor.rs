@@ -151,7 +151,8 @@ pub struct SyncDaemonContext {
 ///
 /// Uses `tokio::select!` to react to mDNS peer-discovery events,
 /// debounced local-change notifications, periodic resync checks, and
-/// shutdown signals — without polling.
+/// shutdown signals — without polling. The shutdown branch is reached
+/// only by tests today: production never calls `SyncDaemon::shutdown`.
 ///
 /// The `lifecycle` hooks gate the periodic 30 s resync tick body on the
 /// foreground flag, and the `wake` notify lets foreground transitions
@@ -942,12 +943,12 @@ pub struct SyncSessionContext<'a> {
 /// #637: the cancel flag is a single `&AtomicBool` SHARED by every per-peer
 /// task in a round (Branch B of `daemon_loop` spawns one task per peer
 /// against the same flag) and, since #1605/#2537, by responder sessions too.
-/// It is set `true` only by the user via `cancel_active_sync()` /
-/// `cancel_sync`. An early guard design cleared it unconditionally on every
-/// exit path; an early-exiting task (backoff gate, lock contention, no
-/// resolved addresses, all-addresses-failed connect, responder identity
-/// rejection) would then store `false` and *swallow* a user cancel aimed at
-/// a still-running sibling before that sibling ever observed it.
+/// It is set `true` only by the user via `cancel_sync`. An early guard
+/// design cleared it unconditionally on every exit path; an early-exiting
+/// task (backoff gate, lock contention, no resolved addresses,
+/// all-addresses-failed connect, responder identity rejection) would then
+/// store `false` and *swallow* a user cancel aimed at a still-running
+/// sibling before that sibling ever observed it.
 ///
 /// Invariant: a user cancel targeting a still-running sibling MUST survive
 /// an early-exiting peer's teardown, while the legitimate post-run reset
@@ -1683,8 +1684,8 @@ fn peer_pulled_from_us_recently(
 /// # Return value
 ///
 /// Returns `true` iff the cancel flag was observed set when the sync
-/// session ended — i.e., the user invoked `cancel_active_sync()` while
-/// this peer's session was running. The caller (the daemon-loop branches
+/// session ended — i.e., the user invoked `cancel_sync` while this peer's
+/// session was running. The caller (the daemon-loop branches
 /// that iterate over multiple peers) uses this to **break out of the
 /// round** so a "stop this round" cancel is honoured for every peer in
 /// the iteration, not just the one that happened to be syncing when the
@@ -1977,9 +1978,9 @@ pub async fn try_sync_with_peer(
     // when the session ends (whether it completed normally or was cancelled).
     _cancel_guard.owns = true;
 
-    // #2537: register this session as live so `cancel_active_sync` /
-    // `cancel_sync` actually latch the shared flag (they are no-ops with no
-    // live session — see `SyncScheduler::request_cancel`). Declared AFTER
+    // #2537: register this session as live so `cancel_sync` actually latches
+    // the shared flag (it is a no-op with no live session — see
+    // `SyncScheduler::request_cancel`). Declared AFTER
     // `_cancel_guard`, so on exit the activity count drops to zero before
     // the guard clears the flag — `request_cancel`'s post-store re-check
     // then guarantees a racing cancel can never latch an ownerless flag.

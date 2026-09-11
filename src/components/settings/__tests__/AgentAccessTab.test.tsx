@@ -168,11 +168,9 @@ function setupInvoke(status: McpStatus = makeStatus(), rwStatus: McpRwStatus = m
     if (cmd === 'get_mcp_status') return status
     if (cmd === 'mcp_set_enabled') return true
     if (cmd === 'mcp_disconnect_all') return null
-    if (cmd === 'get_mcp_socket_path') return status.socket_path
     if (cmd === 'get_mcp_rw_status') return rwStatus
     if (cmd === 'mcp_rw_set_enabled') return true
     if (cmd === 'mcp_rw_disconnect_all') return null
-    if (cmd === 'get_mcp_rw_socket_path') return rwStatus.socket_path
     return undefined
   })
 }

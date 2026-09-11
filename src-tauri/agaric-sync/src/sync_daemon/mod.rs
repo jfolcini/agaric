@@ -55,13 +55,9 @@ use iroh::SecretKey;
 
 // Re-export submodule items
 pub use discovery::{
-    DiscoveredPeers, build_fallback_peer, format_peer_addresses, peers_for_change_round,
-    process_discovery_event, resolve_peer_address, should_attempt_sync_with_discovered_peer,
+    DiscoveredPeers, build_fallback_peer, peers_for_change_round, process_discovery_event,
+    resolve_peer_address, should_attempt_sync_with_discovered_peer,
 };
-// These helpers are only called from test siblings — guard against unused_imports
-// on non-test builds (same rationale as the orchestrator/server re-exports below).
-#[allow(unused_imports)]
-pub use discovery::format_peer_address;
 // `pub(crate) use` re-exports consumed only by the `#[cfg(test)]` sibling
 // `sync_daemon/tests.rs` (the crate-level `sync_integration_tests.rs` that
 // once also consumed these was deleted with the diffy sync layer). Without
@@ -333,9 +329,8 @@ pub struct SyncDaemon {
     // `SyncDaemon { … }` directly across the crate boundary.
     pub shutdown_notify: Arc<Notify>,
     pub cancel: Arc<AtomicBool>,
-    /// #2537: shared scheduler handle, used by [`Self::cancel_active_sync`]
-    /// to gate the cancel flag on live-session activity so a cancel with
-    /// no running session can never latch the flag.
+    /// Shared scheduler handle; the cancel flag is gated on its
+    /// live-session activity (`commands::sync_cmds::cancel_sync_inner`).
     pub scheduler: Arc<SyncScheduler>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
@@ -683,25 +678,6 @@ impl SyncDaemon {
     /// Signal the daemon to shut down gracefully.
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_one();
-    }
-
-    /// Signal the active sync session(s) to cancel.
-    ///
-    /// The cancellation flag is checked each iteration of the message
-    /// exchange loops in `run_sync_session` (initiator) and
-    /// `handle_incoming_sync` (responder).
-    ///
-    /// #2537: the flag is only latched while a session is actually live
-    /// ([`SyncScheduler::request_cancel`]); with nothing running the call
-    /// is a no-op. Previously the flag was stored unconditionally and the
-    /// only resetter was the initiator-side session guard — a cancel with
-    /// no active session latched `true` forever, instantly failing every
-    /// inbound session and burning (plus back-off-penalising) the next
-    /// outbound one just to clear it.
-    pub fn cancel_active_sync(&self) {
-        if !self.scheduler.request_cancel(&self.cancel) {
-            tracing::debug!("cancel_active_sync ignored: no sync session is active");
-        }
     }
 }
 

@@ -994,30 +994,6 @@ export const blocksHandlers = {
     return { block_id: rootId, purged_count: cohort.length }
   },
 
-  restore_all_deleted: () => {
-    let count = 0
-    for (const b of blocks.values()) {
-      if (b['deleted_at']) {
-        b['deleted_at'] = null
-        count++
-      }
-    }
-    return { affected_count: count }
-  },
-
-  purge_all_deleted: () => {
-    // #3091 — empty-trash path: collect every tombstoned block, then run the
-    // SAME satellite cleanup as `purge_block` (previously this only removed the
-    // `blocks` rows and leaked every satellite — block_tags/block_tag_refs
-    // where the purged id was used as a tag, attachments, page_aliases, …).
-    const cohort: string[] = []
-    for (const [id, b] of blocks.entries()) {
-      if (b['deleted_at']) cohort.push(id)
-    }
-    purgeCohortAndSatellites(cohort)
-    return { affected_count: cohort.length }
-  },
-
   // Single-IPC batch restore. Iterates the input ids,
   // clears `deleted_at` on each (matches existing `restore_block` mock's
   // per-row logic), pushes one `restore_block` op per actually-restored
@@ -1520,8 +1496,6 @@ export const blocksHandlers = {
   | 'delete_blocks_by_ids'
   | 'restore_block'
   | 'purge_block'
-  | 'restore_all_deleted'
-  | 'purge_all_deleted'
   | 'restore_blocks_by_ids'
   | 'purge_blocks_by_ids'
   | 'get_block'

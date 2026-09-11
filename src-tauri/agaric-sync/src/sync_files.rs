@@ -1328,7 +1328,7 @@ pub async fn write_attachment_streaming(
 /// 3. Send `FileTransferComplete`.
 ///
 /// At the start of every per-file iteration, the cancel flag is
-/// checked. If the user invoked `cancel_active_sync()` during the
+/// checked. If the user invoked `cancel_sync` during the
 /// transfer, we break out of the per-file loop and fall through to the
 /// existing `FileTransferComplete` send — the receiver sees a clean
 /// "no more files" signal and exits its own loop without protocol error

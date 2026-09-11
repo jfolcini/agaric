@@ -320,7 +320,6 @@ describe('restoreAllDeletedInSpace', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
       blockIds: ['A1', 'A2'],
     })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('restore_all_deleted')
     expect(result).toEqual({ affected_count: 2 })
   })
 
@@ -405,7 +404,6 @@ describe('purgeAllDeletedInSpace', () => {
     const result = await purgeAllDeletedInSpace('SPACE_B')
 
     expect(mockedInvoke).toHaveBeenCalledWith('purge_blocks_by_ids', { blockIds: ['B1'] })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('purge_all_deleted')
     expect(result).toEqual({ affected_count: 1 })
   })
 

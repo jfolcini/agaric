@@ -4,7 +4,7 @@ use agaric_lib::soft_delete;
 use agaric_store::op_log;
 
 // ======================================================================
-// restore_all_deleted — happy paths (B-46)
+// restore_all_deleted_inner — happy paths (B-46)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -238,7 +238,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
 }
 
 // ======================================================================
-// purge_all_deleted — happy paths (B-46)
+// purge_all_deleted_inner — happy paths (B-46)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -971,7 +971,7 @@ async fn restore_child_under_deleted_parent_restores_parent_chain() {
 /// test constructs the collision deterministically: a child (root) and its
 /// parent both deleted at the SAME timestamp `T`, each with its own
 /// `delete_block` op. Both must be recognised as independent roots →
-/// `restore_all_deleted` emits TWO restore ops (and likewise purge).
+/// `restore_all_deleted_inner` emits TWO restore ops (and likewise purge).
 ///
 /// Op-log rows are inserted directly (the production `now_ms()` is not
 /// controllable in-test and is non-monotonic, which is exactly why the bug

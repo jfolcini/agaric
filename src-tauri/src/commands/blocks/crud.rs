@@ -2037,7 +2037,7 @@ pub async fn restore_all_deleted_inner(
     //
     // P7: the prior implementation looped ~4 single-row queries per root
     // (SELECT parent_id, SELECT parent page_id, SELECT block_type, UPDATE
-    // self, then a per-root recursive UPDATE). Because `restore_all_deleted`
+    // self, then a per-root recursive UPDATE). Because `restore_all_deleted_inner`
     // clears `deleted_at` on the ENTIRE table above, every block is now
     // alive, so `page_id` can be recomputed for the whole tree set-based in
     // two statements regardless of root count:
@@ -3024,24 +3024,6 @@ pub async fn purge_block(
     block_id: BlockId,
 ) -> Result<PurgeResponse, AppError> {
     purge_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
-#[tauri::command]
-#[specta::specta]
-pub async fn restore_all_deleted(ctx: State<'_, WriteCtx>) -> Result<BulkTrashResponse, AppError> {
-    restore_all_deleted_inner(ctx.pool(), ctx.device_id(), ctx.materializer())
-        .await
-        .map_err(sanitize_internal_error)
-}
-
-/// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
-#[tauri::command]
-#[specta::specta]
-pub async fn purge_all_deleted(ctx: State<'_, WriteCtx>) -> Result<BulkTrashResponse, AppError> {
-    purge_all_deleted_inner(ctx.pool(), ctx.device_id(), ctx.materializer())
         .await
         .map_err(sanitize_internal_error)
 }

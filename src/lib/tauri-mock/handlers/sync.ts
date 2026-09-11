@@ -212,8 +212,6 @@ export const syncHandlers = {
     active_connections: 0,
   }),
 
-  get_mcp_socket_path: () => '/mock/agaric-mcp-ro.sock',
-
   mcp_set_enabled: (args) => {
     const a = args as Record<string, unknown>
     return (a['enabled'] as boolean) ?? false
@@ -230,8 +228,6 @@ export const syncHandlers = {
     socket_path: '/mock/agaric-mcp-rw.sock',
     active_connections: 0,
   }),
-
-  get_mcp_rw_socket_path: () => '/mock/agaric-mcp-rw.sock',
 
   mcp_rw_set_enabled: (args) => {
     const a = args as Record<string, unknown>
@@ -276,12 +272,10 @@ export const syncHandlers = {
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'
-  | 'get_mcp_socket_path'
   | 'mcp_set_enabled'
   | 'mcp_disconnect_all'
   | 'get_mcp_recent_activity'
   | 'get_mcp_rw_status'
-  | 'get_mcp_rw_socket_path'
   | 'mcp_rw_set_enabled'
   | 'mcp_rw_disconnect_all'
 >

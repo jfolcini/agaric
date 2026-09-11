@@ -721,8 +721,8 @@ async fn handle_incoming_sync_inner(
 
     // #2537: identity checks passed and the per-peer lock is held — this session is now
     // committed. Take cancel ownership (the guard's Drop becomes the legitimate
-    // post-run reset) and register live-session activity so `cancel_active_sync` /
-    // `cancel_sync` latch the flag.
+    // post-run reset) and register live-session activity so `cancel_sync`
+    // latches the flag.
     cancel_guard.owns = true;
     _session_activity = Some(scheduler.begin_session_activity());
 
