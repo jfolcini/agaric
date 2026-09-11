@@ -287,9 +287,23 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
 
       await expand(user)
 
-      const error = await screen.findByTestId('unlinked-references-error')
-      expect(error).toHaveTextContent(t('unlinkedRefs.loadFailed'))
-      expect(error).toHaveAttribute('role', 'alert')
+      // The error card and the loading placeholder are the SAME DOM node:
+      // `ListViewState` returns a bare <div> in one slot for both the skeleton
+      // and `empty`, so React patches that element in place instead of swapping
+      // it. A handle captured the moment `data-testid` appears therefore reads
+      // back as "Loading…" (testid gone) if the panel re-enters loading before
+      // the assertion runs — which is how this reddened on CI. Wait for the
+      // settled TEXT, re-querying each time, and never hold the node across an
+      // await. The budget is above RTL's 1 s default because this file runs
+      // close to a minute under a loaded box, and the CI red was exactly that.
+      await waitFor(
+        () =>
+          expect(screen.getByTestId('unlinked-references-error')).toHaveTextContent(
+            t('unlinkedRefs.loadFailed'),
+          ),
+        { timeout: 5000 },
+      )
+      expect(screen.getByTestId('unlinked-references-error')).toHaveAttribute('role', 'alert')
       expect(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') })).toBeInTheDocument()
       // THE property: the panel never asserts an emptiness nobody measured.
       expect(screen.queryByText(t('unlinkedRefs.noResults'))).not.toBeInTheDocument()
@@ -334,11 +348,9 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
       if (Number(limit) === 1) {
         collapsedFetches += 1
         if (collapsedFetches === 1) return makeResponse({ ids: ['B1'], total: 40, filtered: 40 })
-        // Belt and braces: if collapsing ever DID refetch, this never settles,
-        // so the header still renders the cached entry — the frame the user
-        // sees. In practice it does not: `staleTime: Infinity` plus an observer
-        // that changes key rather than mounting means nothing re-fetches, so a
-        // stale count here does not heal on its own at all.
+        // The refetch the #4967 invalidation triggers (see below) never
+        // settles, so the header keeps rendering the cached entry — the frame
+        // the user sees, and the one a stale count would corrupt.
         return new Promise<GroupedBacklinkResponse>(() => {})
       }
       return makeResponse({ ids: ['B1', 'B2'], total: 40, filtered: 40 })
@@ -363,7 +375,16 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     await waitFor(() => {
       expect(rowCount(container)).toBe(0)
     })
-    expect(collapsedFetches).toBe(1)
+    // Since #4967 "Link it" also bumps the graph-structure counter, and that
+    // invalidates this panel's whole key PREFIX — the collapsed entry included —
+    // once the 150 ms debounce settles. So the collapsed entry IS refetched
+    // here, and asserting it was fetched exactly once raced the debounce
+    // (reddened on a slow run). Wait for that second fetch instead of racing
+    // it: it is the one the mock above never settles, so what the header
+    // renders below is the cached entry either way.
+    await waitFor(() => {
+      expect(collapsedFetches).toBe(2)
+    })
 
     expect(screen.getByRole('button', { name: new RegExp(thirtyNine, 'i') })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: new RegExp(forty, 'i') })).not.toBeInTheDocument()

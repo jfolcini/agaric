@@ -469,6 +469,13 @@ export function TrashView(): React.ReactElement {
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
+      // Each chunk commits on its own, so a rejection can still have put rows
+      // back; the pickers and the graph must hear about those even on failure.
+      if (err instanceof PartialPurgeError && err.affectedCount > 0) {
+        invalidateNameCaches()
+        recordGraphStructureChange()
+        reload()
+      }
       notify.error(t('trash.restoreAllFailed'))
       announce(t('announce.restoreAllFailed'))
     }

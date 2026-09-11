@@ -1630,6 +1630,16 @@ describe('LinkedReferences', () => {
     expect(container.querySelector('.linked-references')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
     expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
+    // The header must not make the claim either: a failed read leaves
+    // `totalCount` at 0, and "0 References" sitting directly above the retry
+    // card says exactly what the card is there to deny. It reads as the bare
+    // panel name until a read succeeds.
+    expect(screen.queryByText(/0 References/)).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: t('common.collapse', { section: t('references.panelLabel') }),
+      }),
+    ).toBeInTheDocument()
 
     expect(await axe(container)).toHaveNoViolations()
   })

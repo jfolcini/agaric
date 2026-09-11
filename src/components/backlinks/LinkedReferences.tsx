@@ -300,8 +300,14 @@ export function LinkedReferences({
     [groups],
   )
 
+  // #4968 — on a failed initial read `totalCount` is 0, and "0 References" over
+  // the retry card is the "nothing links here" claim the card exists to stop.
   const headerLabel =
-    totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
+    isError && groups.length === 0
+      ? t('references.panelLabel')
+      : totalCount === 1
+        ? t('references.headerOne')
+        : t('references.header', { count: totalCount })
 
   // Render nothing when there are no backlinks (and not loading): an empty
   // "no backlinks yet" panel is clutter at the bottom of every page. This

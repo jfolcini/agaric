@@ -154,6 +154,11 @@ async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
  * and hands the resulting root ids to `restore_blocks_by_ids` — the same
  * space-safe path the per-row and multi-select restore actions already
  * use — chunked to the backend's batch-size cap.
+ *
+ * A chunk failing part-way through throws {@link PartialPurgeError} carrying
+ * what the earlier chunks restored, for the same reason the purge drain does:
+ * the caller has to invalidate its caches for rows that ARE back before it
+ * shows the failure.
  */
 export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
   const ids = await collectAllTrashRootIds(spaceId)
@@ -172,15 +177,23 @@ export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTra
   // If that ordering ever changes, this loop breaks silently — nothing here
   // would notice.
   for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
-    const resp = unwrap(await commands.restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS)))
-    affectedCount += resp.affected_count
+    try {
+      const resp = unwrap(await commands.restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS)))
+      affectedCount += resp.affected_count
+    } catch (err) {
+      throw new PartialPurgeError(affectedCount, err)
+    }
   }
   return { affected_count: affectedCount }
 }
 
 /**
- * Thrown by {@link purgeAllDeletedInSpace} when a chunk fails part-way
- * through the drain. #3835 — each chunk is its own backend IMMEDIATE
+ * Thrown by {@link purgeAllDeletedInSpace} and {@link restoreAllDeletedInSpace}
+ * when a chunk fails part-way through the drain — one class for both, because
+ * the partial-commit shape and the count a caller needs are identical (the name
+ * predates the restore drain adopting it).
+ *
+ * #3835 — each chunk is its own backend IMMEDIATE
  * transaction, so any chunk before the failing one has ALREADY committed:
  * a plain rethrow of the chunk's error discarded that count, so a
  * partially-completed "empty trash" surfaced to the caller as a pure

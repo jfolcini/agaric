@@ -21,7 +21,6 @@
     "format:toml": "taplo fmt",
     "format:toml:check": "taplo fmt --check",
     "test": "vitest run",
-    "backend-test": "cd src-tauri && cargo nextest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
