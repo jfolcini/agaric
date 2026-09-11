@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -16,6 +16,10 @@ import {
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -890,6 +894,26 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
     } finally {
       unsubscribe()
     }
+  })
+
+  // #4963 — the counterpart of the test above, and the reason the bump does
+  // NOT ride on the `notifyPagesRemoved` fan-out: nothing goes out on the name
+  // bus for a page-less selection, but those rows still left the graph and the
+  // `[[links]]` they carried were edges.
+  it('bumps the graph-structure counter even when no page was removed', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })],
+    })
+    replyWithCohort([])
+    const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1', 'BLOCK_2'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    _resetGraphStructureEventsForTest()
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })
 
   // Same shape as the toolbar's union test. An id the backend SKIPPED

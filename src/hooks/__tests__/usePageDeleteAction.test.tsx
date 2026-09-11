@@ -10,6 +10,10 @@ import { withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -293,6 +297,37 @@ describe('usePageDeleteAction', () => {
     } finally {
       unsubscribe()
     }
+  })
+
+  // #4963 — the delete half bumps the graph-structure counter inside
+  // `notifyPagesRemoved`, so only the Undo needs its own publisher. Without
+  // it the graph and the reference panels go on hiding the page the user
+  // just brought back, until their 5-minute TTL.
+  it('bumps the graph-structure counter when Undo restores the page', async () => {
+    stubInvoke({
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: [],
+        }),
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+    })
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Doomed')
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    // Reset AFTER the delete: it drops the delete's own bump and its pending
+    // debounce, so the count below can only have come from the restore.
+    _resetGraphStructureEventsForTest()
+    act(() => {
+      lastUndoAction()()
+    })
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })
 })
 

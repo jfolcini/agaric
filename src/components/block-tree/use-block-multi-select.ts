@@ -4,6 +4,7 @@ import type { StoreApi } from 'zustand'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
@@ -191,6 +192,9 @@ export function useBlockMultiSelect({
         const { deleted_count: affected, affected_page_ids: cascadedPageIds } = unwrap(
           await commands.deleteBlocksByIds(ids),
         )
+        // #4963 — bypasses the store reducers that bump the counter, and
+        // `notifyPagesRemoved` below only fires when pages were among the rows.
+        recordGraphStructureChange()
         // The selection itself was processed atomically. Count
         // successful "selected rows that are now deleted" by
         // re-reading the in-memory state shape: since the call

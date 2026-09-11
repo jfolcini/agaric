@@ -30,6 +30,10 @@ import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helper
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
 import type { AppError } from '@/lib/app-error'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { MAX_TRASH_BATCH_IDS } from '@/lib/ipc-helpers'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -467,6 +471,33 @@ describe('TrashView', () => {
     }
   })
 
+  // #4963 — a restore puts a node and its `[[links]]` back in the graph, so
+  // the graph view, the reference panels and the journal badge counts have to
+  // refetch. Asserted on a CONTENT block deliberately: links live on ordinary
+  // rows, so a bump nested in the page/tag branch above would miss the common
+  // case while still passing a page-shaped test.
+  it('bumps the graph-structure counter on a restore, content blocks included', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock({
+      id: 'B1',
+      content: 'a plain block with a [[Link]]',
+      block_type: 'content',
+      deleted_at: 1736899200000,
+    })
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      trash_descendant_counts: () => ({}),
+    })
+
+    _resetGraphStructureEventsForTest()
+    render(<TrashView />)
+    await user.click(await screen.findByTestId('trash-restore-btn'))
+
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+  })
+
   // ── Error handling ──────────────────────────────────────────────────
 
   // #3306 — this test used to assert the DEFECT: a failed `list_trash` ended
@@ -805,6 +836,9 @@ describe('TrashView', () => {
   // collapsed into a single `restore_blocks_by_ids` call.
   it('batch restore fires ONE restore_blocks_by_ids IPC for all selected', async () => {
     const user = userEvent.setup()
+    // #4963 — nothing else in this view bumps the counter, so a reset here
+    // makes the assertion at the end of this test the batch restore's alone.
+    _resetGraphStructureEventsForTest()
     const blocks = [
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
       makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
@@ -842,6 +876,9 @@ describe('TrashView', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('2 blocks restored')
     })
+
+    // #4963 — the restored blocks are graph nodes/edges again.
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })
 
   // #3860 — `trash.batchRestored` had the same missing-plural defect; pins
@@ -1873,6 +1910,9 @@ describe('TrashView', () => {
   // exactly the ids the space-scoped `list_trash` reported.
   it('calls restore_blocks_by_ids (never restore_all_deleted) with the space-scoped ids on Restore All confirmation', async () => {
     const user = userEvent.setup()
+    // #4963 — see the batch-restore test: the reset makes the counter
+    // assertion at the end this restore's alone.
+    _resetGraphStructureEventsForTest()
     stubInvoke({
       list_trash: () => ({
         items: [
@@ -1905,6 +1945,8 @@ describe('TrashView', () => {
       })
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('restore_all_deleted')
+    // #4963 — everything it brought back is in the graph again.
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
   })
 
   // #2544 (core regression) — mirrors the Empty Trash cross-space test:

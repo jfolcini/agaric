@@ -43,6 +43,7 @@ import type { BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import {
   PartialPurgeError,
   purgeAllDeletedInSpace,
@@ -230,6 +231,10 @@ export function TrashView(): React.ReactElement {
       if (!block.deleted_at) return
       try {
         unwrap(await commands.restoreBlock(block.id, block.deleted_at))
+        // #4963 — restored rows re-enter the page-link graph, content blocks
+        // included (their `[[links]]` are edges). A purge needs no bump: every
+        // consumer already filters `deleted_at IS NULL`.
+        recordGraphStructureChange()
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
           // #4239 — the shared gate rather than a local `?? t('common.untitled')`.
@@ -295,6 +300,7 @@ export function TrashView(): React.ReactElement {
       restored = unwrap(
         await commands.restoreBlocksByIds(selectedBlocks.map((b) => b.id)),
       ).affected_count
+      recordGraphStructureChange() // #4963
       let restoredNamedEntity = false
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
@@ -457,6 +463,7 @@ export function TrashView(): React.ReactElement {
         // reports only a count, so the picker caches cannot be patched; drop
         // them and let the next picker read re-fetch.
         invalidateNameCaches()
+        recordGraphStructureChange() // #4963
         notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       }

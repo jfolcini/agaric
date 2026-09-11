@@ -39,6 +39,10 @@ import {
   _resetAttachmentInvalidationForTest,
   getAttachmentInvalidationKey,
 } from '@/lib/attachment-invalidation'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
@@ -888,6 +892,35 @@ describe('HistoryView', () => {
 
     await waitFor(() => {
       expect(getAttachmentInvalidationKey()).toBe(keyBefore + 1)
+    })
+  })
+
+  // #4963 — same story one counter over: a revert rewrites block content,
+  // `[[links]]` and whole pages behind the page-block store's back, so the
+  // graph view and the reference panels have no other signal that the
+  // topology moved.
+  it('bumps the graph-structure counter after a successful revert', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'a [[Link]]' }, 1736942400000)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    stubRevertRun(page1, () => [])
+
+    render(<HistoryView />)
+    await screen.findByText('a [[Link]]')
+
+    _resetGraphStructureEventsForTest()
+
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(1)
     })
   })
 

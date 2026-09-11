@@ -37,6 +37,7 @@ import type { HistoryEntry, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
@@ -278,6 +279,9 @@ export function HistoryView(): React.ReactElement {
     // mounted instance needs this separate signal or it keeps showing
     // pre-mutation filenames. See `@/lib/attachment-invalidation`.
     recordAttachmentInvalidation()
+    // #4963 — revert and restore-to-here rewrite links and pages behind the
+    // page-block store's back.
+    recordGraphStructureChange()
   }, [clearSelection, queryKey])
 
   // ── Render ───────────────────────────────────────────────────────
