@@ -399,9 +399,10 @@ pub async fn create_block_in_tx(
     let block_id = resolve_block_id_in_tx(tx, client_id).await?;
 
     // F01 + 2b. Parent existence / depth checks and the cross-space content
-    // scan, all BEFORE the engine apply below (a parentless create has no
-    // resolvable space yet and skips the scan; orphans are tolerated by the
-    // validator's contract).
+    // scan, all BEFORE the engine apply below, so a rejected create leaves no
+    // phantom node in the LoroDoc (a parentless create has no resolvable space
+    // yet and skips the scan; orphans are tolerated by the validator's
+    // contract).
     if let Some(ref pid) = parent_id {
         validate_parent_in_tx(tx, pid, &block_type, &block_id, &content).await?;
     }
@@ -452,8 +453,9 @@ pub async fn create_block_in_tx(
     // can't be resolved (#2250: `SpaceUnresolved` — e.g. a brand-new top-level
     // page before its `SetProperty(space)`), the helper internally FALLS BACK
     // to the SQL-only projection, so the row is never skipped and we never
-    // crash. `apply_op_tx` does NOT run the LOCAL-only bare-append sentinel
-    // fixup or the cross-space ref validation, so both stay below.
+    // crash. `apply_op_tx` runs neither LOCAL-only step, so they stay outside
+    // it: `validate_parent_in_tx` above, `restore_bare_append_position_in_tx`
+    // below.
     // `apply_op_projected` borrows `&op_record` here (it is returned to the
     // caller unmoved, for commit + dispatch). Create runs no post-commit cohort
     // fan-out, so the returned `ApplyEffects` is empty and discarded.
@@ -476,12 +478,6 @@ pub async fn create_block_in_tx(
     if index.is_none() {
         restore_bare_append_position_in_tx(tx, parent_id.as_deref(), block_id_str).await?;
     }
-
-    // Referential cross-space integrity lives in `validate_parent_in_tx`
-    // ABOVE: it must run BEFORE `apply_op_projected` commits the block into
-    // the LoroDoc, so a rejected create leaves no phantom engine node behind.
-    // The space is resolved from the parent pre-insert (identical outcome to
-    // the old post-INSERT self-resolution).
 
     // #2344: the owning-page `pages_cache` count recompute that used to run here
     // (old step (d)) is now performed by the routed `apply_op_projected`

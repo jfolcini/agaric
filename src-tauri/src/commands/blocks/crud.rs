@@ -1376,7 +1376,8 @@ async fn verify_restorable_in_tx(
 
 /// One restored root's post-commit engine and link fan-out: the seed cohort
 /// and the ancestor chain onto the per-space Loro engine, then their link
-/// repair. [`dispatch_restore_fanout`] runs it once; the batch path loops it.
+/// repair. [`dispatch_restore_fanout`] runs it once; the batch and
+/// restore-all paths loop it.
 async fn dispatch_restore_root_fanout(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -2116,35 +2117,21 @@ pub async fn restore_all_deleted_inner(
     // Commit + drain enqueued background dispatches in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #3856 POST-COMMIT engine fan-out: drive every restored cohort onto its
-    // per-space Loro engine, mirroring `restore_block_inner` and
-    // `restore_blocks_by_ids_inner`. There is no upward `dispatch_restore_ancestors`
-    // companion here and that is not an omission: this variant clears EVERY
-    // tombstone, so an ancestor chain is either inside a root's cohort or is a
-    // root of its own — the #1884 upward walk is vacuous on this path (the same
-    // reason `restore_all_deleted_inner` never called it, which is what hid
-    // #3818 on the batch path that copied it). The fan-out resolves each root's
-    // space inline — valid because the rows are alive again post-commit — and
-    // engine `apply_restore_block` is idempotent, so overlapping cohorts are
-    // harmless. Infallible / log-only.
+    // #3856 POST-COMMIT engine + link fan-out per root, the same
+    // `dispatch_restore_root_fanout` the single and batch restores run. The
+    // ancestor chain is EMPTY here and that is not an omission: this variant
+    // clears EVERY tombstone, so an ancestor chain is either inside a root's
+    // cohort or is a root of its own, so the #1884 upward walk is vacuous on
+    // this path (which is what hid #3818 on the batch path that copied it).
+    // The fan-out resolves
+    // each root's space inline — valid because the rows are alive again
+    // post-commit — and engine `apply_restore_block` is idempotent, so
+    // overlapping cohorts are harmless. Infallible / log-only.
     for (op_record, cohort) in &restore_fanout {
-        crate::materializer::dispatch_restore_descendants(
-            pool,
-            op_record,
-            cohort,
-            materializer.loro_state(),
-        )
-        .await;
-        // #4285: and repair each cohort's LINK edges — only the seed of each
-        // root reached `invalidations_for_op`. No ancestor group here for the
-        // same reason the upward engine fan-out is absent: this variant clears
-        // EVERY tombstone, so an ancestor chain is either inside a root's
-        // cohort or is a root of its own. Overlapping cohorts are deduped
-        // per call, and repeats across roots are idempotent.
-        crate::materializer::reindex_restored_cohort_links(pool, cohort, &[]).await;
+        dispatch_restore_root_fanout(pool, materializer, op_record, cohort, &[]).await;
     }
     // #4733: the FTS rows of every restored cohort, in ONE pass. Unlike the
-    // link repair above, `reindex_fts_for_ids` pays a `load_ref_maps` — a full
+    // link repair inside the fan-out, `reindex_fts_for_ids` pays a `load_ref_maps` — a full
     // scan of every tag and page block — per CALL, so a per-root call would
     // cost N of them to reach the same answer. The helper dedupes what it is
     // handed, so overlapping cohorts are free.
