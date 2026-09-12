@@ -123,7 +123,6 @@ pub async fn journal_for_date_inner(
 ///
 /// - [`AppError::Validation`] — `date` is not `YYYY-MM-DD`, or `space_id`
 ///   does not refer to a live space block (`is_space = 'true'`).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_or_create_journal_page(
     pool: &SqlitePool,
     device_id: &str,
@@ -172,29 +171,7 @@ async fn resolve_or_create_journal_page(
         return Ok(row);
     }
 
-    // Validate `space_id` upfront inside the tx (TOCTOU-safe
-    // against a concurrent space delete). The target must exist as a
-    // live, non-conflict block AND carry `is_space = 'true'`. Mirrors
-    // the check in `create_page_in_space_inner`.
-    let space_ok = sqlx::query_scalar!(
-        r#"SELECT 1 as "ok: i32" FROM blocks b
-           WHERE b.id = ?
-             AND b.deleted_at IS NULL
-             AND EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id
-                   AND p.key = 'is_space'
-                   AND p.value_text = 'true'
-             )"#,
-        space_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    if space_ok.is_none() {
-        return Err(AppError::validation(format!(
-            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
-        )));
-    }
+    crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
 
     // No existing page — create one inside the SAME transaction so the
     // SELECT + INSERT pair is atomic. Concurrent callers that lost the
