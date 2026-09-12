@@ -77,7 +77,6 @@ fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError,
 /// not exercised in unit tests. These are intentionally defensive and
 /// account for a few of the remaining uncovered lines in coverage reports.
 #[tracing::instrument(skip_all, err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,
@@ -180,6 +179,65 @@ pub async fn recover_at_boot(
     // and a hard error here is swallowed so boot still completes (same
     // "log + continue" philosophy as the op-log replay above).
     // -----------------------------------------------------------------
+    let sync_inbox =
+        replay_sync_inbox_with_quarantine_census(pool, registry, device_id, materializer).await;
+
+    // -----------------------------------------------------------------
+    // Step 2: Walk block_drafts and recover unflushed drafts
+    // -----------------------------------------------------------------
+    let drafts = recover_drafts(pool, device_id, materializer).await?;
+
+    // -----------------------------------------------------------------
+    // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
+    // rows that pre-date migration 0093 (or were materialized from a remote
+    // AddAttachment op, whose payload carries no hash). Idempotent (only
+    // `content_hash IS NULL` rows are touched) and tolerant of a missing
+    // file (leaves NULL). Best-effort: a failure is logged and boot
+    // continues — the persisted hash is an availability optimization, not a
+    // correctness invariant. `app_data_dir` comes from the Materializer,
+    // which `lib.rs` sets before boot recovery runs; if it is somehow unset
+    // (test harnesses, an early boot path) the backfill is skipped.
+    // -----------------------------------------------------------------
+    run_attachment_backfills(pool, materializer).await;
+
+    // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.
+    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    tracing::info!(
+        duration_ms,
+        drafts_recovered = drafts.recovered.len(),
+        already_flushed = drafts.already_flushed,
+        errors = drafts.errors.len(),
+        ops_replayed = replay_report.ops_replayed,
+        replay_errors = replay_report.replay_errors.len(),
+        "recovery completed"
+    );
+
+    Ok(RecoveryReport {
+        drafts_recovered: drafts.recovered,
+        drafts_already_flushed: drafts.already_flushed,
+        duration_ms,
+        draft_errors: drafts.errors,
+        ops_replayed: replay_report.ops_replayed,
+        ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
+        replay_errors: replay_report.replay_errors,
+        sync_inbox_replayed: sync_inbox.replayed,
+        sync_inbox_quarantined: sync_inbox.quarantined,
+        sync_inbox_quarantine_pending: sync_inbox.quarantine_pending,
+    })
+}
+
+/// The boot sync-inbox replay, bracketed by the quarantine census.
+///
+/// Returns the three figures [`RecoveryReport`] carries for this step; a
+/// hard failure of the walk itself is swallowed (logged, reported as 0) so
+/// boot still completes.
+async fn replay_sync_inbox_with_quarantine_census(
+    pool: &SqlitePool,
+    registry: &agaric_engine::loro::registry::LoroEngineRegistry,
+    device_id: &str,
+    materializer: &Materializer,
+) -> SyncInboxOutcome {
     // #3226: bracket the walk with the quarantine census so the report can say
     // BOTH "n slots gave up this boot" and "n blobs are stuck right now".
     // Boot recovery holds exclusive write access (see the module contract), so
@@ -244,47 +302,34 @@ pub async fn recover_at_boot(
         }
     }
 
-    // -----------------------------------------------------------------
-    // Step 2: Walk block_drafts and recover unflushed drafts
-    // -----------------------------------------------------------------
+    SyncInboxOutcome {
+        replayed: sync_inbox_replayed,
+        quarantined: sync_inbox_quarantined,
+        quarantine_pending: sync_inbox_quarantine_pending,
+    }
+}
+
+/// What the boot sync-inbox step produced, straight into [`RecoveryReport`].
+struct SyncInboxOutcome {
+    replayed: u64,
+    quarantined: u64,
+    quarantine_pending: u64,
+}
+
+/// Walk `block_drafts` and recover every unflushed draft, deleting only the
+/// rows whose recovery succeeded (#2540).
+async fn recover_drafts(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<DraftRecoveryOutcome, AppError> {
     let drafts = get_all_drafts(pool).await?;
 
     let mut drafts_recovered: Vec<String> = Vec::new();
     let mut drafts_already_flushed: u64 = 0;
     let mut draft_errors: Vec<String> = Vec::new();
 
-    // Batch-check which draft block_ids still exist (not soft-deleted) in the
-    // blocks table. This replaces per-draft SELECT COUNT(*) queries (N+1)
-    // with a single IN-clause query.
-    //
-    // NOTE: sqlx compile-time macros (query!, query_scalar!) don't support
-    // dynamic IN clauses, so we use runtime sqlx::query() here. This is
-    // acceptable — the query is straightforward and only runs once at boot.
-    //
-    // SQLite caps bind parameters at `MAX_SQL_PARAMS` (999) per query.
-    // A multi-thousand-block paste crash can leave > 999 rows in
-    // `block_drafts`; building one giant IN clause would fail with "too many
-    // SQL variables". Chunk the IN clause and accumulate the result set
-    // across chunks. `MAX_SQL_PARAMS - 1` leaves headroom for any future
-    // non-IN bind on this query.
-    let existing_block_ids: HashSet<String> = if drafts.is_empty() {
-        HashSet::new()
-    } else {
-        const CHUNK: usize = MAX_SQL_PARAMS - 1;
-        let mut acc: HashSet<String> = HashSet::new();
-        for chunk in drafts.chunks(CHUNK) {
-            let placeholders = vec!["?"; chunk.len()].join(",");
-            let sql = format!(
-                "SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL"
-            );
-            let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
-            for draft in chunk {
-                q = q.bind(&draft.block_id);
-            }
-            acc.extend(q.fetch_all(pool).await?);
-        }
-        acc
-    };
+    let existing_block_ids = live_draft_block_ids(pool, &drafts).await?;
 
     for draft in &drafts {
         let recovered =
@@ -353,17 +398,61 @@ pub async fn recover_at_boot(
         );
     }
 
-    // -----------------------------------------------------------------
-    // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
-    // rows that pre-date migration 0093 (or were materialized from a remote
-    // AddAttachment op, whose payload carries no hash). Idempotent (only
-    // `content_hash IS NULL` rows are touched) and tolerant of a missing
-    // file (leaves NULL). Best-effort: a failure is logged and boot
-    // continues — the persisted hash is an availability optimization, not a
-    // correctness invariant. `app_data_dir` comes from the Materializer,
-    // which `lib.rs` sets before boot recovery runs; if it is somehow unset
-    // (test harnesses, an early boot path) the backfill is skipped.
-    // -----------------------------------------------------------------
+    Ok(DraftRecoveryOutcome {
+        recovered: drafts_recovered,
+        already_flushed: drafts_already_flushed,
+        errors: draft_errors,
+    })
+}
+
+/// What the boot draft-recovery step produced, straight into [`RecoveryReport`].
+struct DraftRecoveryOutcome {
+    recovered: Vec<String>,
+    already_flushed: u64,
+    errors: Vec<String>,
+}
+
+/// The draft block_ids that still exist and are not soft-deleted.
+async fn live_draft_block_ids(
+    pool: &SqlitePool,
+    drafts: &[agaric_engine::draft::Draft],
+) -> Result<HashSet<String>, AppError> {
+    // Batch-check which draft block_ids still exist (not soft-deleted) in the
+    // blocks table. This replaces per-draft SELECT COUNT(*) queries (N+1)
+    // with a single IN-clause query.
+    //
+    // NOTE: sqlx compile-time macros (query!, query_scalar!) don't support
+    // dynamic IN clauses, so we use runtime sqlx::query() here. This is
+    // acceptable — the query is straightforward and only runs once at boot.
+    //
+    // SQLite caps bind parameters at `MAX_SQL_PARAMS` (999) per query.
+    // A multi-thousand-block paste crash can leave > 999 rows in
+    // `block_drafts`; building one giant IN clause would fail with "too many
+    // SQL variables". Chunk the IN clause and accumulate the result set
+    // across chunks. `MAX_SQL_PARAMS - 1` leaves headroom for any future
+    // non-IN bind on this query.
+    if drafts.is_empty() {
+        return Ok(HashSet::new());
+    }
+    const CHUNK: usize = MAX_SQL_PARAMS - 1;
+    let mut acc: HashSet<String> = HashSet::new();
+    for chunk in drafts.chunks(CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql =
+            format!("SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL");
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+        for draft in chunk {
+            q = q.bind(&draft.block_id);
+        }
+        acc.extend(q.fetch_all(pool).await?);
+    }
+    Ok(acc)
+}
+
+/// The best-effort attachment backfills boot runs once the drafts are in.
+/// Every failure is logged and swallowed: the hash and the blob store are
+/// availability optimizations, not correctness invariants.
+async fn run_attachment_backfills(pool: &SqlitePool, materializer: &Materializer) {
     match materializer.app_data_dir() {
         Some(dir) => {
             if let Err(e) =
@@ -398,30 +487,4 @@ pub async fn recover_at_boot(
             );
         }
     }
-
-    // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.
-    let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-    tracing::info!(
-        duration_ms,
-        drafts_recovered = drafts_recovered.len(),
-        already_flushed = drafts_already_flushed,
-        errors = draft_errors.len(),
-        ops_replayed = replay_report.ops_replayed,
-        replay_errors = replay_report.replay_errors.len(),
-        "recovery completed"
-    );
-
-    Ok(RecoveryReport {
-        drafts_recovered,
-        drafts_already_flushed,
-        duration_ms,
-        draft_errors,
-        ops_replayed: replay_report.ops_replayed,
-        ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
-        replay_errors: replay_report.replay_errors,
-        sync_inbox_replayed,
-        sync_inbox_quarantined,
-        sync_inbox_quarantine_pending,
-    })
 }
