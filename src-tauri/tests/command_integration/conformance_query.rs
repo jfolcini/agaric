@@ -221,6 +221,23 @@ const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 /// `PROPERTY_DEF_TOKEN` in the TS twin.
 const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options"];
 
+/// An `AttachmentRow` (#3830), whose token head is the attachment id and whose
+/// attributes are every other column. `created_at` rides along VERBATIM,
+/// against the "never a clock" rule, because a seeded attachment's stamp is
+/// fixture-authored epoch-ms rather than `now_ms()` — it is what the
+/// `ORDER BY created_at, id` steps sort on, so leaving it off would pin the
+/// order without saying what it was. MUST match `ATTACHMENT_TOKEN` in the TS
+/// twin.
+const ATTACHMENT_ATTRS: &[&str] = &[
+    "block_id",
+    "filename",
+    "mime_type",
+    "size_bytes",
+    "fs_path",
+    "created_at",
+    "content_hash",
+];
+
 /// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
 /// id. MUST match `HISTORY_TOKEN` in the TS twin.
 ///
@@ -1298,6 +1315,57 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Attachment metadata (#3830) ──
+        //
+        // Waived as "blob store outside the snapshot scope" until the fixture
+        // `seed.attachments` section put the same ROWS on both stacks (see
+        // `replay_fixture`); the blob store stays out of scope, and none of
+        // these three reads it. Every arm calls what the shipped command calls.
+        "list_attachments" => {
+            let rows = list_attachments_inner(pool, arg_req::<BlockId>(args, "blockId")).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<AttachmentRow>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter()
+                        .map(|r| row_token(r, "id", ATTACHMENT_ATTRS))
+                        .collect()
+                }),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_attachments_batch" => {
+            let map = list_attachments_batch_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds"))
+                .await?;
+            // `serde_json::Map` is a `BTreeMap` (no `preserve_order`), so the
+            // entries below come key-sorted whatever order the `HashMap` had;
+            // the TS twin sorts `Object.entries` to match. Within an entry the
+            // rows keep the command's `ORDER BY created_at, id`, which is what
+            // the ordered comparison pins.
+            let v =
+                serde_json::to_value(&map).expect("serialize HashMap<String, Vec<AttachmentRow>>");
+            RawResult {
+                rows: map_rows_tokens(&v, &|r| row_token(r, "id", ATTACHMENT_ATTRS)),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "read_attachment_meta" => {
+            let row = attachments::read_attachment_meta_inner(
+                pool,
+                arg_req::<BlockId>(args, "attachmentId"),
+            )
+            .await?;
+            let v = serde_json::to_value(&row).expect("serialize AttachmentRow");
+            RawResult {
+                rows: vec![row_token(&v, "id", ATTACHMENT_ATTRS)],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Point reads over blocks / properties / tags (#3826) ──
         //
         // The #763 snapshot already diffs the ROWS these serve. What it does
@@ -2329,7 +2397,12 @@ pub(super) mod reader_delegation_tests {
     // (`commands/agenda.rs`). The agenda one READS the materialized cache and
     // never rebuilds it — the writer is the `RebuildAgendaCache` task. Writer
     // set unchanged.
-    const SWEPT_ARM_COUNT: usize = 41;
+    // #3830 (attachments) wired `list_attachments`, `list_attachments_batch`
+    // and `read_attachment_meta`: three `query_as!` SELECTs over
+    // `attachments` (`commands/attachments.rs`), the batch one a `json_each`
+    // SELECT grouped in Rust, the meta one a `fetch_optional` that maps a
+    // miss to `NotFound`. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 44;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

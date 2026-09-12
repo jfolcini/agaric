@@ -1137,6 +1137,34 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             .expect("seed create_property_def");
         }
     }
+    // Seed attachment rows (#3830), verbatim: every column is fixture-authored
+    // (`created_at` included, so it is comparable across the stacks) and
+    // `block_id` expands like every other seed reference. Raw SQL rather than
+    // `add_attachment_with_bytes_inner`, which hashes and writes bytes to disk
+    // that the mock never has; the read steps pin the rows, not the blob store.
+    // The TS twin's `loadSeed` copies the same columns into the mock's map.
+    if let Some(rows) = seed["attachments"].as_array() {
+        for a in rows {
+            sqlx::query(
+                "INSERT INTO attachments \
+                 (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(a["id"].as_str().expect("seed attachment id"))
+            .bind(seed_label_to_id(
+                a["block_id"].as_str().expect("seed attachment block_id"),
+            ))
+            .bind(a["mime_type"].as_str().expect("seed attachment mime_type"))
+            .bind(a["filename"].as_str().expect("seed attachment filename"))
+            .bind(a["size_bytes"].as_i64().expect("seed attachment size_bytes"))
+            .bind(a["fs_path"].as_str().expect("seed attachment fs_path"))
+            .bind(a["created_at"].as_i64().expect("seed attachment created_at"))
+            .bind(a["content_hash"].as_str())
+            .execute(&pool)
+            .await
+            .expect("seed attachment");
+        }
+    }
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {

@@ -36,6 +36,7 @@ import {
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
+  attachments,
   blocks,
   blockTags,
   makeBlock,
@@ -58,6 +59,13 @@ export interface Fixture {
      * empty (`clearMock`) and the two stacks must begin in the same state.
      */
     property_defs?: Array<Record<string, unknown>>
+    /**
+     * #3830 — attachment metadata rows, when the fixture pins the attachment
+     * readers. Copied verbatim into the mock's `attachments` map; the Rust
+     * twin inserts the same columns into the `attachments` table. The bytes
+     * and the blob store are not seeded on either stack.
+     */
+    attachments?: Array<Record<string, unknown>>
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -183,6 +191,19 @@ export function loadSeed(fixture: Fixture): void {
       // The backend stamps `now_rfc3339()`; a wall clock is never comparable,
       // so no token carries it (`PROPERTY_DEF_TOKEN`).
       created_at: new Date().toISOString(),
+    })
+  }
+  for (const a of fixture.seed.attachments ?? []) {
+    // The eight `attachments` columns the Rust seed binds, in the same order.
+    attachments.set(a['id'] as string, {
+      id: a['id'],
+      block_id: seedLabelToId(a['block_id'] as string),
+      mime_type: a['mime_type'],
+      filename: a['filename'],
+      size_bytes: a['size_bytes'],
+      fs_path: a['fs_path'],
+      created_at: a['created_at'],
+      content_hash: a['content_hash'] ?? null,
     })
   }
   for (const p of fixture.seed.properties) {

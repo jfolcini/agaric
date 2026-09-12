@@ -366,8 +366,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
  *     step; it simply is not written. This is the honest majority. Every entry
  *     in this category is a to-do, not a verdict.
  *   - `<X> outside the conformance snapshot scope` — reads state the fixture
- *     seed cannot express (attachments, drafts, aliases, spaces, peers,
- *     property_definitions, link metadata).
+ *     seed cannot express (drafts, aliases, spaces, peers, link metadata).
  *   - `<return shape>` — the response carries no row identity the query
  *     projection can bind: a bare scalar, a rendered string, a keyed count
  *     map, or a multi-partition envelope. `conformance-query.ts` projects one
@@ -506,9 +505,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   resolve_page_by_alias: 'page-alias table outside the conformance snapshot scope',
   list_spaces: 'space registry outside the single-space conformance snapshot scope',
   get_link_metadata: 'link_metadata cache outside the conformance snapshot scope',
-  list_attachments: 'attachments blob store outside the conformance snapshot scope',
-  list_attachments_batch: 'attachments blob store outside the conformance snapshot scope',
-  read_attachment_meta: 'attachments blob store outside the conformance snapshot scope',
   list_drafts: 'draft staging table outside the conformance snapshot scope',
   list_peer_refs: 'peer registry (device metadata) outside the conformance snapshot scope',
 
@@ -717,14 +713,11 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'get_link_metadata',
   'get_page_aliases',
   'get_reminder_settings',
-  'list_attachments',
-  'list_attachments_batch',
   'list_drafts',
   'list_page_aliases_by_prefix',
   'list_peer_refs',
   'list_projected_agenda',
   'list_spaces',
-  'read_attachment_meta',
   'resolve_page_by_alias',
 ]
 
