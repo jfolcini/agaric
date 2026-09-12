@@ -3205,7 +3205,6 @@ pub async fn undo_op_inner(
 /// ride the partial `idx_op_log_reverses` index. `ops` is caller-bounded
 /// by `MAX_REVERT_OPS` and deduplicated, so the missing-ref check is a
 /// straight count comparison resolved to a per-ref `NotFound`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn verify_undo_targets_in_tx(tx: &mut CommandTx, ops: &[OpRef]) -> Result<(), AppError> {
     let refs_json = serde_json::to_string(
         &ops.iter()
@@ -3242,18 +3241,14 @@ async fn verify_undo_targets_in_tx(tx: &mut CommandTx, ops: &[OpRef]) -> Result<
 
     // Missing refs: the join drops them, so resolve by set difference for
     // a precise NotFound instead of an anonymous count mismatch.
-    if rows.len() != ops.len() {
-        let found: std::collections::HashSet<(&str, i64)> =
-            rows.iter().map(|r| (r.device_id.as_str(), r.seq)).collect();
-        if let Some(missing) = ops
-            .iter()
-            .find(|r| !found.contains(&(r.device_id.as_str(), r.seq)))
-        {
-            return Err(AppError::NotFound(format!(
-                "op_log ({}, {})",
-                missing.device_id, missing.seq
-            )));
-        }
+    if rows.len() != ops.len()
+        && let Some(missing) =
+            first_missing_ref(ops, rows.iter().map(|r| (r.device_id.as_str(), r.seq)))
+    {
+        return Err(AppError::NotFound(format!(
+            "op_log ({}, {})",
+            missing.device_id, missing.seq
+        )));
     }
 
     for row in &rows {
@@ -3282,6 +3277,17 @@ async fn verify_undo_targets_in_tx(tx: &mut CommandTx, ops: &[OpRef]) -> Result<
     }
 
     Ok(())
+}
+
+/// The first ref in `ops` that the batched `op_log` lookup dropped, resolved
+/// by set difference so the caller can name it in a `NotFound`.
+fn first_missing_ref<'a>(
+    ops: &'a [OpRef],
+    found: impl Iterator<Item = (&'a str, i64)>,
+) -> Option<&'a OpRef> {
+    let found: std::collections::HashSet<(&str, i64)> = found.collect();
+    ops.iter()
+        .find(|r| !found.contains(&(r.device_id.as_str(), r.seq)))
 }
 
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].

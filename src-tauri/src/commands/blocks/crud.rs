@@ -589,6 +589,64 @@ async fn reject_duplicate_page_title(
     Ok(())
 }
 
+/// [`delete_block_inner`]'s validation phase, inside its IMMEDIATE tx
+/// (TOCTOU-safe): the block exists, is live, and is not a non-empty space.
+/// Returns its `block_type`.
+async fn verify_deletable_in_tx(tx: &mut CommandTx, block_id: &str) -> Result<String, AppError> {
+    // #2037 pt2: also read `block_type` so the post-commit dispatch can
+    // narrow the cache-rebuild fan-out for a CONTENT block (skip
+    // `RebuildTagsCache`/`RebuildPagesCache`).
+    let row = sqlx::query!(
+        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
+    if row.deleted_at.is_some() {
+        return Err(AppError::InvalidOperation(format!(
+            "block '{block_id}' is already deleted"
+        )));
+    }
+
+    // Refuse to delete a non-empty space. The frontend
+    // SpaceManageDialog already disables the delete button until the space
+    // is empty, but a concurrent device creating a page in the same space
+    // between the frontend probe and this IPC would otherwise leave the
+    // space soft-deleted with orphan pages whose `space` ref now dangles.
+    // The check runs INSIDE this BEGIN IMMEDIATE tx so no concurrent
+    // CreateBlock-with-space-property can sneak in between the count and
+    // the cascade. #708: "is a space" is now schema-defined — a row in the
+    // `spaces` registry (kept in lockstep with the `is_space = 'true'`
+    // property by the 0089 `spaces_register_is_space` trigger).
+    let is_space_block = sqlx::query_scalar!(
+        "SELECT 1 AS \"flag!: i64\" FROM spaces WHERE id = ?",
+        block_id,
+    )
+    .fetch_optional(&mut ***tx)
+    .await?
+    .is_some();
+    if is_space_block {
+        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
+        // (the old `block_properties(key='space')` rows are gone).
+        let child_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
+             WHERE b.deleted_at IS NULL \
+             AND b.block_type = 'page' \
+             AND b.space_id = ?",
+            block_id,
+        )
+        .fetch_one(&mut ***tx)
+        .await?;
+        if child_count > 0 {
+            return Err(AppError::InvalidOperation(format!(
+                "cannot delete space '{block_id}': it contains {child_count} pages"
+            )));
+        }
+    }
+    Ok(row.block_type)
+}
+
 /// Soft-delete a block and all its descendants (cascade).
 ///
 /// Validates the block exists and is not already deleted, appends a
@@ -609,7 +667,6 @@ async fn reject_duplicate_page_title(
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is already soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -636,58 +693,7 @@ pub async fn delete_block_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
-    // `block_type` so the post-commit dispatch can narrow the cache-rebuild
-    // fan-out for a CONTENT block (skip `RebuildTagsCache`/`RebuildPagesCache`).
-    let row = sqlx::query!(
-        "SELECT deleted_at, block_type FROM blocks WHERE id = ?",
-        block_id
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
-    if row.deleted_at.is_some() {
-        return Err(AppError::InvalidOperation(format!(
-            "block '{block_id}' is already deleted"
-        )));
-    }
-    let block_type = row.block_type;
-
-    // Refuse to delete a non-empty space. The frontend
-    // SpaceManageDialog already disables the delete button until the space
-    // is empty, but a concurrent device creating a page in the same space
-    // between the frontend probe and this IPC would otherwise leave the
-    // space soft-deleted with orphan pages whose `space` ref now dangles.
-    // The check runs INSIDE this BEGIN IMMEDIATE tx so no concurrent
-    // CreateBlock-with-space-property can sneak in between the count and
-    // the cascade. #708: "is a space" is now schema-defined — a row in the
-    // `spaces` registry (kept in lockstep with the `is_space = 'true'`
-    // property by the 0089 `spaces_register_is_space` trigger).
-    let is_space_block = sqlx::query_scalar!(
-        "SELECT 1 AS \"flag!: i64\" FROM spaces WHERE id = ?",
-        block_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .is_some();
-    if is_space_block {
-        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
-        // (the old `block_properties(key='space')` rows are gone).
-        let child_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
-             WHERE b.deleted_at IS NULL \
-             AND b.block_type = 'page' \
-             AND b.space_id = ?",
-            block_id,
-        )
-        .fetch_one(&mut **tx)
-        .await?;
-        if child_count > 0 {
-            return Err(AppError::InvalidOperation(format!(
-                "cannot delete space '{block_id}': it contains {child_count} pages"
-            )));
-        }
-    }
+    let block_type = verify_deletable_in_tx(&mut tx, &block_id).await?;
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
@@ -1158,6 +1164,32 @@ pub async fn delete_blocks_by_ids(
         .map_err(sanitize_internal_error)
 }
 
+/// Reject a `space_id` that is not a live, non-conflict block carrying
+/// `is_space = 'true'`. Mirrors `create_page_in_space_inner`'s check; runs
+/// inside the caller's tx so it is TOCTOU-safe against a concurrent delete.
+async fn require_live_space_in_tx(tx: &mut CommandTx, space_id: &str) -> Result<(), AppError> {
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 as "ok: i32" FROM blocks b
+           WHERE b.id = ?
+             AND b.deleted_at IS NULL
+             AND EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+        space_id,
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::validation(format!(
+            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
+        )));
+    }
+    Ok(())
+}
+
 /// #81 / bulk move N blocks to a target space (the Pages
 /// multi-select "move selected to space" action).
 ///
@@ -1193,7 +1225,6 @@ pub async fn delete_blocks_by_ids(
 ///
 /// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1219,28 +1250,7 @@ pub async fn move_blocks_to_space_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Validate `space_id` ONCE inside the tx (TOCTOU-safe against a
-    // concurrent space delete). Mirrors `create_page_in_space_inner`: the
-    // target must be a live, non-conflict block carrying `is_space = 'true'`.
-    let space_ok = sqlx::query_scalar!(
-        r#"SELECT 1 as "ok: i32" FROM blocks b
-           WHERE b.id = ?
-             AND b.deleted_at IS NULL
-             AND EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id
-                   AND p.key = 'is_space'
-                   AND p.value_text = 'true'
-             )"#,
-        space_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    if space_ok.is_none() {
-        return Err(AppError::validation(format!(
-            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
-        )));
-    }
+    require_live_space_in_tx(&mut tx, &space_id).await?;
 
     // #2038: resolve the live target set in ONE membership query instead of a
     // per-block existence SELECT inside the loop (N+1). Skip-on-miss preserved:
@@ -1876,68 +1886,49 @@ pub async fn purge_block_inner(
     })
 }
 
-/// Restore ALL soft-deleted blocks in a single transaction.
-///
-/// Finds cascade roots from the op-log, creates a `RestoreBlock` op for
-/// each, then clears `deleted_at` on ALL deleted blocks. Recomputes tag
-/// inheritance afterward.
-///
-/// # Cascade-root derivation (C9, #345 — fixed)
-///
-/// Cascade roots are derived from the `delete_block` op-log entries
-/// (`op.created_at = blocks.deleted_at`) when one exists, falling back to
-/// the structural `deleted_at`-equality heuristic only for op-less
-/// tombstones (recovery / legacy / the low-level `cascade_soft_delete`
-/// primitive, which does not append to `op_log`). This closes the prior
-/// same-millisecond collision window where two distinct cascade-delete
-/// events whose roots shared a timestamp were conflated into a single root,
-/// emitting one fewer `RestoreBlock` op than performed and leaving a peer's
-/// replay with one subtree unrestored. `now_ms()` is not strictly monotonic
-/// across pool connections, so a pure structural heuristic could not be made
-/// collision-safe; for op-backed deletes the op id is authoritative.
-#[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn restore_all_deleted_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-) -> Result<BulkTrashResponse, AppError> {
-    // CommandTx couples commit + post-commit dispatch.
-    let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
+/// One cascade root of the trash, as [`select_trash_cascade_roots_in_tx`]
+/// reports it.
+struct TrashCascadeRoot {
+    id: String,
+    deleted_at: Option<i64>,
+    block_type: String,
+}
 
-    // C9 (#345) — derive cascade roots from the op-log when one exists,
-    // falling back to the structural heuristic only for op-less tombstones.
-    //
-    // Production deletes go through `delete_block_inner`, which appends one
-    // `DeleteBlock` op per root with `op.created_at == blocks.deleted_at`
-    // (the same `now` is written to both). Matching on that timestamp makes
-    // the root test exact and collision-proof:
-    //   * a true root's tombstone equals its own delete op's timestamp;
-    //   * a cascade descendant carries the ROOT's timestamp (different
-    //     `block_id`), so it never matches its own (absent) op;
-    //   * a block re-trashed as a descendant after a prior root delete
-    //     (del@T1 → restore → cascade@T2) carries `deleted_at = T2` while
-    //     its stale op has `created_at = T1` — correctly demoted.
-    //
-    // This fixes the same-ms collision the old structural heuristic
-    // ("root = parent_id NULL or parent's `deleted_at` differs") produced:
-    // `del child@T` then `del parent@T` left both sharing `deleted_at = T`,
-    // so the heuristic demoted the child → one fewer `RestoreBlock` op →
-    // a peer's replay left the child unrestored. `now_ms()` is not strictly
-    // monotonic across pool connections, so a pure structural test could
-    // never be made collision-safe; the op id is authoritative.
-    //
-    // The structural fallback (the `OR NOT EXISTS(delete_block op)` branch)
-    // is retained ONLY for tombstones with no `delete_block` op at all —
-    // op-less soft-deletes from recovery, legacy data, or the low-level
-    // `cascade_soft_delete` primitive (which does not append to `op_log`).
-    // For those there is no op id to key on, so the original parent-vs-self
-    // `deleted_at` comparison remains the best available signal.
-    // #2037 pt2: select `block_type` so each per-root dispatch can narrow
-    // the rebuild fan-out for a CONTENT root.
-    let roots = sqlx::query!(
+/// C9 (#345) — derive cascade roots from the op-log when one exists,
+/// falling back to the structural heuristic only for op-less tombstones.
+///
+/// Production deletes go through `delete_block_inner`, which appends one
+/// `DeleteBlock` op per root with `op.created_at == blocks.deleted_at`
+/// (the same `now` is written to both). Matching on that timestamp makes
+/// the root test exact and collision-proof:
+///   * a true root's tombstone equals its own delete op's timestamp;
+///   * a cascade descendant carries the ROOT's timestamp (different
+///     `block_id`), so it never matches its own (absent) op;
+///   * a block re-trashed as a descendant after a prior root delete
+///     (del@T1 → restore → cascade@T2) carries `deleted_at = T2` while
+///     its stale op has `created_at = T1` — correctly demoted.
+///
+/// This fixes the same-ms collision the old structural heuristic
+/// ("root = parent_id NULL or parent's `deleted_at` differs") produced:
+/// `del child@T` then `del parent@T` left both sharing `deleted_at = T`,
+/// so the heuristic demoted the child → one fewer `RestoreBlock` op →
+/// a peer's replay left the child unrestored. `now_ms()` is not strictly
+/// monotonic across pool connections, so a pure structural test could
+/// never be made collision-safe; the op id is authoritative.
+///
+/// The structural fallback (the `OR NOT EXISTS(delete_block op)` branch)
+/// is retained ONLY for tombstones with no `delete_block` op at all —
+/// op-less soft-deletes from recovery, legacy data, or the low-level
+/// `cascade_soft_delete` primitive (which does not append to `op_log`).
+/// For those there is no op id to key on, so the original parent-vs-self
+/// `deleted_at` comparison remains the best available signal.
+/// #2037 pt2: select `block_type` so each per-root dispatch can narrow
+/// the rebuild fan-out for a CONTENT root.
+async fn select_trash_cascade_roots_in_tx(
+    tx: &mut CommandTx,
+) -> Result<Vec<TrashCascadeRoot>, AppError> {
+    Ok(sqlx::query_as!(
+        TrashCascadeRoot,
         "SELECT b.id, b.deleted_at, b.block_type FROM blocks b \
          WHERE b.deleted_at IS NOT NULL \
          AND ( \
@@ -1962,8 +1953,41 @@ pub async fn restore_all_deleted_inner(
            ) \
          )"
     )
-    .fetch_all(&mut **tx)
-    .await?;
+    .fetch_all(&mut ***tx)
+    .await?)
+}
+
+/// Restore ALL soft-deleted blocks in a single transaction.
+///
+/// Finds cascade roots from the op-log, creates a `RestoreBlock` op for
+/// each, then clears `deleted_at` on ALL deleted blocks. Recomputes tag
+/// inheritance afterward.
+///
+/// # Cascade-root derivation (C9, #345 — fixed)
+///
+/// Cascade roots are derived from the `delete_block` op-log entries
+/// (`op.created_at = blocks.deleted_at`) when one exists, falling back to
+/// the structural `deleted_at`-equality heuristic only for op-less
+/// tombstones (recovery / legacy / the low-level `cascade_soft_delete`
+/// primitive, which does not append to `op_log`). This closes the prior
+/// same-millisecond collision window where two distinct cascade-delete
+/// events whose roots shared a timestamp were conflated into a single root,
+/// emitting one fewer `RestoreBlock` op than performed and leaving a peer's
+/// replay with one subtree unrestored. `now_ms()` is not strictly monotonic
+/// across pool connections, so a pure structural heuristic could not be made
+/// collision-safe; for op-backed deletes the op id is authoritative.
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn restore_all_deleted_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<BulkTrashResponse, AppError> {
+    // CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+
+    let roots = select_trash_cascade_roots_in_tx(&mut tx).await?;
 
     if roots.is_empty() {
         return Ok(BulkTrashResponse { affected_count: 0 });
