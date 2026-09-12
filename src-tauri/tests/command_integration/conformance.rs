@@ -1165,6 +1165,41 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             .expect("seed attachment");
         }
     }
+    // Seed link metadata rows (#3830), verbatim: `fetched_at` is
+    // fixture-authored epoch-ms so it is comparable across the stacks, and the
+    // two flags land as the 0/1 INTEGERs `link_metadata::upsert` writes. The
+    // TS twin's `loadSeed` copies the same columns into the mock's map.
+    if let Some(rows) = seed["link_metadata"].as_array() {
+        for m in rows {
+            sqlx::query(
+                "INSERT INTO link_metadata \
+                 (url, title, favicon_url, description, fetched_at, auth_required, not_found) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(m["url"].as_str().expect("seed link_metadata url"))
+            .bind(m["title"].as_str())
+            .bind(m["favicon_url"].as_str())
+            .bind(m["description"].as_str())
+            .bind(
+                m["fetched_at"]
+                    .as_i64()
+                    .expect("seed link_metadata fetched_at"),
+            )
+            .bind(i32::from(
+                m["auth_required"]
+                    .as_bool()
+                    .expect("seed link_metadata auth_required"),
+            ))
+            .bind(i32::from(
+                m["not_found"]
+                    .as_bool()
+                    .expect("seed link_metadata not_found"),
+            ))
+            .execute(&pool)
+            .await
+            .expect("seed link_metadata");
+        }
+    }
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {

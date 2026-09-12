@@ -3175,11 +3175,19 @@ describe('LinkMetadata commands', () => {
     expect(typeof result['fetched_at']).toBe('number')
   })
 
-  it('get_link_metadata returns LinkMetadata shape with the given url', () => {
+  // #3830 — `get_link_metadata_inner` is `link_metadata::get_cached`: null for
+  // an unseen url, the upserted row once `fetch_link_metadata` has seen it.
+  it('get_link_metadata answers null for a url no fetch has seen', () => {
+    expect(invoke('get_link_metadata', { url: 'https://other.dev' })).toBeNull()
+  })
+
+  it('get_link_metadata answers the row fetch_link_metadata upserted', () => {
+    const fetched = invoke('fetch_link_metadata', { url: 'https://other.dev' })
     const result = invoke('get_link_metadata', { url: 'https://other.dev' }) as Record<
       string,
       unknown
     >
+    expect(result).toEqual(fetched)
     expect(result).toMatchObject({
       url: 'https://other.dev',
       title: 'Mock Title',

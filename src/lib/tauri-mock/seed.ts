@@ -58,6 +58,11 @@ export const attachments = new Map<string, Record<string, unknown>>()
 // content so the FE upload→render flow is exercisable under the web mock.
 export const attachmentBytes = new Map<string, number[]>()
 
+// Link metadata cache: url → LinkMetadata-like object (see `LinkMetadata` in
+// `src/lib/bindings.ts`). `get_link_metadata` reads it and
+// `fetch_link_metadata` upserts into it (#3830).
+export const linkMetadata = new Map<string, Record<string, unknown>>()
+
 // Peer refs store: peer_id → PeerRef-like object (see `PeerRef` in
 // `src/lib/bindings.ts` for the field shape). #3469 — a peer row lands here
 // some time AFTER `confirm_pairing` (mimicking the real TOFU-pin, which
@@ -295,6 +300,7 @@ export function seedBlocks(): void {
   pageAliases.clear()
   attachments.clear()
   attachmentBytes.clear()
+  linkMetadata.clear()
   // #3469 (review) — `peerRefs` (and its pending-reveal counter) were added
   // as mock stores but never reset here, so a peer pinned by one seeded
   // session survived into the next one and every later `list_peer_refs`

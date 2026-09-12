@@ -26,7 +26,7 @@ import {
   pageRequestLimit,
   scanLinkTargets,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 /**
  * `BacklinkFilter::PropertyText`'s `CompareOp` over a stored `value_text`:
@@ -465,10 +465,16 @@ export const linksHandlers = {
   // Logging commands (fire-and-forget)
   // ---------------------------------------------------------------------------
 
+  // There is no network here, so the "fetch" answers a stub and upserts it
+  // into `linkMetadata` so the read below sees the url afterwards. It does
+  // not mirror `fetch_link_metadata_inner`'s seven-day freshness short-circuit
+  // (a fresh cached row is returned untouched there); the command stays
+  // waived, and the frontend only fetches after a `get` miss.
   fetch_link_metadata: (args) => {
     const a = args as Record<string, unknown>
-    return {
-      url: a['url'],
+    const url = a['url'] as string
+    const row = {
+      url,
       title: 'Mock Title',
       favicon_url: null,
       description: null,
@@ -476,19 +482,16 @@ export const linksHandlers = {
       auth_required: false,
       not_found: false,
     }
+    linkMetadata.set(url, row)
+    return row
   },
 
+  // `get_link_metadata_inner` is `link_metadata::get_cached`: the stored row
+  // for a seen url, `null` for an unseen one. The mock answered the fetch stub
+  // for ANY url until `query_link_metadata.json` pinned the miss (#3830).
   get_link_metadata: (args) => {
     const a = args as Record<string, unknown>
-    return {
-      url: a['url'],
-      title: 'Mock Title',
-      favicon_url: null,
-      description: null,
-      fetched_at: Date.now(),
-      auth_required: false,
-      not_found: false,
-    }
+    return linkMetadata.get(a['url'] as string) ?? null
   },
 
   // ---------------------------------------------------------------------------

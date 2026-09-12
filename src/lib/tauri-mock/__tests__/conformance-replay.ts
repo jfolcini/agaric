@@ -39,6 +39,7 @@ import {
   attachments,
   blocks,
   blockTags,
+  linkMetadata,
   makeBlock,
   opLog,
   properties,
@@ -66,6 +67,12 @@ export interface Fixture {
      * and the blob store are not seeded on either stack.
      */
     attachments?: Array<Record<string, unknown>>
+    /**
+     * #3830 — link metadata cache rows, when the fixture pins
+     * `get_link_metadata`. Copied verbatim into the mock's `linkMetadata` map;
+     * the Rust twin inserts the same columns into the `link_metadata` table.
+     */
+    link_metadata?: Array<Record<string, unknown>>
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -204,6 +211,20 @@ export function loadSeed(fixture: Fixture): void {
       fs_path: a['fs_path'],
       created_at: a['created_at'],
       content_hash: a['content_hash'] ?? null,
+    })
+  }
+  for (const m of fixture.seed.link_metadata ?? []) {
+    // The seven `link_metadata` columns the Rust seed binds, in the same
+    // order. The flags stay booleans: the backend struct has `bool` fields, so
+    // both stacks serialize `true` / `false` and the tokens agree.
+    linkMetadata.set(m['url'] as string, {
+      url: m['url'],
+      title: m['title'] ?? null,
+      favicon_url: m['favicon_url'] ?? null,
+      description: m['description'] ?? null,
+      fetched_at: m['fetched_at'],
+      auth_required: m['auth_required'],
+      not_found: m['not_found'],
     })
   }
   for (const p of fixture.seed.properties) {

@@ -366,7 +366,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
  *     step; it simply is not written. This is the honest majority. Every entry
  *     in this category is a to-do, not a verdict.
  *   - `<X> outside the conformance snapshot scope` — reads state the fixture
- *     seed cannot express (drafts, aliases, spaces, peers, link metadata).
+ *     seed cannot express (drafts, aliases, spaces, peers).
  *   - `<return shape>` — the response carries no row identity the query
  *     projection can bind: a bare scalar, a rendered string, a keyed count
  *     map, or a multi-partition envelope. `conformance-query.ts` projects one
@@ -504,7 +504,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   list_page_aliases_by_prefix: 'page-alias table outside the conformance snapshot scope',
   resolve_page_by_alias: 'page-alias table outside the conformance snapshot scope',
   list_spaces: 'space registry outside the single-space conformance snapshot scope',
-  get_link_metadata: 'link_metadata cache outside the conformance snapshot scope',
   list_drafts: 'draft staging table outside the conformance snapshot scope',
   list_peer_refs: 'peer registry (device metadata) outside the conformance snapshot scope',
 
@@ -710,7 +709,6 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'compute_reconciliation_report',
   'export_page_markdown',
   'get_compaction_status',
-  'get_link_metadata',
   'get_page_aliases',
   'get_reminder_settings',
   'list_drafts',

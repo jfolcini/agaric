@@ -1,0 +1,119 @@
+{
+  "description": "#3830 — READ-command differential over `get_link_metadata`, waived as \"link_metadata cache outside the conformance snapshot scope\" until a fixture could put the same rows on both stacks; `seed.link_metadata` is that, inserted verbatim into the backend `link_metadata` table and the mock's map. `get_link_metadata_inner` is `link_metadata::get_cached`: the stored row for a seen url, `None` for an unseen one. The mock answered a hard-coded stub (`title: 'Mock Title'`, `fetched_at: Date.now()`) for ANY url and never `null`, which is the divergence this fixture found and fixed. Two seeded rows discriminate every column: one fully populated with `auth_required: true`, one with every nullable column null and `not_found: true`; `fetched_at` is fixture-authored epoch-ms, not a wall clock, so it is comparable. The flags are booleans on both stacks (the backend struct has `bool` fields; the seed binds them as the 0/1 INTEGERs `upsert` writes), so a mock that stored 0/1 would not agree. NOT pinned: `fetch_link_metadata` (still waived — it goes to the network and upserts, which the mock cannot do).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Links",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_link_metadata_hit_populated",
+      "rows": [
+        "https://example.com/docs#title=Example Docs#favicon_url=https://example.com/favicon.ico#description=The docs.#fetched_at=1000#auth_required=true#not_found=false"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_link_metadata_hit_not_found_row",
+      "rows": [
+        "https://example.com/gone#title=null#favicon_url=null#description=null#fetched_at=900#auth_required=false#not_found=true"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_link_metadata_miss_is_none",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_link_metadata",
+  "ops": [],
+  "queries": [
+    {
+      "args": {
+        "url": "https://example.com/docs"
+      },
+      "command": "get_link_metadata",
+      "comment": "The fully populated row: every column comes back as seeded, `auth_required` as the boolean `true`. A stub answer (`Mock Title`, a clock stamp, `auth_required: false`) fails on every attribute but the url.",
+      "name": "get_link_metadata_hit_populated"
+    },
+    {
+      "args": {
+        "url": "https://example.com/gone"
+      },
+      "command": "get_link_metadata",
+      "comment": "The row with every nullable column null and `not_found: true`: a cached negative result is still a HIT, answered with the flag rather than `null`. Discriminates the null columns from the populated row above.",
+      "name": "get_link_metadata_hit_not_found_row"
+    },
+    {
+      "args": {
+        "url": "https://example.com/never-seen"
+      },
+      "command": "get_link_metadata",
+      "comment": "An unseen url answers `None`, zero rows — not a refusal, and not a stub. The mock answered its fetch stub here, which is the divergence this step found. `expect_empty` says the absence is the point; non-vacuous because the two steps above serve rows through the same command.",
+      "expect_empty": true,
+      "name": "get_link_metadata_miss_is_none"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Links",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "link_metadata": [
+      {
+        "auth_required": true,
+        "description": "The docs.",
+        "favicon_url": "https://example.com/favicon.ico",
+        "fetched_at": 1000,
+        "not_found": false,
+        "title": "Example Docs",
+        "url": "https://example.com/docs"
+      },
+      {
+        "auth_required": false,
+        "description": null,
+        "favicon_url": null,
+        "fetched_at": 900,
+        "not_found": true,
+        "title": null,
+        "url": "https://example.com/gone"
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
