@@ -184,9 +184,9 @@ function compareTrashKeys(x: SortKey, y: SortKey): number {
 }
 
 /**
- * Every component descending — the two op-log history keysets
- * (`ORDER BY created_at DESC, seq DESC, device_id DESC` in `list_page_history`,
- * `ORDER BY seq DESC, device_id DESC` in `list_block_history`,
+ * Every component descending — the op-log history keyset both
+ * `list_page_history` and `list_block_history` share
+ * (`ORDER BY created_at DESC, seq DESC, device_id DESC`,
  * `agaric-store/src/pagination/history.rs`). Unlike {@link compareTrashKeys},
  * whose id tiebreak stays ASCending, these reverse the WHOLE tuple, which is
  * what makes the backend's `created_at < ?` / `seq < ?` / `device_id < ?`
