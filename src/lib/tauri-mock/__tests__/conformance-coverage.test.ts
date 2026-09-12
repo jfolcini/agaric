@@ -217,9 +217,13 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  *     cohort, and every time-travel command sat behind a `covered by
  *     revert.test.ts` waiver that read like coverage.
  *   - `<X> outside the conformance snapshot scope` — mutates state (drafts,
- *     attachments, spaces, aliases, peers, property_definitions) that the
- *     blocks/properties/tags/op_log snapshot in `conformance-snapshot.ts` does
- *     not model. A future snapshot extension would move these to fixtures.
+ *     attachments, spaces, property_definitions) that the blocks/properties/
+ *     tags/op_log snapshot in `conformance-snapshot.ts` does not model. A
+ *     future snapshot extension would move these to fixtures.
+ *   - `fixture candidate: <why not yet>` — as in the read allowlist: nothing
+ *     structural blocks a fixture, it simply is not written. A write whose
+ *     table a `seed` section expresses and whose reader carries a query step
+ *     is pinnable by an ops-then-query fixture, so it is debt, not scope.
  *   - `no persistent state` — telemetry / notifications / runtime toggles.
  *
  * ADDING A COMMAND HERE IS A WAIVER, not a free pass: prefer a fixture. The
@@ -304,7 +308,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     '#4723 resolve-to-existing-title is pinned mock-side by page-title-unique.test.ts',
   create_space: 'space registry outside the single-space conformance snapshot scope',
   move_blocks_to_space: 'cross-space move outside the single-space conformance snapshot scope',
-  set_page_aliases: 'page-alias table outside the conformance snapshot scope',
+  set_page_aliases:
+    'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
+    'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
+    'write; none does yet',
   create_property_def: 'property_definitions registry (app-layer), not projected block state',
   delete_property_def: 'property_definitions registry (app-layer), not projected block state',
   update_property_def_options:
@@ -314,7 +321,11 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // Classified read-only by its `fetch_` verb until #3332; it takes
   // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
   // cache on a stale/miss.
-  fetch_link_metadata: 'link_metadata cache is outside the conformance snapshot scope',
+  fetch_link_metadata:
+    'the NETWORK fetch is the blocker, not the scope: `seed.link_metadata` puts the ' +
+    'table on both stacks (#4997), but the backend fetches a URL and upserts what comes ' +
+    'back, where the mock upserts a constant row and skips the seven-day freshness ' +
+    'short-circuit entirely (handlers/links.ts)',
 
   // ── Import / quick capture (composes covered create/edit ops) ──
   import_bibliography: 'covered by import-bibliography.test.ts',
@@ -334,11 +345,13 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // same reason `confirm_pairing` (which writes that row) is: the marker is
   // pairing-window plumbing, not projected block state.
   cancel_pairing: 'pending-pairing marker (app_settings), not projected block state',
-  set_peer_address: 'peer registry (device metadata) outside the conformance snapshot scope',
-  update_peer_name: 'peer registry (device metadata) outside the conformance snapshot scope',
-  delete_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
-  set_reminder_settings:
-    'device-local reminder preferences in `app_settings`, outside the conformance snapshot scope',
+  // #4998 put `peer_refs` and `app_settings` on both stacks and pinned
+  // `list_peer_refs` / `get_reminder_settings` with query steps, so these four
+  // are debt, not scope.
+  set_peer_address: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
+  update_peer_name: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
+  delete_peer_ref: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
+  set_reminder_settings: 'fixture candidate: ops-then-query over `seed.app_settings` (#4998)',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',

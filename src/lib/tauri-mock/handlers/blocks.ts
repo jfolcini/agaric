@@ -1310,6 +1310,11 @@ export const blocksHandlers = {
         value_ref: spaceId,
         value_bool: null,
       })
+      // #3081 — the backend routes this through `set_property_in_tx`, which
+      // projects `space` to the denormalized `blocks.space_id` column that
+      // every space-scoped query reads. Mirror it, as the `set_property`
+      // handler does.
+      b['space_id'] = spaceId
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',

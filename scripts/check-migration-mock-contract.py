@@ -198,6 +198,10 @@ CONTRACT: dict[str, dict[str, object]] = {
         "store": "appSettings",
         "files": ["seed.ts", "handlers/properties.ts"],
     },
+    "link_metadata": {
+        "store": "linkMetadata",
+        "files": ["seed.ts", "handlers/links.ts"],
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -234,10 +238,6 @@ UNMODELED: dict[str, str] = {
     "gcal_agenda_event_map": "no Google-Calendar command is implemented",
     "gcal_settings": "no Google-Calendar command is implemented",
     "gcal_space_config": "no Google-Calendar command is implemented",
-    "link_metadata": (
-        "fetch_link_metadata/get_link_metadata return a constant literal "
-        "(handlers/links.ts); no stored row, so nothing can go stale"
-    ),
     "loro_doc_state": (
         "no Loro counterpart: the mock's in-memory stores ARE its convergent "
         "state, it does not model CRDT storage"

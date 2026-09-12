@@ -196,26 +196,6 @@ function loadSeedProperty(p: Record<string, unknown>): void {
   })
 }
 
-/**
- * The thirteen `peer_refs` columns the Rust seed binds, in `list_peer_refs`'s
- * SELECT order; every nullable one defaults to `null` when the fixture omits it.
- */
-const PEER_REF_SEED_COLUMNS = [
-  'peer_id',
-  'last_hash',
-  'last_sent_hash',
-  'synced_at',
-  'streamed_at',
-  'reset_count',
-  'last_reset_at',
-  'cert_hash',
-  'device_name',
-  'remote_device_name',
-  'last_address',
-  'endpoint_id',
-  'unpaired_by_peer_at_ms',
-] as const
-
 /** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
 export function loadSeed(fixture: Fixture): void {
   for (const b of fixture.seed.blocks) {
@@ -274,9 +254,10 @@ export function loadSeed(fixture: Fixture): void {
     appSettings.set(s['key'] as string, s['value'] as string)
   }
   for (const p of fixture.seed.peer_refs ?? []) {
-    const row: Record<string, unknown> = {}
-    for (const col of PEER_REF_SEED_COLUMNS) row[col] = p[col] ?? null
-    peerRefs.set(p['peer_id'] as string, row)
+    // Copied verbatim: `PEER_REF_TOKEN.attrKeys` is what selects the columns,
+    // and `attrValue` renders an absent one exactly as it renders an explicit
+    // null, so a third copy of the peer column list would buy nothing.
+    peerRefs.set(p['peer_id'] as string, { ...p })
   }
   for (const r of fixture.seed.page_aliases ?? []) {
     const pageId = seedLabelToId(r.page_id)
