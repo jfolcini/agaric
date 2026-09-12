@@ -193,6 +193,59 @@ struct RecoveredBlocksShape {
     head_indexes: bool,
 }
 
+/// [`ensure_blocks_table_exists`]'s constrained attempt (#3269): rebuild
+/// `blocks` in the head shape when its FK target table is still there.
+/// `Ok(true)` iff that attempt committed and emitted its diagnostics;
+/// `Ok(false)` sends the caller to the constraint-free scaffold.
+async fn try_head_shape_rebuild(pool: &SqlitePool) -> Result<bool, agaric_core::error::AppError> {
+    // Pre-flight the one FK target the head DDL names outside `blocks`
+    // itself. The known-reachable failure mode is external damage broad
+    // enough to have taken `spaces` too; SQLite resolves FK targets at DML
+    // time, not DDL time, so the `CREATE TABLE` succeeds and the whole
+    // replay then aborts on the first insert with "no such table:
+    // main.spaces". Checking first turns that case into ONE replay instead
+    // of two (see the retry note in `ensure_blocks_table_exists`) — the attempt is only worth making
+    // when it can plausibly succeed.
+    let spaces_exists: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'spaces'"
+    )
+    .fetch_one(pool)
+    .await?;
+    if spaces_exists > 0 {
+        let head_shape = RecoveredBlocksShape {
+            table: BlocksTableShape::Head,
+            head_indexes: true,
+        };
+        match rebuild_blocks_table(pool, head_shape).await {
+            Ok(diagnostics) => {
+                // #3269 R5: emitted HERE, by the attempt that actually
+                // committed. The replay used to log from inside itself, so
+                // the retry below double-reported the `DISASTER RECOVERY
+                // DATA LOSS (#2504)` error and every per-op warning — a
+                // post-mortem reading the log would double-count the damage.
+                diagnostics.emit();
+                return Ok(true);
+            }
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    "constrained `blocks` rebuild failed — falling back to the constraint-free \
+                     recovery scaffold (#3269). The recovered table gets the head indexes but \
+                     NOT the STRICT / FK / CHECK constraints; run a rebuild or re-sync to \
+                     restore the full schema."
+                );
+            }
+        }
+    } else {
+        tracing::error!(
+            "the `spaces` table is missing too — skipping the constrained `blocks` rebuild \
+             (its `space_id REFERENCES spaces(id)` could not be created) and recovering into \
+             the constraint-free scaffold instead (#3269)."
+        );
+    }
+    Ok(false)
+}
+
 /// If the `blocks` table is missing (e.g. from a partial migration-73
 /// DROP TABLE that was not rolled back), create a temporary table and
 /// replay block-level ops from `op_log` to reconstruct it.
@@ -209,7 +262,6 @@ struct RecoveredBlocksShape {
 /// `block_tags` empty forever post-0088). For crash-retry coverage the
 /// same signal is also persisted as the [`DERIVED_RECOVERY_PENDING_KEY`]
 /// marker row, when the `app_settings` table (migration 0053) exists.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn ensure_blocks_table_exists(
     pool: &SqlitePool,
 ) -> Result<bool, agaric_core::error::AppError> {
@@ -323,52 +375,8 @@ pub(crate) async fn ensure_blocks_table_exists(
     // to exactly the pre-#3269 scaffold. The head index set is issued on BOTH
     // paths: it is pure DDL that cannot reject data, so a fallback vault is
     // still index-complete even when it is constraint-incomplete.
-    if head_shape_applies {
-        // Pre-flight the one FK target the head DDL names outside `blocks`
-        // itself. The known-reachable failure mode is external damage broad
-        // enough to have taken `spaces` too; SQLite resolves FK targets at DML
-        // time, not DDL time, so the `CREATE TABLE` succeeds and the whole
-        // replay then aborts on the first insert with "no such table:
-        // main.spaces". Checking first turns that case into ONE replay instead
-        // of two (see the retry note below) — the attempt is only worth making
-        // when it can plausibly succeed.
-        let spaces_exists: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'spaces'"
-        )
-        .fetch_one(pool)
-        .await?;
-        if spaces_exists > 0 {
-            let head_shape = RecoveredBlocksShape {
-                table: BlocksTableShape::Head,
-                head_indexes: true,
-            };
-            match rebuild_blocks_table(pool, head_shape).await {
-                Ok(diagnostics) => {
-                    // #3269 R5: emitted HERE, by the attempt that actually
-                    // committed. The replay used to log from inside itself, so
-                    // the retry below double-reported the `DISASTER RECOVERY
-                    // DATA LOSS (#2504)` error and every per-op warning — a
-                    // post-mortem reading the log would double-count the damage.
-                    diagnostics.emit();
-                    return Ok(true);
-                }
-                Err(err) => {
-                    tracing::error!(
-                        error = %err,
-                        "constrained `blocks` rebuild failed — falling back to the constraint-free \
-                         recovery scaffold (#3269). The recovered table gets the head indexes but \
-                         NOT the STRICT / FK / CHECK constraints; run a rebuild or re-sync to \
-                         restore the full schema."
-                    );
-                }
-            }
-        } else {
-            tracing::error!(
-                "the `spaces` table is missing too — skipping the constrained `blocks` rebuild \
-                 (its `space_id REFERENCES spaces(id)` could not be created) and recovering into \
-                 the constraint-free scaffold instead (#3269)."
-            );
-        }
+    if head_shape_applies && try_head_shape_rebuild(pool).await? {
+        return Ok(true);
     }
 
     // #3269 R5 (residual, documented rather than fixed): reaching here after a
@@ -378,7 +386,7 @@ pub(crate) async fn ensure_blocks_table_exists(
     // failed attempt's transaction (data included) is gone by the time we find
     // out. The cost is bounded: it is one extra O(op_count) pass on a path that
     // has already established the vault is damaged AND that the preferred
-    // rebuild failed, and the pre-flight above removes the one failure mode
+    // rebuild failed, and `try_head_shape_rebuild`'s pre-flight removes the one failure mode
     // known to be reachable. The DIAGNOSTICS, which is what a post-mortem
     // reads, are no longer duplicated: the replay reports rather than logs, and
     // only the attempt that commits emits.
@@ -708,6 +716,345 @@ async fn persisted_engine_snapshot_count(
     Ok(count)
 }
 
+/// [`reproject_blocks_from_engine`]'s snapshot load: every space that carries a
+/// real (non-empty) engine snapshot. Empty when `loro_doc_state` is absent.
+async fn load_engine_snapshots(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, Vec<u8>)>, agaric_core::error::AppError> {
+    // `loro_doc_state` may be absent on an ancient pre-0052 database.
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if table_exists == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Every space that carries a real (non-empty) engine snapshot. A NULL/empty
+    // snapshot column holds no recoverable state.
+    let snapshots: Vec<(String, Vec<u8>)> = sqlx::query_as(
+        "SELECT space_id, snapshot FROM loro_doc_state \
+         WHERE snapshot IS NOT NULL AND LENGTH(snapshot) > 0 \
+         ORDER BY space_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(snapshots)
+}
+
+/// One block's engine-side derived state as [`reproject_space_from_engine`]
+/// reads it: typed properties, tag ids, and the soft-delete stamp.
+type EngineBlockState = (
+    Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
+    Vec<String>,
+    Option<String>,
+);
+
+/// [`reproject_space_from_engine`]'s core read.
+fn read_engine_core_rows(
+    engine: &agaric_engine::loro::engine::LoroEngine,
+    space_id_str: &str,
+    block_ids: &[agaric_core::ulid::BlockId],
+    skipped: &mut [bool],
+) -> Vec<Option<agaric_engine::loro::engine::BlockSnapshot>> {
+    let n = block_ids.len();
+    // Engine core read: fast O(N) bulk path, with a per-block fallback
+    // (#2920). If the bulk read fails because ONE block's engine metadata is
+    // corrupt, re-read block-by-block so only the bad block(s) are skipped
+    // instead of aborting the entire space.
+    let id_refs: Vec<&str> = block_ids
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    match engine.read_blocks_bulk(&id_refs) {
+        Ok(core) => core,
+        Err(e) => {
+            tracing::warn!(
+                space_id = %space_id_str,
+                error = %e,
+                "recovery (#2920): bulk engine core-read failed; falling back to per-block \
+                 reads to isolate the corrupt block(s)"
+            );
+            let mut v = Vec::with_capacity(n);
+            for (i, block_id) in block_ids.iter().enumerate() {
+                match engine.read_block(block_id.as_str()) {
+                    Ok(snap) => v.push(snap),
+                    Err(e) => {
+                        tracing::error!(
+                            space_id = %space_id_str,
+                            block_id = %block_id.as_str(),
+                            error = %e,
+                            "recovery (#2920): engine core-read failed for block; skipping it \
+                             (remote content for this block missing until re-sync)"
+                        );
+                        skipped[i] = true;
+                        v.push(None);
+                    }
+                }
+            }
+            v
+        }
+    }
+}
+
+/// [`reproject_space_from_engine`]'s per-block derived reads (properties /
+/// tags / deleted_at), each non-fatal (#2920). Aligned with `block_ids` by
+/// index; a skipped block holds `None`.
+fn read_engine_block_states(
+    engine: &agaric_engine::loro::engine::LoroEngine,
+    space_id_str: &str,
+    block_ids: &[agaric_core::ulid::BlockId],
+    skipped: &mut [bool],
+) -> Vec<Option<EngineBlockState>> {
+    let n = block_ids.len();
+    let mut states = Vec::with_capacity(n);
+    for (i, block_id) in block_ids.iter().enumerate() {
+        if skipped[i] {
+            states.push(None);
+            continue;
+        }
+        let props = match engine.read_all_properties_typed(block_id.as_str()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                    "recovery (#2920): engine property-read failed for block; skipping it"
+                );
+                skipped[i] = true;
+                states.push(None);
+                continue;
+            }
+        };
+        let tags = match engine.read_tags(block_id.as_str()) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                    "recovery (#2920): engine tag-read failed for block; skipping it"
+                );
+                skipped[i] = true;
+                states.push(None);
+                continue;
+            }
+        };
+        let deleted_at = match engine.read_deleted_at(block_id.as_str()) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                    "recovery (#2920): engine deleted_at-read failed for block; skipping it"
+                );
+                skipped[i] = true;
+                states.push(None);
+                continue;
+            }
+        };
+        states.push(Some((props, tags, deleted_at)));
+    }
+    states
+}
+
+/// [`reproject_space_from_engine`]'s Pass A.
+async fn project_engine_core_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    space_id_str: &str,
+    space_id: &agaric_store::space::SpaceId,
+    block_ids: &[agaric_core::ulid::BlockId],
+    core: &[Option<agaric_engine::loro::engine::BlockSnapshot>],
+    skipped: &mut [bool],
+) -> Result<(), agaric_core::error::AppError> {
+    use agaric_engine::loro::projection::project_block_full_to_sql;
+    // #2920: `tx.begin()` on the shared transaction opens a nested SAVEPOINT so a
+    // per-block projection failure rolls back only that block, not the whole
+    // recovery. Requires the `Acquire` trait in scope.
+    use sqlx::Acquire;
+
+    // Pass A — core columns + properties. FIRST upsert EVERY (non-skipped)
+    // block's core row (incl. tag blocks) so all `blocks` rows a later
+    // `block_tags.tag_id` FK references exist before Pass B/C. Each block
+    // runs under its OWN savepoint (#2920): a failing INSERT (e.g. an
+    // unrecognised `block_type` the local schema's CHECK rejects) rolls back
+    // only that block and flags it skipped, leaving the shared tx intact so
+    // the remaining blocks and spaces still commit.
+    for (i, (block_id, snapshot)) in block_ids.iter().zip(core).enumerate() {
+        if skipped[i] {
+            continue;
+        }
+        let mut sp = tx.begin().await?;
+        match project_block_full_to_sql(&mut sp, space_id, block_id, snapshot.as_ref()).await {
+            Ok(()) => {
+                sp.commit().await?;
+            }
+            Err(e) => {
+                sp.rollback().await?;
+                tracing::error!(
+                    space_id = %space_id_str,
+                    block_id = %block_id.as_str(),
+                    error = %e,
+                    "recovery (#2920): SQL core-projection failed for block; skipping it and \
+                     continuing (other blocks and spaces still commit)"
+                );
+                skipped[i] = true;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`reproject_space_from_engine`]'s Pass B/C/D.
+async fn project_engine_derived_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    space_id_str: &str,
+    block_ids: &[agaric_core::ulid::BlockId],
+    states: &[Option<EngineBlockState>],
+    value_types: &std::collections::HashMap<String, String>,
+    skipped: &mut [bool],
+) -> Result<(), agaric_core::error::AppError> {
+    use agaric_engine::loro::projection::{
+        reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
+        reproject_block_tags_from_engine,
+    };
+    use sqlx::Acquire;
+
+    // Pass B/C/D — properties, then tags (FK-ordered after every Pass A core
+    // row exists), then soft-delete state. Grouped per block under one
+    // savepoint (#2920): all Pass A rows are already present, so the
+    // intra-block grouping preserves the cross-block FK ordering while still
+    // isolating a per-block failure.
+    for (i, block_id) in block_ids.iter().enumerate() {
+        if skipped[i] {
+            continue;
+        }
+        let Some((props, tags, deleted_at)) = states[i].as_ref() else {
+            continue;
+        };
+        let mut sp = tx.begin().await?;
+        let res = async {
+            reproject_block_properties_from_engine(&mut sp, block_id, props, value_types).await?;
+            reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
+            reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
+                .await?;
+            Ok::<(), agaric_core::error::AppError>(())
+        }
+        .await;
+        match res {
+            Ok(()) => {
+                sp.commit().await?;
+            }
+            Err(e) => {
+                sp.rollback().await?;
+                tracing::error!(
+                    space_id = %space_id_str,
+                    block_id = %block_id.as_str(),
+                    error = %e,
+                    "recovery (#2920): SQL derived-projection failed for block; skipping it \
+                     and continuing"
+                );
+                skipped[i] = true;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`reproject_blocks_from_engine`]'s per-space pass: load the persisted
+/// snapshot into a throwaway engine and project every live block. `None` when
+/// the snapshot failed to decode (the space is skipped); otherwise
+/// `(blocks, skipped)` for the space.
+async fn reproject_space_from_engine(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    space_id_str: &str,
+    bytes: &[u8],
+    value_types: &std::collections::HashMap<String, String>,
+) -> Result<Option<(usize, usize)>, agaric_core::error::AppError> {
+    // Build a throwaway engine and load this space's persisted snapshot. A
+    // decode failure is non-fatal: skip this space (its local content still
+    // stands from the op-log pass) and keep rebuilding the rest.
+    let mut engine = agaric_engine::loro::engine::LoroEngine::new();
+    if let Err(e) = engine.import(bytes) {
+        tracing::error!(
+            space_id = %space_id_str,
+            error = %e,
+            "recovery (#2504): failed to load persisted Loro snapshot — remote-authored \
+             content for this space cannot be reprojected and will be missing until re-sync"
+        );
+        return Ok(None);
+    }
+
+    let space_id = agaric_store::space::SpaceId::from_trusted(space_id_str);
+    // Full live tree, parent-before-child (soft-deleted nodes are included,
+    // so Pass C can re-stamp their tombstones). Hard-purged blocks are gone
+    // from the engine index already, so there is nothing to sweep here.
+    let block_ids = engine.live_blocks_preorder();
+    if block_ids.is_empty() {
+        return Ok(Some((0, 0)));
+    }
+    let n = block_ids.len();
+    // Per-block skip flags for THIS space. A block flagged here is excluded
+    // from every later pass, so a failure in one pass can't cascade into a
+    // hard error in the next (e.g. a tag edge onto a block whose core row
+    // never landed).
+    let mut skipped = vec![false; n];
+    let core = read_engine_core_rows(&engine, space_id_str, &block_ids, &mut skipped);
+    let states = read_engine_block_states(&engine, space_id_str, &block_ids, &mut skipped);
+    project_engine_core_rows(tx, space_id_str, &space_id, &block_ids, &core, &mut skipped).await?;
+    project_engine_derived_rows(
+        tx,
+        space_id_str,
+        &block_ids,
+        &states,
+        value_types,
+        &mut skipped,
+    )
+    .await?;
+    let space_skipped = skipped.iter().filter(|&&s| s).count();
+    Ok(Some((n, space_skipped)))
+}
+
+/// [`reproject_blocks_from_engine`]'s post-commit rebuild of the
+/// visibility-critical derived caches.
+async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
+    // #2504: the passes above restore the PRIMARY state (blocks / properties /
+    // tags / deleted_at) for the remote-authored content, but NOT the derived
+    // caches the live inbound-sync path rebuilds via its post-projection fan-out
+    // (`Materializer::enqueue_inbound_sync_rebuilds`). That fan-out is
+    // unreachable here — this runs inside `init_pools`, BEFORE the materializer
+    // exists. Without it the freshly-restored remote blocks land with NULL
+    // `page_id` (invisible to every `WHERE page_id = ?` page-scoped read), no
+    // `fts_blocks` row (unsearchable), and no inherited-tag rows (missing from
+    // tag-filtered reads) — recovered-but-invisible until an unrelated full
+    // cache rebuild happens to run.
+    //
+    // The boot fan-out (`spawn_boot_maintenance`) enqueues an unconditional
+    // full-table `RebuildPageIds`, but only rebuilds FTS when `fts_blocks` is
+    // EMPTY (a stale-but-non-empty index after a partial corruption never
+    // triggers it) and never rebuilds tag-inheritance unconditionally. So we
+    // cannot rely on it to cover the reprojected content. Rebuild the
+    // visibility-critical derived caches synchronously and deterministically
+    // here instead (the disaster path is rare, so the one-shot full rebuild
+    // cost is acceptable — and correctness/visibility beats deferral).
+    //
+    // Order: `page_id` first — the FTS and tag-inheritance rebuilds are
+    // independent of it, but `page_id` is the foundation other `page_id`-scoped
+    // caches (rebuilt by the boot fan-out) consume, and rebuilding it here
+    // closes the NULL-`page_id` window without waiting for the background task.
+    // All three are full-table, idempotent, and pool-only (no engine / space
+    // bootstrap dependency), so they are safe to run at init. Best-effort:
+    // a rebuild failure must NOT wedge boot — the primary content is already
+    // durably committed above, every read path degrades gracefully on a stale
+    // cache, and the boot fan-out + next-op incremental updates are a backstop.
+    if let Err(e) = agaric_store::cache::rebuild_page_ids(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
+    }
+    if let Err(e) = agaric_store::fts::rebuild_fts_index(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
+    }
+    if let Err(e) = agaric_store::tag_inheritance::rebuild_all(pool).await {
+        tracing::warn!(error = %e, "recovery (#2504): tag-inheritance rebuild after engine reproject failed (non-fatal; inherited-tag reads stale until next rebuild)");
+    }
+}
+
 /// #2504: engine-first disaster rebuild of the SQL primary state.
 ///
 /// [`recover_blocks_from_op_log`] rebuilds `blocks` by replaying the strictly
@@ -770,39 +1117,11 @@ async fn persisted_engine_snapshot_count(
 /// visible to page-scoped reads / search / tag filters — the live inbound-sync
 /// path rebuilds these via its post-projection materializer fan-out, which is
 /// unreachable at `init_pools` time (the materializer does not exist yet). See
-/// the rebuild block at the end of the function body for the rationale.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+/// [`rebuild_caches_after_engine_reproject`] for the rationale.
 pub(crate) async fn reproject_blocks_from_engine(
     pool: &SqlitePool,
 ) -> Result<bool, agaric_core::error::AppError> {
-    use agaric_engine::loro::projection::{
-        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
-        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
-    };
-    // #2920: `tx.begin()` on the shared transaction opens a nested SAVEPOINT so a
-    // per-block projection failure rolls back only that block, not the whole
-    // recovery. Requires the `Acquire` trait in scope.
-    use sqlx::Acquire;
-
-    // `loro_doc_state` may be absent on an ancient pre-0052 database.
-    let table_exists: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'",
-    )
-    .fetch_one(pool)
-    .await?;
-    if table_exists == 0 {
-        return Ok(false);
-    }
-
-    // Every space that carries a real (non-empty) engine snapshot. A NULL/empty
-    // snapshot column holds no recoverable state.
-    let snapshots: Vec<(String, Vec<u8>)> = sqlx::query_as(
-        "SELECT space_id, snapshot FROM loro_doc_state \
-         WHERE snapshot IS NOT NULL AND LENGTH(snapshot) > 0 \
-         ORDER BY space_id",
-    )
-    .fetch_all(pool)
-    .await?;
+    let snapshots = load_engine_snapshots(pool).await?;
     if snapshots.is_empty() {
         return Ok(false);
     }
@@ -832,194 +1151,12 @@ pub(crate) async fn reproject_blocks_from_engine(
     let mut skipped_blocks_total = 0usize;
 
     for (space_id_str, bytes) in &snapshots {
-        // Build a throwaway engine and load this space's persisted snapshot. A
-        // decode failure is non-fatal: skip this space (its local content still
-        // stands from the op-log pass) and keep rebuilding the rest.
-        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
-        if let Err(e) = engine.import(bytes) {
-            tracing::error!(
-                space_id = %space_id_str,
-                error = %e,
-                "recovery (#2504): failed to load persisted Loro snapshot — remote-authored \
-                 content for this space cannot be reprojected and will be missing until re-sync"
-            );
+        let Some((n, space_skipped)) =
+            reproject_space_from_engine(&mut tx, space_id_str, bytes, &value_types).await?
+        else {
             skipped_spaces += 1;
             continue;
-        }
-
-        let space_id = agaric_store::space::SpaceId::from_trusted(space_id_str);
-        // Full live tree, parent-before-child (soft-deleted nodes are included,
-        // so Pass C can re-stamp their tombstones). Hard-purged blocks are gone
-        // from the engine index already, so there is nothing to sweep here.
-        let block_ids = engine.live_blocks_preorder();
-        if block_ids.is_empty() {
-            spaces_reprojected += 1;
-            continue;
-        }
-        let n = block_ids.len();
-        // Per-block skip flags for THIS space. A block flagged here is excluded
-        // from every later pass, so a failure in one pass can't cascade into a
-        // hard error in the next (e.g. a tag edge onto a block whose core row
-        // never landed).
-        let mut skipped = vec![false; n];
-
-        // Engine core read: fast O(N) bulk path, with a per-block fallback
-        // (#2920). If the bulk read fails because ONE block's engine metadata is
-        // corrupt, re-read block-by-block so only the bad block(s) are skipped
-        // instead of aborting the entire space.
-        let id_refs: Vec<&str> = block_ids
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        let core = match engine.read_blocks_bulk(&id_refs) {
-            Ok(core) => core,
-            Err(e) => {
-                tracing::warn!(
-                    space_id = %space_id_str,
-                    error = %e,
-                    "recovery (#2920): bulk engine core-read failed; falling back to per-block \
-                     reads to isolate the corrupt block(s)"
-                );
-                let mut v = Vec::with_capacity(n);
-                for (i, block_id) in block_ids.iter().enumerate() {
-                    match engine.read_block(block_id.as_str()) {
-                        Ok(snap) => v.push(snap),
-                        Err(e) => {
-                            tracing::error!(
-                                space_id = %space_id_str,
-                                block_id = %block_id.as_str(),
-                                error = %e,
-                                "recovery (#2920): engine core-read failed for block; skipping it \
-                                 (remote content for this block missing until re-sync)"
-                            );
-                            skipped[i] = true;
-                            v.push(None);
-                        }
-                    }
-                }
-                v
-            }
         };
-
-        // Per-block engine state reads (properties / tags / deleted_at), each
-        // non-fatal (#2920). Aligned with `block_ids` by index; a skipped block
-        // holds `None`.
-        let mut states = Vec::with_capacity(n);
-        for (i, block_id) in block_ids.iter().enumerate() {
-            if skipped[i] {
-                states.push(None);
-                continue;
-            }
-            let props = match engine.read_all_properties_typed(block_id.as_str()) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(
-                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
-                        "recovery (#2920): engine property-read failed for block; skipping it"
-                    );
-                    skipped[i] = true;
-                    states.push(None);
-                    continue;
-                }
-            };
-            let tags = match engine.read_tags(block_id.as_str()) {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::error!(
-                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
-                        "recovery (#2920): engine tag-read failed for block; skipping it"
-                    );
-                    skipped[i] = true;
-                    states.push(None);
-                    continue;
-                }
-            };
-            let deleted_at = match engine.read_deleted_at(block_id.as_str()) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::error!(
-                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
-                        "recovery (#2920): engine deleted_at-read failed for block; skipping it"
-                    );
-                    skipped[i] = true;
-                    states.push(None);
-                    continue;
-                }
-            };
-            states.push(Some((props, tags, deleted_at)));
-        }
-
-        // Pass A — core columns + properties. FIRST upsert EVERY (non-skipped)
-        // block's core row (incl. tag blocks) so all `blocks` rows a later
-        // `block_tags.tag_id` FK references exist before Pass B/C. Each block
-        // runs under its OWN savepoint (#2920): a failing INSERT (e.g. an
-        // unrecognised `block_type` the local schema's CHECK rejects) rolls back
-        // only that block and flags it skipped, leaving the shared tx intact so
-        // the remaining blocks and spaces still commit.
-        for (i, (block_id, snapshot)) in block_ids.iter().zip(&core).enumerate() {
-            if skipped[i] {
-                continue;
-            }
-            let mut sp = tx.begin().await?;
-            match project_block_full_to_sql(&mut sp, &space_id, block_id, snapshot.as_ref()).await {
-                Ok(()) => {
-                    sp.commit().await?;
-                }
-                Err(e) => {
-                    sp.rollback().await?;
-                    tracing::error!(
-                        space_id = %space_id_str,
-                        block_id = %block_id.as_str(),
-                        error = %e,
-                        "recovery (#2920): SQL core-projection failed for block; skipping it and \
-                         continuing (other blocks and spaces still commit)"
-                    );
-                    skipped[i] = true;
-                }
-            }
-        }
-
-        // Pass B/C/D — properties, then tags (FK-ordered after every Pass A core
-        // row exists), then soft-delete state. Grouped per block under one
-        // savepoint (#2920): all Pass A rows are already present, so the
-        // intra-block grouping preserves the cross-block FK ordering while still
-        // isolating a per-block failure.
-        for (i, block_id) in block_ids.iter().enumerate() {
-            if skipped[i] {
-                continue;
-            }
-            let Some((props, tags, deleted_at)) = states[i].as_ref() else {
-                continue;
-            };
-            let mut sp = tx.begin().await?;
-            let res = async {
-                reproject_block_properties_from_engine(&mut sp, block_id, props, &value_types)
-                    .await?;
-                reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
-                reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
-                    .await?;
-                Ok::<(), agaric_core::error::AppError>(())
-            }
-            .await;
-            match res {
-                Ok(()) => {
-                    sp.commit().await?;
-                }
-                Err(e) => {
-                    sp.rollback().await?;
-                    tracing::error!(
-                        space_id = %space_id_str,
-                        block_id = %block_id.as_str(),
-                        error = %e,
-                        "recovery (#2920): SQL derived-projection failed for block; skipping it \
-                         and continuing"
-                    );
-                    skipped[i] = true;
-                }
-            }
-        }
-
-        let space_skipped = skipped.iter().filter(|&&s| s).count();
         skipped_blocks_total += space_skipped;
         spaces_reprojected += 1;
         blocks_reprojected += n - space_skipped;
@@ -1054,44 +1191,7 @@ pub(crate) async fn reproject_blocks_from_engine(
 
     tx.commit().await?;
 
-    // #2504: the passes above restore the PRIMARY state (blocks / properties /
-    // tags / deleted_at) for the remote-authored content, but NOT the derived
-    // caches the live inbound-sync path rebuilds via its post-projection fan-out
-    // (`Materializer::enqueue_inbound_sync_rebuilds`). That fan-out is
-    // unreachable here — this runs inside `init_pools`, BEFORE the materializer
-    // exists. Without it the freshly-restored remote blocks land with NULL
-    // `page_id` (invisible to every `WHERE page_id = ?` page-scoped read), no
-    // `fts_blocks` row (unsearchable), and no inherited-tag rows (missing from
-    // tag-filtered reads) — recovered-but-invisible until an unrelated full
-    // cache rebuild happens to run.
-    //
-    // The boot fan-out (`spawn_boot_maintenance`) enqueues an unconditional
-    // full-table `RebuildPageIds`, but only rebuilds FTS when `fts_blocks` is
-    // EMPTY (a stale-but-non-empty index after a partial corruption never
-    // triggers it) and never rebuilds tag-inheritance unconditionally. So we
-    // cannot rely on it to cover the reprojected content. Rebuild the
-    // visibility-critical derived caches synchronously and deterministically
-    // here instead (the disaster path is rare, so the one-shot full rebuild
-    // cost is acceptable — and correctness/visibility beats deferral).
-    //
-    // Order: `page_id` first — the FTS and tag-inheritance rebuilds are
-    // independent of it, but `page_id` is the foundation other `page_id`-scoped
-    // caches (rebuilt by the boot fan-out) consume, and rebuilding it here
-    // closes the NULL-`page_id` window without waiting for the background task.
-    // All three are full-table, idempotent, and pool-only (no engine / space
-    // bootstrap dependency), so they are safe to run at init. Best-effort:
-    // a rebuild failure must NOT wedge boot — the primary content is already
-    // durably committed above, every read path degrades gracefully on a stale
-    // cache, and the boot fan-out + next-op incremental updates are a backstop.
-    if let Err(e) = agaric_store::cache::rebuild_page_ids(pool).await {
-        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
-    }
-    if let Err(e) = agaric_store::fts::rebuild_fts_index(pool).await {
-        tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
-    }
-    if let Err(e) = agaric_store::tag_inheritance::rebuild_all(pool).await {
-        tracing::warn!(error = %e, "recovery (#2504): tag-inheritance rebuild after engine reproject failed (non-fatal; inherited-tag reads stale until next rebuild)");
-    }
+    rebuild_caches_after_engine_reproject(pool).await;
 
     if anything_skipped {
         // #2920: partial recovery. Good content is durably committed above, but
@@ -1260,48 +1360,9 @@ const CASCADE_RESTORE: &str = "restore_block cascade";
 const CASCADE_PURGE: &str = "purge_block cascade";
 
 impl ReplayDiagnostics {
-    /// Emit everything this pass observed, exactly once.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-    fn emit(&self) {
-        if self.op_log_missing {
-            tracing::warn!("op_log table missing — cannot recover blocks data");
-            return;
-        }
-
-        // #2504: loudly surface the device-local-only limitation of this
-        // rebuild. The op-log replay reconstructs only locally-authored content
-        // (and, post-#3268, only ops this device authored). If the device has
-        // synced, the per-space Loro engine snapshots in `loro_doc_state` hold
-        // the complete convergent state — including remote-authored content
-        // this replay cannot see — and it is about to be dropped. This is a
-        // disaster-path last resort; it must not fail silently.
-        if self.engine_snapshots > 0 {
-            tracing::error!(
-                engine_snapshots = self.engine_snapshots,
-                "DISASTER RECOVERY DATA LOSS (#2504): rebuilding `blocks` from the device-local \
-                 op_log only. This device has synced ({} Loro engine snapshot(s) in \
-                 `loro_doc_state`), but the op_log holds only locally-authored ops — every \
-                 remote-authored block, property, and tag WILL BE MISSING from the rebuilt table. \
-                 The complete convergent state survives in `loro_doc_state`; recover it via an \
-                 engine-first reprojection or a fresh re-sync from a peer.",
-                self.engine_snapshots
-            );
-        } else {
-            tracing::warn!(
-                "Recovering `blocks` from the device-local op_log (#2504). No synced Loro engine \
-                 state present, so local content is complete; note this replay would omit any \
-                 remote-authored content if the device had synced."
-            );
-        }
-
-        if self.ops_replayed == 0 {
-            return;
-        }
-        tracing::info!(
-            "Replayed {} ops into the recovered blocks table",
-            self.ops_replayed
-        );
-
+    /// [`ReplayDiagnostics::emit`]'s `create_block` anomalies: duplicate and
+    /// constraint-rejected creates.
+    fn emit_create_anomalies(&self) {
         for block_id in &self.duplicate_creates {
             tracing::warn!(
                 block_id,
@@ -1327,7 +1388,11 @@ impl ReplayDiagnostics {
                 self.constraint_rejected_creates.len()
             );
         }
+    }
 
+    /// [`ReplayDiagnostics::emit`]'s `move_block` reconciliations: the #4187
+    /// sweep and its #4204/#4188 mirror image.
+    fn emit_move_reconciliations(&self) {
         // #4187: a cross-device reconciliation, not a user action — the same
         // reason the materializer's sweep (#4112) and R9's snapshot-import
         // sweep both warn. Reported here rather than logged at the site so the
@@ -1366,7 +1431,11 @@ impl ReplayDiagnostics {
                 self.move_unswept_inherited_cohort.len()
             );
         }
+    }
 
+    /// [`ReplayDiagnostics::emit`]'s #4232 report of the walks that hit the
+    /// depth cap.
+    fn emit_cascade_truncations(&self) {
         // #4232: a walk that ran out of rope answered from a PARTIAL view of
         // the tree, so the rebuilt table may be wrong and no longer merely
         // noisy — hence an error, alongside the #2504 data-loss report, rather
@@ -1441,7 +1510,11 @@ impl ReplayDiagnostics {
                 emit_truncation!(error);
             }
         }
+    }
 
+    /// [`ReplayDiagnostics::emit`]'s #4287 report of the truncated purge tails
+    /// the replay finished.
+    fn emit_purge_tails_finished(&self) {
         // #4287: the repair, reported separately from the truncation that
         // caused it. A truncated purge used to end with its unreached tail
         // adopted by the orphan cleanup as a live, FTS-indexed top-level block
@@ -1468,6 +1541,53 @@ impl ReplayDiagnostics {
                 self.purge_tail_rows_removed
             );
         }
+    }
+
+    /// Emit everything this pass observed, exactly once.
+    fn emit(&self) {
+        if self.op_log_missing {
+            tracing::warn!("op_log table missing — cannot recover blocks data");
+            return;
+        }
+
+        // #2504: loudly surface the device-local-only limitation of this
+        // rebuild. The op-log replay reconstructs only locally-authored content
+        // (and, post-#3268, only ops this device authored). If the device has
+        // synced, the per-space Loro engine snapshots in `loro_doc_state` hold
+        // the complete convergent state — including remote-authored content
+        // this replay cannot see — and it is about to be dropped. This is a
+        // disaster-path last resort; it must not fail silently.
+        if self.engine_snapshots > 0 {
+            tracing::error!(
+                engine_snapshots = self.engine_snapshots,
+                "DISASTER RECOVERY DATA LOSS (#2504): rebuilding `blocks` from the device-local \
+                 op_log only. This device has synced ({} Loro engine snapshot(s) in \
+                 `loro_doc_state`), but the op_log holds only locally-authored ops — every \
+                 remote-authored block, property, and tag WILL BE MISSING from the rebuilt table. \
+                 The complete convergent state survives in `loro_doc_state`; recover it via an \
+                 engine-first reprojection or a fresh re-sync from a peer.",
+                self.engine_snapshots
+            );
+        } else {
+            tracing::warn!(
+                "Recovering `blocks` from the device-local op_log (#2504). No synced Loro engine \
+                 state present, so local content is complete; note this replay would omit any \
+                 remote-authored content if the device had synced."
+            );
+        }
+
+        if self.ops_replayed == 0 {
+            return;
+        }
+        tracing::info!(
+            "Replayed {} ops into the recovered blocks table",
+            self.ops_replayed
+        );
+
+        self.emit_create_anomalies();
+        self.emit_move_reconciliations();
+        self.emit_cascade_truncations();
+        self.emit_purge_tails_finished();
     }
 }
 
@@ -3070,6 +3190,336 @@ async fn replay_purge_block(
     Ok(())
 }
 
+/// [`recover_derived_state_from_op_log`]'s `set_property` arm for a payload
+/// with no value set: an explicit clear.
+async fn replay_set_property_clear(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+) -> Result<(), agaric_core::error::AppError> {
+    // #534: reserved keys are column-backed on `blocks` (the
+    // single source of truth); a clear is replayed as nulling
+    // the column, never a `block_properties` DELETE (which is
+    // now CHECK-forbidden for these keys anyway).
+    if let Some(col) = reserved_key_blocks_column(key) {
+        // `col` is a fixed internal literal from the allowlist
+        // in `reserved_key_blocks_column`, never user input.
+        // `space` fans out to the whole owning-page group, like
+        // `project_delete_property_to_sql`; the others are 1:1.
+        let q = if col == "space_id" {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
+            )))
+            .bind(block_id)
+            .bind(block_id)
+        } else {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE blocks SET {col} = NULL WHERE id = ?"
+            )))
+            .bind(block_id)
+        };
+        q.execute(&mut *conn).await?;
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+        .bind(block_id)
+        .bind(key)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// [`recover_derived_state_from_op_log`]'s `set_property` arm for a reserved
+/// key: the value lands on its `blocks` column (#534), never in
+/// `block_properties`.
+async fn replay_reserved_set_property(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+    col: &str,
+    col_value: Option<&str>,
+) -> Result<(), agaric_core::error::AppError> {
+    if key == agaric_store::op::SPACE_PROPERTY_KEY {
+        // #605: `blocks.space_id` carries an FK and recovery
+        // runs with `foreign_keys=ON`, so an op whose target
+        // is absent (purged locally, or created on another
+        // device and never present in the local op_log) would
+        // trip FK 787 — and because recovery re-runs on every
+        // boot until it succeeds, that single dangling ref
+        // becomes a PERMANENT boot failure. Skip the op
+        // instead, exactly like the generic value_ref branch
+        // below: a dead ref means the assignment is dead.
+        // #708: the FK target is now `spaces(id)` (migration
+        // 0089), so the guard checks the registry — a target
+        // that exists as a block but was never flagged
+        // `is_space` (the #612 mis-stamp class) is skipped
+        // too. Replay order keeps legitimate targets
+        // registered before they are referenced: the
+        // `SetProperty(is_space)` op precedes any
+        // `SetProperty(space)` pointing at it, and its
+        // `block_properties` INSERT fires the 0089
+        // `spaces_register_is_space` trigger.
+        // The block keeps its prior (NULL/unchanged) space_id;
+        // a later import / rebuild reconciles once the space
+        // block exists (same degrade contract as
+        // `project_block_full_to_sql`'s subquery stamp).
+        if let Some(target) = col_value {
+            let target_exists: i64 =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)")
+                    .bind(target)
+                    .fetch_one(&mut *conn)
+                    .await?;
+            if target_exists == 0 {
+                tracing::warn!(
+                    block_id,
+                    space_id = target,
+                    "recovery: set_property(space) references a block that \
+                 is not a registered space — skipping (dangling or \
+                 mis-stamped value_ref, #605/#708)"
+                );
+                return Ok(());
+            }
+        }
+        // `space` fans out to the whole owning-page group, like
+        // the live projection (`blocks.space_id`).
+        // `col` is a fixed internal literal from the allowlist
+        // in `reserved_key_blocks_column`, never user input.
+        let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ? OR page_id = ?");
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(col_value)
+            .bind(block_id)
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+    } else {
+        // `col` is a fixed internal literal from the allowlist
+        // in `reserved_key_blocks_column`, never user input.
+        let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(col_value)
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// [`recover_derived_state_from_op_log`]'s `set_property` arm.
+async fn replay_set_property_op(
+    conn: &mut sqlx::SqliteConnection,
+    payload: &serde_json::Value,
+) -> Result<(), agaric_core::error::AppError> {
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    let key = payload["key"].as_str().unwrap_or("");
+    let value_text = payload
+        .get("value_text")
+        .and_then(serde_json::Value::as_str);
+    let value_num = payload.get("value_num").and_then(serde_json::Value::as_f64);
+    let value_date = payload
+        .get("value_date")
+        .and_then(serde_json::Value::as_str);
+    let value_ref = payload.get("value_ref").and_then(serde_json::Value::as_str);
+    let value_bool = payload
+        .get("value_bool")
+        .and_then(serde_json::Value::as_bool)
+        .map(i64::from);
+
+    // A `SetProperty` with NO value set is an explicit *clear*
+    // (value = None) — the live projection represents a cleared
+    // property as row-absent, never an all-NULL row. Inserting
+    // the all-NULL row here would violate the `exactly_one_value`
+    // CHECK (migration 0062, which requires exactly one value
+    // column non-NULL) and abort startup with a (275) panic.
+    // Replay it as a DELETE so the LWW order is preserved: a
+    // clear removes any prior value for this (block_id, key).
+    let value_count = i32::from(value_text.is_some())
+        + i32::from(value_num.is_some())
+        + i32::from(value_date.is_some())
+        + i32::from(value_ref.is_some())
+        + i32::from(value_bool.is_some());
+    if value_count == 0 {
+        replay_set_property_clear(conn, block_id, key).await?;
+        return Ok(());
+    }
+
+    // #534: reserved keys (`todo_state` / `priority` / `due_date` /
+    // `scheduled_date` / `space`) are column-backed on `blocks` and
+    // are FORBIDDEN in `block_properties` by the migration-0088
+    // CHECK constraint. Route the set to the dedicated `blocks` column
+    // (the same reserved-key→column mapping the projection uses)
+    // instead of inserting a (now-rejected) property row.
+    //
+    // #2043: this arm is INTENTIONALLY left inline, not routed
+    // through `project_set_property_to_sql`. Recovery adds
+    // FK-existence guards the projection LACKS — it skips the op if
+    // the owning block is absent (purged / never reached this
+    // device, below) and skips a dangling `space` ref (#605/#708) —
+    // because recovery runs with `foreign_keys=ON` on every boot, so
+    // a dangling write would trip FK 787 and PERMANENTLY wedge boot.
+    // Dropping those guards to share the projection is unsafe.
+    if let Some(col) = reserved_key_blocks_column(key) {
+        // `space` is value_ref-typed; the date/text keys carry their
+        // value in value_date / value_text respectively. Pick the
+        // payload field that matches the column's storage.
+        let col_value: Option<&str> = match key {
+            "due_date" | "scheduled_date" => value_date,
+            agaric_store::op::SPACE_PROPERTY_KEY => value_ref,
+            _ => value_text,
+        };
+        replay_reserved_set_property(conn, block_id, key, col, col_value).await?;
+        return Ok(());
+    }
+
+    // #4020: this `EXISTS` skip now also fires on a
+    // LOCALLY-authored op whose target block is PEER-authored.
+    // `recover_blocks_from_op_log` filters `is_replicated = 0`,
+    // so peer-authored blocks are still absent from `blocks`
+    // while this pass runs — the identical drop that forced the
+    // attachment arms into their own post-reprojection pass
+    // (#3268). It is safe HERE, and only here, because
+    // `reproject_blocks_from_engine` runs next and
+    // DELETE-then-reinserts `block_properties` (and
+    // `block_tags`) per block straight from the engine, which
+    // holds local and peer state alike — so anything this guard
+    // skipped is rewritten from the authoritative source
+    // moments later. `attachments` has no such downstream
+    // repair (it is not Loro-modelled — `pool.rs` states this
+    // for attachments and nothing stated it here), and THAT
+    // asymmetry, not a difference in the guards, is the whole
+    // reason only the attachment arms moved. Do not "fix" this
+    // by moving the property/tag arms after the reprojection
+    // too: they would then be overwritten by it and the local
+    // op-log pass would stop contributing anything.
+    //
+    // Guard the two FK columns (block_id, value_ref → blocks(id)).
+    // An op may reference a block that was purged or created on
+    // another device and is absent from the local op_log, so
+    // inserting blindly would trip FOREIGN KEY constraint failed
+    // (787) and abort startup. Skip the row entirely if its owning
+    // block is gone, or if a non-null value_ref dangles: under the
+    // exactly-one-value invariant (migration 0062) value_ref is the
+    // row's sole value, and its FK is ON DELETE CASCADE, so a dead
+    // ref means the whole property is dead — nulling it would just
+    // trade FK 787 for a CHECK violation on the now all-NULL row.
+    sqlx::query(
+        "INSERT OR REPLACE INTO block_properties \
+     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+     SELECT ?, ?, ?, ?, ?, ?, ? \
+     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
+    )
+    .bind(block_id)
+    .bind(key)
+    .bind(value_text)
+    .bind(value_num)
+    .bind(value_date)
+    .bind(value_ref)
+    .bind(value_bool)
+    .bind(block_id)
+    .bind(value_ref)
+    .bind(value_ref)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// [`recover_derived_state_from_op_log`]'s per-op dispatch, in LWW replay
+/// order.
+async fn replay_derived_op(
+    conn: &mut sqlx::SqliteConnection,
+    op_type: &str,
+    payload: &serde_json::Value,
+) -> Result<(), agaric_core::error::AppError> {
+    match op_type {
+        "set_property" => replay_set_property_op(conn, payload).await?,
+        "delete_property" => {
+            let block_id = payload["block_id"].as_str().unwrap_or("");
+            let key = payload["key"].as_str().unwrap_or("");
+
+            // #2043: route through the shared projection
+            // (`project_delete_property_to_sql`) instead of re-hand-rolling
+            // the per-key fan-out. It is genuinely equivalent: reserved
+            // keys clear the dedicated `blocks` column (single source of
+            // truth); `space` clears `space_id` for the whole owning-page
+            // group; non-reserved keys DELETE the `block_properties` row —
+            // the same `reserved_key_blocks_column` / `is_reserved_property_key`
+            // dispatch. This arm runs post-migration against the REAL
+            // schema, and a clear-to-NULL / row DELETE cannot trip FK 787,
+            // so there is no FK-guard concern (unlike `set_property` /
+            // `add_tag`, which keep their guards inline). All branches are
+            // idempotent (0-row UPDATE/DELETE no-ops).
+            agaric_engine::loro::projection::project_delete_property_to_sql(
+                &mut *conn, block_id, key,
+            )
+            .await?;
+        }
+        "add_tag" => {
+            let block_id = payload["block_id"].as_str().unwrap_or("");
+            let tag_id = payload["tag_id"].as_str().unwrap_or("");
+
+            // Both columns are FKs to blocks(id): skip the tag if either
+            // the tagged block or the tag block is absent (purged, or
+            // never created in the local op_log) to avoid FK 787 panic.
+            // #4020: as on the `set_property` arm above, that "absent"
+            // set now includes PEER-authored blocks, which
+            // `recover_blocks_from_op_log`'s `is_replicated = 0` filter
+            // leaves out of `blocks` until the engine reprojection runs.
+            // Safe for the same reason and only that reason:
+            // `reproject_blocks_from_engine` DELETE-then-reinserts
+            // `block_tags` per block from the engine right after this
+            // pass. `attachments` is the exception with no downstream
+            // repair — see the `set_property` arm for the full argument
+            // and for why the fix must not be applied in reverse here.
+            sqlx::query(
+                "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+             SELECT ?, ? \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
+               AND EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+            )
+            .bind(block_id)
+            .bind(tag_id)
+            .bind(block_id)
+            .bind(tag_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        // #614: a later `remove_tag` must win over its earlier `add_tag`
+        // (LWW replay order) — the exact analogue of the #374
+        // `delete_attachment` arm below. Without this arm every tag the
+        // user added and later removed resurrected after a recovery.
+        "remove_tag" => {
+            let block_id = payload["block_id"].as_str().unwrap_or("");
+            let tag_id = payload["tag_id"].as_str().unwrap_or("");
+
+            // #2894: route the `block_tags` delete through the shared
+            // projection (`project_remove_tag_to_sql`) — the exact fn the
+            // engine arm (`apply_remove_tag_via_loro`) and the SQL-only
+            // fallback (`apply_remove_tag_sql_only`) both run — so the
+            // `DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?`
+            // shape lives in ONE place and cannot drift between the three
+            // paths. This is the exact analogue of the already-converged
+            // `delete_property` arm above (#2043): a keyed DELETE cannot
+            // trip FK 787 (it removes a child row), is idempotent (0-row
+            // no-op when the pair is absent), and reads only `block_id` /
+            // `tag_id` straight from the payload — so unlike the `add_tag`
+            // / `set_property` arms it needs NO recovery-only FK-existence
+            // guard, and routing it through the projection is
+            // byte-for-byte equivalent. The inherited-tag cleanup that the
+            // command/sql_only wrappers run AFTER the projection
+            // (`remove_inherited_tag`) is deliberately NOT invoked here:
+            // this replay rebuilds only `block_tags`, exactly as the old
+            // inline DELETE did (the `block_tag_inherited` view is
+            // reconstructed by its own recompute path, not this loop).
+            agaric_engine::loro::projection::project_remove_tag_to_sql(
+                &mut *conn, block_id, tag_id,
+            )
+            .await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// After migrations run, recover the dependent tables (`block_properties`,
 /// `block_tags`) from `op_log` — but only when block-table
 /// recovery actually fired (#616: `blocks_recovered_this_boot`, or the
@@ -3087,7 +3537,6 @@ async fn replay_purge_block(
 /// the attachment pass (which is what clears [`DERIVED_RECOVERY_PENDING_KEY`]).
 /// This pass deliberately does NOT clear that marker: a crash between the two
 /// passes must leave the retry signal armed.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
@@ -3261,296 +3710,7 @@ pub(crate) async fn recover_derived_state_from_op_log(
             let payload: serde_json::Value =
                 serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
 
-            match op_type.as_str() {
-                "set_property" => {
-                    let block_id = payload["block_id"].as_str().unwrap_or("");
-                    let key = payload["key"].as_str().unwrap_or("");
-                    let value_text = payload
-                        .get("value_text")
-                        .and_then(serde_json::Value::as_str);
-                    let value_num = payload.get("value_num").and_then(serde_json::Value::as_f64);
-                    let value_date = payload
-                        .get("value_date")
-                        .and_then(serde_json::Value::as_str);
-                    let value_ref = payload.get("value_ref").and_then(serde_json::Value::as_str);
-                    let value_bool = payload
-                        .get("value_bool")
-                        .and_then(serde_json::Value::as_bool)
-                        .map(i64::from);
-
-                    // A `SetProperty` with NO value set is an explicit *clear*
-                    // (value = None) — the live projection represents a cleared
-                    // property as row-absent, never an all-NULL row. Inserting
-                    // the all-NULL row here would violate the `exactly_one_value`
-                    // CHECK (migration 0062, which requires exactly one value
-                    // column non-NULL) and abort startup with a (275) panic.
-                    // Replay it as a DELETE so the LWW order is preserved: a
-                    // clear removes any prior value for this (block_id, key).
-                    let value_count = i32::from(value_text.is_some())
-                        + i32::from(value_num.is_some())
-                        + i32::from(value_date.is_some())
-                        + i32::from(value_ref.is_some())
-                        + i32::from(value_bool.is_some());
-                    if value_count == 0 {
-                        // #534: reserved keys are column-backed on `blocks` (the
-                        // single source of truth); a clear is replayed as nulling
-                        // the column, never a `block_properties` DELETE (which is
-                        // now CHECK-forbidden for these keys anyway).
-                        if let Some(col) = reserved_key_blocks_column(key) {
-                            // `col` is a fixed internal literal from the allowlist
-                            // in `reserved_key_blocks_column`, never user input.
-                            // `space` fans out to the whole owning-page group, like
-                            // `project_delete_property_to_sql`; the others are 1:1.
-                            let q = if col == "space_id" {
-                                sqlx::query(sqlx::AssertSqlSafe(format!(
-                                    "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
-                                )))
-                                .bind(block_id)
-                                .bind(block_id)
-                            } else {
-                                sqlx::query(sqlx::AssertSqlSafe(format!(
-                                    "UPDATE blocks SET {col} = NULL WHERE id = ?"
-                                )))
-                                .bind(block_id)
-                            };
-                            q.execute(&mut *tx).await?;
-                            continue;
-                        }
-                        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                            .bind(block_id)
-                            .bind(key)
-                            .execute(&mut *tx)
-                            .await?;
-                        continue;
-                    }
-
-                    // #534: reserved keys (`todo_state` / `priority` / `due_date` /
-                    // `scheduled_date` / `space`) are column-backed on `blocks` and
-                    // are FORBIDDEN in `block_properties` by the migration-0088
-                    // CHECK constraint. Route the set to the dedicated `blocks` column
-                    // (the same reserved-key→column mapping the projection uses)
-                    // instead of inserting a (now-rejected) property row.
-                    //
-                    // #2043: this arm is INTENTIONALLY left inline, not routed
-                    // through `project_set_property_to_sql`. Recovery adds
-                    // FK-existence guards the projection LACKS — it skips the op if
-                    // the owning block is absent (purged / never reached this
-                    // device, below) and skips a dangling `space` ref (#605/#708) —
-                    // because recovery runs with `foreign_keys=ON` on every boot, so
-                    // a dangling write would trip FK 787 and PERMANENTLY wedge boot.
-                    // Dropping those guards to share the projection is unsafe.
-                    if let Some(col) = reserved_key_blocks_column(key) {
-                        // `space` is value_ref-typed; the date/text keys carry their
-                        // value in value_date / value_text respectively. Pick the
-                        // payload field that matches the column's storage.
-                        let col_value: Option<&str> = match key {
-                            "due_date" | "scheduled_date" => value_date,
-                            agaric_store::op::SPACE_PROPERTY_KEY => value_ref,
-                            _ => value_text,
-                        };
-                        if key == agaric_store::op::SPACE_PROPERTY_KEY {
-                            // #605: `blocks.space_id` carries an FK and recovery
-                            // runs with `foreign_keys=ON`, so an op whose target
-                            // is absent (purged locally, or created on another
-                            // device and never present in the local op_log) would
-                            // trip FK 787 — and because recovery re-runs on every
-                            // boot until it succeeds, that single dangling ref
-                            // becomes a PERMANENT boot failure. Skip the op
-                            // instead, exactly like the generic value_ref branch
-                            // below: a dead ref means the assignment is dead.
-                            // #708: the FK target is now `spaces(id)` (migration
-                            // 0089), so the guard checks the registry — a target
-                            // that exists as a block but was never flagged
-                            // `is_space` (the #612 mis-stamp class) is skipped
-                            // too. Replay order keeps legitimate targets
-                            // registered before they are referenced: the
-                            // `SetProperty(is_space)` op precedes any
-                            // `SetProperty(space)` pointing at it, and its
-                            // `block_properties` INSERT fires the 0089
-                            // `spaces_register_is_space` trigger.
-                            // The block keeps its prior (NULL/unchanged) space_id;
-                            // a later import / rebuild reconciles once the space
-                            // block exists (same degrade contract as
-                            // `project_block_full_to_sql`'s subquery stamp).
-                            if let Some(target) = col_value {
-                                let target_exists: i64 = sqlx::query_scalar(
-                                    "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)",
-                                )
-                                .bind(target)
-                                .fetch_one(&mut *tx)
-                                .await?;
-                                if target_exists == 0 {
-                                    tracing::warn!(
-                                        block_id,
-                                        space_id = target,
-                                        "recovery: set_property(space) references a block that \
-                                     is not a registered space — skipping (dangling or \
-                                     mis-stamped value_ref, #605/#708)"
-                                    );
-                                    continue;
-                                }
-                            }
-                            // `space` fans out to the whole owning-page group, like
-                            // the live projection (`blocks.space_id`).
-                            // `col` is a fixed internal literal from the allowlist
-                            // in `reserved_key_blocks_column`, never user input.
-                            let sql =
-                                format!("UPDATE blocks SET {col} = ? WHERE id = ? OR page_id = ?");
-                            sqlx::query(sqlx::AssertSqlSafe(sql))
-                                .bind(col_value)
-                                .bind(block_id)
-                                .bind(block_id)
-                                .execute(&mut *tx)
-                                .await?;
-                        } else {
-                            // `col` is a fixed internal literal from the allowlist
-                            // in `reserved_key_blocks_column`, never user input.
-                            let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
-                            sqlx::query(sqlx::AssertSqlSafe(sql))
-                                .bind(col_value)
-                                .bind(block_id)
-                                .execute(&mut *tx)
-                                .await?;
-                        }
-                        continue;
-                    }
-
-                    // #4020: this `EXISTS` skip now also fires on a
-                    // LOCALLY-authored op whose target block is PEER-authored.
-                    // `recover_blocks_from_op_log` filters `is_replicated = 0`,
-                    // so peer-authored blocks are still absent from `blocks`
-                    // while this pass runs — the identical drop that forced the
-                    // attachment arms into their own post-reprojection pass
-                    // (#3268). It is safe HERE, and only here, because
-                    // `reproject_blocks_from_engine` runs next and
-                    // DELETE-then-reinserts `block_properties` (and
-                    // `block_tags`) per block straight from the engine, which
-                    // holds local and peer state alike — so anything this guard
-                    // skipped is rewritten from the authoritative source
-                    // moments later. `attachments` has no such downstream
-                    // repair (it is not Loro-modelled — `pool.rs` states this
-                    // for attachments and nothing stated it here), and THAT
-                    // asymmetry, not a difference in the guards, is the whole
-                    // reason only the attachment arms moved. Do not "fix" this
-                    // by moving the property/tag arms after the reprojection
-                    // too: they would then be overwritten by it and the local
-                    // op-log pass would stop contributing anything.
-                    //
-                    // Guard the two FK columns (block_id, value_ref → blocks(id)).
-                    // An op may reference a block that was purged or created on
-                    // another device and is absent from the local op_log, so
-                    // inserting blindly would trip FOREIGN KEY constraint failed
-                    // (787) and abort startup. Skip the row entirely if its owning
-                    // block is gone, or if a non-null value_ref dangles: under the
-                    // exactly-one-value invariant (migration 0062) value_ref is the
-                    // row's sole value, and its FK is ON DELETE CASCADE, so a dead
-                    // ref means the whole property is dead — nulling it would just
-                    // trade FK 787 for a CHECK violation on the now all-NULL row.
-                    sqlx::query(
-                        "INSERT OR REPLACE INTO block_properties \
-                     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-                     SELECT ?, ?, ?, ?, ?, ?, ? \
-                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
-                       AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
-                    )
-                    .bind(block_id)
-                    .bind(key)
-                    .bind(value_text)
-                    .bind(value_num)
-                    .bind(value_date)
-                    .bind(value_ref)
-                    .bind(value_bool)
-                    .bind(block_id)
-                    .bind(value_ref)
-                    .bind(value_ref)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-                "delete_property" => {
-                    let block_id = payload["block_id"].as_str().unwrap_or("");
-                    let key = payload["key"].as_str().unwrap_or("");
-
-                    // #2043: route through the shared projection
-                    // (`project_delete_property_to_sql`) instead of re-hand-rolling
-                    // the per-key fan-out. It is genuinely equivalent: reserved
-                    // keys clear the dedicated `blocks` column (single source of
-                    // truth); `space` clears `space_id` for the whole owning-page
-                    // group; non-reserved keys DELETE the `block_properties` row —
-                    // the same `reserved_key_blocks_column` / `is_reserved_property_key`
-                    // dispatch. This arm runs post-migration against the REAL
-                    // schema, and a clear-to-NULL / row DELETE cannot trip FK 787,
-                    // so there is no FK-guard concern (unlike `set_property` /
-                    // `add_tag`, which keep their guards inline). All branches are
-                    // idempotent (0-row UPDATE/DELETE no-ops).
-                    agaric_engine::loro::projection::project_delete_property_to_sql(
-                        &mut tx, block_id, key,
-                    )
-                    .await?;
-                }
-                "add_tag" => {
-                    let block_id = payload["block_id"].as_str().unwrap_or("");
-                    let tag_id = payload["tag_id"].as_str().unwrap_or("");
-
-                    // Both columns are FKs to blocks(id): skip the tag if either
-                    // the tagged block or the tag block is absent (purged, or
-                    // never created in the local op_log) to avoid FK 787 panic.
-                    // #4020: as on the `set_property` arm above, that "absent"
-                    // set now includes PEER-authored blocks, which
-                    // `recover_blocks_from_op_log`'s `is_replicated = 0` filter
-                    // leaves out of `blocks` until the engine reprojection runs.
-                    // Safe for the same reason and only that reason:
-                    // `reproject_blocks_from_engine` DELETE-then-reinserts
-                    // `block_tags` per block from the engine right after this
-                    // pass. `attachments` is the exception with no downstream
-                    // repair — see the `set_property` arm for the full argument
-                    // and for why the fix must not be applied in reverse here.
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
-                     SELECT ?, ? \
-                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
-                       AND EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-                    )
-                    .bind(block_id)
-                    .bind(tag_id)
-                    .bind(block_id)
-                    .bind(tag_id)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-                // #614: a later `remove_tag` must win over its earlier `add_tag`
-                // (LWW replay order) — the exact analogue of the #374
-                // `delete_attachment` arm below. Without this arm every tag the
-                // user added and later removed resurrected after a recovery.
-                "remove_tag" => {
-                    let block_id = payload["block_id"].as_str().unwrap_or("");
-                    let tag_id = payload["tag_id"].as_str().unwrap_or("");
-
-                    // #2894: route the `block_tags` delete through the shared
-                    // projection (`project_remove_tag_to_sql`) — the exact fn the
-                    // engine arm (`apply_remove_tag_via_loro`) and the SQL-only
-                    // fallback (`apply_remove_tag_sql_only`) both run — so the
-                    // `DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?`
-                    // shape lives in ONE place and cannot drift between the three
-                    // paths. This is the exact analogue of the already-converged
-                    // `delete_property` arm above (#2043): a keyed DELETE cannot
-                    // trip FK 787 (it removes a child row), is idempotent (0-row
-                    // no-op when the pair is absent), and reads only `block_id` /
-                    // `tag_id` straight from the payload — so unlike the `add_tag`
-                    // / `set_property` arms it needs NO recovery-only FK-existence
-                    // guard, and routing it through the projection is
-                    // byte-for-byte equivalent. The inherited-tag cleanup that the
-                    // command/sql_only wrappers run AFTER the projection
-                    // (`remove_inherited_tag`) is deliberately NOT invoked here:
-                    // this replay rebuilds only `block_tags`, exactly as the old
-                    // inline DELETE did (the `block_tag_inherited` view is
-                    // reconstructed by its own recompute path, not this loop).
-                    agaric_engine::loro::projection::project_remove_tag_to_sql(
-                        &mut tx, block_id, tag_id,
-                    )
-                    .await?;
-                }
-                _ => {}
-            }
+            replay_derived_op(&mut tx, &op_type, &payload).await?;
         }
     }
 
@@ -3653,6 +3813,210 @@ async fn fetch_derived_replay_chunk(
     Ok(rows)
 }
 
+/// [`recover_attachments_from_op_log`]'s `add_attachment` arm.
+async fn replay_add_attachment(
+    conn: &mut sqlx::SqliteConnection,
+    row: &sqlx::sqlite::SqliteRow,
+    payload: &serde_json::Value,
+) -> Result<(), agaric_core::error::AppError> {
+    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+    let block_id = payload["block_id"].as_str().unwrap_or("");
+    let mime_type = payload["mime_type"].as_str().unwrap_or("");
+    // #3029 (SECURITY): the filename comes from a peer's op —
+    // sanitize before it lands in `attachments.filename` so a
+    // hostile `../../evil.sh` can never be replayed into a
+    // traversal-shaped name. Sanitize (never reject): a reject
+    // here would wedge the entire recovery replay on one op.
+    let raw_filename = payload["filename"].as_str().unwrap_or("");
+    let filename = sanitize_attachment_filename(raw_filename);
+    if filename != raw_filename {
+        tracing::warn!(
+            attachment_id,
+            original = raw_filename,
+            sanitized = %filename,
+            "sanitized traversal-unsafe peer attachment filename on recovery replay (add_attachment)"
+        );
+    }
+    let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
+    // #3370 (SECURITY): same argument as the filename above, but
+    // for a value that actually reaches the filesystem. Parse the
+    // peer's `fs_path` into the confined canonical form; a value
+    // that cannot be made safe becomes this device's own
+    // `attachments/<attachment_id>` path. Coerce, never reject —
+    // rejecting would wedge the recovery replay.
+    let raw_fs_path = payload["fs_path"].as_str().unwrap_or("");
+    let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+        raw_fs_path,
+        attachment_id,
+    );
+    let fs_path = fs_path.as_str();
+    if fs_path != raw_fs_path {
+        tracing::warn!(
+            attachment_id,
+            original = raw_fs_path,
+            canonical = fs_path,
+            "rewrote unsafe or non-canonical peer attachment fs_path on recovery replay (add_attachment)"
+        );
+    }
+    let created_at: i64 = row.try_get("created_at")?;
+
+    // #3268: a REPLICATED `add_attachment` is restored only when
+    // this device actually holds the bytes it names. The
+    // `attachment_blobs` row is written by
+    // `register_received_blob` after a hash-verified receive
+    // (agaric-sync/src/sync_files.rs) and keyed by the canonical
+    // `on_disk_path` — the same value the received file was
+    // written to and the same value the op's coerced `fs_path`
+    // resolves to. `attachment_blobs` has no FK to `blocks`, so
+    // it survived the `DROP TABLE blocks` cascade that destroyed
+    // the `attachments` row this op describes.
+    //
+    // Present ⇒ the row was a legitimate, locally-held peer
+    // attachment and dropping it would orphan real bytes forever.
+    // Absent ⇒ the op names a file this device never received,
+    // so materialising a row for it would invent the foreign
+    // metadata #3268 is about. Locally-authored ops are never
+    // gated on this: their blob row may not exist yet (a
+    // pre-0094 vault, or before the boot-time blob backfill has
+    // run), and their provenance is not in question.
+    //
+    // Known conservative case, and it errs the safe way. #1993
+    // dedup (`maybe_link_local_blob`) can repoint an
+    // `attachments` row at ANOTHER blob's canonical file, after
+    // which the originating op's own `fs_path` is no longer a
+    // registered `on_disk_path` and this gate declines — even
+    // though byte-identical content is present under the other
+    // path. Declining costs one unrestored metadata row on the
+    // disaster path; the opposite error would be inventing the
+    // foreign row #3268 was filed about. The tighter key would
+    // be `content_hash`, which `attachment_blobs` is actually
+    // keyed by — but `AddAttachmentPayload`
+    // (agaric-store/src/op.rs) does not carry it, so the op
+    // cannot name its own blob and `fs_path` is the only link
+    // the wire format gives us.
+    let is_replicated: i64 = row.try_get("is_replicated")?;
+    if is_replicated != 0 {
+        // The compile-checked macro: this pass runs AFTER
+        // `sqlx::migrate!`, so `attachment_blobs` (0094) is
+        // always present, and its shape is the guarantee the
+        // gate rests on.
+        let blob_held: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM attachment_blobs WHERE on_disk_path = ?",
+            fs_path
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if blob_held == 0 {
+            tracing::warn!(
+                attachment_id,
+                fs_path,
+                "skipped a replicated add_attachment on recovery replay: this \
+                 device holds no blob for its fs_path, so the row would describe \
+                 bytes that are not here (#3268)"
+            );
+            return Ok(());
+        }
+    }
+
+    // Guard the `block_id` FK (→ blocks(id)): an attachment whose
+    // owning block was purged (or never reached this device) must
+    // stay deleted — restoring it would trip FK 787 and abort
+    // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
+    // (same id) a no-op and keeps recovery idempotent across boots.
+    //
+    // #3268: this is why the pass runs after the engine
+    // reprojection. `blocks` must already be COMPLETE here —
+    // peer-authored rows included — or this guard reads "the
+    // block is gone" for a block that is merely not restored
+    // YET, and drops metadata nothing downstream can rebuild.
+    // The guard is correct; only its position was not.
+    sqlx::query(
+        "INSERT OR IGNORE INTO attachments \
+     (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+     SELECT ?, ?, ?, ?, ?, ?, ? \
+     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+    )
+    .bind(attachment_id)
+    .bind(block_id)
+    .bind(mime_type)
+    .bind(filename)
+    .bind(size_bytes)
+    .bind(fs_path)
+    .bind(created_at)
+    .bind(block_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// [`recover_attachments_from_op_log`]'s per-op dispatch, in LWW replay order.
+async fn replay_attachment_op(
+    conn: &mut sqlx::SqliteConnection,
+    row: &sqlx::sqlite::SqliteRow,
+    op_type: &str,
+    payload: &serde_json::Value,
+) -> Result<(), agaric_core::error::AppError> {
+    match op_type {
+        // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
+        // (its rows are the source of truth for fs_path / mime_type /
+        // filename / size_bytes — NOT a derived cache). Migration 0061
+        // gave `attachments.block_id` an `ON DELETE CASCADE` to
+        // `blocks(id)`, so the `DROP TABLE blocks` in the 0073/0080
+        // rebuilds cascade-deleted every attachment row under
+        // `foreign_keys=ON`, silently destroying that metadata and
+        // orphaning the on-disk files. The op-log `add_attachment`
+        // payload carries every column the row needs, so replay it here
+        // to restore the table (this pass runs on the same corruption
+        // signal as the property/tag pass, one step later — see the
+        // function docs).
+        "add_attachment" => replay_add_attachment(conn, row, payload).await?,
+        // #374: a later `delete_attachment` must win over its earlier
+        // `add_attachment` (LWW replay order), so drop any row this op
+        // removed — otherwise recovery would resurrect a deleted file.
+        "delete_attachment" => {
+            let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+
+            sqlx::query("DELETE FROM attachments WHERE id = ?")
+                .bind(attachment_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        // #651: replay `rename_attachment` so a recovered attachment
+        // keeps its post-rename filename instead of reverting to the
+        // `add_attachment` original. LWW replay order means the last
+        // rename wins, mirroring the live `apply_rename_attachment_tx`.
+        // No-op if the row was never restored (owning block purged —
+        // the add_attachment arm above skipped it).
+        "rename_attachment" => {
+            let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+            let raw_new_filename = payload["new_filename"].as_str().unwrap_or("");
+
+            // Preserve the existing empty-skip (an empty rename is a
+            // no-op), but #3029: sanitize any non-empty peer filename
+            // before store so a hostile rename can't replay a
+            // traversal-shaped name onto the attachment.
+            if !raw_new_filename.is_empty() {
+                let new_filename = sanitize_attachment_filename(raw_new_filename);
+                if new_filename != raw_new_filename {
+                    tracing::warn!(
+                        attachment_id,
+                        original = raw_new_filename,
+                        sanitized = %new_filename,
+                        "sanitized traversal-unsafe peer attachment filename on recovery replay (rename_attachment)"
+                    );
+                }
+                sqlx::query("UPDATE attachments SET filename = ? WHERE id = ?")
+                    .bind(new_filename)
+                    .bind(attachment_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// The second half of the derived recovery: replay the `attachments` ops.
 ///
 /// **Run this AFTER [`reproject_blocks_from_engine`]** — the caller
@@ -3695,7 +4059,6 @@ async fn fetch_derived_replay_chunk(
 /// Every arm is idempotent (`INSERT OR IGNORE`, keyed DELETE/UPDATE), so a
 /// re-run against an already-populated `attachments` re-reads and changes
 /// nothing — which is what lets the gate be "the recovery fired" alone.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn recover_attachments_from_op_log(
     pool: &SqlitePool,
 ) -> Result<(), agaric_core::error::AppError> {
@@ -3720,192 +4083,7 @@ pub(crate) async fn recover_attachments_from_op_log(
             let payload: serde_json::Value =
                 serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
 
-            match op_type.as_str() {
-                // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
-                // (its rows are the source of truth for fs_path / mime_type /
-                // filename / size_bytes — NOT a derived cache). Migration 0061
-                // gave `attachments.block_id` an `ON DELETE CASCADE` to
-                // `blocks(id)`, so the `DROP TABLE blocks` in the 0073/0080
-                // rebuilds cascade-deleted every attachment row under
-                // `foreign_keys=ON`, silently destroying that metadata and
-                // orphaning the on-disk files. The op-log `add_attachment`
-                // payload carries every column the row needs, so replay it here
-                // to restore the table (this pass runs on the same corruption
-                // signal as the property/tag pass, one step later — see the
-                // function docs).
-                "add_attachment" => {
-                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-                    let block_id = payload["block_id"].as_str().unwrap_or("");
-                    let mime_type = payload["mime_type"].as_str().unwrap_or("");
-                    // #3029 (SECURITY): the filename comes from a peer's op —
-                    // sanitize before it lands in `attachments.filename` so a
-                    // hostile `../../evil.sh` can never be replayed into a
-                    // traversal-shaped name. Sanitize (never reject): a reject
-                    // here would wedge the entire recovery replay on one op.
-                    let raw_filename = payload["filename"].as_str().unwrap_or("");
-                    let filename = sanitize_attachment_filename(raw_filename);
-                    if filename != raw_filename {
-                        tracing::warn!(
-                            attachment_id,
-                            original = raw_filename,
-                            sanitized = %filename,
-                            "sanitized traversal-unsafe peer attachment filename on recovery replay (add_attachment)"
-                        );
-                    }
-                    let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
-                    // #3370 (SECURITY): same argument as the filename above, but
-                    // for a value that actually reaches the filesystem. Parse the
-                    // peer's `fs_path` into the confined canonical form; a value
-                    // that cannot be made safe becomes this device's own
-                    // `attachments/<attachment_id>` path. Coerce, never reject —
-                    // rejecting would wedge the recovery replay.
-                    let raw_fs_path = payload["fs_path"].as_str().unwrap_or("");
-                    let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
-                        raw_fs_path,
-                        attachment_id,
-                    );
-                    let fs_path = fs_path.as_str();
-                    if fs_path != raw_fs_path {
-                        tracing::warn!(
-                            attachment_id,
-                            original = raw_fs_path,
-                            canonical = fs_path,
-                            "rewrote unsafe or non-canonical peer attachment fs_path on recovery replay (add_attachment)"
-                        );
-                    }
-                    let created_at: i64 = row.try_get("created_at")?;
-
-                    // #3268: a REPLICATED `add_attachment` is restored only when
-                    // this device actually holds the bytes it names. The
-                    // `attachment_blobs` row is written by
-                    // `register_received_blob` after a hash-verified receive
-                    // (agaric-sync/src/sync_files.rs) and keyed by the canonical
-                    // `on_disk_path` — the same value the received file was
-                    // written to and the same value the op's coerced `fs_path`
-                    // resolves to. `attachment_blobs` has no FK to `blocks`, so
-                    // it survived the `DROP TABLE blocks` cascade that destroyed
-                    // the `attachments` row this op describes.
-                    //
-                    // Present ⇒ the row was a legitimate, locally-held peer
-                    // attachment and dropping it would orphan real bytes forever.
-                    // Absent ⇒ the op names a file this device never received,
-                    // so materialising a row for it would invent the foreign
-                    // metadata #3268 is about. Locally-authored ops are never
-                    // gated on this: their blob row may not exist yet (a
-                    // pre-0094 vault, or before the boot-time blob backfill has
-                    // run), and their provenance is not in question.
-                    //
-                    // Known conservative case, and it errs the safe way. #1993
-                    // dedup (`maybe_link_local_blob`) can repoint an
-                    // `attachments` row at ANOTHER blob's canonical file, after
-                    // which the originating op's own `fs_path` is no longer a
-                    // registered `on_disk_path` and this gate declines — even
-                    // though byte-identical content is present under the other
-                    // path. Declining costs one unrestored metadata row on the
-                    // disaster path; the opposite error would be inventing the
-                    // foreign row #3268 was filed about. The tighter key would
-                    // be `content_hash`, which `attachment_blobs` is actually
-                    // keyed by — but `AddAttachmentPayload`
-                    // (agaric-store/src/op.rs) does not carry it, so the op
-                    // cannot name its own blob and `fs_path` is the only link
-                    // the wire format gives us.
-                    let is_replicated: i64 = row.try_get("is_replicated")?;
-                    if is_replicated != 0 {
-                        // The compile-checked macro: this pass runs AFTER
-                        // `sqlx::migrate!`, so `attachment_blobs` (0094) is
-                        // always present, and its shape is the guarantee the
-                        // gate rests on.
-                        let blob_held: i64 = sqlx::query_scalar!(
-                            "SELECT COUNT(*) FROM attachment_blobs WHERE on_disk_path = ?",
-                            fs_path
-                        )
-                        .fetch_one(&mut *tx)
-                        .await?;
-                        if blob_held == 0 {
-                            tracing::warn!(
-                                attachment_id,
-                                fs_path,
-                                "skipped a replicated add_attachment on recovery replay: this \
-                                 device holds no blob for its fs_path, so the row would describe \
-                                 bytes that are not here (#3268)"
-                            );
-                            continue;
-                        }
-                    }
-
-                    // Guard the `block_id` FK (→ blocks(id)): an attachment whose
-                    // owning block was purged (or never reached this device) must
-                    // stay deleted — restoring it would trip FK 787 and abort
-                    // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
-                    // (same id) a no-op and keeps recovery idempotent across boots.
-                    //
-                    // #3268: this is why the pass runs after the engine
-                    // reprojection. `blocks` must already be COMPLETE here —
-                    // peer-authored rows included — or this guard reads "the
-                    // block is gone" for a block that is merely not restored
-                    // YET, and drops metadata nothing downstream can rebuild.
-                    // The guard is correct; only its position was not.
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO attachments \
-                     (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                     SELECT ?, ?, ?, ?, ?, ?, ? \
-                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-                    )
-                    .bind(attachment_id)
-                    .bind(block_id)
-                    .bind(mime_type)
-                    .bind(filename)
-                    .bind(size_bytes)
-                    .bind(fs_path)
-                    .bind(created_at)
-                    .bind(block_id)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-                // #374: a later `delete_attachment` must win over its earlier
-                // `add_attachment` (LWW replay order), so drop any row this op
-                // removed — otherwise recovery would resurrect a deleted file.
-                "delete_attachment" => {
-                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-
-                    sqlx::query("DELETE FROM attachments WHERE id = ?")
-                        .bind(attachment_id)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-                // #651: replay `rename_attachment` so a recovered attachment
-                // keeps its post-rename filename instead of reverting to the
-                // `add_attachment` original. LWW replay order means the last
-                // rename wins, mirroring the live `apply_rename_attachment_tx`.
-                // No-op if the row was never restored (owning block purged —
-                // the add_attachment arm above skipped it).
-                "rename_attachment" => {
-                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-                    let raw_new_filename = payload["new_filename"].as_str().unwrap_or("");
-
-                    // Preserve the existing empty-skip (an empty rename is a
-                    // no-op), but #3029: sanitize any non-empty peer filename
-                    // before store so a hostile rename can't replay a
-                    // traversal-shaped name onto the attachment.
-                    if !raw_new_filename.is_empty() {
-                        let new_filename = sanitize_attachment_filename(raw_new_filename);
-                        if new_filename != raw_new_filename {
-                            tracing::warn!(
-                                attachment_id,
-                                original = raw_new_filename,
-                                sanitized = %new_filename,
-                                "sanitized traversal-unsafe peer attachment filename on recovery replay (rename_attachment)"
-                            );
-                        }
-                        sqlx::query("UPDATE attachments SET filename = ? WHERE id = ?")
-                            .bind(new_filename)
-                            .bind(attachment_id)
-                            .execute(&mut *tx)
-                            .await?;
-                    }
-                }
-                _ => {}
-            }
+            replay_attachment_op(&mut tx, &row, &op_type, &payload).await?;
         }
     }
 
