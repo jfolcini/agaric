@@ -869,6 +869,7 @@ export function addMockAttachment(
     size_bytes: size,
     fs_path: `/mock/${filename}`,
     created_at: new Date().toISOString(),
+    content_hash: null,
   }
   attachments.set(row.id, row)
   return row
@@ -897,6 +898,7 @@ export function addMockAttachmentWithBytes(
     size_bytes: bytes.length,
     fs_path: `attachments/${id}`,
     created_at: new Date().toISOString(),
+    content_hash: null,
   }
   attachments.set(id, row)
   attachmentBytes.set(id, bytes)

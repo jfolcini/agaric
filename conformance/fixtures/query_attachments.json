@@ -1,0 +1,258 @@
+{
+  "description": "#3830 — READ-command differential over the attachment metadata readers: `list_attachments`, `list_attachments_batch` and `read_attachment_meta`. All three were waived as \"attachments blob store outside the conformance snapshot scope\" until a fixture could put the same rows on both stacks; `seed.attachments` is that, inserted verbatim into the backend `attachments` table and the mock's map — with SHORT fixture-authored ids, since a 26-char id in a token reads as a stack-local leak to the coverage ratchet (the blob store itself — bytes on disk, `attachment_blobs` — stays out of scope, and nothing here reads it). The seed exists to make ORDER discriminate: `list_attachments_inner` is `ORDER BY created_at, id`, so S2 carries three rows seeded in NEITHER order — the newest-by-id first, then a same-`created_at` sibling with a lower id (the tiebreak), then the earliest-created row with the highest id (the primary key) — and the ordered comparison pins the sort rather than insertion order, which was the divergence this fixture found and fixed in the mock. S3's single row is seeded FIRST, so the mock's insertion order puts S3 before S2 in the batch map where the backend's serialized map is key-sorted; the projection sorts keys on both sides. Every token carries every column but the id: `created_at` is fixture-authored epoch-ms here, not a wall clock, so it is comparable, and `content_hash` is null on one row and set on the others because the mock's row had no such field at all. NOT pinned: `add_attachment_with_bytes` / `delete_attachment` / `rename_attachment` (still waived — the backend hashes and writes bytes the mock never has), and `read_attachment`, which answers raw bytes and has no binding.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Files",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "three attachments",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "list_attachments_ordered_by_created_at_then_id",
+      "rows": [
+        "ATT4#block_id=B2#filename=early.png#mime_type=image/png#size_bytes=10#fs_path=attachments/ATT4.png#created_at=900#content_hash=blake3-of-early",
+        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan",
+        "ATT2#block_id=B2#filename=photo.png#mime_type=image/png#size_bytes=2048#fs_path=attachments/ATT2.png#created_at=1000#content_hash=blake3-of-photo"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "list_attachments_for_a_bare_block_is_empty",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "list_attachments_batch_omits_blocks_with_no_rows",
+      "rows": [
+        "B2->ATT4#block_id=B2#filename=early.png#mime_type=image/png#size_bytes=10#fs_path=attachments/ATT4.png#created_at=900#content_hash=blake3-of-early",
+        "B2->ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan",
+        "B2->ATT2#block_id=B2#filename=photo.png#mime_type=image/png#size_bytes=2048#fs_path=attachments/ATT2.png#created_at=1000#content_hash=blake3-of-photo",
+        "B3->ATT3#block_id=B3#filename=notes.txt#mime_type=text/plain#size_bytes=12#fs_path=attachments/ATT3.txt#created_at=500#content_hash=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "list_attachments_batch_empty_request",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "read_attachment_meta_hit",
+      "rows": [
+        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "not_found",
+      "has_more": null,
+      "name": "read_attachment_meta_miss_is_not_found",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_attachments",
+  "ops": [],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_attachments",
+      "comment": "Three rows on S2, answered `created_at` ascending with `id` as the tiebreak: `ATT4` (900) first though it has the highest id and was seeded last, then `ATT1` before `ATT2` (both 1000). Insertion order was `ATT2`, `ATT1`, `ATT4` — an implementation answering in that order fails here.",
+      "name": "list_attachments_ordered_by_created_at_then_id"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "list_attachments",
+      "comment": "S4 owns nothing, so the listing is empty rather than a refusal or a leak of another block's rows. Non-vacuous because the previous step lists three rows through the same command.",
+      "expect_empty": true,
+      "name": "list_attachments_for_a_bare_block_is_empty"
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S3", "S4", "S9"]
+      },
+      "command": "list_attachments_batch",
+      "comment": "Four blocks requested; S4 owns nothing and S9 does not exist. Both are ABSENT from the map — `list_attachments_batch_inner` groups the fetched rows and never seeds an empty entry — so neither `S4->(none)` nor `S9->(none)` appears. S2's three rows keep the `created_at, id` order inside its entry; the entries are key-sorted by the projection because a `HashMap` has no order on either stack.",
+      "name": "list_attachments_batch_omits_blocks_with_no_rows"
+    },
+    {
+      "args": {
+        "blockIds": []
+      },
+      "command": "list_attachments_batch",
+      "comment": "An empty request answers an empty map rather than refusing (`list_attachments_batch_inner` short-circuits before the cap check) — the shape a page with no blocks relies on.",
+      "expect_empty": true,
+      "name": "list_attachments_batch_empty_request"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT1"
+      },
+      "command": "read_attachment_meta",
+      "comment": "The PK lookup serves the same row the listing does, every column included. Paired with the next step, this is the present-vs-absent distinction.",
+      "name": "read_attachment_meta_hit"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT9"
+      },
+      "command": "read_attachment_meta",
+      "comment": "The other half of the pair: `ATT9` was never seeded, and `read_attachment_meta_inner` REFUSES with `NotFound` rather than answering `None` — the mock answered `null` here, which is the divergence this step found. `expect_error` says the refusal is the point.",
+      "expect_error": "not_found",
+      "name": "read_attachment_meta_miss_is_not_found"
+    }
+  ],
+  "seed": {
+    "attachments": [
+      {
+        "block_id": "S3",
+        "content_hash": null,
+        "created_at": 500,
+        "filename": "notes.txt",
+        "fs_path": "attachments/ATT3.txt",
+        "id": "ATT3",
+        "mime_type": "text/plain",
+        "size_bytes": 12
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-photo",
+        "created_at": 1000,
+        "filename": "photo.png",
+        "fs_path": "attachments/ATT2.png",
+        "id": "ATT2",
+        "mime_type": "image/png",
+        "size_bytes": 2048
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-scan",
+        "created_at": 1000,
+        "filename": "scan.pdf",
+        "fs_path": "attachments/ATT1.pdf",
+        "id": "ATT1",
+        "mime_type": "application/pdf",
+        "size_bytes": 4096
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-early",
+        "created_at": 900,
+        "filename": "early.png",
+        "fs_path": "attachments/ATT4.png",
+        "id": "ATT4",
+        "mime_type": "image/png",
+        "size_bytes": 10
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Files",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "three attachments",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

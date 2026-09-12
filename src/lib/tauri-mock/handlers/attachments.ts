@@ -9,14 +9,31 @@
  * store.
  */
 
-import { type TypedHandlers } from '@/lib/tauri-mock/handlers/shared'
+import { notFoundRejection, type TypedHandlers } from '@/lib/tauri-mock/handlers/shared'
 import { attachmentBytes, attachments, fakeId } from '@/lib/tauri-mock/seed'
+
+/**
+ * The backend's `ORDER BY created_at, id` (`list_attachments_inner` and the
+ * per-block lists of `list_attachments_batch_inner`). The mock answered in
+ * `attachments` insertion order until `query_attachments.json` pinned the sort
+ * (#3830).
+ */
+function byCreatedAtThenId(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const ca = a['created_at'] as number
+  const cb = b['created_at'] as number
+  if (ca !== cb) return ca < cb ? -1 : 1
+  const ia = a['id'] as string
+  const ib = b['id'] as string
+  return ia < ib ? -1 : ia > ib ? 1 : 0
+}
 
 export const attachmentsHandlers = {
   list_attachments: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    return [...attachments.values()].filter((att) => att['block_id'] === blockId)
+    return [...attachments.values()]
+      .filter((att) => att['block_id'] === blockId)
+      .toSorted(byCreatedAtThenId)
   },
 
   // Full-list batch — single source for both
@@ -26,8 +43,8 @@ export const attachmentsHandlers = {
   list_attachments_batch: (args) => {
     const a = args as Record<string, unknown>
     const blockIds = (a['blockIds'] as string[]) ?? []
-    const result: Record<string, unknown[]> = {}
-    for (const att of attachments.values()) {
+    const result: Record<string, Array<Record<string, unknown>>> = {}
+    for (const att of [...attachments.values()].toSorted(byCreatedAtThenId)) {
       const bid = att['block_id'] as string
       if (blockIds.includes(bid)) {
         result[bid] = result[bid] ?? []
@@ -51,6 +68,10 @@ export const attachmentsHandlers = {
       size_bytes: bytes.length,
       fs_path: `attachments/${id}`,
       created_at: new Date().toISOString(),
+      // The backend stores the blake3 of the bytes; the mock never hashes, and
+      // `null` is the wire-legal "no hash" the row carried before migration
+      // 0093. The field is present so the row has the `AttachmentRow` shape.
+      content_hash: null,
     }
     attachments.set(id, row)
     attachmentBytes.set(id, bytes)
@@ -66,7 +87,12 @@ export const attachmentsHandlers = {
   // `attachment:<id>` ref to a portable `assets/<filename>` path.
   read_attachment_meta: (args) => {
     const a = args as Record<string, unknown>
-    return attachments.get(a['attachmentId'] as string) ?? null
+    const id = a['attachmentId'] as string
+    const row = attachments.get(id)
+    // `read_attachment_meta_inner` REFUSES a miss with `NotFound`; the mock
+    // answered `null` until `query_attachments.json` pinned the refusal (#3830).
+    if (!row) throw notFoundRejection(`attachment '${id}'`)
+    return row
   },
 
   delete_attachment: (args) => {

@@ -328,6 +328,23 @@ const PROPERTY_DEF_TOKEN = {
   idKey: 'key',
   attrKeys: ['value_type', 'options'],
 } as const
+/** An `AttachmentRow` (#3830): the attachment id plus every other column.
+ *  `created_at` is fixture-authored epoch-ms on a seeded row, not a clock, and
+ *  it is the sort key the ordered steps pin. MUST match `ATTACHMENT_ATTRS` in
+ *  the Rust twin. */
+const ATTACHMENT_TOKEN = {
+  kind: 'id',
+  idKey: 'id',
+  attrKeys: [
+    'block_id',
+    'filename',
+    'mime_type',
+    'size_bytes',
+    'fs_path',
+    'created_at',
+    'content_hash',
+  ],
+} as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -555,6 +572,34 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   get_property_def: {
     rows: { kind: 'bare-row' },
     token: PROPERTY_DEF_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
+  // ── Attachment metadata (#3830) ──
+  //
+  // Seeded on both stacks by a fixture's `seed.attachments` section, which is
+  // what lifted the "blob store outside the snapshot scope" waiver on these
+  // three; the bytes stay out of scope. `list_attachments` and each entry of
+  // the batch map are `ORDER BY created_at, id` on the backend, so the ordered
+  // comparison pins the mock's sort rather than its insertion order.
+  // `read_attachment_meta` REFUSES a miss (`not_found`) rather than answering
+  // `null`, so its miss step is an `expect_error`, not a `bare-row` miss.
+  list_attachments: {
+    rows: { kind: 'bare-array' },
+    token: ATTACHMENT_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_attachments_batch: {
+    rows: { kind: 'map-of-rows' },
+    token: ATTACHMENT_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  read_attachment_meta: {
+    rows: { kind: 'bare-row' },
+    token: ATTACHMENT_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
@@ -1225,7 +1270,15 @@ function rawRows(response: unknown, shape: WireShape): string[] {
     const map = (response ?? {}) as Record<string, unknown>
     if (typeof map !== 'object') return []
     const out: string[] = []
-    for (const [key, value] of Object.entries(map)) {
+    // Key-sorted, because the Rust twin's is: it serializes the command's
+    // `HashMap` through `serde_json::Map`, a `BTreeMap`, so its entries arrive
+    // sorted by RAW key whatever order the map held. `Object.entries` is
+    // insertion-ordered, which is the mock handler's iteration order — not a
+    // contract on either stack. Sorting here (before relabel, as there) is what
+    // lets an ordered step pin the order WITHIN an entry (#3830,
+    // `list_attachments_batch`) without pinning the entries' own order.
+    const entries = Object.entries(map).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    for (const [key, value] of entries) {
       if (shape.rows.kind === 'map-of-row') {
         out.push(`${key}->${rowToken(value, shape.token)}`)
         continue
