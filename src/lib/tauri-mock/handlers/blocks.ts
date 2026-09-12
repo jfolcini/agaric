@@ -1312,8 +1312,10 @@ export const blocksHandlers = {
       })
       // #3081 — the backend routes this through `set_property_in_tx`, which
       // projects `space` to the denormalized `blocks.space_id` column that
-      // every space-scoped query reads. Mirror it, as the `set_property`
-      // handler does.
+      // every space-scoped query reads. Stamp the page row only: the backend
+      // fans the column out over the page group (`WHERE id = ? OR page_id =
+      // ?`), but every mock reader of `space_id` reads it on a page or
+      // top-level tag row, so the descendant stamp has no reader here.
       b['space_id'] = spaceId
       pushOp('set_property', {
         block_id: blockId,

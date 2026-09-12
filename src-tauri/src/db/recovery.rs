@@ -858,7 +858,6 @@ fn read_engine_block_states(
 /// [`reproject_space_from_engine`]'s Pass A.
 async fn project_engine_core_rows(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    space_id_str: &str,
     space_id: &agaric_store::space::SpaceId,
     block_ids: &[agaric_core::ulid::BlockId],
     core: &[Option<agaric_engine::loro::engine::BlockSnapshot>],
@@ -889,7 +888,7 @@ async fn project_engine_core_rows(
             Err(e) => {
                 sp.rollback().await?;
                 tracing::error!(
-                    space_id = %space_id_str,
+                    space_id = %space_id.as_str(),
                     block_id = %block_id.as_str(),
                     error = %e,
                     "recovery (#2920): SQL core-projection failed for block; skipping it and \
@@ -998,7 +997,7 @@ async fn reproject_space_from_engine(
     let mut skipped = vec![false; n];
     let core = read_engine_core_rows(&engine, space_id_str, &block_ids, &mut skipped);
     let states = read_engine_block_states(&engine, space_id_str, &block_ids, &mut skipped);
-    project_engine_core_rows(tx, space_id_str, &space_id, &block_ids, &core, &mut skipped).await?;
+    project_engine_core_rows(tx, &space_id, &block_ids, &core, &mut skipped).await?;
     project_engine_derived_rows(
         tx,
         space_id_str,
