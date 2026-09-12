@@ -180,6 +180,168 @@ pub fn validate_create_block_shape(block_type: &str, content: &str) -> Result<()
     Ok(())
 }
 
+/// [`create_block_in_tx`]'s id resolution. #2849 PR2: an optimistic-create
+/// caller supplies a client-generated ULID so the frontend can splice the row
+/// in BEFORE the IPC resolves and never has to relocate focus/selection to a
+/// server id. Accept it verbatim ONLY when it is a well-formed ULID that does
+/// not collide with any existing row; otherwise error (a silent swap would
+/// hide bugs and break the stable-id contract). `None` keeps the legacy
+/// server-generated id (every non-optimistic caller).
+async fn resolve_block_id_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    client_id: Option<BlockId>,
+) -> Result<BlockId, AppError> {
+    let Some(id) = client_id else {
+        return Ok(BlockId::new());
+    };
+    // The IPC `BlockId` Deserialize is lenient (it uppercases a non-ULID
+    // string instead of erroring — it must, so synthetic test ids survive),
+    // so re-validate here through the strict `from_string` parse: a
+    // malformed client id becomes `AppError::Ulid` rather than a phantom
+    // insert. This also canonicalises to uppercase Crockford base32.
+    let id = BlockId::from_string(id.into_string())?;
+    // Collision check against ALL rows (live OR tombstoned): `blocks.id`
+    // is the primary key, so a soft-deleted row carrying this id would
+    // still fail the projection INSERT. Reject up-front with a clear Conflict.
+    let id_str = id.as_str();
+    let existing = sqlx::query!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, id_str)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if existing.is_some() {
+        return Err(AppError::Conflict(format!(
+            "block id '{id_str}' already exists"
+        )));
+    }
+    Ok(id)
+}
+
+/// [`create_block_in_tx`]'s parent-side validation, inside its tx (F01,
+/// TOCTOU-safe: a concurrent purge_block could physically delete the parent
+/// between a pre-tx check and the INSERT, violating the FK constraint): the
+/// parent exists and is live, is not a tag, keeps the new block within
+/// `MAX_BLOCK_DEPTH`, and the new content's refs stay inside its space.
+async fn validate_parent_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    pid: &str,
+    block_type: &str,
+    block_id: &BlockId,
+    content: &str,
+) -> Result<(), AppError> {
+    let parent = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        pid
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(parent) = parent else {
+        return Err(AppError::NotFound(format!("parent block '{pid}'")));
+    };
+
+    // #4725 — a tag holds the blocks tagged with it, never children of
+    // its own, so a create under one only leaves a block nothing renders.
+    if parent.block_type == "tag" {
+        return Err(AppError::validation(format!(
+            "cannot create a block under tag '{pid}': the tag view is read-only"
+        )));
+    }
+
+    // Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
+    // will live at depth = parent_depth + 1, so reject when that exceeds
+    // the documented limit (docs/architecture/data-and-events.md § Everything is a block). Without this guard
+    // a user could repeatedly create blocks under the deepest leaf and
+    // drift past the bound — `move_block_inner` already enforces the
+    // same limit; the asymmetry was the loophole.
+    //
+    // The shared `ancestors_cte_standard!()` macro pins invariant #9
+    // (`a.depth < 100` recursion bound). Same shape as the cycle-
+    // detection CTE in `move_block_inner` (move_ops.rs).
+    // The seed (`pid`, depth 0) plus N ancestors yields MAX(depth) = N,
+    // i.e. the parent's depth from the root — identical semantics to
+    // the previous inline `path` CTE.
+    // dynamic-sql: concat! of the ancestors CTE macro expansion — query! needs a string literal.
+    let parent_depth = sqlx::query_scalar::<_, i64>(concat!(
+        agaric_store::ancestors_cte_standard!(),
+        "SELECT MAX(depth) FROM ancestors",
+    ))
+    .bind(pid)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    if parent_depth + 1 > MAX_BLOCK_DEPTH {
+        return Err(AppError::validation(format!(
+            "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
+        )));
+    }
+
+    // 2b. Referential cross-space integrity — validated BEFORE the engine
+    // apply in `create_block_in_tx`. `apply_op_projected` COMMITS the block
+    // into the shared per-space LoroDoc, and the engine has no rollback:
+    // running this fallible check after it (the old post-INSERT ordering)
+    // left a phantom committed node in the CRDT on rejection — op_log + SQL
+    // rolled back while the block kept exporting over sync. A non-page
+    // block's space is fully determined by its parent (the SAME resolution
+    // anchor `apply_create_block_via_loro` uses), so resolve the parent's
+    // space and scan the content against it pre-insert. A page — which
+    // resolves its space via itself (`page_id = id`), not its parent — has
+    // no resolvable space at this point and is skipped, exactly matching the
+    // post-INSERT `resolve_block_space(new_block)` outcome this ordering
+    // replaces (orphans are tolerated by the validator's contract).
+    if block_type != "page"
+        && let Some(source_space) =
+            agaric_store::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(pid)).await?
+    {
+        agaric_store::cross_space_validation::validate_content_refs_in_space(
+            tx,
+            block_id,
+            &source_space,
+            content,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// #1257 ENGINE-ABSENT bare-append position parity. When the engine
+/// path engages, `reproject_dense_positions` gives every sibling a concrete
+/// dense 1-based rank (never the sentinel). But when the create falls back to
+/// the SQL-only path (space unresolved, #2250) AND it's a
+/// bare append (`index: None`, `position: None` — the payload this command
+/// path always builds), `apply_create_block_sql_only` writes the append
+/// sentinel `i64::MAX` (its documented both-`None` corner). The pre-PR-2
+/// command path instead computed a concrete `MAX(position)+1` rank inline for
+/// that case, and existing tests pin `1, 2, 3` for successive bare appends.
+/// Restore that concrete rank here, scoped to exactly the fallback-append
+/// case (position == sentinel), so the engine-absent fallback is observably
+/// identical to before. A no-op when the engine ran (dense rank ≠ sentinel);
+/// [`create_block_in_tx`] skips this when an explicit `index` was given (the
+/// fallback used the provisional `index+1`, never the sentinel). We do NOT
+/// touch the op-log payload (`position: None`) — only the projected SQL
+/// column — so sync/replay semantics are unchanged.
+async fn restore_bare_append_position_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    parent_id: Option<&str>,
+    block_id_str: &str,
+) -> Result<(), AppError> {
+    let next_pos = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
+         WHERE parent_id IS ? AND deleted_at IS NULL \
+           AND position < 9223372036854775807 AND id <> ?",
+        parent_id,
+        block_id_str,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE blocks SET position = ? \
+         WHERE id = ? AND position = 9223372036854775807",
+        next_pos,
+        block_id_str,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Create a new block inside an existing transaction.
 ///
 /// This is the core implementation shared by `create_block_inner` (the app-crate `#[tauri::command]`) (which
@@ -205,7 +367,6 @@ pub fn validate_create_block_shape(block_type: &str, content: &str) -> Result<()
 // struct would touch ~12 call sites for zero behavioural gain; the tx-scoped
 // writer signature is intentionally flat.
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn create_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,
@@ -234,114 +395,15 @@ pub async fn create_block_in_tx(
     // position via reprojection, so a caller can no longer target the sentinel.)
     let index = index.map(|i| i.max(0));
 
-    // 2. Resolve the new BlockId. #2849 PR2: an optimistic-create caller supplies
-    //    a client-generated ULID so the frontend can splice the row in BEFORE this
-    //    IPC resolves and never has to relocate focus/selection to a server id.
-    //    Accept it verbatim ONLY when it is a well-formed ULID that does not
-    //    collide with any existing row; otherwise error (a silent swap would hide
-    //    bugs and break the stable-id contract). `None` keeps the legacy
-    //    server-generated id (every non-optimistic caller).
-    let block_id = match client_id {
-        Some(id) => {
-            // The IPC `BlockId` Deserialize is lenient (it uppercases a non-ULID
-            // string instead of erroring — it must, so synthetic test ids survive),
-            // so re-validate here through the strict `from_string` parse: a
-            // malformed client id becomes `AppError::Ulid` rather than a phantom
-            // insert. This also canonicalises to uppercase Crockford base32.
-            let id = BlockId::from_string(id.into_string())?;
-            // Collision check against ALL rows (live OR tombstoned): `blocks.id`
-            // is the primary key, so a soft-deleted row carrying this id would
-            // still fail the INSERT below. Reject up-front with a clear Conflict.
-            let id_str = id.as_str();
-            let existing = sqlx::query!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, id_str)
-                .fetch_optional(&mut **tx)
-                .await?;
-            if existing.is_some() {
-                return Err(AppError::Conflict(format!(
-                    "block id '{id_str}' already exists"
-                )));
-            }
-            id
-        }
-        None => BlockId::new(),
-    };
+    // 2. Resolve the new BlockId (client-supplied or server-generated).
+    let block_id = resolve_block_id_in_tx(tx, client_id).await?;
 
-    // F01: Validate parent_id inside the transaction to prevent TOCTOU race.
-    // A concurrent purge_block could physically delete the parent between
-    // our check and the INSERT, violating the FK constraint.
+    // F01 + 2b. Parent existence / depth checks and the cross-space content
+    // scan, all BEFORE the engine apply below (a parentless create has no
+    // resolvable space yet and skips the scan; orphans are tolerated by the
+    // validator's contract).
     if let Some(ref pid) = parent_id {
-        let parent = sqlx::query!(
-            "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-            pid
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-        let Some(parent) = parent else {
-            return Err(AppError::NotFound(format!("parent block '{pid}'")));
-        };
-
-        // #4725 — a tag holds the blocks tagged with it, never children of
-        // its own, so a create under one only leaves a block nothing renders.
-        if parent.block_type == "tag" {
-            return Err(AppError::validation(format!(
-                "cannot create a block under tag '{pid}': the tag view is read-only"
-            )));
-        }
-
-        // Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
-        // will live at depth = parent_depth + 1, so reject when that exceeds
-        // the documented limit (docs/architecture/data-and-events.md § Everything is a block). Without this guard
-        // a user could repeatedly create blocks under the deepest leaf and
-        // drift past the bound — `move_block_inner` already enforces the
-        // same limit; the asymmetry was the loophole.
-        //
-        // The shared `ancestors_cte_standard!()` macro pins invariant #9
-        // (`a.depth < 100` recursion bound). Same shape as the cycle-
-        // detection CTE in `move_block_inner` (move_ops.rs).
-        // The seed (`pid`, depth 0) plus N ancestors yields MAX(depth) = N,
-        // i.e. the parent's depth from the root — identical semantics to
-        // the previous inline `path` CTE.
-        // dynamic-sql: concat! of the ancestors CTE macro expansion — query! needs a string literal.
-        let parent_depth = sqlx::query_scalar::<_, i64>(concat!(
-            agaric_store::ancestors_cte_standard!(),
-            "SELECT MAX(depth) FROM ancestors",
-        ))
-        .bind(pid)
-        .fetch_one(&mut **tx)
-        .await?;
-
-        if parent_depth + 1 > MAX_BLOCK_DEPTH {
-            return Err(AppError::validation(format!(
-                "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
-            )));
-        }
-    }
-
-    // 2b. Referential cross-space integrity — validated BEFORE the engine
-    // apply below. `apply_op_projected` COMMITS the block into the shared
-    // per-space LoroDoc, and the engine has no rollback: running this
-    // fallible check after it (the old post-INSERT ordering) left a phantom
-    // committed node in the CRDT on rejection — op_log + SQL rolled back
-    // while the block kept exporting over sync. A non-page block's space is
-    // fully determined by its parent (the SAME resolution anchor
-    // `apply_create_block_via_loro` uses), so resolve the parent's space and
-    // scan the content against it pre-insert. A parentless create — or a
-    // page, which resolves its space via itself (`page_id = id`), not its
-    // parent — has no resolvable space at this point and is skipped, exactly
-    // matching the post-INSERT `resolve_block_space(new_block)` outcome this
-    // ordering replaces (orphans are tolerated by the validator's contract).
-    if block_type != "page"
-        && let Some(ref pid) = parent_id
-        && let Some(source_space) =
-            agaric_store::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(pid)).await?
-    {
-        agaric_store::cross_space_validation::validate_content_refs_in_space(
-            tx,
-            &block_id,
-            &source_space,
-            &content,
-        )
-        .await?;
+        validate_parent_in_tx(tx, pid, &block_type, &block_id, &content).await?;
     }
 
     // 3b. Build CreateBlockPayload (#400: carries the 0-based `index`; `None`
@@ -410,47 +472,16 @@ pub async fn create_block_in_tx(
     // LOCAL copy is gone; `block_id_str` is retained for the fixups below.
     let block_id_str = block_id.as_str();
 
-    // #1257 ENGINE-ABSENT bare-append position parity. When the engine
-    // path engages, `reproject_dense_positions` gives every sibling a concrete
-    // dense 1-based rank (never the sentinel). But when the create falls back to
-    // the SQL-only path (space unresolved, #2250) AND it's a
-    // bare append (`index: None`, `position: None` — the payload this command
-    // path always builds), `apply_create_block_sql_only` writes the append
-    // sentinel `i64::MAX` (its documented both-`None` corner). The pre-PR-2
-    // command path instead computed a concrete `MAX(position)+1` rank inline for
-    // that case, and existing tests pin `1, 2, 3` for successive bare appends.
-    // Restore that concrete rank here, scoped to exactly the fallback-append
-    // case (position == sentinel), so the engine-absent fallback is observably
-    // identical to before. A no-op when the engine ran (dense rank ≠ sentinel)
-    // or when an explicit `index` was given (the fallback used the provisional
-    // `index+1`, never the sentinel). We do NOT touch the op-log payload
-    // (`position: None`) — only the projected SQL column — so sync/replay
-    // semantics are unchanged.
+    // #1257 engine-absent bare-append position parity.
     if index.is_none() {
-        let next_pos = sqlx::query_scalar!(
-            "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
-             WHERE parent_id IS ? AND deleted_at IS NULL \
-               AND position < 9223372036854775807 AND id <> ?",
-            parent_id,
-            block_id_str,
-        )
-        .fetch_one(&mut **tx)
-        .await?;
-        sqlx::query!(
-            "UPDATE blocks SET position = ? \
-             WHERE id = ? AND position = 9223372036854775807",
-            next_pos,
-            block_id_str,
-        )
-        .execute(&mut **tx)
-        .await?;
+        restore_bare_append_position_in_tx(tx, parent_id.as_deref(), block_id_str).await?;
     }
 
-    // Referential cross-space integrity moved to step 2b ABOVE: it must run
-    // BEFORE `apply_op_projected` commits the block into the LoroDoc, so a
-    // rejected create leaves no phantom engine node behind. The space is
-    // resolved from the parent pre-insert (identical outcome to the old
-    // post-INSERT self-resolution).
+    // Referential cross-space integrity lives in `validate_parent_in_tx`
+    // ABOVE: it must run BEFORE `apply_op_projected` commits the block into
+    // the LoroDoc, so a rejected create leaves no phantom engine node behind.
+    // The space is resolved from the parent pre-insert (identical outcome to
+    // the old post-INSERT self-resolution).
 
     // #2344: the owning-page `pages_cache` count recompute that used to run here
     // (old step (d)) is now performed by the routed `apply_op_projected`
@@ -509,6 +540,57 @@ pub struct PropertyDeclaration {
     pub options: Option<String>,
 }
 
+/// Step 4 of [`validate_property_value`]: the payload's populated field must
+/// match the declared `value_type`.
+fn validate_declared_type(
+    payload: &SetPropertyPayload,
+    expected_type: &str,
+) -> Result<(), AppError> {
+    let type_matches = match expected_type {
+        "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
+        "ref" => payload.value_ref.is_some(),
+        "number" => payload.value_num.is_some(),
+        "date" => payload.value_date.is_some(),
+        "boolean" => payload.value_bool.is_some(),
+        _ => true,
+    };
+    if !type_matches {
+        let actual_type = if payload.value_text.is_some() {
+            "text"
+        } else if payload.value_num.is_some() {
+            "number"
+        } else if payload.value_date.is_some() {
+            "date"
+        } else if payload.value_ref.is_some() {
+            "ref"
+        } else if payload.value_bool.is_some() {
+            "boolean"
+        } else {
+            "unknown"
+        };
+        return Err(AppError::validation(format!(
+            "Property '{}' expects type '{}', got '{}'.",
+            payload.key, expected_type, actual_type
+        )));
+    }
+    Ok(())
+}
+
+/// Step 5 of [`validate_property_value`]: `actual` must be one of the
+/// `options` JSON array a select-type declaration lists for `key`.
+fn validate_select_option(key: &str, opts_json: &str, actual: &str) -> Result<(), AppError> {
+    let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
+        AppError::validation(format!("Property '{key}' has malformed options JSON: {e}"))
+    })?;
+    if !allowed.iter().any(|a| a == actual) {
+        return Err(AppError::validation(format!(
+            "Property '{key}' value '{actual}' is not in allowed options: {}",
+            allowed.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a [`SetPropertyPayload`] against the reserved-key shape rules
 /// and (optionally) against a pre-fetched `property_definitions` row.
 ///
@@ -536,7 +618,6 @@ pub struct PropertyDeclaration {
 /// `declaration` is `None` when no `property_definitions` row exists for
 /// the key — type/options checks are skipped (custom keys without a
 /// declaration are permissive).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn validate_property_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
@@ -588,38 +669,11 @@ pub(crate) fn validate_property_value(
     //        `property_definitions` (caller pre-fetched).
     if let Some(decl) = declaration {
         let expected_type = decl.value_type.as_str();
-        let options_json = decl.options.as_ref();
 
         // Type validation — only for non-reserved keys. Reserved-key
         // field-shape is enforced by step 3 above.
         if !is_reserved_property_key(&payload.key) {
-            let type_matches = match expected_type {
-                "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
-                "ref" => payload.value_ref.is_some(),
-                "number" => payload.value_num.is_some(),
-                "date" => payload.value_date.is_some(),
-                "boolean" => payload.value_bool.is_some(),
-                _ => true,
-            };
-            if !type_matches {
-                let actual_type = if payload.value_text.is_some() {
-                    "text"
-                } else if payload.value_num.is_some() {
-                    "number"
-                } else if payload.value_date.is_some() {
-                    "date"
-                } else if payload.value_ref.is_some() {
-                    "ref"
-                } else if payload.value_bool.is_some() {
-                    "boolean"
-                } else {
-                    "unknown"
-                };
-                return Err(AppError::validation(format!(
-                    "Property '{}' expects type '{}', got '{}'.",
-                    payload.key, expected_type, actual_type
-                )));
-            }
+            validate_declared_type(payload, expected_type)?;
         }
 
         // Options membership validation for select-type
@@ -629,22 +683,10 @@ pub(crate) fn validate_property_value(
         // select-type definition without options is treated permissively
         // so custom keys stay flexible.
         if expected_type == "select"
-            && let Some(opts_json) = options_json
+            && let Some(opts_json) = decl.options.as_ref()
             && let Some(ref actual) = payload.value_text
         {
-            let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
-                AppError::validation(format!(
-                    "Property '{}' has malformed options JSON: {e}",
-                    payload.key
-                ))
-            })?;
-            if !allowed.iter().any(|a| a == actual) {
-                return Err(AppError::validation(format!(
-                    "Property '{}' value '{actual}' is not in allowed options: {}",
-                    payload.key,
-                    allowed.join(", ")
-                )));
-            }
+            validate_select_option(&payload.key, opts_json, actual)?;
         }
     }
 
@@ -713,6 +755,93 @@ pub async fn set_property_in_tx(
     .await
 }
 
+/// [`set_property_in_tx_with_declaration`]'s target lookup, inside its tx
+/// (TOCTOU-safe): the block exists and is not deleted.
+///
+/// #1627: this single in-tx read is also the authoritative activeness gate
+/// now that the redundant pre-tx `verify_active` round-trip on the pool has
+/// been dropped from the command wrappers. The `deleted_at IS NULL` filter is
+/// removed from the WHERE clause so the fetched `deleted_at` lets us
+/// reproduce `verify_active`'s EXACT discrimination (distinct NotFound vs
+/// soft-deleted errors) from this one query.
+async fn fetch_live_block_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    block_id: &str,
+) -> Result<BlockRow, AppError> {
+    let existing: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let existing =
+        existing.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
+    if existing.deleted_at.is_some() {
+        return Err(AppError::validation(format!(
+            "block '{block_id}' has been soft-deleted"
+        )));
+    }
+    Ok(existing)
+}
+
+/// #533/#612/#708: `space` key registration backstop for
+/// [`set_property_in_tx_with_declaration`]. The `project_set_property_to_sql`
+/// projection only LOGS+SKIPS an unregistered space target (the sync/replay
+/// degrade contract), but the LOCAL command boundary must reject it loudly
+/// (the generic `set_property` IPC/MCP path reaches this unvalidated). Keep
+/// this TOCTOU-safe Validation check on the LOCAL path BEFORE the engine
+/// helper runs, preserving the pre-#1257 behaviour. (The helper's projection
+/// then performs the identical `UPDATE blocks SET space_id = ? WHERE id = ?
+/// OR page_id = ?` fan-out.)
+async fn validate_space_target_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    existing: &BlockRow,
+    block_id: &str,
+    value_ref: Option<&str>,
+) -> Result<(), AppError> {
+    // R17: only the authoritative `space_id` holders may carry the
+    // reserved `space` key — page blocks and top-level tag blocks (the
+    // documented membership model; see `move_blocks_to_space_inner`'s
+    // doc comment and `cache::page_id::rebuild_space_ids`). Stamping a
+    // CONTENT block into a foreign space mis-scopes every space-filtered
+    // read and mis-routes all later per-space engine applies for the
+    // block (reachable via the generic `set_property` IPC/MCP path), so
+    // reject loudly at the LOCAL command boundary. The tag
+    // adoption/migration paths append their `SetProperty(space)` ops
+    // directly (`add_tag` orphan adoption, `migrate_orphan_tags_to_space`)
+    // and are unaffected.
+    let is_space_holder = existing.block_type == "page"
+        || (existing.block_type == "tag" && existing.parent_id.is_none());
+    if !is_space_holder {
+        return Err(AppError::validation(format!(
+            "property 'space' can only be set on a page or top-level tag block; \
+             block '{block_id}' is a '{}' block",
+            existing.block_type
+        )));
+    }
+    let Some(target) = value_ref else {
+        return Err(AppError::validation(
+            "property 'space' requires a value_ref pointing at a space block".into(),
+        ));
+    };
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 AS "ok: i32" FROM spaces s
+               JOIN blocks b ON b.id = s.id
+               WHERE s.id = ? AND b.deleted_at IS NULL"#,
+        target,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::validation(format!(
+            "space_id '{target}' does not refer to a live, registered space block"
+        )));
+    }
+    Ok(())
+}
+
 /// Core of [`set_property_in_tx`] with the `property_definitions` declaration
 /// supplied by the caller (#1921).
 ///
@@ -725,7 +854,6 @@ pub async fn set_property_in_tx(
 /// (matching the wrapper's `is_clear` skip) and otherwise the row for `key`
 /// (or `None` when `key` is undeclared — a permissive custom key).
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_property_in_tx_with_declaration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,
@@ -755,28 +883,7 @@ pub async fn set_property_in_tx_with_declaration(
     validate_property_value(&prop_payload, declaration.as_ref())?;
 
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx).
-    //    #1627: this single in-tx read is also the authoritative
-    //    activeness gate now that the redundant pre-tx `verify_active`
-    //    round-trip on the pool has been dropped from the command
-    //    wrappers. The `deleted_at IS NULL` filter is removed from the
-    //    WHERE clause so the fetched `deleted_at` lets us reproduce
-    //    `verify_active`'s EXACT discrimination (distinct NotFound vs
-    //    soft-deleted errors) from this one query.
-    let existing: Option<BlockRow> = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ?"#,
-        block_id
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-
-    let existing =
-        existing.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
-    if existing.deleted_at.is_some() {
-        return Err(AppError::validation(format!(
-            "block '{block_id}' has been soft-deleted"
-        )));
-    }
+    let existing = fetch_live_block_in_tx(tx, &block_id).await?;
 
     // Referential cross-space integrity (Phase 2):
     // reject a ref-type property whose target lives in a different space
@@ -795,53 +902,9 @@ pub async fn set_property_in_tx_with_declaration(
     let op_record =
         op_log::append_local_op_in_tx(tx, device_id, payload, agaric_store::db::now_ms()).await?;
 
-    // 3b. #533/#612/#708: `space` key registration backstop. The
-    // `project_set_property_to_sql` projection only LOGS+SKIPS an unregistered
-    // space target (the sync/replay degrade contract), but the LOCAL command
-    // boundary must reject it loudly (the generic `set_property` IPC/MCP path
-    // reaches this unvalidated). Keep this TOCTOU-safe Validation check on the
-    // LOCAL path BEFORE the engine helper runs, preserving the pre-#1257
-    // behaviour. (The helper's projection then performs the identical
-    // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?` fan-out.)
+    // 3b. `space` key registration backstop, BEFORE the engine helper runs.
     if key == SPACE_PROPERTY_KEY {
-        // R17: only the authoritative `space_id` holders may carry the
-        // reserved `space` key — page blocks and top-level tag blocks (the
-        // documented membership model; see `move_blocks_to_space_inner`'s
-        // doc comment and `cache::page_id::rebuild_space_ids`). Stamping a
-        // CONTENT block into a foreign space mis-scopes every space-filtered
-        // read and mis-routes all later per-space engine applies for the
-        // block (reachable via the generic `set_property` IPC/MCP path), so
-        // reject loudly at the LOCAL command boundary. The tag
-        // adoption/migration paths append their `SetProperty(space)` ops
-        // directly (`add_tag` orphan adoption, `migrate_orphan_tags_to_space`)
-        // and are unaffected.
-        let is_space_holder = existing.block_type == "page"
-            || (existing.block_type == "tag" && existing.parent_id.is_none());
-        if !is_space_holder {
-            return Err(AppError::validation(format!(
-                "property 'space' can only be set on a page or top-level tag block; \
-                 block '{block_id}' is a '{}' block",
-                existing.block_type
-            )));
-        }
-        let Some(target) = value_ref.as_deref() else {
-            return Err(AppError::validation(
-                "property 'space' requires a value_ref pointing at a space block".into(),
-            ));
-        };
-        let space_ok = sqlx::query_scalar!(
-            r#"SELECT 1 AS "ok: i32" FROM spaces s
-               JOIN blocks b ON b.id = s.id
-               WHERE s.id = ? AND b.deleted_at IS NULL"#,
-            target,
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-        if space_ok.is_none() {
-            return Err(AppError::validation(format!(
-                "space_id '{target}' does not refer to a live, registered space block"
-            )));
-        }
+        validate_space_target_in_tx(tx, &existing, &block_id, value_ref.as_deref()).await?;
     }
 
     // 4. #1257 route the property write through the SAME engine-apply +
