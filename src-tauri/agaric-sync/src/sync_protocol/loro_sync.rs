@@ -417,51 +417,17 @@ pub fn first_engine_live_block_sql_deleted(
         .cloned()
 }
 
-/// Apply an incoming [`LoroSyncMessage`] to the local engine and
-/// project the changed blocks to SQL.
-///
-/// Returns an [`ApplyOutcome`]:
-///
-/// * [`ApplyOutcome::Imported`] — engine import + SQL projection
-///   succeeded; the carried [`SpaceId`] lets the caller invalidate
-///   per-space caches (FE event emission, agenda recompute, etc.).
-/// * [`ApplyOutcome::SnapshotFallbackRequested`] — the
-///   message was a [`LoroSyncMessage::Update`] whose `from_vv` is
-///   ahead of (or concurrent with) our `oplog_vv()`.  The engine
-///   import is **not** attempted; the caller MUST request a fresh
-///   snapshot from the peer (orchestrator emits
-///   [`super::types::SyncMessage::ResetRequired`] for this).
-///
-/// Atomicity contract: the engine import happens **before** the SQL
-/// transaction. A crash between the two leaves the engine ahead of
-/// SQL; boot crash recovery reconciles by re-running projection over
-/// each engine block.
-///
-/// #3213 / #3194 / #535: the write-ahead inbox slot this writes is cleared only
-/// if the post-import `oplog_vv()` actually reached the frontier the blob
-/// DECLARED (`ImportBlobMetadata::partial_end_vv`, recovered together with the
-/// #792 fork verdict by `LoroEngine::screen_inbound_blob`). `LoroDoc::import`
-/// returns `Ok` even when it parked part of the payload in `pending_changes`
-/// for missing deps: those ops are in neither the op-log nor SQL, so the slot
-/// holds their only copy and must survive for a boot replay. An
-/// [`ApplyOutcome::Imported`] therefore no longer implies "the slot is gone" —
-/// it reports what was projected, which is exactly what the caller's cache/FTS
-/// fan-out needs. Retention of a kept slot is unbounded by design; see the
-/// "Kept slots are retained without bound" section on `import_and_project`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn apply_remote(
-    pool: &SqlitePool,
+/// Validate the protocol version and extract `(space_id, bytes)`.  For
+/// Update, also gate the import on the reachability check — if the peer's
+/// `from_vv` is unreachable from our local `oplog_vv()`, break with
+/// `SnapshotFallbackRequested` instead of letting
+/// `import_with_changed_blocks` surface an opaque Loro decode error.
+fn gate_inbound_message(
     registry: &LoroEngineRegistry,
     device_id: &str,
     message: LoroSyncMessage,
-) -> Result<ApplyOutcome, AppError> {
-    // Validate protocol version + extract bytes / space_id.  For
-    // Update, also gate the import on the reachability
-    // check — if the peer's `from_vv` is unreachable from our local
-    // `oplog_vv()`, short-circuit with `SnapshotFallbackRequested`
-    // instead of letting `import_with_changed_blocks` surface an
-    // opaque Loro decode error.
-    let (space_id, bytes) = match message {
+) -> Result<std::ops::ControlFlow<ApplyOutcome, (SpaceId, Vec<u8>)>, AppError> {
+    match message {
         LoroSyncMessage::Snapshot {
             protocol_version,
             space_id,
@@ -473,7 +439,7 @@ pub async fn apply_remote(
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
             }
-            (space_id, bytes)
+            Ok(std::ops::ControlFlow::Continue((space_id, bytes)))
         }
         LoroSyncMessage::Update {
             protocol_version,
@@ -508,11 +474,56 @@ pub async fn apply_remote(
                     // surfacing stays the orchestrator's `SyncEvent::Error`
                     // / `ResetRequired` line.
                     super::snapshot_fallback_metrics::record(device_id, space_id.as_str(), &reason);
-                    return Ok(ApplyOutcome::SnapshotFallbackRequested { space_id, reason });
+                    return Ok(std::ops::ControlFlow::Break(
+                        ApplyOutcome::SnapshotFallbackRequested { space_id, reason },
+                    ));
                 }
             }
-            (space_id, bytes)
+            Ok(std::ops::ControlFlow::Continue((space_id, bytes)))
         }
+    }
+}
+
+/// Apply an incoming [`LoroSyncMessage`] to the local engine and
+/// project the changed blocks to SQL.
+///
+/// Returns an [`ApplyOutcome`]:
+///
+/// * [`ApplyOutcome::Imported`] — engine import + SQL projection
+///   succeeded; the carried [`SpaceId`] lets the caller invalidate
+///   per-space caches (FE event emission, agenda recompute, etc.).
+/// * [`ApplyOutcome::SnapshotFallbackRequested`] — the
+///   message was a [`LoroSyncMessage::Update`] whose `from_vv` is
+///   ahead of (or concurrent with) our `oplog_vv()`.  The engine
+///   import is **not** attempted; the caller MUST request a fresh
+///   snapshot from the peer (orchestrator emits
+///   [`super::types::SyncMessage::ResetRequired`] for this).
+///
+/// Atomicity contract: the engine import happens **before** the SQL
+/// transaction. A crash between the two leaves the engine ahead of
+/// SQL; boot crash recovery reconciles by re-running projection over
+/// each engine block.
+///
+/// #3213 / #3194 / #535: the write-ahead inbox slot this writes is cleared only
+/// if the post-import `oplog_vv()` actually reached the frontier the blob
+/// DECLARED (`ImportBlobMetadata::partial_end_vv`, recovered together with the
+/// #792 fork verdict by `LoroEngine::screen_inbound_blob`). `LoroDoc::import`
+/// returns `Ok` even when it parked part of the payload in `pending_changes`
+/// for missing deps: those ops are in neither the op-log nor SQL, so the slot
+/// holds their only copy and must survive for a boot replay. An
+/// [`ApplyOutcome::Imported`] therefore no longer implies "the slot is gone" —
+/// it reports what was projected, which is exactly what the caller's cache/FTS
+/// fan-out needs. Retention of a kept slot is unbounded by design; see the
+/// "Kept slots are retained without bound" section on `import_and_project`.
+pub async fn apply_remote(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    message: LoroSyncMessage,
+) -> Result<ApplyOutcome, AppError> {
+    let (space_id, bytes) = match gate_inbound_message(registry, device_id, message)? {
+        std::ops::ControlFlow::Continue(accepted) => accepted,
+        std::ops::ControlFlow::Break(outcome) => return Ok(outcome),
     };
 
     // #792: own-peer fork guard — runs for BOTH Snapshot and Update,
@@ -980,6 +991,905 @@ pub enum InboundDeliveryKind {
     RecoveryReplay,
 }
 
+/// Pass A — core columns + properties.  This upserts EVERY changed
+/// block (including the tag blocks themselves), so all `blocks` rows
+/// referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
+/// Pass B's tag-edge inserts.
+///
+/// Load property_definitions ONCE for the whole pass (hoisted out of
+/// the per-block loop to avoid an N+1 SELECT against a static table).
+/// #2264: skipped when the import changed no live block (purge-only
+/// imports reach this tx solely for Pass D + the inbox DELETE).
+async fn project_pass_a(
+    tx: &mut sqlx::SqliteConnection,
+    space_id: &SpaceId,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+    block_states: &[ProjectedBlockState],
+) -> Result<(), AppError> {
+    use agaric_engine::loro::projection::{
+        project_block_full_to_sql, reproject_block_properties_from_engine,
+    };
+
+    let value_types: std::collections::HashMap<String, String> = if changed_blocks.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        sqlx::query!("SELECT key, value_type FROM property_definitions")
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| (r.key, r.value_type))
+            .collect()
+    };
+    for (block_id, (snapshot_opt, full_state)) in changed_blocks.iter().zip(block_states) {
+        // Runs for EVERY changed block, rank-only ones included: this is the
+        // upsert that writes the refreshed dense `position` (and it is a full
+        // core-column upsert, so it correctly creates the row if SQL somehow
+        // never had one — #3162 never turns a missing row into a silent no-op).
+        project_block_full_to_sql(&mut *tx, space_id, block_id, snapshot_opt.as_ref()).await?;
+        // Re-project the block's properties: mirrors remote
+        // SetProperty / DeleteProperty changes into `block_properties`.
+        // Skipped for rank-only siblings (#3162) — this import carried no
+        // property change for them.
+        if let Some((props, _, _)) = full_state {
+            reproject_block_properties_from_engine(&mut *tx, block_id, props, &value_types).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Pass B — tags. Mirrors remote AddTag / RemoveTag
+/// changes into `block_tags`.  Runs AFTER Pass A so every referenced
+/// tag block already has its `blocks` row (FK ordering, see above).
+/// Read the tag list under the guard, then write in the tx — same
+/// read-under-guard-then-write-in-tx discipline as the property pass.
+/// Rank-only siblings are skipped (#3162): a sibling that appears solely
+/// because its rank shifted had no `block_tags` change in this import — any
+/// tag edit would have put it in the set through the tags root instead.
+async fn project_pass_b(
+    tx: &mut sqlx::SqliteConnection,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+    block_states: &[ProjectedBlockState],
+) -> Result<(), AppError> {
+    use agaric_engine::loro::projection::reproject_block_tags_from_engine;
+
+    for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
+        if let Some((_, tag_ids, _)) = full_state {
+            reproject_block_tags_from_engine(&mut *tx, block_id, tag_ids).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Pass C — soft-delete state (Phase 2). Mirrors remote
+/// DeleteBlock / RestoreBlock changes into `blocks.deleted_at`.  Runs
+/// AFTER Pass A so every changed block's `parent_id` row exists — the
+/// helper's descendant-cascade / ancestor-guard CTE walks depend on
+/// it.  The engine stores `deleted_at` on the delete seed only, so the
+/// helper re-derives the SQL cascade from the seed timestamp (an
+/// ancestor check prevents a snapshot re-import from resurrecting a
+/// soft-deleted subtree, and — R9 — a live block whose post-merge
+/// parent chain crosses a tombstoned ancestor is swept into that
+/// ancestor's cohort, converging the concurrent delete-vs-move-in
+/// merge to the same SQL on every peer). Every `(id, deleted_at)`
+/// pair the pass stamps is collected for the post-commit engine
+/// fan-out below.
+async fn project_pass_c(
+    tx: &mut sqlx::SqliteConnection,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+    block_states: &[ProjectedBlockState],
+) -> Result<Vec<(String, i64)>, AppError> {
+    use agaric_engine::loro::projection::reproject_block_deleted_at_from_engine;
+
+    let mut swept_tombstones: Vec<(String, i64)> = Vec::new();
+    // Rank-only siblings are skipped (#3162). Their own engine `deleted_at`
+    // seed is unchanged by this import (a delete / restore is a meta change,
+    // which would have put them in the set through `node_ids`), and their
+    // ancestor chain is unchanged (they did not move — a move makes a block a
+    // `struct_root`, never rank-only). So the two cases this helper exists for
+    // cannot apply to them: the descendant cascade and the R9 sweep are both
+    // driven by an ANCESTOR whose own state changed, and that ancestor is a
+    // full-projection member of `changed_blocks` whose call here cascades over
+    // its whole subtree — these siblings included.
+    for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
+        let Some((_, _, engine_deleted_at)) = full_state else {
+            continue;
+        };
+        let stamped = reproject_block_deleted_at_from_engine(
+            &mut *tx,
+            block_id,
+            engine_deleted_at.as_deref(),
+        )
+        .await?;
+        swept_tombstones.extend(stamped);
+    }
+    Ok(swept_tombstones)
+}
+
+/// Pass D — hard-purge (#2128). Mirrors a remote `PurgeBlock` by deleting
+/// the purged seed + every descendant from ALL derived tables (the same
+/// table set as the local SQL cascade). Runs LAST and in the SAME tx so it
+/// removes any rows the earlier passes may have upserted for a block that is
+/// net-purged in this import: Pass A's `project_block_full_to_sql(None)`
+/// already skips a purged id (the engine returns no live snapshot for it),
+/// but a block that was changed earlier in the same import and then purged
+/// could still have a stale row — Pass D guarantees it is gone. The engine
+/// handed us the COMPLETE purged set, so no descendant CTE is needed.
+/// Atomic with the rest of the projection: a rollback leaves SQL untouched.
+/// #2292: sweep the UNION of the engine's purged set and the durable
+/// tombstone recovered from the inbox row — NARROWED (Fix 2) to
+/// `tombstone_to_sweep`, the recovered ids the engine no longer holds live,
+/// so a stale tombstone can never delete a block a later move resurrected.
+/// On a live apply the tombstone is empty and this is exactly the engine set;
+/// on a crash-recovery replay the engine set is empty (subtree already gone)
+/// and the narrowed tombstone carries the ids. `project_purge_blocks_to_sql`
+/// is idempotent (INSERT OR IGNORE into a keyed temp table, then joined
+/// DELETEs), so re-sweeping already-gone ids is a no-op and the dedup below
+/// is a courtesy, not a correctness requirement.
+async fn project_pass_d(
+    tx: &mut sqlx::SqliteConnection,
+    purged_blocks: &[agaric_core::ulid::BlockId],
+    tombstone_to_sweep: &[agaric_core::ulid::BlockId],
+) -> Result<(), AppError> {
+    use agaric_engine::loro::projection::project_purge_blocks_to_sql;
+
+    let mut purge_union: Vec<&str> = purged_blocks
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    purge_union.extend(
+        tombstone_to_sweep
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str),
+    );
+    purge_union.sort_unstable();
+    purge_union.dedup();
+    if !purge_union.is_empty() {
+        project_purge_blocks_to_sql(&mut *tx, &purge_union).await?;
+    }
+    Ok(())
+}
+
+/// #4775: the space's own block travels in its own doc, and its `is_space`
+/// row is what registers the space here (the 0089 trigger). Project it
+/// first, so every sibling's `space_id` subquery in Pass A already
+/// resolves; the delta's order is otherwise kept.
+fn project_space_block_first(
+    space_id: &SpaceId,
+    changed_blocks: &mut [agaric_core::ulid::BlockId],
+    block_states: &mut [ProjectedBlockState],
+) {
+    if let Some(i) = changed_blocks
+        .iter()
+        .position(|b| b.as_str() == space_id.as_str())
+    {
+        changed_blocks[..=i].rotate_right(1);
+        block_states[..=i].rotate_right(1);
+    }
+}
+
+/// #535: clear the write-ahead inbox slot in the SAME tx as the SQL
+/// projection. This is the atomicity hinge — the slot disappears IFF the
+/// projection commits. On replay, the slot is either still present (this
+/// re-runs) or already gone (projection committed). The DELETE is a no-op
+/// if the row was already removed (e.g. a concurrent replay), which keeps
+/// double-replay safe.
+///
+/// #3164: for a BATCH this loop is the whole of the batching risk, and it is
+/// where the invariant is bought back. All N deletes and the union
+/// projection are in ONE tx: it commits (every projection landed AND every
+/// slot cleared) or it rolls back (nothing projected AND nothing cleared).
+/// There is no interleaving in which a slot outlives its committed
+/// projection or a projection outlives its slot — the two halves of #535 —
+/// because SQLite gives us no way to observe a partial tx. The only failure
+/// that batching genuinely widens is the ENGINE import (outside any tx), and
+/// that is handled upstream by importing before this tx and returning early
+/// on error.
+/// #3194: `clearable_ids`, not `inbox_ids` — a slot whose blob's declared end
+/// frontier the op-log never reached keeps its row (its content is in neither
+/// the op-log nor this projection), which is the same #535 rule the tx
+/// coupling enforces for everything else.
+async fn clear_inbox_slots(
+    tx: &mut sqlx::SqliteConnection,
+    clearable_ids: &[i64],
+) -> Result<(), AppError> {
+    for id in clearable_ids {
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// #4083: with FK enforcement deferred to COMMIT, this is where a dangling
+/// reference surfaces — as a bare `(code: 787) FOREIGN KEY constraint
+/// failed` naming neither table nor row. Name the offending edges before
+/// propagating, so the next occurrence is diagnosable from the log alone
+/// instead of from a live two-device pairing.
+async fn commit_projection(
+    tx: sqlx::Transaction<'_, sqlx::Sqlite>,
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    block_states: &[ProjectedBlockState],
+) -> Result<(), AppError> {
+    if let Err(err) = tx.commit().await {
+        let parent_edges: Vec<(&str, &str)> = block_states
+            .iter()
+            .filter_map(|(snapshot, _)| {
+                let snapshot = snapshot.as_ref()?;
+                Some((snapshot.block_id.as_str(), snapshot.parent_id.as_deref()?))
+            })
+            .collect();
+        report_parent_fk_violation(pool, space_id, &parent_edges, &err).await;
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+/// R9: fan the Pass-C tombstones out to the ENGINE for every stamped
+/// block whose engine meta still says "live". The SQL cascade/sweep can
+/// legally reach blocks no peer ever wrote a delete op for (a block
+/// concurrently moved INTO the deleted subtree), and an engine-live /
+/// SQL-deleted block permanently wedges the #1257 outbound freshness
+/// gate. This mirrors the local delete path's #2344
+/// `dispatch_delete_descendants` fan-out (same cohort timestamp,
+/// idempotent per-block engine writes), and is deterministic across
+/// peers — each peer derives the identical set from the identical
+/// converged CRDT state. Runs AFTER the committed projection and is
+/// best-effort: a failure must NOT turn the committed projection into
+/// an `Err` (same policy as the tag rebuild below); the next import /
+/// boot replay re-derives the same fan-out.
+fn fan_out_swept_tombstones(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    swept_tombstones: &[(String, i64)],
+) {
+    if !swept_tombstones.is_empty() {
+        let fanout_result: Result<(), AppError> = (|| {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            let engine = guard.engine_mut();
+            for (id, ts) in swept_tombstones {
+                if engine.read_deleted_at(id)?.is_none() {
+                    engine.apply_delete_block(id, &ts.to_string())?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(err) = fanout_result {
+            tracing::warn!(
+                error = %err,
+                "engine tombstone fan-out failed AFTER the projection \
+                 committed; the committed SQL state stands; the #1257 \
+                 freshness gate may refuse outbound export for this space \
+                 until a later import / boot replay re-derives the fan-out"
+            );
+        }
+    }
+}
+
+/// Refresh the derived `block_tag_inherited` cache. `block_tags` only carries
+/// direct edges; inherited tags are a recursive-CTE projection over
+/// `(block_tags, blocks.parent_id)`, so a remote tag change shifts inherited
+/// rows for the changed block's whole subtree, and a structural move/create
+/// re-inherits the moved subtree's new ancestor chain.
+///
+/// #2036 stage 3: scope the recompute to the affected subtrees (the engine
+/// deduped them to top-most roots). Falls back to the global rebuild when the
+/// import could not be resolved incrementally. Purged blocks' inherited rows
+/// were already removed by Pass D. Runs after the projection tx commits (the
+/// subtree CTE reads the just-projected `blocks.parent_id`), mirroring the
+/// previous global rebuild's placement.
+///
+/// #2275 — the projection tx has ALREADY committed above (the #535 inbox
+/// slot is gone), so this derived-cache rebuild is best-effort: it must NOT
+/// turn a committed projection into an `Err`. If it fails, the committed
+/// block/tag state stands and the `block_tag_inherited` cache heals on the
+/// next FULL rebuild: any subsequent local tag/move op enqueues
+/// `MaterializeTask::RebuildTagInheritanceCache` (a full rebuild), a later
+/// Global-scope import rebuild does the same, and snapshot restore enqueues
+/// it too. Until one of those runs, inherited-tag reads (tag search) may see
+/// stale rows for the affected subtrees. Propagating the error here would be
+/// strictly worse: the caller would treat a committed import as unprojected
+/// while the inbox slot is already deleted (no retry possible), with the
+/// cache exactly as stale. Log loudly and continue instead.
+async fn refresh_tag_inheritance(
+    pool: &SqlitePool,
+    tag_scope: agaric_engine::loro::engine::TagScope,
+) {
+    let rebuild_result: Result<(), AppError> = async {
+        match tag_scope {
+            agaric_engine::loro::engine::TagScope::Global => {
+                agaric_store::tag_inheritance::rebuild_all(pool).await?;
+            }
+            agaric_engine::loro::engine::TagScope::Subtrees(roots) => {
+                if !roots.is_empty() {
+                    let mut tag_tx =
+                        agaric_store::db::begin_immediate_logged(pool, "tag_inheritance_subtrees")
+                            .await?;
+                    for root in &roots {
+                        agaric_store::tag_inheritance::recompute_subtree_inheritance(
+                            &mut tag_tx,
+                            root.as_str(),
+                        )
+                        .await?;
+                    }
+                    tag_tx.commit().await?;
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(err) = rebuild_result {
+        tracing::warn!(
+            error = %err,
+            "inherited-tags cache rebuild failed AFTER the projection committed; \
+             the committed state stands; inherited-tag reads may be stale until \
+             the next full RebuildTagInheritanceCache (local tag op, \
+             global-scope import, or snapshot restore) runs"
+        );
+    }
+}
+
+/// #4083 — heal the ancestor gap.
+///
+/// The incremental diff path emits only the blocks the import touched; every
+/// untouched ancestor must already be in SQL. It may not be: a
+/// `project_block_full_to_sql` warn-and-skip, a purge, or a previously
+/// rolled-back `sync_apply_remote` all leave that hole — and the last one
+/// makes the failure self-perpetuating, because the retry re-imports the same
+/// blob and aborts on the same dangling `parent_id` (787), permanently
+/// blocking this direction of sync (a session is one-directional: only the
+/// INITIATOR applies remote data).
+///
+/// The ancestor is NOT degraded to a NULL parent: that would silently
+/// reparent the block to the vault root with nothing to reconcile it
+/// afterwards (unlike `blocks.space_id`, which a boot backfill heals). The
+/// engine holds the real ancestor, so we project it for real, with its full
+/// state (core columns + properties + tags + soft-delete) — a row SQL never
+/// had needs all of it, not just the column the FK points at — and report it
+/// as changed so the caller's FTS / derived-cache fan-out covers it too.
+///
+/// #4099 — ONE batched probe, and it runs INSIDE this transaction.
+///
+/// Batched: the probe used to be a `SELECT 1 FROM blocks WHERE id = ?` per
+/// candidate. A large offline catch-up (a device returning after a long
+/// absence) can produce hundreds of candidates, i.e. hundreds of sequential
+/// round-trips, on the path that is already the slow one.
+///
+/// Inside the tx: the per-candidate probes ran on `pool` in AUTOCOMMIT,
+/// before `begin_immediate_logged` — so a writer that removed an ancestor
+/// row between the probe and the projection put the apply straight back into
+/// a commit-time 787. It self-healed (the #535 inbox slot survives the
+/// rollback and the replay re-probes), but running the probe on the
+/// connection that already holds the writer lock closes the window outright,
+/// and costs nothing now that it is a single statement.
+async fn backfill_missing_ancestors(
+    tx: &mut sqlx::SqliteConnection,
+    space_id: &SpaceId,
+    ancestor_candidates: &[agaric_core::ulid::BlockId],
+    ancestor_states: Vec<ProjectedBlockState>,
+    changed_blocks: &mut Vec<agaric_core::ulid::BlockId>,
+    block_states: &mut Vec<ProjectedBlockState>,
+) -> Result<(), AppError> {
+    if !ancestor_candidates.is_empty() {
+        let candidate_refs: Vec<&str> = ancestor_candidates
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let absent = absent_block_ids(&mut *tx, &candidate_refs).await?;
+        // Filter BOTH index-aligned vectors by the same membership test,
+        // keeping `ancestors_outside`'s root-first order.
+        let mut missing_ancestors: Vec<agaric_core::ulid::BlockId> = Vec::new();
+        let mut missing_states = Vec::new();
+        for (candidate, state) in ancestor_candidates.iter().zip(ancestor_states) {
+            if absent.contains(candidate.as_str()) {
+                missing_ancestors.push(candidate.clone());
+                missing_states.push(state);
+            }
+        }
+        // Known gap in this healing pass: Pass B writes the backfilled
+        // ancestor's own `block_tags`, but `tag_scope` was resolved from the
+        // import's subtree roots and does not include an ancestor sitting ABOVE
+        // them — so `block_tag_inherited` can stay stale for that ancestor until
+        // the next full rebuild. Strictly better than the abort this replaces,
+        // and recorded here so it is not rediscovered as a new defect.
+        if !missing_ancestors.is_empty() {
+            tracing::warn!(
+                space_id = space_id.as_str(),
+                missing_ancestors = ?missing_ancestors
+                    .iter()
+                    .map(agaric_core::ulid::BlockId::as_str)
+                    .collect::<Vec<_>>(),
+                "#4083: inbound projection found engine ancestors with no `blocks` \
+                 row; projecting them ahead of the changed set so the changed \
+                 blocks' parent_id self-FK resolves"
+            );
+            // Root-first ancestors, then the depth-sorted changed set.
+            //
+            // NOTE: the concatenation is NOT globally parent-before-child, and
+            // does not need to be. `ancestors_outside` climbs PAST an ancestor
+            // that is itself in the changed set, so on `AA→BB→CC→DD` with
+            // changed `[BB, DD]` it returns `[AA, CC]` and the merged order is
+            // `[AA, CC, BB, DD]` — `CC` before its parent `BB`. That commits
+            // only because the caller runs this whole tx under `PRAGMA
+            // defer_foreign_keys = ON`, which is therefore load-bearing here,
+            // not merely defence in depth
+            // (`apply_remote_backfills_interleaved_ancestor_gap_4083` is the
+            // shape that reddens if it is removed). Re-sorting the union by
+            // engine depth would need another guard acquisition to answer "how
+            // deep is this id", which is what the deferral buys us out of.
+            missing_states.append(block_states);
+            *block_states = missing_states;
+            missing_ancestors.append(changed_blocks);
+            *changed_blocks = missing_ancestors;
+        }
+    }
+    Ok(())
+}
+
+/// What [`read_projection_states`] hands the projection passes: the changed
+/// blocks' states, the untouched ancestors named for the #4083 backfill, and
+/// those ancestors' states, index-aligned with them.
+type ProjectionStates = (
+    Vec<ProjectedBlockState>,
+    Vec<agaric_core::ulid::BlockId>,
+    Vec<ProjectedBlockState>,
+);
+
+/// One block's engine state for the projection passes: the core snapshot, plus
+/// the typed properties, tags and soft-delete seed that every block except a
+/// rank-only sibling (#3162) needs.
+type ProjectedBlockState = (
+    Option<agaric_engine::loro::engine::BlockSnapshot>,
+    Option<(
+        Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
+        Vec<String>,
+        Option<String>,
+    )>,
+);
+
+/// #540: snapshot EVERY changed block's engine state under ONE guard
+/// acquisition, drop the guard, then do all SQL writes. The previous
+/// shape re-acquired the `Mutex<LoroEngine>` once per block across three
+/// passes (3N acquisitions for N blocks); this reads all four projections
+/// per block under a single lock (1 acquisition total) into a local Vec,
+/// so the SQL writes never contend with — or hold — the engine mutex.
+/// Reads stay consistent (one atomic view of the engine); the three SQL
+/// passes below still run A→B→C for the FK ordering documented on each.
+///
+/// #4100: "one atomic view" is the property, not merely "one acquisition on
+/// the healthy path". The #4083 ancestor backfill briefly took a SECOND
+/// acquisition, gated on the probe finding a missing row — so on the healing
+/// path the backfilled ancestors' snapshots could come from a later engine
+/// state than the changed blocks they were merged with. Both the candidate
+/// walk AND the candidates' state are read under the single acquisition
+/// below; the probe that decides which of them to project is pure SQL and
+/// needs no engine access at all.
+///
+fn read_projection_states(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    changed_blocks: &[agaric_core::ulid::BlockId],
+    rank_only_blocks: &[agaric_core::ulid::BlockId],
+) -> Result<ProjectionStates, AppError> {
+    // #3162 lookup set for the per-block skip decisions below. A strict subset
+    // of `changed_blocks`, so every block is still visited by Pass A.
+    let rank_only: std::collections::HashSet<&str> = rank_only_blocks
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        // #1621: derive every block's `position` from a per-parent ordered-
+        // children index built ONCE (read_blocks_bulk), not a per-block O(K)
+        // `child_rank_position` sibling scan. For N changed blocks in a flat
+        // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
+        // snapshot (incl. `position`) is byte-identical to `read_block`'s.
+        let mut all_refs: Vec<&str> = changed_blocks
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let changed_len = all_refs.len();
+        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
+        // depth-sorted, so a changed PARENT is always projected before its
+        // changed child — but an untouched ancestor is merely ASSUMED to
+        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
+        // Named here (one cheap parent-hop walk) so the SQL probe inside the
+        // projection tx can tell which of them are missing.
+        // `all_refs` is still exactly the changed set at this point — the
+        // candidates are appended below — so this is the whole slice, not a
+        // guard against anything.
+        let ancestor_candidates = engine.ancestors_outside(&all_refs);
+        // #4100: the candidates' state is read HERE, under the guard that is
+        // already held, not under a second acquisition gated on the probe
+        // result. #540's property is not merely "acquire once on the healthy
+        // path" — it is that a projection reads ONE atomic view of the engine.
+        // A second acquisition after the probe let the backfilled ancestors
+        // come from a later engine state than the changed blocks they are
+        // merged with.
+        //
+        // NOT a deadlock argument, and it must not be read as one. With the
+        // probe moved INSIDE the projection tx (#4099), a lazily-gated second
+        // acquisition would block on the engine mutex while this connection
+        // holds SQLite's `BEGIN IMMEDIATE` writer lock — but that is the
+        // ordering the LOCAL apply path already takes on every single op
+        // (`apply_*_via_loro` calls `for_space_recording` with the caller's
+        // write tx open), and the reverse edge cannot exist anywhere:
+        // `EngineGuard` is `!Send`, pinned by the compile-time tripwire in
+        // `loro::registry`, so no async code can hold the engine mutex across
+        // the `.await` that acquiring a SQLite lock requires. What the single
+        // acquisition buys here is LATENCY, not the absence of a cycle:
+        // waiting on the engine mutex while holding the writer lock stalls
+        // every other writer for the length of that wait.
+        //
+        // The cost is reading ancestor states that usually turn out to be
+        // present already, and it is a real cost — the one jfolcini flagged on
+        // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
+        // over `changed ++ candidates` (so the per-parent rank index is still
+        // built once for the whole projection) and the extra per-candidate
+        // work is the same three engine reads a changed block pays, but the
+        // candidate count is not a constant: it is the number of DISTINCT
+        // untouched ancestors of the changed set. For a sparse edit that is
+        // tree depth — a handful — while a long offline catch-up can push it
+        // into the hundreds (the same scenario #4099 cites), bounded above by
+        // the live vault. Judged worth it because the alternative keeps a
+        // split engine view on precisely the path that is already repairing
+        // damage. On the whole-tree changed set a snapshot import or the
+        // untrusted no-op fallback produces, every ancestor is IN the input,
+        // so `ancestors_outside` returns EMPTY and this costs exactly nothing.
+        all_refs.extend(
+            ancestor_candidates
+                .iter()
+                .map(agaric_core::ulid::BlockId::as_str),
+        );
+        let snapshots = engine.read_blocks_bulk(&all_refs)?;
+        let mut snapshots = snapshots.into_iter();
+        let mut states = Vec::with_capacity(changed_len);
+        for (block_id, snapshot) in changed_blocks
+            .iter()
+            .zip(snapshots.by_ref().take(changed_len))
+        {
+            // #3162: a rank-only sibling is in this set solely because a
+            // create / move / delete elsewhere in its sibling group shifted
+            // its dense `position` — which `snapshot` already carries. The
+            // import brought no property, tag, content or soft-delete change
+            // for it (the resolver excludes anything it saw through another
+            // channel), so skip the three per-block engine reads AND their
+            // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
+            // `reproject_block_deleted_at_from_engine` for exactly the blocks
+            // that provably cannot need it.
+            let full_state = if rank_only.contains(block_id.as_str()) {
+                None
+            } else {
+                Some((
+                    engine.read_all_properties_typed(block_id.as_str())?,
+                    engine.read_tags(block_id.as_str())?,
+                    engine.read_deleted_at(block_id.as_str())?,
+                ))
+            };
+            states.push((snapshot, full_state));
+        }
+        // The remainder of `snapshots` is the candidates', in `ancestor_candidates`
+        // order — index-aligned, so the probe below can filter both together.
+        // Always the FULL state: a row SQL never had needs all of it, not just
+        // the column the FK points at, so there is no `rank_only` analogue here.
+        //
+        // Widened failure surface, accepted knowingly: these reads now run for
+        // EVERY candidate, not only the ones SQL turns out to lack. A corrupt
+        // engine node that `ancestors_outside` could still name — its `block_id`
+        // was readable, so the #4111 truncation warn did not fire — but whose
+        // properties/tags are not, now fails the whole apply rather than only
+        // the healing path. That is the same hard failure a CHANGED block with
+        // the same corruption already causes, and it fails loudly into the #535
+        // inbox retry rather than silently; it is a consequence of the single
+        // acquisition, not an oversight in it.
+        let mut ancestor_states = Vec::with_capacity(ancestor_candidates.len());
+        for (block_id, snapshot) in all_refs[changed_len..].iter().zip(snapshots) {
+            let full_state = Some((
+                engine.read_all_properties_typed(block_id)?,
+                engine.read_tags(block_id)?,
+                engine.read_deleted_at(block_id)?,
+            ));
+            ancestor_states.push((snapshot, full_state));
+        }
+        Ok((states, ancestor_candidates, ancestor_states))
+    }
+}
+
+/// The `(changed, rank_only, tag_scope)` triple the no-op branches resolve to.
+type HealingDelta = (
+    Vec<agaric_core::ulid::BlockId>,
+    Vec<agaric_core::ulid::BlockId>,
+    agaric_engine::loro::engine::TagScope,
+);
+
+/// Untrusted no-op: SQL may be behind the engine (the crash window #535 exists
+/// to heal). Reproject the whole live tree + globally rebuild tag inheritance —
+/// the pre-#2036 recovery behaviour. The full set is returned as
+/// `changed_blocks` so the caller's FTS / derived-cache fan-out heals as well.
+/// (Purged-rows gap: see [`import_and_project`]'s docs — pre-existing #2128
+/// limitation, additive fallback only.)
+///
+/// No rank-only hint on the healing fallback: it exists because we do NOT know
+/// what SQL is missing, so every block gets the full treatment (#3162).
+/// `rank_only_blocks` is already empty at the call site — it is a subset of the
+/// empty `changed_blocks` that got us into this branch — but say so explicitly
+/// rather than leaning on that.
+fn healing_fallback_delta(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+) -> Result<HealingDelta, AppError> {
+    let full = {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        guard.engine_mut().live_blocks_preorder()
+    };
+    Ok((
+        full,
+        Vec::new(),
+        agaric_engine::loro::engine::TagScope::Global,
+    ))
+}
+
+/// Whether a no-op import diff may take the #2264 fast path — see the "#2264 —
+/// no-op short-circuit" section of [`import_and_project`] for the trust rule.
+async fn noop_import_is_trusted(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    inbox_ids: &[i64],
+    delivery: InboundDeliveryKind,
+) -> Result<bool, AppError> {
+    match delivery {
+        // The replayed slot itself proves the projection never committed.
+        InboundDeliveryKind::RecoveryReplay => Ok(false),
+        // Trusted iff no OTHER slot (a prior delivery's failed
+        // projection, whose ops this payload may duplicate) is pending
+        // for this space. Runtime query (not `query!`): one-off
+        // static-string probe on the rare no-op path.
+        InboundDeliveryKind::Live => {
+            // dynamic-sql: static-string COUNT probe guarding the no-op fast path
+            // (#2264 review); runtime form to keep the rare path off the macro cache.
+            let total: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox WHERE space_id = ?")
+                    .bind(space_id.as_str())
+                    .fetch_one(pool)
+                    .await?;
+            // #3164: "no OTHER slot pending for this space" now means
+            // "every slot in this space belongs to THIS payload". Counting
+            // our own still-present ids (rather than subtracting
+            // `inbox_ids.len()`) keeps the answer exact if one of them
+            // raced away, and for the one-id live payload it is literally
+            // the pre-#3164 `... AND id != ?` count.
+            let mut ours_present: i64 = 0;
+            for id in inbox_ids {
+                let present: Option<i64> = sqlx::query_scalar!(
+                    r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
+                    id,
+                )
+                .fetch_optional(pool)
+                .await?;
+                ours_present += i64::from(present.is_some());
+            }
+            Ok(total == ours_present)
+        }
+    }
+}
+
+/// #2292: durable tombstone of the purged id set on the write-ahead inbox
+/// slot. Written in its OWN autocommit tx on `pool` — NOT the Phase-2
+/// projection tx below — precisely so it survives a crash mid-projection:
+/// the slot row (INSERTed before the engine import) and this tombstone must
+/// both outlive the window in which the engine has already imported the
+/// purge but the SQL Pass-D sweep has not yet committed. On recovery the
+/// engine delta is empty (the subtree is already gone), so the purged set
+/// can no longer be recomputed from the engine — this durable copy is the
+/// only way to re-sweep the stale SQL rows without a FORBIDDEN "SQL minus
+/// engine" reconcile (#779). Cleared for free by the in-tx slot DELETE when
+/// the projection commits.
+///
+/// Placed right after the engine import to minimize the window in which the
+/// engine may be persisted (periodic `save_all_engines`) with no durable
+/// tombstone yet.
+///
+/// Guard: only when the engine actually purged something this import. The
+/// empty-set skip is load-bearing on the replay re-import path — replay's
+/// engine delta is empty, so writing an empty tombstone here would CLOBBER
+/// the real one recovered from the row.
+async fn stamp_purged_tombstone(
+    pool: &SqlitePool,
+    inbox_ids: &[i64],
+    purged_blocks: &[agaric_core::ulid::BlockId],
+    tombstone_purged: &[agaric_core::ulid::BlockId],
+) -> Result<(), AppError> {
+    if !purged_blocks.is_empty() {
+        // #2292 (CR, Fix 5): persist the UNION of the engine's purged set and
+        // any tombstone recovered from this row, so a recovery re-import that
+        // recomputes a non-empty purge set does not overwrite/lose the
+        // originally-recovered tombstone ids. `BlockId` is
+        // `#[serde(transparent)]`, so serializing the `&str` view yields the
+        // identical JSON array of id strings the decoder expects. On the live
+        // path `tombstone_purged` is empty, so the union is exactly
+        // `purged_blocks` (unchanged behaviour). `AppError: From<serde_json::Error>`
+        // handles the (only theoretically possible) encode failure.
+        let mut union: Vec<&str> = purged_blocks
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        union.extend(
+            tombstone_purged
+                .iter()
+                .map(agaric_core::ulid::BlockId::as_str),
+        );
+        union.sort_unstable();
+        union.dedup();
+        let purged_json = serde_json::to_string(&union)?;
+        // #3164: on a batch the engine resolved ONE union purge delta, which
+        // cannot be attributed back to an individual blob — so stamp the union
+        // on EVERY slot in the batch. That is the conservative direction: if
+        // the projection tx rolls back, each surviving slot carries at least
+        // the ids it would have carried alone, so the next boot re-sweeps at
+        // least as much. Over-broad tombstones are harmless because Fix 2
+        // (`narrow_tombstone_to_sweep`) narrows any recovered tombstone to ids
+        // the engine no longer holds live. Single-id (live) behaviour is unchanged.
+        for id in inbox_ids {
+            sqlx::query!(
+                "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
+                purged_json,
+                id,
+            )
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// #2292 (CR, Fix 2): a block the engine currently holds LIVE must not be
+/// swept by a stale recovered tombstone (a later move can resurrect a
+/// previously-purged id; Pass A upserts it live, and an unfiltered Pass D
+/// would then delete it → SQL-behind-engine divergence). Narrow the recovered
+/// tombstone to ids the engine no longer holds. Stays within #779: an engine
+/// that reloaded empty holds nothing live, so it still sweeps the full
+/// tombstone (the device's own durable record). Uncertain reads (Err) are
+/// treated as LIVE and excluded — prefer leaving a stale row over deleting a
+/// live one.
+fn narrow_tombstone_to_sweep(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    tombstone_purged: &[agaric_core::ulid::BlockId],
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    Ok(if tombstone_purged.is_empty() {
+        Vec::new()
+    } else {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        tombstone_purged
+            .iter()
+            .filter(|id| matches!(engine.read_block(id.as_str()), Ok(None)))
+            .cloned()
+            .collect()
+    })
+}
+
+/// #3194 (#535) — decide, BEFORE anything is deleted, which slots this import
+/// has actually earned the right to clear.
+///
+/// The replay gate admits a blob on the strength of its declared
+/// `partial_end_vv` and advances its cumulative base by the same value, which
+/// assumes every blob's per-peer counter range is contiguous. Blobs loro's
+/// `export(updates)` produces are — but a merged, truncated or hand-crafted
+/// one need not be, and `LoroDoc::import*` returns `Ok` even when it parked
+/// part of the payload in `pending_changes` for missing deps. Either way the
+/// ops are not in the op-log, so they were not diffed, not projected, and the
+/// slot that holds their only durable copy must survive. Requiring the
+/// post-import `oplog_vv()` to actually reach the declared frontier closes
+/// both without touching the gate's admission logic.
+///
+/// Counter semantics: both sides are `VersionVector` counters (EXCLUSIVE
+/// ends), so "covered" is `local >= declared` — see `LoroEngine::oplog_shortfall`.
+///
+/// #3213: the same rule now runs for the live apply and per-row replay
+/// paths, whose condition comes from the blob's own `partial_end_vv` rather
+/// than from a batch gate verdict. Nothing here is path-specific — the
+/// `require_covered` pairs are simply supplied by three callers now instead
+/// of one.
+fn clearable_slot_ids(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    inbox_ids: &[i64],
+    require_covered: &[(i64, Vec<(PeerID, Counter)>)],
+    pending_changes: &[(u64, i32, i32)],
+) -> Result<Vec<i64>, AppError> {
+    if !pending_changes.is_empty() {
+        tracing::warn!(
+            space_id = space_id.as_str(),
+            slots = inbox_ids.len(),
+            pending = ?pending_changes,
+            "#3194: the import left changes buffered in loro's pending_changes — \
+             they are not in the op-log and were not projected; any slot whose \
+             frontier they cover is kept for a later boot"
+        );
+    }
+    // NOTE: only the DELETE sites (`clear_inbox_slots` and the no-op fast path
+    // in `import_and_project`) switch to this narrowed set. The #2292
+    // `purged_ids` tombstone stamp and the #2264 no-op probe keep using the full
+    // `inbox_ids`, because a slot that is KEPT still needs its durable tombstone
+    // for the boot that finally clears it.
+    let clearable_ids: Vec<i64> = if require_covered.is_empty() {
+        inbox_ids.to_vec()
+    } else {
+        let shortfalls: Vec<(i64, Option<String>)> = {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            let engine = guard.engine_mut();
+            inbox_ids
+                .iter()
+                .map(|id| {
+                    let shortfall = require_covered
+                        .iter()
+                        .find(|(slot, _)| slot == id)
+                        .and_then(|(_, end_vv)| engine.oplog_shortfall(end_vv));
+                    (*id, shortfall)
+                })
+                .collect()
+        };
+        let mut clearable = Vec::with_capacity(shortfalls.len());
+        for (id, shortfall) in shortfalls {
+            match shortfall {
+                None => clearable.push(id),
+                Some(reason) => tracing::warn!(
+                    space_id = space_id.as_str(),
+                    inbox_id = id,
+                    reason = %reason,
+                    "#3194: the import did not reach this slot's declared end \
+                     frontier, so its content is not in the projection — keeping \
+                     the durable slot for a later boot (#535)"
+                ),
+            }
+        }
+        clearable
+    };
+    Ok(clearable_ids)
+}
+
+/// #2188: the CRDT import (decode + diff resolution) is CPU-bound and runs while
+/// holding this space's engine mutex (#2205 — per-space). `cpu_block_in_place`
+/// lets the multi-thread reactor drive other tasks for the duration without
+/// releasing the lock (the guard is held across the decode, so same-space
+/// atomicity vs concurrent mutation is unchanged). The `!Send` guard is fine
+/// inside the closure — it runs inline on this same worker thread. See
+/// [`cpu_block_in_place`] for the current-thread-runtime fallback.
+fn import_payload_into_engine(
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    payload: agaric_engine::loro::engine::ImportPayload<'_>,
+) -> Result<agaric_engine::loro::engine::ImportDelta, AppError> {
+    cpu_block_in_place(|| {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        let engine = guard.engine_mut();
+        match payload {
+            agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
+                engine.import_with_changed_purged_tagscope(bytes)
+            }
+            // #3164: N blobs, ONE diff event, ONE resolved delta — see
+            // `import_batch_with_changed_purged_tagscope` for the loro
+            // citation. An `Err` here means an UNKNOWN subset landed in
+            // the engine, so the caller must return before any slot is
+            // deleted; its `?` does exactly that, leaving every slot for the
+            // caller's per-row retry (#535 unharmed: nothing projected,
+            // nothing deleted).
+            agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
+                engine.import_batch_with_changed_purged_tagscope(blobs)
+            }
+        }
+    })
+}
+
 /// Import `bytes` into the per-space engine and project every changed
 /// block into the SQL `blocks` table (+ properties / tags / deleted_at),
 /// clearing the write-ahead inbox slot `inbox_id` atomically with the
@@ -1118,7 +2028,6 @@ pub enum InboundDeliveryKind {
 // (the durable-tombstone plumbing). Threading them as fields of a struct here
 // would obscure the linear import→project flow for no real benefit.
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn import_and_project(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -1165,12 +2074,6 @@ pub(crate) async fn import_and_project(
     ),
     AppError,
 > {
-    use agaric_engine::loro::projection::{
-        project_block_full_to_sql, project_purge_blocks_to_sql,
-        reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
-        reproject_block_tags_from_engine,
-    };
-
     // Phase 1 — import bytes into the engine, capture changed AND purged
     // blocks. #2128: a remote `PurgeBlock` removes the seed + its whole
     // subtree from the engine index and so never appears in `changed_blocks`
@@ -1195,188 +2098,21 @@ pub(crate) async fn import_and_project(
         // enforced against `oplog_vv()` below, which is the stronger statement
         // (a pending change is exactly one the op-log did not advance over).
         pending: pending_changes,
-    } = {
-        // #2188: the CRDT import (decode + diff resolution) is CPU-bound and
-        // runs while holding this space's engine mutex (#2205 — per-space).
-        // `cpu_block_in_place` lets the multi-thread reactor drive other tasks
-        // for the duration without releasing the lock (the guard is held across
-        // the decode, so same-space atomicity vs concurrent mutation is
-        // unchanged). The
-        // `!Send` guard is fine inside the closure — it runs inline on this same
-        // worker thread. See `cpu_block_in_place` for the current-thread-runtime
-        // fallback.
-        cpu_block_in_place(|| {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            match payload {
-                agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
-                    engine.import_with_changed_purged_tagscope(bytes)
-                }
-                // #3164: N blobs, ONE diff event, ONE resolved delta — see
-                // `import_batch_with_changed_purged_tagscope` for the loro
-                // citation. An `Err` here means an UNKNOWN subset landed in
-                // the engine, so we must return before any slot is deleted;
-                // the `?` below does exactly that, leaving every slot for the
-                // caller's per-row retry (#535 unharmed: nothing projected,
-                // nothing deleted).
-                agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
-                    engine.import_batch_with_changed_purged_tagscope(blobs)
-                }
-            }
-        })?
-    };
+    } = import_payload_into_engine(registry, device_id, space_id, payload)?;
 
-    // #3194 (#535) — decide, BEFORE anything is deleted, which slots this import
-    // has actually earned the right to clear.
-    //
-    // The replay gate admits a blob on the strength of its declared
-    // `partial_end_vv` and advances its cumulative base by the same value, which
-    // assumes every blob's per-peer counter range is contiguous. Blobs loro's
-    // `export(updates)` produces are — but a merged, truncated or hand-crafted
-    // one need not be, and `LoroDoc::import*` returns `Ok` even when it parked
-    // part of the payload in `pending_changes` for missing deps. Either way the
-    // ops are not in the op-log, so they were not diffed, not projected, and the
-    // slot that holds their only durable copy must survive. Requiring the
-    // post-import `oplog_vv()` to actually reach the declared frontier closes
-    // both without touching the gate's admission logic.
-    //
-    // Counter semantics: both sides are `VersionVector` counters (EXCLUSIVE
-    // ends), so "covered" is `local >= declared` — see `LoroEngine::oplog_shortfall`.
-    //
-    // #3213: the same rule now runs for the live apply and per-row replay
-    // paths, whose condition comes from the blob's own `partial_end_vv` rather
-    // than from a batch gate verdict. Nothing here is path-specific — the
-    // `require_covered` pairs are simply supplied by three callers now instead
-    // of one.
-    if !pending_changes.is_empty() {
-        tracing::warn!(
-            space_id = space_id.as_str(),
-            slots = inbox_ids.len(),
-            pending = ?pending_changes,
-            "#3194: the import left changes buffered in loro's pending_changes — \
-             they are not in the op-log and were not projected; any slot whose \
-             frontier they cover is kept for a later boot"
-        );
-    }
-    // NOTE: only the DELETE sites below switch to this narrowed set. The #2292
-    // `purged_ids` tombstone stamp and the #2264 no-op probe keep using the full
-    // `inbox_ids`, because a slot that is KEPT still needs its durable tombstone
-    // for the boot that finally clears it.
-    let clearable_ids: Vec<i64> = if require_covered.is_empty() {
-        inbox_ids.to_vec()
-    } else {
-        let shortfalls: Vec<(i64, Option<String>)> = {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            inbox_ids
-                .iter()
-                .map(|id| {
-                    let shortfall = require_covered
-                        .iter()
-                        .find(|(slot, _)| slot == id)
-                        .and_then(|(_, end_vv)| engine.oplog_shortfall(end_vv));
-                    (*id, shortfall)
-                })
-                .collect()
-        };
-        let mut clearable = Vec::with_capacity(shortfalls.len());
-        for (id, shortfall) in shortfalls {
-            match shortfall {
-                None => clearable.push(id),
-                Some(reason) => tracing::warn!(
-                    space_id = space_id.as_str(),
-                    inbox_id = id,
-                    reason = %reason,
-                    "#3194: the import did not reach this slot's declared end \
-                     frontier, so its content is not in the projection — keeping \
-                     the durable slot for a later boot (#535)"
-                ),
-            }
-        }
-        clearable
-    };
+    let clearable_ids = clearable_slot_ids(
+        registry,
+        device_id,
+        space_id,
+        inbox_ids,
+        require_covered,
+        &pending_changes,
+    )?;
 
-    // #2292: durable tombstone of the purged id set on the write-ahead inbox
-    // slot. Written in its OWN autocommit tx on `pool` — NOT the Phase-2
-    // projection tx below — precisely so it survives a crash mid-projection:
-    // the slot row (INSERTed before the engine import) and this tombstone must
-    // both outlive the window in which the engine has already imported the
-    // purge but the SQL Pass-D sweep has not yet committed. On recovery the
-    // engine delta is empty (the subtree is already gone), so the purged set
-    // can no longer be recomputed from the engine — this durable copy is the
-    // only way to re-sweep the stale SQL rows without a FORBIDDEN "SQL minus
-    // engine" reconcile (#779). Cleared for free by the in-tx slot DELETE when
-    // the projection commits.
-    //
-    // Placed right after the engine import to minimize the window in which the
-    // engine may be persisted (periodic `save_all_engines`) with no durable
-    // tombstone yet.
-    //
-    // Guard: only when the engine actually purged something this import. The
-    // empty-set skip is load-bearing on the replay re-import path — replay's
-    // engine delta is empty, so writing an empty tombstone here would CLOBBER
-    // the real one recovered from the row.
-    if !purged_blocks.is_empty() {
-        // #2292 (CR, Fix 5): persist the UNION of the engine's purged set and
-        // any tombstone recovered from this row, so a recovery re-import that
-        // recomputes a non-empty purge set does not overwrite/lose the
-        // originally-recovered tombstone ids. `BlockId` is
-        // `#[serde(transparent)]`, so serializing the `&str` view yields the
-        // identical JSON array of id strings the decoder expects. On the live
-        // path `tombstone_purged` is empty, so the union is exactly
-        // `purged_blocks` (unchanged behaviour). `AppError: From<serde_json::Error>`
-        // handles the (only theoretically possible) encode failure.
-        let mut union: Vec<&str> = purged_blocks
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        union.extend(
-            tombstone_purged
-                .iter()
-                .map(agaric_core::ulid::BlockId::as_str),
-        );
-        union.sort_unstable();
-        union.dedup();
-        let purged_json = serde_json::to_string(&union)?;
-        // #3164: on a batch the engine resolved ONE union purge delta, which
-        // cannot be attributed back to an individual blob — so stamp the union
-        // on EVERY slot in the batch. That is the conservative direction: if
-        // the projection tx rolls back, each surviving slot carries at least
-        // the ids it would have carried alone, so the next boot re-sweeps at
-        // least as much. Over-broad tombstones are harmless because Fix 2
-        // below narrows any recovered tombstone to ids the engine no longer
-        // holds live. Single-id (live) behaviour is unchanged.
-        for id in inbox_ids {
-            sqlx::query!(
-                "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
-                purged_json,
-                id,
-            )
-            .execute(pool)
-            .await?;
-        }
-    }
+    stamp_purged_tombstone(pool, inbox_ids, &purged_blocks, tombstone_purged).await?;
 
-    // #2292 (CR, Fix 2): a block the engine currently holds LIVE must not be
-    // swept by a stale recovered tombstone (a later move can resurrect a
-    // previously-purged id; Pass A upserts it live, and an unfiltered Pass D
-    // would then delete it → SQL-behind-engine divergence). Narrow the recovered
-    // tombstone to ids the engine no longer holds. Stays within #779: an engine
-    // that reloaded empty holds nothing live, so it still sweeps the full
-    // tombstone (the device's own durable record). Uncertain reads (Err) are
-    // treated as LIVE and excluded — prefer leaving a stale row over deleting a
-    // live one.
-    let tombstone_to_sweep: Vec<agaric_core::ulid::BlockId> = if tombstone_purged.is_empty() {
-        Vec::new()
-    } else {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        tombstone_purged
-            .iter()
-            .filter(|id| matches!(engine.read_block(id.as_str()), Ok(None)))
-            .cloned()
-            .collect()
-    };
+    let tombstone_to_sweep =
+        narrow_tombstone_to_sweep(registry, device_id, space_id, tombstone_purged)?;
 
     // #2264: complete no-op import diff (a redelivered / echoed payload that
     // added zero new ops — the engine's oplog-frontier short-circuit, #2036).
@@ -1393,40 +2129,7 @@ pub(crate) async fn import_and_project(
     // `changed_blocks` is `mut` for the #4083 ancestor backfill below, which may
     // prepend engine ancestors SQL has no row for.
     let (mut changed_blocks, rank_only_blocks, tag_scope) = if noop_diff {
-        let trusted = match delivery {
-            // The replayed slot itself proves the projection never committed.
-            InboundDeliveryKind::RecoveryReplay => false,
-            // Trusted iff no OTHER slot (a prior delivery's failed
-            // projection, whose ops this payload may duplicate) is pending
-            // for this space. Runtime query (not `query!`): one-off
-            // static-string probe on the rare no-op path.
-            InboundDeliveryKind::Live => {
-                // dynamic-sql: static-string COUNT probe guarding the no-op fast path
-                // (#2264 review); runtime form to keep the rare path off the macro cache.
-                let total: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox WHERE space_id = ?")
-                        .bind(space_id.as_str())
-                        .fetch_one(pool)
-                        .await?;
-                // #3164: "no OTHER slot pending for this space" now means
-                // "every slot in this space belongs to THIS payload". Counting
-                // our own still-present ids (rather than subtracting
-                // `inbox_ids.len()`) keeps the answer exact if one of them
-                // raced away, and for the one-id live payload it is literally
-                // the pre-#3164 `... AND id != ?` count.
-                let mut ours_present: i64 = 0;
-                for id in inbox_ids {
-                    let present: Option<i64> = sqlx::query_scalar!(
-                        r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
-                        id,
-                    )
-                    .fetch_optional(pool)
-                    .await?;
-                    ours_present += i64::from(present.is_some());
-                }
-                total == ours_present
-            }
-        };
+        let trusted = noop_import_is_trusted(pool, space_id, inbox_ids, delivery).await?;
         if trusted {
             // #3213: `clearable_ids`, not `inbox_ids`. Since the live path also
             // supplies a delete condition this is no longer trivially the same
@@ -1443,173 +2146,20 @@ pub(crate) async fn import_and_project(
             }
             return Ok((changed_blocks, purged_blocks));
         }
-        // Untrusted no-op: SQL may be behind the engine (the crash window
-        // #535 exists to heal). Reproject the whole live tree + globally
-        // rebuild tag inheritance — the pre-#2036 recovery behaviour. The
-        // full set is returned as `changed_blocks` so the caller's FTS /
-        // derived-cache fan-out heals as well. (Purged-rows gap: see fn
-        // docs — pre-existing #2128 limitation, additive fallback only.)
-        let full = {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            guard.engine_mut().live_blocks_preorder()
-        };
-        // No rank-only hint on the healing fallback: it exists because we do
-        // NOT know what SQL is missing, so every block gets the full treatment
-        // (#3162). `rank_only_blocks` is already empty here — it is a subset of
-        // the empty `changed_blocks` that got us into this branch — but say so
-        // explicitly rather than leaning on that.
-        (
-            full,
-            Vec::new(),
-            agaric_engine::loro::engine::TagScope::Global,
-        )
+        healing_fallback_delta(registry, device_id, space_id)?
     } else {
         (changed_blocks, rank_only_blocks, tag_scope)
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
     //
-    // #540: snapshot EVERY changed block's engine state under ONE guard
-    // acquisition, drop the guard, then do all SQL writes. The previous
-    // shape re-acquired the `Mutex<LoroEngine>` once per block across three
-    // passes (3N acquisitions for N blocks); this reads all four projections
-    // per block under a single lock (1 acquisition total) into a local Vec,
-    // so the SQL writes never contend with — or hold — the engine mutex.
-    // Reads stay consistent (one atomic view of the engine); the three SQL
-    // passes below still run A→B→C for the FK ordering documented on each.
-    //
-    // #4100: "one atomic view" is the property, not merely "one acquisition on
-    // the healthy path". The #4083 ancestor backfill briefly took a SECOND
-    // acquisition, gated on the probe finding a missing row — so on the healing
-    // path the backfilled ancestors' snapshots could come from a later engine
-    // state than the changed blocks they were merged with. Both the candidate
-    // walk AND the candidates' state are read under the single acquisition
-    // below; the probe that decides which of them to project is pure SQL and
-    // needs no engine access at all.
-
-    // #3162 lookup set for the per-block skip decisions below. A strict subset
-    // of `changed_blocks`, so every block is still visited by Pass A.
-    let rank_only: std::collections::HashSet<&str> = rank_only_blocks
-        .iter()
-        .map(agaric_core::ulid::BlockId::as_str)
-        .collect();
-    let (mut block_states, ancestor_candidates, ancestor_states) = {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        // #1621: derive every block's `position` from a per-parent ordered-
-        // children index built ONCE (read_blocks_bulk), not a per-block O(K)
-        // `child_rank_position` sibling scan. For N changed blocks in a flat
-        // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
-        // snapshot (incl. `position`) is byte-identical to `read_block`'s.
-        let mut all_refs: Vec<&str> = changed_blocks
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        let changed_len = all_refs.len();
-        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
-        // depth-sorted, so a changed PARENT is always projected before its
-        // changed child — but an untouched ancestor is merely ASSUMED to
-        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
-        // Named here (one cheap parent-hop walk) so the SQL probe inside the
-        // projection tx can tell which of them are missing.
-        // `all_refs` is still exactly the changed set at this point — the
-        // candidates are appended below — so this is the whole slice, not a
-        // guard against anything.
-        let ancestor_candidates = engine.ancestors_outside(&all_refs);
-        // #4100: the candidates' state is read HERE, under the guard that is
-        // already held, not under a second acquisition gated on the probe
-        // result. #540's property is not merely "acquire once on the healthy
-        // path" — it is that a projection reads ONE atomic view of the engine.
-        // A second acquisition after the probe let the backfilled ancestors
-        // come from a later engine state than the changed blocks they are
-        // merged with.
-        //
-        // NOT a deadlock argument, and it must not be read as one. With the
-        // probe moved INSIDE the projection tx (#4099), a lazily-gated second
-        // acquisition would block on the engine mutex while this connection
-        // holds SQLite's `BEGIN IMMEDIATE` writer lock — but that is the
-        // ordering the LOCAL apply path already takes on every single op
-        // (`apply_*_via_loro` calls `for_space_recording` with the caller's
-        // write tx open), and the reverse edge cannot exist anywhere:
-        // `EngineGuard` is `!Send`, pinned by the compile-time tripwire in
-        // `loro::registry`, so no async code can hold the engine mutex across
-        // the `.await` that acquiring a SQLite lock requires. What the single
-        // acquisition buys here is LATENCY, not the absence of a cycle:
-        // waiting on the engine mutex while holding the writer lock stalls
-        // every other writer for the length of that wait.
-        //
-        // The cost is reading ancestor states that usually turn out to be
-        // present already, and it is a real cost — the one jfolcini flagged on
-        // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
-        // over `changed ++ candidates` (so the per-parent rank index is still
-        // built once for the whole projection) and the extra per-candidate
-        // work is the same three engine reads a changed block pays, but the
-        // candidate count is not a constant: it is the number of DISTINCT
-        // untouched ancestors of the changed set. For a sparse edit that is
-        // tree depth — a handful — while a long offline catch-up can push it
-        // into the hundreds (the same scenario #4099 cites), bounded above by
-        // the live vault. Judged worth it because the alternative keeps a
-        // split engine view on precisely the path that is already repairing
-        // damage. On the whole-tree changed set a snapshot import or the
-        // untrusted no-op fallback produces, every ancestor is IN the input,
-        // so `ancestors_outside` returns EMPTY and this costs exactly nothing.
-        all_refs.extend(
-            ancestor_candidates
-                .iter()
-                .map(agaric_core::ulid::BlockId::as_str),
-        );
-        let snapshots = engine.read_blocks_bulk(&all_refs)?;
-        let mut snapshots = snapshots.into_iter();
-        let mut states = Vec::with_capacity(changed_len);
-        for (block_id, snapshot) in changed_blocks
-            .iter()
-            .zip(snapshots.by_ref().take(changed_len))
-        {
-            // #3162: a rank-only sibling is in this set solely because a
-            // create / move / delete elsewhere in its sibling group shifted
-            // its dense `position` — which `snapshot` already carries. The
-            // import brought no property, tag, content or soft-delete change
-            // for it (the resolver excludes anything it saw through another
-            // channel), so skip the three per-block engine reads AND their
-            // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
-            // `reproject_block_deleted_at_from_engine` for exactly the blocks
-            // that provably cannot need it.
-            let full_state = if rank_only.contains(block_id.as_str()) {
-                None
-            } else {
-                Some((
-                    engine.read_all_properties_typed(block_id.as_str())?,
-                    engine.read_tags(block_id.as_str())?,
-                    engine.read_deleted_at(block_id.as_str())?,
-                ))
-            };
-            states.push((snapshot, full_state));
-        }
-        // The remainder of `snapshots` is the candidates', in `ancestor_candidates`
-        // order — index-aligned, so the probe below can filter both together.
-        // Always the FULL state: a row SQL never had needs all of it, not just
-        // the column the FK points at, so there is no `rank_only` analogue here.
-        //
-        // Widened failure surface, accepted knowingly: these reads now run for
-        // EVERY candidate, not only the ones SQL turns out to lack. A corrupt
-        // engine node that `ancestors_outside` could still name — its `block_id`
-        // was readable, so the #4111 truncation warn did not fire — but whose
-        // properties/tags are not, now fails the whole apply rather than only
-        // the healing path. That is the same hard failure a CHANGED block with
-        // the same corruption already causes, and it fails loudly into the #535
-        // inbox retry rather than silently; it is a consequence of the single
-        // acquisition, not an oversight in it.
-        let mut ancestor_states = Vec::with_capacity(ancestor_candidates.len());
-        for (block_id, snapshot) in all_refs[changed_len..].iter().zip(snapshots) {
-            let full_state = Some((
-                engine.read_all_properties_typed(block_id)?,
-                engine.read_tags(block_id)?,
-                engine.read_deleted_at(block_id)?,
-            ));
-            ancestor_states.push((snapshot, full_state));
-        }
-        (states, ancestor_candidates, ancestor_states)
-    };
+    let (mut block_states, ancestor_candidates, ancestor_states) = read_projection_states(
+        registry,
+        device_id,
+        space_id,
+        &changed_blocks,
+        &rank_only_blocks,
+    )?;
 
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
     // #4083: defer FK enforcement to COMMIT for the WHOLE projection tx, not
@@ -1629,358 +2179,33 @@ pub(crate) async fn import_and_project(
         .execute(&mut *tx)
         .await?;
 
-    // #4083 — heal the ancestor gap.
-    //
-    // The incremental diff path emits only the blocks the import touched; every
-    // untouched ancestor must already be in SQL. It may not be: a
-    // `project_block_full_to_sql` warn-and-skip, a purge, or a previously
-    // rolled-back `sync_apply_remote` all leave that hole — and the last one
-    // makes the failure self-perpetuating, because the retry re-imports the same
-    // blob and aborts on the same dangling `parent_id` (787), permanently
-    // blocking this direction of sync (a session is one-directional: only the
-    // INITIATOR applies remote data).
-    //
-    // The ancestor is NOT degraded to a NULL parent: that would silently
-    // reparent the block to the vault root with nothing to reconcile it
-    // afterwards (unlike `blocks.space_id`, which a boot backfill heals). The
-    // engine holds the real ancestor, so we project it for real, with its full
-    // state (core columns + properties + tags + soft-delete) — a row SQL never
-    // had needs all of it, not just the column the FK points at — and report it
-    // as changed so the caller's FTS / derived-cache fan-out covers it too.
-    //
-    // #4099 — ONE batched probe, and it runs INSIDE this transaction.
-    //
-    // Batched: the probe used to be a `SELECT 1 FROM blocks WHERE id = ?` per
-    // candidate. A large offline catch-up (a device returning after a long
-    // absence) can produce hundreds of candidates, i.e. hundreds of sequential
-    // round-trips, on the path that is already the slow one.
-    //
-    // Inside the tx: the per-candidate probes ran on `pool` in AUTOCOMMIT,
-    // before `begin_immediate_logged` — so a writer that removed an ancestor
-    // row between the probe and the projection put the apply straight back into
-    // a commit-time 787. It self-healed (the #535 inbox slot survives the
-    // rollback and the replay re-probes), but running the probe on the
-    // connection that already holds the writer lock closes the window outright,
-    // and costs nothing now that it is a single statement.
-    if !ancestor_candidates.is_empty() {
-        let candidate_refs: Vec<&str> = ancestor_candidates
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        let absent = absent_block_ids(&mut *tx, &candidate_refs).await?;
-        // Filter BOTH index-aligned vectors by the same membership test,
-        // keeping `ancestors_outside`'s root-first order.
-        let mut missing_ancestors: Vec<agaric_core::ulid::BlockId> = Vec::new();
-        let mut missing_states = Vec::new();
-        for (candidate, state) in ancestor_candidates.iter().zip(ancestor_states) {
-            if absent.contains(candidate.as_str()) {
-                missing_ancestors.push(candidate.clone());
-                missing_states.push(state);
-            }
-        }
-        // Known gap in this healing pass: Pass B writes the backfilled
-        // ancestor's own `block_tags`, but `tag_scope` was resolved from the
-        // import's subtree roots and does not include an ancestor sitting ABOVE
-        // them — so `block_tag_inherited` can stay stale for that ancestor until
-        // the next full rebuild. Strictly better than the abort this replaces,
-        // and recorded here so it is not rediscovered as a new defect.
-        if !missing_ancestors.is_empty() {
-            tracing::warn!(
-                space_id = space_id.as_str(),
-                missing_ancestors = ?missing_ancestors
-                    .iter()
-                    .map(agaric_core::ulid::BlockId::as_str)
-                    .collect::<Vec<_>>(),
-                "#4083: inbound projection found engine ancestors with no `blocks` \
-                 row; projecting them ahead of the changed set so the changed \
-                 blocks' parent_id self-FK resolves"
-            );
-            // Root-first ancestors, then the depth-sorted changed set.
-            //
-            // NOTE: the concatenation is NOT globally parent-before-child, and
-            // does not need to be. `ancestors_outside` climbs PAST an ancestor
-            // that is itself in the changed set, so on `AA→BB→CC→DD` with
-            // changed `[BB, DD]` it returns `[AA, CC]` and the merged order is
-            // `[AA, CC, BB, DD]` — `CC` before its parent `BB`. That commits
-            // only because this whole tx runs under `PRAGMA defer_foreign_keys
-            // = ON` above, which is therefore load-bearing for the backfill,
-            // not merely defence in depth
-            // (`apply_remote_backfills_interleaved_ancestor_gap_4083` is the
-            // shape that reddens if it is removed). Re-sorting the union by
-            // engine depth would need another guard acquisition to answer "how
-            // deep is this id", which is what the deferral buys us out of.
-            missing_states.append(&mut block_states);
-            block_states = missing_states;
-            missing_ancestors.append(&mut changed_blocks);
-            changed_blocks = missing_ancestors;
-        }
-    }
+    backfill_missing_ancestors(
+        &mut tx,
+        space_id,
+        &ancestor_candidates,
+        ancestor_states,
+        &mut changed_blocks,
+        &mut block_states,
+    )
+    .await?;
 
-    // #4775: the space's own block travels in its own doc, and its `is_space`
-    // row is what registers the space here (the 0089 trigger). Project it
-    // first, so every sibling's `space_id` subquery in Pass A already
-    // resolves; the delta's order is otherwise kept.
-    if let Some(i) = changed_blocks
-        .iter()
-        .position(|b| b.as_str() == space_id.as_str())
-    {
-        changed_blocks[..=i].rotate_right(1);
-        block_states[..=i].rotate_right(1);
-    }
+    project_space_block_first(space_id, &mut changed_blocks, &mut block_states);
 
-    // Pass A — core columns + properties.  This upserts EVERY changed
-    // block (including the tag blocks themselves), so all `blocks` rows
-    // referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
-    // Pass B's tag-edge inserts.
-    //
-    // Load property_definitions ONCE for the whole pass (hoisted out of
-    // the per-block loop to avoid an N+1 SELECT against a static table).
-    // #2264: skipped when the import changed no live block (purge-only
-    // imports reach this tx solely for Pass D + the inbox DELETE).
-    let value_types: std::collections::HashMap<String, String> = if changed_blocks.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        sqlx::query!("SELECT key, value_type FROM property_definitions")
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .map(|r| (r.key, r.value_type))
-            .collect()
-    };
-    for (block_id, (snapshot_opt, full_state)) in changed_blocks.iter().zip(&block_states) {
-        // Runs for EVERY changed block, rank-only ones included: this is the
-        // upsert that writes the refreshed dense `position` (and it is a full
-        // core-column upsert, so it correctly creates the row if SQL somehow
-        // never had one — #3162 never turns a missing row into a silent no-op).
-        project_block_full_to_sql(&mut tx, space_id, block_id, snapshot_opt.as_ref()).await?;
-        // Re-project the block's properties: mirrors remote
-        // SetProperty / DeleteProperty changes into `block_properties`.
-        // Skipped for rank-only siblings (#3162) — this import carried no
-        // property change for them.
-        if let Some((props, _, _)) = full_state {
-            reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
-        }
-    }
+    project_pass_a(&mut tx, space_id, &changed_blocks, &block_states).await?;
 
-    // Pass B — tags. Mirrors remote AddTag / RemoveTag
-    // changes into `block_tags`.  Runs AFTER Pass A so every referenced
-    // tag block already has its `blocks` row (FK ordering, see above).
-    // Read the tag list under the guard, then write in the tx — same
-    // read-under-guard-then-write-in-tx discipline as the property pass.
-    // Rank-only siblings are skipped (#3162): a sibling that appears solely
-    // because its rank shifted had no `block_tags` change in this import — any
-    // tag edit would have put it in the set through the tags root instead.
-    for (block_id, (_, full_state)) in changed_blocks.iter().zip(&block_states) {
-        if let Some((_, tag_ids, _)) = full_state {
-            reproject_block_tags_from_engine(&mut tx, block_id, tag_ids).await?;
-        }
-    }
+    project_pass_b(&mut tx, &changed_blocks, &block_states).await?;
 
-    // Pass C — soft-delete state (Phase 2). Mirrors remote
-    // DeleteBlock / RestoreBlock changes into `blocks.deleted_at`.  Runs
-    // AFTER Pass A so every changed block's `parent_id` row exists — the
-    // helper's descendant-cascade / ancestor-guard CTE walks depend on
-    // it.  The engine stores `deleted_at` on the delete seed only, so the
-    // helper re-derives the SQL cascade from the seed timestamp (an
-    // ancestor check prevents a snapshot re-import from resurrecting a
-    // soft-deleted subtree, and — R9 — a live block whose post-merge
-    // parent chain crosses a tombstoned ancestor is swept into that
-    // ancestor's cohort, converging the concurrent delete-vs-move-in
-    // merge to the same SQL on every peer). Every `(id, deleted_at)`
-    // pair the pass stamps is collected for the post-commit engine
-    // fan-out below.
-    let mut swept_tombstones: Vec<(String, i64)> = Vec::new();
-    // Rank-only siblings are skipped (#3162). Their own engine `deleted_at`
-    // seed is unchanged by this import (a delete / restore is a meta change,
-    // which would have put them in the set through `node_ids`), and their
-    // ancestor chain is unchanged (they did not move — a move makes a block a
-    // `struct_root`, never rank-only). So the two cases this helper exists for
-    // cannot apply to them: the descendant cascade and the R9 sweep are both
-    // driven by an ANCESTOR whose own state changed, and that ancestor is a
-    // full-projection member of `changed_blocks` whose call here cascades over
-    // its whole subtree — these siblings included.
-    for (block_id, (_, full_state)) in changed_blocks.iter().zip(&block_states) {
-        let Some((_, _, engine_deleted_at)) = full_state else {
-            continue;
-        };
-        let stamped =
-            reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
-                .await?;
-        swept_tombstones.extend(stamped);
-    }
+    let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
 
-    // Pass D — hard-purge (#2128). Mirrors a remote `PurgeBlock` by deleting
-    // the purged seed + every descendant from ALL derived tables (the same
-    // table set as the local SQL cascade). Runs LAST and in the SAME tx so it
-    // removes any rows the earlier passes may have upserted for a block that is
-    // net-purged in this import: Pass A's `project_block_full_to_sql(None)`
-    // already skips a purged id (the engine returns no live snapshot for it),
-    // but a block that was changed earlier in the same import and then purged
-    // could still have a stale row — Pass D guarantees it is gone. The engine
-    // handed us the COMPLETE purged set, so no descendant CTE is needed.
-    // Atomic with the rest of the projection: a rollback leaves SQL untouched.
-    // #2292: sweep the UNION of the engine's purged set and the durable
-    // tombstone recovered from the inbox row — NARROWED (Fix 2) to
-    // `tombstone_to_sweep`, the recovered ids the engine no longer holds live,
-    // so a stale tombstone can never delete a block a later move resurrected.
-    // On a live apply the tombstone is empty and this is exactly the engine set;
-    // on a crash-recovery replay the engine set is empty (subtree already gone)
-    // and the narrowed tombstone carries the ids. `project_purge_blocks_to_sql`
-    // is idempotent (INSERT OR IGNORE into a keyed temp table, then joined
-    // DELETEs), so re-sweeping already-gone ids is a no-op and the dedup below
-    // is a courtesy, not a correctness requirement.
-    let mut purge_union: Vec<&str> = purged_blocks
-        .iter()
-        .map(agaric_core::ulid::BlockId::as_str)
-        .collect();
-    purge_union.extend(
-        tombstone_to_sweep
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str),
-    );
-    purge_union.sort_unstable();
-    purge_union.dedup();
-    if !purge_union.is_empty() {
-        project_purge_blocks_to_sql(&mut tx, &purge_union).await?;
-    }
+    project_pass_d(&mut tx, &purged_blocks, &tombstone_to_sweep).await?;
 
-    // #535: clear the write-ahead inbox slot in the SAME tx as the SQL
-    // projection. This is the atomicity hinge — the slot disappears IFF the
-    // projection commits. On replay, the slot is either still present (this
-    // re-runs) or already gone (projection committed). The DELETE is a no-op
-    // if the row was already removed (e.g. a concurrent replay), which keeps
-    // double-replay safe.
-    //
-    // #3164: for a BATCH this loop is the whole of the batching risk, and it is
-    // where the invariant is bought back. All N deletes and the union
-    // projection are in ONE tx: it commits (every projection landed AND every
-    // slot cleared) or it rolls back (nothing projected AND nothing cleared).
-    // There is no interleaving in which a slot outlives its committed
-    // projection or a projection outlives its slot — the two halves of #535 —
-    // because SQLite gives us no way to observe a partial tx. The only failure
-    // that batching genuinely widens is the ENGINE import (outside any tx), and
-    // that is handled upstream by importing before this tx and returning early
-    // on error.
-    // #3194: `clearable_ids`, not `inbox_ids` — a slot whose blob's declared end
-    // frontier the op-log never reached keeps its row (its content is in neither
-    // the op-log nor this projection), which is the same #535 rule the tx
-    // coupling enforces for everything else.
-    for id in &clearable_ids {
-        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
-    // #4083: with FK enforcement deferred to COMMIT, this is where a dangling
-    // reference surfaces — as a bare `(code: 787) FOREIGN KEY constraint
-    // failed` naming neither table nor row. Name the offending edges before
-    // propagating, so the next occurrence is diagnosable from the log alone
-    // instead of from a live two-device pairing.
-    if let Err(err) = tx.commit().await {
-        let parent_edges: Vec<(&str, &str)> = block_states
-            .iter()
-            .filter_map(|(snapshot, _)| {
-                let snapshot = snapshot.as_ref()?;
-                Some((snapshot.block_id.as_str(), snapshot.parent_id.as_deref()?))
-            })
-            .collect();
-        report_parent_fk_violation(pool, space_id, &parent_edges, &err).await;
-        return Err(err.into());
-    }
+    commit_projection(tx, pool, space_id, &block_states).await?;
 
-    // R9: fan the Pass-C tombstones out to the ENGINE for every stamped
-    // block whose engine meta still says "live". The SQL cascade/sweep can
-    // legally reach blocks no peer ever wrote a delete op for (a block
-    // concurrently moved INTO the deleted subtree), and an engine-live /
-    // SQL-deleted block permanently wedges the #1257 outbound freshness
-    // gate. This mirrors the local delete path's #2344
-    // `dispatch_delete_descendants` fan-out (same cohort timestamp,
-    // idempotent per-block engine writes), and is deterministic across
-    // peers — each peer derives the identical set from the identical
-    // converged CRDT state. Runs AFTER the committed projection and is
-    // best-effort: a failure must NOT turn the committed projection into
-    // an `Err` (same policy as the tag rebuild below); the next import /
-    // boot replay re-derives the same fan-out.
-    if !swept_tombstones.is_empty() {
-        let fanout_result: Result<(), AppError> = (|| {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            for (id, ts) in &swept_tombstones {
-                if engine.read_deleted_at(id)?.is_none() {
-                    engine.apply_delete_block(id, &ts.to_string())?;
-                }
-            }
-            Ok(())
-        })();
-        if let Err(err) = fanout_result {
-            tracing::warn!(
-                error = %err,
-                "engine tombstone fan-out failed AFTER the projection \
-                 committed; the committed SQL state stands; the #1257 \
-                 freshness gate may refuse outbound export for this space \
-                 until a later import / boot replay re-derives the fan-out"
-            );
-        }
-    }
+    fan_out_swept_tombstones(registry, device_id, space_id, &swept_tombstones);
 
-    // Refresh the derived `block_tag_inherited` cache. `block_tags` only carries
-    // direct edges; inherited tags are a recursive-CTE projection over
-    // `(block_tags, blocks.parent_id)`, so a remote tag change shifts inherited
-    // rows for the changed block's whole subtree, and a structural move/create
-    // re-inherits the moved subtree's new ancestor chain.
-    //
-    // #2036 stage 3: scope the recompute to the affected subtrees (the engine
-    // deduped them to top-most roots). Falls back to the global rebuild when the
-    // import could not be resolved incrementally. Purged blocks' inherited rows
-    // were already removed by Pass D. Runs after the projection tx commits (the
-    // subtree CTE reads the just-projected `blocks.parent_id`), mirroring the
-    // previous global rebuild's placement.
-    //
-    // #2275 — the projection tx has ALREADY committed above (the #535 inbox
-    // slot is gone), so this derived-cache rebuild is best-effort: it must NOT
-    // turn a committed projection into an `Err`. If it fails, the committed
-    // block/tag state stands and the `block_tag_inherited` cache heals on the
-    // next FULL rebuild: any subsequent local tag/move op enqueues
-    // `MaterializeTask::RebuildTagInheritanceCache` (a full rebuild), a later
-    // Global-scope import rebuild does the same, and snapshot restore enqueues
-    // it too. Until one of those runs, inherited-tag reads (tag search) may see
-    // stale rows for the affected subtrees. Propagating the error here would be
-    // strictly worse: the caller would treat a committed import as unprojected
-    // while the inbox slot is already deleted (no retry possible), with the
-    // cache exactly as stale. Log loudly and continue instead.
-    let rebuild_result: Result<(), AppError> = async {
-        match tag_scope {
-            agaric_engine::loro::engine::TagScope::Global => {
-                agaric_store::tag_inheritance::rebuild_all(pool).await?;
-            }
-            agaric_engine::loro::engine::TagScope::Subtrees(roots) => {
-                if !roots.is_empty() {
-                    let mut tag_tx =
-                        agaric_store::db::begin_immediate_logged(pool, "tag_inheritance_subtrees")
-                            .await?;
-                    for root in &roots {
-                        agaric_store::tag_inheritance::recompute_subtree_inheritance(
-                            &mut tag_tx,
-                            root.as_str(),
-                        )
-                        .await?;
-                    }
-                    tag_tx.commit().await?;
-                }
-            }
-        }
-        Ok(())
-    }
-    .await;
-    if let Err(err) = rebuild_result {
-        tracing::warn!(
-            error = %err,
-            "inherited-tags cache rebuild failed AFTER the projection committed; \
-             the committed state stands; inherited-tag reads may be stale until \
-             the next full RebuildTagInheritanceCache (local tag op, \
-             global-scope import, or snapshot restore) runs"
-        );
-    }
+    refresh_tag_inheritance(pool, tag_scope).await;
 
     Ok((changed_blocks, purged_blocks))
 }
@@ -2175,6 +2400,253 @@ pub struct InboxSlot {
     pub tombstone_purged: Vec<agaric_core::ulid::BlockId>,
 }
 
+/// Union of the batch's durable tombstones — Pass D narrows it to ids the engine
+/// no longer holds live (#2292 Fix 2), so the union is safe.
+fn batch_tombstone_union(accepted: &[InboxSlot]) -> Vec<agaric_core::ulid::BlockId> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    accepted
+        .iter()
+        .flat_map(|s| s.tombstone_purged.iter())
+        .filter(|id| seen.insert(id.as_str().to_string()))
+        .cloned()
+        .collect()
+}
+
+/// Replay each accepted slot on its own after a batch failure, so one poison
+/// blob cannot strand the rest of this space's slots.
+///
+/// #3213: `Ok` from [`replay_inbox_row`] no longer implies "slot cleared" — the
+/// per-row path now keeps a slot whose blob the op-log did not reach, exactly as
+/// the batch path does. Ask the table rather than assuming, so `replayed` stays
+/// truthful and each survivor is reported for a later boot (same probe as the
+/// batch success arm).
+async fn replay_accepted_slots_individually(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space: &SpaceId,
+    accepted: &[InboxSlot],
+    blobs: &[Vec<u8>],
+    out: &mut BatchReplayOutcome,
+) -> Result<(), AppError> {
+    for (slot, bytes) in accepted.iter().zip(blobs) {
+        match replay_inbox_row(
+            pool,
+            registry,
+            device_id,
+            space.as_str(),
+            bytes,
+            slot.id,
+            &slot.tombstone_purged,
+        )
+        .await
+        {
+            Ok((changed, purged)) => {
+                // #3213: `Ok` no longer implies "slot cleared" — the
+                // per-row path now keeps a slot whose blob the op-log
+                // did not reach, exactly as the batch path does. Ask
+                // the table rather than assuming, so `replayed` stays
+                // truthful and each survivor is reported for a later
+                // boot (same probe as the batch success arm above).
+                let still_there: Option<i64> = sqlx::query_scalar!(
+                    r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
+                    slot.id,
+                )
+                .fetch_optional(pool)
+                .await?;
+                match still_there {
+                    None => out.replayed += 1,
+                    Some(_) => {
+                        // #3226 — same accounting as the batch arm. The
+                        // declared frontier is re-derived from the blob
+                        // here (`replay_inbox_row` does not return it),
+                        // which costs one extra metadata decode on a
+                        // path that is already the cold poison-isolation
+                        // fallback and only for slots that did not
+                        // clear.
+                        let screen = {
+                            let mut guard = registry.for_space(space, device_id)?;
+                            guard.engine_mut().screen_inbound_blob(bytes)
+                        };
+                        let reason = {
+                            let mut guard = registry.for_space(space, device_id)?;
+                            guard.engine_mut().oplog_shortfall(&screen.declared_end_vv)
+                        }
+                        .unwrap_or_else(|| {
+                            "kept after a committed projection although the op-log \
+                             reports no shortfall (#3213/#535)"
+                                .to_string()
+                        });
+                        account_unresolved_slot(
+                            pool,
+                            space.as_str(),
+                            slot.id,
+                            &screen.declared_end_vv,
+                            &reason,
+                            out,
+                        )
+                        .await?;
+                    }
+                }
+                out.changed.extend(changed);
+                out.purged.extend(purged);
+            }
+            Err(e) => {
+                // Poison slot: left in place by `replay_inbox_row`, so
+                // a later boot retries it. Reported, never fatal —
+                // the per-row walk's "log + continue" contract.
+                //
+                // #3226: this is the population the issue names as
+                // "truncated blob, corrupt payload" — a blob that cannot
+                // be imported AT ALL never reaches the frontier check
+                // above, it errors out of `import_and_project`. It is
+                // just as permanently stuck as an unmet frontier, so it
+                // is charged against the same boot budget and lands in
+                // the same quarantine. The blob's declared frontier is
+                // whatever its metadata says (empty when the metadata
+                // itself will not decode, which is the usual case here).
+                let screen = {
+                    let mut guard = registry.for_space(space, device_id)?;
+                    guard.engine_mut().screen_inbound_blob(bytes)
+                };
+                let reason = format!("replay failed: {e}");
+                account_unresolved_slot(
+                    pool,
+                    space.as_str(),
+                    slot.id,
+                    &screen.declared_end_vv,
+                    &reason,
+                    out,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Probe every slot the committed batch projection was supposed to clear, and
+/// count each one as replayed or charge it as a survivor.
+///
+/// #3194: "every accepted slot" is no longer the same as "every slot deleted" —
+/// a blob whose declared end frontier the import never reached kept its row on
+/// purpose. Count what actually went, rather than assuming, so the boot walk's
+/// `replayed` total stays truthful and each survivor is reported for a later
+/// boot.
+async fn account_batch_survivors(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space: &SpaceId,
+    inbox_ids: &[i64],
+    declared_end_vv: &[(i64, Vec<(PeerID, Counter)>)],
+    out: &mut BatchReplayOutcome,
+) -> Result<(), AppError> {
+    for id in inbox_ids {
+        let still_there: Option<i64> = sqlx::query_scalar!(
+            r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
+            id,
+        )
+        .fetch_optional(pool)
+        .await?;
+        match still_there {
+            None => out.replayed += 1,
+            Some(_) => {
+                // #3226: the slot did not clear. Charge it one boot
+                // against the quarantine budget; once spent, its bytes
+                // MOVE to `loro_sync_quarantine` and the retry loop for
+                // this blob ends — without ever deleting an unprojected
+                // payload (#535).
+                let declared: Vec<(PeerID, Counter)> = declared_end_vv
+                    .iter()
+                    .find(|(slot, _)| slot == id)
+                    .map(|(_, vv)| vv.clone())
+                    .unwrap_or_default();
+                let reason = {
+                    let mut guard = registry.for_space(space, device_id)?;
+                    guard.engine_mut().oplog_shortfall(&declared)
+                }
+                .unwrap_or_else(|| {
+                    "kept after a committed projection although the op-log \
+                     reports no shortfall (#3194/#535)"
+                        .to_string()
+                });
+                account_unresolved_slot(pool, space.as_str(), *id, &declared, &reason, out).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #792 / #1054 pre-import gates, run over the WHOLE batch in id order against a
+/// cumulative version base — see `gate_replay_blobs` for why the per-blob guards
+/// cannot simply be mapped over the batch (a single peer's linear dep chain would
+/// gate every blob but the first as unreachable).
+///
+/// Returns the accepted slots and, for each, the end frontier its blob DECLARED
+/// (#3194, keyed by slot id). The gate advanced its cumulative base by exactly
+/// these, so they are also the condition under which deleting the slot is honest
+/// — see the `require_covered` parameter of [`import_and_project`]. Dropped slots
+/// are deleted here and counted into `out`.
+async fn gate_replay_slots(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space: &SpaceId,
+    space_id: &str,
+    slots: Vec<InboxSlot>,
+    out: &mut BatchReplayOutcome,
+) -> Result<(Vec<InboxSlot>, Vec<(i64, Vec<(PeerID, Counter)>)>), AppError> {
+    let gates = {
+        let blob_refs: Vec<&[u8]> = slots.iter().map(|s| s.bytes.as_slice()).collect();
+        let mut guard = registry.for_space(space, device_id)?;
+        guard.engine_mut().gate_replay_blobs(&blob_refs)
+    };
+
+    let mut accepted: Vec<InboxSlot> = Vec::with_capacity(slots.len());
+    let mut declared_end_vv: Vec<(i64, Vec<(PeerID, Counter)>)> = Vec::with_capacity(slots.len());
+    for (slot, gate) in slots.into_iter().zip(gates) {
+        match gate {
+            agaric_engine::loro::engine::ReplayBlobGate::Accept { end_vv } => {
+                declared_end_vv.push((slot.id, end_vv));
+                accepted.push(slot);
+            }
+            agaric_engine::loro::engine::ReplayBlobGate::Fork(reason) => {
+                tracing::warn!(
+                    space_id,
+                    inbox_id = slot.id,
+                    reason = %reason,
+                    "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
+                     space (#792); dropping the slot — the next sync session will \
+                     fall back to snapshot catch-up"
+                );
+                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
+                    .execute(pool)
+                    .await?;
+                // A dropped slot IS cleared, so it counts as replayed —
+                // identical to the per-row path, whose drop branches return
+                // `Ok` and are counted by `replay_sync_inbox`.
+                out.replayed += 1;
+            }
+            agaric_engine::loro::engine::ReplayBlobGate::Unreachable(reason) => {
+                tracing::warn!(
+                    space_id,
+                    inbox_id = slot.id,
+                    reason = %reason,
+                    "loro_sync: boot-replay inbox slot's update base is unreachable from \
+                     the local engine (#1054); dropping the slot — the next sync session \
+                     will detect the gap and fall back to snapshot catch-up"
+                );
+                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
+                    .execute(pool)
+                    .await?;
+                out.replayed += 1;
+            }
+        }
+    }
+    Ok((accepted, declared_end_vv))
+}
+
 /// #3164 — boot-recovery entry point for a whole batch of leftover slots that
 /// all target the SAME space, in id (insert) order.
 ///
@@ -2227,7 +2699,6 @@ pub struct InboxSlot {
 /// `Ok` no longer means "cleared", so both the batch arm and the per-row
 /// fallback arm below probe `loro_sync_inbox` before counting a slot as
 /// `replayed`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_inbox_batch(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -2241,77 +2712,14 @@ pub async fn replay_inbox_batch(
     }
     let space = SpaceId::from_trusted(space_id);
 
-    // #792 / #1054 pre-import gates, run over the WHOLE batch in id order
-    // against a cumulative version base — see `gate_replay_blobs` for why the
-    // per-blob guards cannot simply be mapped over the batch (a single peer's
-    // linear dep chain would gate every blob but the first as unreachable).
-    let gates = {
-        let blob_refs: Vec<&[u8]> = slots.iter().map(|s| s.bytes.as_slice()).collect();
-        let mut guard = registry.for_space(&space, device_id)?;
-        guard.engine_mut().gate_replay_blobs(&blob_refs)
-    };
-
-    let mut accepted: Vec<InboxSlot> = Vec::with_capacity(slots.len());
-    // #3194: the end frontier each accepted blob DECLARED, keyed by slot id. The
-    // gate advanced its cumulative base by exactly these, so they are also the
-    // condition under which deleting the slot is honest — see the
-    // `require_covered` parameter of `import_and_project`.
-    let mut declared_end_vv: Vec<(i64, Vec<(PeerID, Counter)>)> = Vec::with_capacity(slots.len());
-    for (slot, gate) in slots.into_iter().zip(gates) {
-        match gate {
-            agaric_engine::loro::engine::ReplayBlobGate::Accept { end_vv } => {
-                declared_end_vv.push((slot.id, end_vv));
-                accepted.push(slot);
-            }
-            agaric_engine::loro::engine::ReplayBlobGate::Fork(reason) => {
-                tracing::warn!(
-                    space_id,
-                    inbox_id = slot.id,
-                    reason = %reason,
-                    "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
-                     space (#792); dropping the slot — the next sync session will \
-                     fall back to snapshot catch-up"
-                );
-                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
-                    .execute(pool)
-                    .await?;
-                // A dropped slot IS cleared, so it counts as replayed —
-                // identical to the per-row path, whose drop branches return
-                // `Ok` and are counted by `replay_sync_inbox`.
-                out.replayed += 1;
-            }
-            agaric_engine::loro::engine::ReplayBlobGate::Unreachable(reason) => {
-                tracing::warn!(
-                    space_id,
-                    inbox_id = slot.id,
-                    reason = %reason,
-                    "loro_sync: boot-replay inbox slot's update base is unreachable from \
-                     the local engine (#1054); dropping the slot — the next sync session \
-                     will detect the gap and fall back to snapshot catch-up"
-                );
-                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
-                    .execute(pool)
-                    .await?;
-                out.replayed += 1;
-            }
-        }
-    }
+    let (mut accepted, declared_end_vv) =
+        gate_replay_slots(pool, registry, device_id, &space, space_id, slots, &mut out).await?;
     if accepted.is_empty() {
         return Ok(out);
     }
 
     let inbox_ids: Vec<i64> = accepted.iter().map(|s| s.id).collect();
-    // Union of the batch's durable tombstones — Pass D narrows it to ids the
-    // engine no longer holds live (#2292 Fix 2), so the union is safe.
-    let tombstone_union: Vec<agaric_core::ulid::BlockId> = {
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        accepted
-            .iter()
-            .flat_map(|s| s.tombstone_purged.iter())
-            .filter(|id| seen.insert(id.as_str().to_string()))
-            .cloned()
-            .collect()
-    };
+    let tombstone_union = batch_tombstone_union(&accepted);
     // Move the blobs out into the contiguous slice `import_batch` needs — no
     // clone, so the chunk's memory footprint is unchanged (#1574).
     let blobs: Vec<Vec<u8>> = accepted
@@ -2342,40 +2750,16 @@ pub async fn replay_inbox_batch(
             // reached kept its row on purpose. Count what actually went, rather
             // than assuming, so the boot walk's `replayed` total stays truthful
             // and each survivor is reported for a later boot.
-            for id in &inbox_ids {
-                let still_there: Option<i64> = sqlx::query_scalar!(
-                    r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
-                    id,
-                )
-                .fetch_optional(pool)
-                .await?;
-                match still_there {
-                    None => out.replayed += 1,
-                    Some(_) => {
-                        // #3226: the slot did not clear. Charge it one boot
-                        // against the quarantine budget; once spent, its bytes
-                        // MOVE to `loro_sync_quarantine` and the retry loop for
-                        // this blob ends — without ever deleting an unprojected
-                        // payload (#535).
-                        let declared: Vec<(PeerID, Counter)> = declared_end_vv
-                            .iter()
-                            .find(|(slot, _)| slot == id)
-                            .map(|(_, vv)| vv.clone())
-                            .unwrap_or_default();
-                        let reason = {
-                            let mut guard = registry.for_space(&space, device_id)?;
-                            guard.engine_mut().oplog_shortfall(&declared)
-                        }
-                        .unwrap_or_else(|| {
-                            "kept after a committed projection although the op-log \
-                             reports no shortfall (#3194/#535)"
-                                .to_string()
-                        });
-                        account_unresolved_slot(pool, space_id, *id, &declared, &reason, &mut out)
-                            .await?;
-                    }
-                }
-            }
+            account_batch_survivors(
+                pool,
+                registry,
+                device_id,
+                &space,
+                &inbox_ids,
+                &declared_end_vv,
+                &mut out,
+            )
+            .await?;
             out.changed.extend(changed);
             out.purged.extend(purged);
             Ok(out)
@@ -2391,99 +2775,10 @@ pub async fn replay_inbox_batch(
                 "#3164: batched sync-inbox replay failed; no slot was cleared — \
                  retrying the batch one slot at a time to isolate the poison blob"
             );
-            for (slot, bytes) in accepted.iter().zip(&blobs) {
-                match replay_inbox_row(
-                    pool,
-                    registry,
-                    device_id,
-                    space_id,
-                    bytes,
-                    slot.id,
-                    &slot.tombstone_purged,
-                )
-                .await
-                {
-                    Ok((changed, purged)) => {
-                        // #3213: `Ok` no longer implies "slot cleared" — the
-                        // per-row path now keeps a slot whose blob the op-log
-                        // did not reach, exactly as the batch path does. Ask
-                        // the table rather than assuming, so `replayed` stays
-                        // truthful and each survivor is reported for a later
-                        // boot (same probe as the batch success arm above).
-                        let still_there: Option<i64> = sqlx::query_scalar!(
-                            r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
-                            slot.id,
-                        )
-                        .fetch_optional(pool)
-                        .await?;
-                        match still_there {
-                            None => out.replayed += 1,
-                            Some(_) => {
-                                // #3226 — same accounting as the batch arm. The
-                                // declared frontier is re-derived from the blob
-                                // here (`replay_inbox_row` does not return it),
-                                // which costs one extra metadata decode on a
-                                // path that is already the cold poison-isolation
-                                // fallback and only for slots that did not
-                                // clear.
-                                let screen = {
-                                    let mut guard = registry.for_space(&space, device_id)?;
-                                    guard.engine_mut().screen_inbound_blob(bytes)
-                                };
-                                let reason = {
-                                    let mut guard = registry.for_space(&space, device_id)?;
-                                    guard.engine_mut().oplog_shortfall(&screen.declared_end_vv)
-                                }
-                                .unwrap_or_else(|| {
-                                    "kept after a committed projection although the op-log \
-                                     reports no shortfall (#3213/#535)"
-                                        .to_string()
-                                });
-                                account_unresolved_slot(
-                                    pool,
-                                    space_id,
-                                    slot.id,
-                                    &screen.declared_end_vv,
-                                    &reason,
-                                    &mut out,
-                                )
-                                .await?;
-                            }
-                        }
-                        out.changed.extend(changed);
-                        out.purged.extend(purged);
-                    }
-                    Err(e) => {
-                        // Poison slot: left in place by `replay_inbox_row`, so
-                        // a later boot retries it. Reported, never fatal —
-                        // the per-row walk's "log + continue" contract.
-                        //
-                        // #3226: this is the population the issue names as
-                        // "truncated blob, corrupt payload" — a blob that cannot
-                        // be imported AT ALL never reaches the frontier check
-                        // above, it errors out of `import_and_project`. It is
-                        // just as permanently stuck as an unmet frontier, so it
-                        // is charged against the same boot budget and lands in
-                        // the same quarantine. The blob's declared frontier is
-                        // whatever its metadata says (empty when the metadata
-                        // itself will not decode, which is the usual case here).
-                        let screen = {
-                            let mut guard = registry.for_space(&space, device_id)?;
-                            guard.engine_mut().screen_inbound_blob(bytes)
-                        };
-                        let reason = format!("replay failed: {e}");
-                        account_unresolved_slot(
-                            pool,
-                            space_id,
-                            slot.id,
-                            &screen.declared_end_vv,
-                            &reason,
-                            &mut out,
-                        )
-                        .await?;
-                    }
-                }
-            }
+            replay_accepted_slots_individually(
+                pool, registry, device_id, &space, &accepted, &blobs, &mut out,
+            )
+            .await?;
             Ok(out)
         }
     }
