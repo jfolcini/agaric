@@ -210,7 +210,6 @@ async fn count_filtered_backlinks(
 /// Created-sort path: single SQL with keyset on `b.id`, optional
 /// `json_each` filter intersection, projects full BlockRow columns —
 /// no separate fetch step.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn eval_created_sort_keyset(
     pool: &SqlitePool,
     block_id: &str,
@@ -233,6 +232,51 @@ async fn eval_created_sort_keyset(
         });
     }
 
+    let rows: Vec<BlockRow> =
+        fetch_created_sort_page(pool, block_id, space_id, page, dir, filter).await?;
+
+    // Slice to honour `limit`; detect `has_more` from the +1 row.
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    let mut rows = rows;
+    if has_more {
+        rows.truncate(limit_usize);
+    }
+
+    let next_cursor = if has_more {
+        let last = rows.last().expect("has_more implies non-empty");
+        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
+    } else {
+        None
+    };
+
+    // The SQL filters `deleted_at IS NULL`, so the rows
+    // are active by construction. Boundary cast records that claim.
+    let items: Vec<crate::pagination::ActiveBlockRow> = rows
+        .into_iter()
+        .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
+        .collect();
+
+    Ok(BacklinkQueryResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+    })
+}
+
+/// The Created-sort page query: compose and bind chain read together,
+/// because the bare `?` placeholders are positional — base, cursor,
+/// filter fragment, limit — and a reordered bind silently shifts the page.
+async fn fetch_created_sort_page(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    page: &PageRequest,
+    dir: SortDir,
+    filter: Option<&CompiledFilter>,
+) -> Result<Vec<BlockRow>, AppError> {
     // ----- Compose page SQL -------------------------------------------------
     //
     // Raw-string compose with bare `?` placeholders bound left-to-right so
@@ -288,36 +332,7 @@ async fn eval_created_sort_keyset(
         }
     }
     let rows: Vec<BlockRow> = q.bind(fetch_limit).fetch_all(pool).await?;
-
-    // Slice to honour `limit`; detect `has_more` from the +1 row.
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let has_more = rows.len() > limit_usize;
-    let mut rows = rows;
-    if has_more {
-        rows.truncate(limit_usize);
-    }
-
-    let next_cursor = if has_more {
-        let last = rows.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
-    } else {
-        None
-    };
-
-    // The SQL filters `deleted_at IS NULL`, so the rows
-    // are active by construction. Boundary cast records that claim.
-    let items: Vec<crate::pagination::ActiveBlockRow> = rows
-        .into_iter()
-        .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
-        .collect();
-
-    Ok(BacklinkQueryResponse {
-        items,
-        next_cursor,
-        has_more,
-        total_count,
-        filtered_count,
-    })
+    Ok(rows)
 }
 
 /// Property-sort path: a single keyset query over `(value_{text,num,date},
@@ -337,7 +352,6 @@ async fn eval_created_sort_keyset(
 ///
 /// `block_links` is unique per `(source_id, target_id)` (PK, migration 0072),
 /// so each source block yields exactly one row — no `DISTINCT` needed.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn eval_property_sort_keyset(
     pool: &SqlitePool,
     block_id: &str,
@@ -359,6 +373,77 @@ async fn eval_property_sort_keyset(
         });
     }
 
+    let sort_key = property_sort_key(sort)?;
+    let PropertySortKey {
+        column,
+        key,
+        order_dir,
+        is_num,
+        ..
+    } = sort_key;
+    let (keyset_clause, keyset_binds) = property_sort_keyset_clause(sort_key, page.after.as_ref());
+
+    let filter_clause = match filter {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
+    };
+    let fetch_limit: i64 = page.limit.saturating_add(1);
+
+    let sql = format!(
+        "SELECT bl.source_id AS id, bp.{column} AS sort_val \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         LEFT JOIN block_properties bp ON bp.block_id = b.id AND bp.key = ? \
+         WHERE bl.target_id = ? AND bl.source_id != ? \
+           AND b.deleted_at IS NULL \
+           AND (? IS NULL OR b.space_id = ?) \
+           {filter_clause} \
+           {keyset_clause} \
+         ORDER BY bp.{column} {order_dir} NULLS LAST, b.id ASC \
+         LIMIT ?"
+    );
+
+    let rows: Vec<(String, Option<CursorKey>)> = fetch_property_sort_rows(
+        pool,
+        &sql,
+        PropertySortBinds {
+            key,
+            block_id,
+            space_id,
+            filter,
+            keyset: &keyset_binds,
+            fetch_limit,
+        },
+        is_num,
+    )
+    .await?;
+
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    let page_rows: &[(String, Option<CursorKey>)] = if has_more {
+        &rows[..limit_usize]
+    } else {
+        &rows
+    };
+
+    property_sort_response(pool, page_rows, has_more, total_count, filtered_count).await
+}
+
+/// The SQL pieces a property sort splices, alongside the property key it
+/// binds. Named fields rather than a tuple: four `&str` in a row is a swap
+/// waiting to happen, and a swapped column or direction is a silently
+/// mis-ordered page.
+#[derive(Clone, Copy)]
+struct PropertySortKey<'a> {
+    column: &'a str,
+    key: &'a str,
+    order_dir: &'a str,
+    cmp: &'a str,
+    is_num: bool,
+}
+
+/// Reject a `Created` sort here rather than let it reach the property SQL.
+fn property_sort_key(sort: &BacklinkSort) -> Result<PropertySortKey<'_>, AppError> {
     // Column + property key + direction + value-typing. `column` / `order_dir`
     // / `cmp` are `&'static str` chosen here (never user input) so splicing is
     // safe; the property `key` and every value are BOUND.
@@ -376,14 +461,35 @@ async fn eval_property_sort_keyset(
         SortDir::Asc => (">", "ASC"),
         SortDir::Desc => ("<", "DESC"),
     };
+    Ok(PropertySortKey {
+        column,
+        key,
+        order_dir,
+        cmp,
+        is_num,
+    })
+}
 
-    // Keyset binds carried in appearance order (value twice, then id).
-    enum KsBind {
-        Text(String),
-        Num(f64),
-    }
+/// Keyset binds carried in appearance order (value twice, then id).
+enum KsBind {
+    Text(String),
+    Num(f64),
+}
+
+/// The keyset clause for a property sort and the binds it consumes, kept
+/// together because the clause's bare `?` are positional.
+fn property_sort_keyset_clause(
+    sort_key: PropertySortKey<'_>,
+    cursor: Option<&Cursor>,
+) -> (String, Vec<KsBind>) {
+    let PropertySortKey {
+        column,
+        cmp,
+        is_num,
+        ..
+    } = sort_key;
     let mut keyset_binds: Vec<KsBind> = Vec::new();
-    let keyset_clause: String = match page.after.as_ref() {
+    let keyset_clause: String = match cursor {
         None => String::new(),
         Some(c) => {
             // A non-null cursor stashes its value in `rank` (numeric) or
@@ -418,40 +524,50 @@ async fn eval_property_sort_keyset(
             }
         }
     };
+    (keyset_clause, keyset_binds)
+}
 
-    let filter_clause = match filter {
-        Some(cf) => format!(" AND ({})", cf.sql),
-        None => String::new(),
-    };
-    let fetch_limit: i64 = page.limit.saturating_add(1);
+/// The sort key a page row carries into the next page's cursor.
+enum CursorKey {
+    Text(String),
+    Num(f64),
+}
 
-    let sql = format!(
-        "SELECT bl.source_id AS id, bp.{column} AS sort_val \
-         FROM block_links bl \
-         JOIN blocks b ON b.id = bl.source_id \
-         LEFT JOIN block_properties bp ON bp.block_id = b.id AND bp.key = ? \
-         WHERE bl.target_id = ? AND bl.source_id != ? \
-           AND b.deleted_at IS NULL \
-           AND (? IS NULL OR b.space_id = ?) \
-           {filter_clause} \
-           {keyset_clause} \
-         ORDER BY bp.{column} {order_dir} NULLS LAST, b.id ASC \
-         LIMIT ?"
-    );
+/// The property-sort keyset query's bind chain, in `?` appearance order.
+/// Named fields rather than a tuple: the two ids and the two space slots
+/// are the same type, and a swap there silently mis-pages.
+struct PropertySortBinds<'a> {
+    key: &'a str,
+    block_id: &'a str,
+    space_id: Option<&'a str>,
+    filter: Option<&'a CompiledFilter>,
+    keyset: &'a [KsBind],
+    fetch_limit: i64,
+}
 
-    // The sort key is stashed into the cursor for the next page. Numeric
-    // values fetch as `f64` (→ `rank` slot), text/date as `String`
-    // (→ `deleted_at` slot); a NULL value fetches as `None` (→ id-only
-    // cursor, i.e. "null tail"). Bind order is identical in both arms:
-    // key, target_id, source_id, space_id×2, [filter binds], [keyset binds],
-    // limit.
-    enum CursorKey {
-        Text(String),
-        Num(f64),
-    }
+/// The sort key is stashed into the cursor for the next page. Numeric
+/// values fetch as `f64` (→ `rank` slot), text/date as `String`
+/// (→ `deleted_at` slot); a NULL value fetches as `None` (→ id-only
+/// cursor, i.e. "null tail"). Bind order is identical in both arms:
+/// key, target_id, source_id, space_id×2, [filter binds], [keyset binds],
+/// limit.
+async fn fetch_property_sort_rows(
+    pool: &SqlitePool,
+    sql: &str,
+    binds: PropertySortBinds<'_>,
+    is_num: bool,
+) -> Result<Vec<(String, Option<CursorKey>)>, AppError> {
+    let PropertySortBinds {
+        key,
+        block_id,
+        space_id,
+        filter,
+        keyset: keyset_binds,
+        fetch_limit,
+    } = binds;
     let rows: Vec<(String, Option<CursorKey>)> = if is_num {
         // dynamic-sql: property-value keyset (column/dir spliced, all values bound); numeric arm
-        let mut q = sqlx::query_as::<_, (String, Option<f64>)>(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut q = sqlx::query_as::<_, (String, Option<f64>)>(sqlx::AssertSqlSafe(sql))
             .bind(key)
             .bind(block_id)
             .bind(block_id)
@@ -465,7 +581,7 @@ async fn eval_property_sort_keyset(
                 };
             }
         }
-        for kb in &keyset_binds {
+        for kb in keyset_binds {
             q = match kb {
                 KsBind::Text(s) => q.bind(s.clone()),
                 KsBind::Num(n) => q.bind(*n),
@@ -479,13 +595,12 @@ async fn eval_property_sort_keyset(
             .collect()
     } else {
         // dynamic-sql: property-value keyset (column/dir spliced, all values bound); text/date arm
-        let mut q =
-            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()))
-                .bind(key)
-                .bind(block_id)
-                .bind(block_id)
-                .bind(space_id)
-                .bind(space_id);
+        let mut q = sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql))
+            .bind(key)
+            .bind(block_id)
+            .bind(block_id)
+            .bind(space_id)
+            .bind(space_id);
         if let Some(cf) = filter {
             for b in &cf.binds {
                 q = match b {
@@ -494,7 +609,7 @@ async fn eval_property_sort_keyset(
                 };
             }
         }
-        for kb in &keyset_binds {
+        for kb in keyset_binds {
             q = match kb {
                 KsBind::Text(s) => q.bind(s.clone()),
                 KsBind::Num(n) => q.bind(*n),
@@ -507,15 +622,19 @@ async fn eval_property_sort_keyset(
             .map(|(id, v)| (id, v.map(CursorKey::Text)))
             .collect()
     };
+    Ok(rows)
+}
 
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let has_more = rows.len() > limit_usize;
-    let page_rows: &[(String, Option<CursorKey>)] = if has_more {
-        &rows[..limit_usize]
-    } else {
-        &rows
-    };
-
+/// The response for a property-sort page: the next cursor carries the last
+/// row's sort key, so the following request seeks past it instead of
+/// rescanning the filtered set by id.
+async fn property_sort_response(
+    pool: &SqlitePool,
+    page_rows: &[(String, Option<CursorKey>)],
+    has_more: bool,
+    total_count: usize,
+    filtered_count: usize,
+) -> Result<BacklinkQueryResponse, AppError> {
     let actual_ids: Vec<&str> = page_rows.iter().map(|(id, _)| id.as_str()).collect();
     if actual_ids.is_empty() {
         return Ok(BacklinkQueryResponse {
