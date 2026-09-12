@@ -230,6 +230,117 @@ pub async fn project_edit_block_to_sql(
     Ok(())
 }
 
+/// [`project_set_property_to_sql`]'s reserved-key arm: the hot-path `blocks`
+/// column update.
+async fn project_reserved_property_to_column(
+    conn: &mut SqliteConnection,
+    payload: &SetPropertyPayload,
+) -> Result<(), AppError> {
+    let block_id = payload.block_id.as_str();
+    // #1893: route the reserved-key→`blocks`-column mapping through the
+    // single drift-tested helper (`reserved_key_blocks_column`,
+    // db/recovery.rs) instead of a hand-rolled `match`, so a missing key
+    // is a centralized concern rather than a per-site runtime
+    // `Validation`. The four `RESERVED_PROPERTY_KEYS` reaching this branch
+    // always resolve to a `Some(col)`; the `else` only fires if a key is
+    // added to the reserved set without a mapping arm (drift), preserving
+    // the prior catch-all's loud-error semantics.
+    if let Some(col) = reserved_key_blocks_column(&payload.key) {
+        // `col` is a fixed internal literal from the helper's allowlist,
+        // never user input — safe to interpolate. The date-typed keys
+        // carry their value in `value_date`; the others in `value_text`.
+        // (`space` has its own branch in `project_set_property_to_sql` and never
+        // reaches here.)
+        let col_value: Option<&str> = match payload.key.as_str() {
+            "due_date" | "scheduled_date" => payload.value_date.as_deref(),
+            _ => payload.value_text.as_deref(),
+        };
+        // dynamic-sql: column name `col` comes only from the
+        // reserved_key_blocks_column allowlist (a fixed internal literal,
+        // never user input); the value is bound. Mirrors recovery.rs.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE blocks SET {col} = ? WHERE id = ?"
+        )))
+        .bind(col_value)
+        .bind(block_id)
+        .execute(&mut *conn)
+        .await?;
+    } else {
+        return Err(AppError::validation(format!(
+            "project_set_property_to_sql: unrecognised reserved key '{}'",
+            payload.key,
+        )));
+    }
+    Ok(())
+}
+
+/// [`project_set_property_to_sql`]'s non-reserved arm: the `block_properties`
+/// row (INSERT OR REPLACE, or DELETE for a cleared value).
+async fn project_property_row(
+    conn: &mut SqliteConnection,
+    payload: &SetPropertyPayload,
+) -> Result<(), AppError> {
+    let value_bool_int: Option<i64> = payload.value_bool.map(i64::from);
+    let block_id = payload.block_id.as_str();
+    // The `block_properties.exactly_one_value` CHECK (migration 0062)
+    // forbids an all-NULL row. An all-None payload represents a cleared
+    // property, whose correct SQL representation is row-absent (DELETE) —
+    // NOT an all-NULL INSERT, which would abort the apply/replay
+    // transaction. Mirror the sibling `reproject_property_row_from_engine`
+    // guard, which returns before the INSERT for the same case. `validate_set_property` (op.rs) only logs an all-None
+    // SetProperty for reserved keys today (routed to `blocks` columns by
+    // `project_reserved_property_to_column`), so this is defense-in-depth
+    // against a corrupted / older- or future-version op-log entry replayed
+    // via undo/redo or the engine-less SQL-only fallback.
+    if payload.value_text.is_none()
+        && payload.value_num.is_none()
+        && payload.value_date.is_none()
+        && payload.value_ref.is_none()
+        && value_bool_int.is_none()
+    {
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id,
+            payload.key,
+        )
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
+    // FK safety (#2908): `value_ref` is a FK to `blocks(id)` (migration
+    // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. A payload can
+    // legitimately carry a `value_ref` whose target block has been purged
+    // (a since-deleted cross reference, or an op replayed via undo/redo
+    // against a now-gone target). An unguarded INSERT would raise FK 787
+    // and abort the whole command/undo transaction — every retry failing
+    // identically, wedging the undo entry. Guard the row exactly like the
+    // sync-path twin `reproject_block_properties_from_engine` (projection.rs,
+    // #377) and boot recovery (db/recovery.rs, #2043, which documents that
+    // this projection LACKS the guard): insert only when `value_ref` is
+    // NULL (no FK to satisfy — the value lives in another column) or its
+    // target block exists. A dangling `value_ref` is dropped (row-absent),
+    // the only valid representation — NULL-ing it would leave an all-NULL
+    // row that violates the `exactly_one_value` CHECK (migration 0062).
+    sqlx::query!(
+        "INSERT OR REPLACE INTO block_properties \
+             (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+         SELECT ?, ?, ?, ?, ?, ?, ? \
+         WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+        block_id,
+        payload.key,
+        payload.value_text,
+        payload.value_num,
+        payload.value_date,
+        payload.value_ref,
+        value_bool_int,
+        payload.value_ref,
+        payload.value_ref,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Project a `SetProperty` engine state into SQL.
 ///
 /// - **Reserved keys** (`todo_state`, `priority`, `due_date`,
@@ -245,46 +356,12 @@ pub async fn project_edit_block_to_sql(
 /// The projection therefore reads the typed value fields off the
 /// payload directly — the engine's post-apply state for a property
 /// equals the payload's value field by construction.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn project_set_property_to_sql(
     conn: &mut SqliteConnection,
     payload: &SetPropertyPayload,
 ) -> Result<(), AppError> {
     if is_reserved_property_key(&payload.key) {
-        let block_id = payload.block_id.as_str();
-        // #1893: route the reserved-key→`blocks`-column mapping through the
-        // single drift-tested helper (`reserved_key_blocks_column`,
-        // db/recovery.rs) instead of a hand-rolled `match`, so a missing key
-        // is a centralized concern rather than a per-site runtime
-        // `Validation`. The four `RESERVED_PROPERTY_KEYS` reaching this branch
-        // always resolve to a `Some(col)`; the `else` only fires if a key is
-        // added to the reserved set without a mapping arm (drift), preserving
-        // the prior catch-all's loud-error semantics.
-        if let Some(col) = reserved_key_blocks_column(&payload.key) {
-            // `col` is a fixed internal literal from the helper's allowlist,
-            // never user input — safe to interpolate. The date-typed keys
-            // carry their value in `value_date`; the others in `value_text`.
-            // (`space` has its own branch below and never reaches here.)
-            let col_value: Option<&str> = match payload.key.as_str() {
-                "due_date" | "scheduled_date" => payload.value_date.as_deref(),
-                _ => payload.value_text.as_deref(),
-            };
-            // dynamic-sql: column name `col` comes only from the
-            // reserved_key_blocks_column allowlist (a fixed internal literal,
-            // never user input); the value is bound. Mirrors recovery.rs.
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE blocks SET {col} = ? WHERE id = ?"
-            )))
-            .bind(col_value)
-            .bind(block_id)
-            .execute(&mut *conn)
-            .await?;
-        } else {
-            return Err(AppError::validation(format!(
-                "project_set_property_to_sql: unrecognised reserved key '{}'",
-                payload.key,
-            )));
-        }
+        project_reserved_property_to_column(conn, payload).await?;
     } else if payload.key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed ONLY — project the logged
         // `SetProperty(space)` op to the denormalized `blocks.space_id` for
@@ -328,65 +405,7 @@ pub async fn project_set_property_to_sql(
         .execute(&mut *conn)
         .await?;
     } else {
-        let value_bool_int: Option<i64> = payload.value_bool.map(i64::from);
-        let block_id = payload.block_id.as_str();
-        // The `block_properties.exactly_one_value` CHECK (migration 0062)
-        // forbids an all-NULL row. An all-None payload represents a cleared
-        // property, whose correct SQL representation is row-absent (DELETE) —
-        // NOT an all-NULL INSERT, which would abort the apply/replay
-        // transaction. Mirror the sibling `reproject_block_properties_from_engine`
-        // guard (projection.rs ~821) which `continue`s past the INSERT for the
-        // same case. `validate_set_property` (op.rs) only logs an all-None
-        // SetProperty for reserved keys today (routed to `blocks` columns
-        // above), so this is defense-in-depth against a corrupted / older- or
-        // future-version op-log entry replayed via undo/redo or the engine-less
-        // SQL-only fallback.
-        if payload.value_text.is_none()
-            && payload.value_num.is_none()
-            && payload.value_date.is_none()
-            && payload.value_ref.is_none()
-            && value_bool_int.is_none()
-        {
-            sqlx::query!(
-                "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
-                block_id,
-                payload.key,
-            )
-            .execute(&mut *conn)
-            .await?;
-            return Ok(());
-        }
-        // FK safety (#2908): `value_ref` is a FK to `blocks(id)` (migration
-        // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. A payload can
-        // legitimately carry a `value_ref` whose target block has been purged
-        // (a since-deleted cross reference, or an op replayed via undo/redo
-        // against a now-gone target). An unguarded INSERT would raise FK 787
-        // and abort the whole command/undo transaction — every retry failing
-        // identically, wedging the undo entry. Guard the row exactly like the
-        // sync-path twin `reproject_block_properties_from_engine` (projection.rs,
-        // #377) and boot recovery (db/recovery.rs, #2043, which documents that
-        // this projection LACKS the guard): insert only when `value_ref` is
-        // NULL (no FK to satisfy — the value lives in another column) or its
-        // target block exists. A dangling `value_ref` is dropped (row-absent),
-        // the only valid representation — NULL-ing it would leave an all-NULL
-        // row that violates the `exactly_one_value` CHECK (migration 0062).
-        sqlx::query!(
-            "INSERT OR REPLACE INTO block_properties \
-                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             SELECT ?, ?, ?, ?, ?, ?, ? \
-             WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-            block_id,
-            payload.key,
-            payload.value_text,
-            payload.value_num,
-            payload.value_date,
-            payload.value_ref,
-            value_bool_int,
-            payload.value_ref,
-            payload.value_ref,
-        )
-        .execute(&mut *conn)
-        .await?;
+        project_property_row(conn, payload).await?;
     }
     Ok(())
 }
@@ -420,63 +439,9 @@ pub async fn project_purge_block_to_sql(
     Ok(())
 }
 
-/// Project a remote-purge delta into SQL by hard-deleting an EXPLICIT id set
-/// (#2128).
-///
-/// Unlike [`project_purge_block_to_sql`] (which clears only the three engine
-/// tables for one id) and unlike the local SQL cascade
-/// (`materializer/handlers/loro_apply.rs::purge_block_sql_cascade`, which
-/// derives the descendant set from the recursive purge CTE), this helper is
-/// given the COMPLETE purged set — seed + every descendant — directly by the
-/// engine (`import_with_changed_and_purged_blocks`). The engine pruned the
-/// whole subtree from its index, so there is nothing left in the live tree to
-/// drive a descendant walk: we delete `WHERE <key> IN (ids)` against the
-/// provided set instead.
-///
-/// The table set mirrors `purge_block_sql_cascade` exactly (it is the
-/// canonical record of every derived table PURGE touches) so a remote purge
-/// projects to byte-identical SQL state as a local purge. Mechanics also
-/// mirror that function: build a `_purge_ids` TEMP table once, run every
-/// DELETE joined to it under `defer_foreign_keys = ON`, then drop the temp
-/// table to keep the pooled connection's temp namespace clean.
-///
-/// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
-/// deletes nothing the second time (every row is already gone).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn project_purge_blocks_to_sql(
-    conn: &mut SqliteConnection,
-    block_ids: &[&str],
-) -> Result<(), AppError> {
-    if block_ids.is_empty() {
-        return Ok(());
-    }
-    // #4083: the inbound-sync caller now sets this for its WHOLE projection tx
-    // (SQLite resets it at COMMIT/ROLLBACK, and setting it twice is idempotent).
-    // It stays here because this is a self-contained public helper: its
-    // documented contract is that the DELETE set below is safe in any FK order
-    // on whatever connection it is handed, tx or autocommit, and that must not
-    // become the caller's responsibility.
-    sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *conn)
-        .await?;
-    // Defensive drop guards against a prior crash that leaked the table on
-    // this pooled connection (mirrors `purge_block_sql_cascade`).
-    sqlx::query("DROP TABLE IF EXISTS _purge_ids")
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("CREATE TEMP TABLE _purge_ids (id TEXT PRIMARY KEY)")
-        .execute(&mut *conn)
-        .await?;
-    for id in block_ids {
-        sqlx::query("INSERT OR IGNORE INTO _purge_ids (id) VALUES (?)")
-            .bind(id)
-            .execute(&mut *conn)
-            .await?;
-    }
-    // Same DELETE set as the local cascade, joined to `_purge_ids` instead of
-    // `_purge_descendants`. Order: child/edge tables before `blocks` so the
-    // final `blocks` delete has no dangling references (also covered by
-    // `defer_foreign_keys = ON`).
+/// [`project_purge_blocks_to_sql`]'s tag, property and link rows keyed on the
+/// purged set.
+async fn delete_purge_ids_relation_rows(conn: &mut SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM _purge_ids) \
@@ -514,6 +479,11 @@ pub async fn project_purge_blocks_to_sql(
     )
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+/// [`project_purge_blocks_to_sql`]'s derived-table sweep, keyed on the purged set.
+async fn delete_purge_ids_derived_rows(conn: &mut SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM agenda_cache \
          WHERE block_id IN (SELECT id FROM _purge_ids)",
@@ -579,6 +549,67 @@ pub async fn project_purge_blocks_to_sql(
     )
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+/// Project a remote-purge delta into SQL by hard-deleting an EXPLICIT id set
+/// (#2128).
+///
+/// Unlike [`project_purge_block_to_sql`] (which clears only the three engine
+/// tables for one id) and unlike the local SQL cascade
+/// (`materializer/handlers/loro_apply.rs::purge_block_sql_cascade`, which
+/// derives the descendant set from the recursive purge CTE), this helper is
+/// given the COMPLETE purged set — seed + every descendant — directly by the
+/// engine (`import_with_changed_and_purged_blocks`). The engine pruned the
+/// whole subtree from its index, so there is nothing left in the live tree to
+/// drive a descendant walk: we delete `WHERE <key> IN (ids)` against the
+/// provided set instead.
+///
+/// The table set mirrors `purge_block_sql_cascade` exactly (it is the
+/// canonical record of every derived table PURGE touches) so a remote purge
+/// projects to byte-identical SQL state as a local purge. Mechanics also
+/// mirror that function: build a `_purge_ids` TEMP table once, run every
+/// DELETE joined to it under `defer_foreign_keys = ON`, then drop the temp
+/// table to keep the pooled connection's temp namespace clean.
+///
+/// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
+/// deletes nothing the second time (every row is already gone).
+pub async fn project_purge_blocks_to_sql(
+    conn: &mut SqliteConnection,
+    block_ids: &[&str],
+) -> Result<(), AppError> {
+    if block_ids.is_empty() {
+        return Ok(());
+    }
+    // #4083: the inbound-sync caller now sets this for its WHOLE projection tx
+    // (SQLite resets it at COMMIT/ROLLBACK, and setting it twice is idempotent).
+    // It stays here because this is a self-contained public helper: its
+    // documented contract is that the DELETE set below is safe in any FK order
+    // on whatever connection it is handed, tx or autocommit, and that must not
+    // become the caller's responsibility.
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *conn)
+        .await?;
+    // Defensive drop guards against a prior crash that leaked the table on
+    // this pooled connection (mirrors `purge_block_sql_cascade`).
+    sqlx::query("DROP TABLE IF EXISTS _purge_ids")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("CREATE TEMP TABLE _purge_ids (id TEXT PRIMARY KEY)")
+        .execute(&mut *conn)
+        .await?;
+    for id in block_ids {
+        sqlx::query("INSERT OR IGNORE INTO _purge_ids (id) VALUES (?)")
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    // Same DELETE set as the local cascade, joined to `_purge_ids` instead of
+    // `_purge_descendants`. Order: child/edge tables before `blocks` so the
+    // final `blocks` delete has no dangling references (also covered by
+    // `defer_foreign_keys = ON`).
+    delete_purge_ids_relation_rows(&mut *conn).await?;
+    delete_purge_ids_derived_rows(&mut *conn).await?;
     sqlx::query(
         "DELETE FROM blocks \
          WHERE id IN (SELECT id FROM _purge_ids)",
@@ -1081,6 +1112,179 @@ pub async fn project_block_full_to_sql(
     }
 }
 
+/// [`reproject_property_row_from_engine`]'s `property_definitions.value_type`
+/// lookup, defaulting to `text` for an undefined key.
+fn declared_value_type_or_text<'a>(
+    value_types: &'a std::collections::HashMap<String, String>,
+    key: &str,
+    block_id: &agaric_core::ulid::BlockId,
+) -> &'a str {
+    value_types.get(key).map_or_else(
+        || {
+            tracing::warn!(
+                key = %key,
+                block_id = %block_id.as_str(),
+                "reproject_block_properties_from_engine: no property_definitions row; \
+                 defaulting to 'text'"
+            );
+            "text"
+        },
+        String::as_str,
+    )
+}
+
+/// [`reproject_block_properties_from_engine`]'s per-key row: route the engine
+/// value to its typed `block_properties` column and INSERT it (row-absent for a
+/// cleared or dangling value).
+async fn reproject_property_row_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &agaric_core::ulid::BlockId,
+    key: &str,
+    value: &crate::loro::engine::PropertyValue,
+    value_types: &std::collections::HashMap<String, String>,
+) -> Result<(), AppError> {
+    use crate::loro::engine::PropertyValue;
+    let block_id_str = block_id.as_str();
+    let mut value_text: Option<&str> = None;
+    let mut value_num: Option<f64> = None;
+    let mut value_date: Option<&str> = None;
+    let mut value_ref: Option<&str> = None;
+    let mut value_bool: Option<i64> = None;
+    match value {
+        // Native typed values route straight to their column — no string
+        // round-trip and no `property_definitions` lookup needed.
+        PropertyValue::Num(n) => value_num = Some(*n),
+        PropertyValue::Bool(b) => value_bool = Some(i64::from(*b)),
+        PropertyValue::Null => { /* cleared → row-absent (handled below) */ }
+        // A String value is text/date/ref/select (or a legacy pre-§2.1
+        // Str-encoded number/bool); recover the SQL column from the
+        // property definition, defaulting to "text" for an undefined key
+        // (warn so a missing definition is observable).
+        PropertyValue::Str(s) => {
+            let value_type: &str = declared_value_type_or_text(value_types, key, block_id);
+            match value_type {
+                "number" => {
+                    value_num = s.parse::<f64>().ok();
+                    // #383: a `number`-typed property whose Str payload
+                    // fails to parse routes to no column and is dropped
+                    // (the all-None guard below skips the INSERT). Warn so the
+                    // silent drop is observable (matches the undefined-
+                    // definition warn above). We deliberately do NOT fall
+                    // back to `value_text` — that would corrupt the typed
+                    // column contract.
+                    if value_num.is_none() {
+                        tracing::warn!(
+                            key = %key,
+                            block_id = %block_id.as_str(),
+                            value = %s,
+                            "reproject_block_properties_from_engine: 'number' property \
+                             value failed to parse as f64; dropping (row-absent)"
+                        );
+                    }
+                }
+                "boolean" => value_bool = Some(i64::from(s == "true")),
+                "date" => value_date = Some(s.as_str()),
+                "ref" => value_ref = Some(s.as_str()),
+                // "select" | "text" | anything unrecognised → text column.
+                _ => value_text = Some(s.as_str()),
+            }
+        }
+    }
+
+    // The `block_properties.exactly_one_value` CHECK (migration 0062)
+    // forbids an all-NULL row. An explicit-null engine value (a cleared
+    // property), or a `number` whose string fails to parse, routes to no
+    // column. The correct SQL representation of a cleared property is
+    // row-absent — the up-front DELETE already removed any prior row — so
+    // skip the INSERT rather than violate the CHECK and abort the whole
+    // inbound-sync transaction.
+    if value_text.is_none()
+        && value_num.is_none()
+        && value_date.is_none()
+        && value_ref.is_none()
+        && value_bool.is_none()
+    {
+        return Ok(());
+    }
+
+    // FK safety (#377): `value_ref` is a FK to `blocks(id)` (migration
+    // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. The engine can
+    // legitimately hand back a ref whose target has no `blocks` row in
+    // THIS space — a cross-space reference, or a forward reference to a
+    // block projected later in the same `changed_blocks` loop. An
+    // unguarded INSERT would raise FK 787 and abort the whole inbound-sync
+    // `BEGIN IMMEDIATE` transaction; every retry would fail identically,
+    // wedging sync for that peer/space. Guard the row exactly like the
+    // sibling `reproject_block_tags_from_engine`: insert only when
+    // `value_ref` is NULL (no FK to satisfy — the value lives in another
+    // column) or its target block exists. A dangling/cross-space ref is
+    // dropped (row-absent), which is the only valid representation —
+    // NULL-ing `value_ref` would leave an all-NULL row that violates the
+    // `exactly_one_value` CHECK, and authoritative-replace already removed
+    // any prior row via the up-front DELETE.
+    sqlx::query!(
+        "INSERT INTO block_properties \
+             (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+         SELECT ?, ?, ?, ?, ?, ?, ? \
+         WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+        block_id_str,
+        key,
+        value_text,
+        value_num,
+        value_date,
+        value_ref,
+        value_bool,
+        value_ref,
+        value_ref,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// [`reproject_block_properties_from_engine`]'s reserved-key pass: the hot-path
+/// `blocks` column update.
+async fn reproject_reserved_columns_from_engine(
+    conn: &mut SqliteConnection,
+    block_id_str: &str,
+    props: &[(String, crate::loro::engine::PropertyValue)],
+) -> Result<(), AppError> {
+    // Reserved hot-path keys → dedicated `blocks` columns.
+    // Authoritative-replace: collect each reserved key's engine value (None
+    // when absent / cleared on the remote), then a single UPDATE sets all
+    // four columns at once — present keys to their value, absent keys to
+    // NULL. All four are stored as `Str` in the engine (todo_state/priority
+    // are text; due_date/scheduled_date are date strings); render each to
+    // its string form (`Null` → column NULL), mirroring the local
+    // `project_set_property_to_sql` routing.
+    let mut todo_state: Option<String> = None;
+    let mut priority: Option<String> = None;
+    let mut due_date: Option<String> = None;
+    let mut scheduled_date: Option<String> = None;
+    for (key, value) in props {
+        match key.as_str() {
+            "todo_state" => todo_state = value.as_legacy_string(),
+            "priority" => priority = value.as_legacy_string(),
+            "due_date" => due_date = value.as_legacy_string(),
+            "scheduled_date" => scheduled_date = value.as_legacy_string(),
+            _ => {}
+        }
+    }
+    sqlx::query!(
+        "UPDATE blocks SET \
+             todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
+         WHERE id = ?",
+        todo_state,
+        priority,
+        due_date,
+        scheduled_date,
+        block_id_str,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Re-project a block's full property set from the engine into the SQL
 /// `block_properties` table (non-reserved keys) and the dedicated
 /// `blocks` hot-path columns (reserved keys) after a sync-pull import.
@@ -1139,14 +1343,12 @@ pub async fn project_block_full_to_sql(
 /// caches that read `due_date`/`scheduled_date`/`todo_state` are rebuilt
 /// by the inbound-sync cache fan-out
 /// (the app-layer `materializer::Materializer::enqueue_inbound_sync_rebuilds`).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
     props: &[(String, crate::loro::engine::PropertyValue)],
     value_types: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
-    use crate::loro::engine::PropertyValue;
     // Authoritative replace: clear all existing rows first so remote
     // deletes (absent from `props`) are swept and never re-inserted.
     //
@@ -1171,7 +1373,7 @@ pub async fn reproject_block_properties_from_engine(
     for (key, value) in props {
         if is_column_backed_property_key(key) {
             // Reserved keys map to dedicated `blocks` columns, never
-            // `block_properties` (handled by the reserved-key pass below).
+            // `block_properties` (handled by `reproject_reserved_columns_from_engine`).
             // #533: `space` is likewise column-backed (`blocks.space_id`,
             // stamped from the per-space doc in `project_block_full_to_sql`)
             // — it must NEVER be written back as a `block_properties` row
@@ -1179,148 +1381,9 @@ pub async fn reproject_block_properties_from_engine(
             // removed.
             continue;
         }
-
-        let mut value_text: Option<&str> = None;
-        let mut value_num: Option<f64> = None;
-        let mut value_date: Option<&str> = None;
-        let mut value_ref: Option<&str> = None;
-        let mut value_bool: Option<i64> = None;
-        match value {
-            // Native typed values route straight to their column — no string
-            // round-trip and no `property_definitions` lookup needed.
-            PropertyValue::Num(n) => value_num = Some(*n),
-            PropertyValue::Bool(b) => value_bool = Some(i64::from(*b)),
-            PropertyValue::Null => { /* cleared → row-absent (handled below) */ }
-            // A String value is text/date/ref/select (or a legacy pre-§2.1
-            // Str-encoded number/bool); recover the SQL column from the
-            // property definition, defaulting to "text" for an undefined key
-            // (warn so a missing definition is observable).
-            PropertyValue::Str(s) => {
-                let value_type: &str = value_types.get(key).map_or_else(
-                    || {
-                        tracing::warn!(
-                            key = %key,
-                            block_id = %block_id.as_str(),
-                            "reproject_block_properties_from_engine: no property_definitions row; \
-                             defaulting to 'text'"
-                        );
-                        "text"
-                    },
-                    String::as_str,
-                );
-                match value_type {
-                    "number" => {
-                        value_num = s.parse::<f64>().ok();
-                        // #383: a `number`-typed property whose Str payload
-                        // fails to parse routes to no column and is dropped
-                        // (the all-None guard below `continue`s). Warn so the
-                        // silent drop is observable (matches the undefined-
-                        // definition warn above). We deliberately do NOT fall
-                        // back to `value_text` — that would corrupt the typed
-                        // column contract.
-                        if value_num.is_none() {
-                            tracing::warn!(
-                                key = %key,
-                                block_id = %block_id.as_str(),
-                                value = %s,
-                                "reproject_block_properties_from_engine: 'number' property \
-                                 value failed to parse as f64; dropping (row-absent)"
-                            );
-                        }
-                    }
-                    "boolean" => value_bool = Some(i64::from(s == "true")),
-                    "date" => value_date = Some(s.as_str()),
-                    "ref" => value_ref = Some(s.as_str()),
-                    // "select" | "text" | anything unrecognised → text column.
-                    _ => value_text = Some(s.as_str()),
-                }
-            }
-        }
-
-        // The `block_properties.exactly_one_value` CHECK (migration 0062)
-        // forbids an all-NULL row. An explicit-null engine value (a cleared
-        // property), or a `number` whose string fails to parse, routes to no
-        // column. The correct SQL representation of a cleared property is
-        // row-absent — the up-front DELETE already removed any prior row — so
-        // skip the INSERT rather than violate the CHECK and abort the whole
-        // inbound-sync transaction.
-        if value_text.is_none()
-            && value_num.is_none()
-            && value_date.is_none()
-            && value_ref.is_none()
-            && value_bool.is_none()
-        {
-            continue;
-        }
-
-        // FK safety (#377): `value_ref` is a FK to `blocks(id)` (migration
-        // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. The engine can
-        // legitimately hand back a ref whose target has no `blocks` row in
-        // THIS space — a cross-space reference, or a forward reference to a
-        // block projected later in the same `changed_blocks` loop. An
-        // unguarded INSERT would raise FK 787 and abort the whole inbound-sync
-        // `BEGIN IMMEDIATE` transaction; every retry would fail identically,
-        // wedging sync for that peer/space. Guard the row exactly like the
-        // sibling `reproject_block_tags_from_engine`: insert only when
-        // `value_ref` is NULL (no FK to satisfy — the value lives in another
-        // column) or its target block exists. A dangling/cross-space ref is
-        // dropped (row-absent), which is the only valid representation —
-        // NULL-ing `value_ref` would leave an all-NULL row that violates the
-        // `exactly_one_value` CHECK, and authoritative-replace already removed
-        // any prior row via the up-front DELETE.
-        sqlx::query!(
-            "INSERT INTO block_properties \
-                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             SELECT ?, ?, ?, ?, ?, ?, ? \
-             WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-            block_id_str,
-            key,
-            value_text,
-            value_num,
-            value_date,
-            value_ref,
-            value_bool,
-            value_ref,
-            value_ref,
-        )
-        .execute(&mut *conn)
-        .await?;
+        reproject_property_row_from_engine(conn, block_id, key, value, value_types).await?;
     }
-
-    // Reserved hot-path keys → dedicated `blocks` columns.
-    // Authoritative-replace: collect each reserved key's engine value (None
-    // when absent / cleared on the remote), then a single UPDATE sets all
-    // four columns at once — present keys to their value, absent keys to
-    // NULL. All four are stored as `Str` in the engine (todo_state/priority
-    // are text; due_date/scheduled_date are date strings); render each to
-    // its string form (`Null` → column NULL), mirroring the local
-    // `project_set_property_to_sql` routing.
-    let mut todo_state: Option<String> = None;
-    let mut priority: Option<String> = None;
-    let mut due_date: Option<String> = None;
-    let mut scheduled_date: Option<String> = None;
-    for (key, value) in props {
-        match key.as_str() {
-            "todo_state" => todo_state = value.as_legacy_string(),
-            "priority" => priority = value.as_legacy_string(),
-            "due_date" => due_date = value.as_legacy_string(),
-            "scheduled_date" => scheduled_date = value.as_legacy_string(),
-            _ => {}
-        }
-    }
-    sqlx::query!(
-        "UPDATE blocks SET \
-             todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
-         WHERE id = ?",
-        todo_state,
-        priority,
-        due_date,
-        scheduled_date,
-        block_id_str,
-    )
-    .execute(&mut *conn)
-    .await?;
-
+    reproject_reserved_columns_from_engine(conn, block_id_str, props).await?;
     Ok(())
 }
 
@@ -3756,7 +3819,7 @@ mod tests {
     #[tokio::test]
     async fn reproject_number_parse_failure_drops_row() {
         // #383: a `number`-typed property whose Str payload fails to parse as
-        // f64 routes to no column. The all-None guard then `continue`s, so the
+        // f64 routes to no column. The all-None guard then returns, so the
         // row is correctly absent (the `exactly_one_value` CHECK forbids an
         // all-NULL row; row-absent is the right SQL representation). We do NOT
         // fall back to value_text. A warn (asserted only by code review) makes
