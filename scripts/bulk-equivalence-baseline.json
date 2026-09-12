@@ -133,6 +133,12 @@
     "test": "delete_blocks_by_ids_matches_per_block_fold"
   },
   {
+    "fn": "src-tauri/src/commands/blocks/crud.rs::dispatch_restore_batch_fanout",
+    "kind": "read-only",
+    "status": "converged",
+    "reason": "ALREADY A FOLD: the post-commit half of restore_blocks_by_ids_inner, extracted in the #4639 slice that took crud.rs to zero attributes. It loops the same three per-root calls dispatch_restore_fanout (the single path's post-commit half) makes for one root \u2014 dispatch_restore_descendants, dispatch_restore_ancestors, reindex_restored_cohort_links \u2014 then runs ONE reindex_fts_for_ids over the union instead of N (#4733), a cost fold on an idempotent re-index, not a state fork. Appends no op_log rows and writes no SQL of its own; the engine agreement it produces is pinned by restore_blocks_by_ids_inner_fans_the_restored_subtree_to_the_engine, and its caller stays `covered`"
+  },
+  {
     "fn": "src-tauri/src/commands/blocks/crud.rs::purge_blocks_by_ids",
     "kind": "mutating",
     "status": "wrapper",

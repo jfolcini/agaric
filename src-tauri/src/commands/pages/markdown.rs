@@ -2273,25 +2273,7 @@ async fn create_import_page(
     // chunk when the block loop reopens the transaction.
     tx.arm_engine_rollback(materializer.loro_state());
 
-    let space_ok = sqlx::query_scalar!(
-        r#"SELECT 1 as "ok: i32" FROM blocks b
-           WHERE b.id = ?
-             AND b.deleted_at IS NULL
-             AND EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id
-                   AND p.key = 'is_space'
-                   AND p.value_text = 'true'
-             )"#,
-        space_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    if space_ok.is_none() {
-        return Err(AppError::validation(format!(
-            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
-        )));
-    }
+    crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
 
     let (page, page_op) = create_block_in_tx(
         &mut tx,

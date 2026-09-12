@@ -147,6 +147,36 @@ pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpac
 // Phase 2: `create_page_in_space`
 // ---------------------------------------------------------------------------
 
+/// Reject a `space_id` that is not a live, non-conflict block carrying
+/// `is_space = 'true'`. Runs inside the caller's tx so it is TOCTOU-safe
+/// against a concurrent delete; every command that stamps a `space` ref
+/// validates its target through this one check.
+pub(crate) async fn require_live_space_in_tx(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<(), AppError> {
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 as "ok: i32" FROM blocks b
+           WHERE b.id = ?
+             AND b.deleted_at IS NULL
+             AND EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+        space_id,
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::validation(format!(
+            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
+        )));
+    }
+    Ok(())
+}
+
 /// Create a new page block and atomically assign it to `space_id`.
 ///
 /// Both ops (`CreateBlock` and `SetProperty(space = <space_id>)`) are
@@ -174,7 +204,6 @@ pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpac
 /// - Other [`AppError`] variants propagated from
 ///   [`create_block_in_tx`] / [`set_property_in_tx`].
 #[instrument(skip(pool, materializer, content), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn create_page_in_space_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -201,29 +230,8 @@ pub async fn create_page_in_space_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // 1. Validate `space_id` upfront inside the tx. The target must
-    //    exist as a live, non-conflict block AND carry `is_space = 'true'`.
-    //    Inside the tx the check is TOCTOU-safe against a concurrent
-    //    delete.
-    let space_ok = sqlx::query_scalar!(
-        r#"SELECT 1 as "ok: i32" FROM blocks b
-           WHERE b.id = ?
-             AND b.deleted_at IS NULL
-             AND EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id
-                   AND p.key = 'is_space'
-                   AND p.value_text = 'true'
-             )"#,
-        space_id,
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    if space_ok.is_none() {
-        return Err(AppError::validation(format!(
-            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
-        )));
-    }
+    // 1. Validate `space_id` upfront inside the tx.
+    require_live_space_in_tx(&mut tx, &space_id).await?;
 
     // When a parent is supplied, enforce that it belongs to the
     // SAME space as `space_id`. Otherwise a frontend bug (e.g. resolving
