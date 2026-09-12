@@ -1,4 +1,4 @@
-# Session 1722 — the 0.13.0 cut bumps three REMOVE AFTER markers (#4885)
+# Session 1723 — the 0.13.0 cut bumps three REMOVE AFTER markers (#4885)
 
 `scripts/release.sh 0.13.0` passed the local release build and then the
 bump commit failed `remove-after-markers`: the three baseline-ratchet

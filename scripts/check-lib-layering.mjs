@@ -63,7 +63,7 @@
 // REMOVE AFTER 0.14.0 (#4885). Bumped from 0.13.0 at the 0.13.0 cut;
 // burning it down is its own PR, not a release's. This baseline exists to
 // reach `[]`, and nothing but someone happening to notice has ever pressed
-// it there. At 0.13.0 `remove-after-markers` fails on this line: burn the
+// it there. At 0.14.0 `remove-after-markers` fails on this line: burn the
 // baseline down and delete this block, or bump the version and say in the
 // diff why not.
 //
