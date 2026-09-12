@@ -256,7 +256,7 @@ pub async fn search_with_toggles(
         // pre-filter window through Rust just to discard non-matching
         // types. Removes the post-fetch `Vec::retain()` that lived
         // here previously.
-        let response = regex_mode_query(
+        return regex_mode_query(
             pool,
             query,
             page,
@@ -270,8 +270,7 @@ pub async fn search_with_toggles(
             metadata,
             snippet_len,
         )
-        .await?;
-        return Ok(response);
+        .await;
     }
 
     fts_page_with_toggles(

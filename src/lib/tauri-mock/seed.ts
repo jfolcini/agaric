@@ -868,7 +868,7 @@ export function addMockAttachment(
     mime_type: mimeType,
     size_bytes: size,
     fs_path: `/mock/${filename}`,
-    created_at: new Date().toISOString(),
+    created_at: Date.now(),
     content_hash: null,
   }
   attachments.set(row.id, row)
@@ -897,7 +897,7 @@ export function addMockAttachmentWithBytes(
     mime_type: mimeType,
     size_bytes: bytes.length,
     fs_path: `attachments/${id}`,
-    created_at: new Date().toISOString(),
+    created_at: Date.now(),
     content_hash: null,
   }
   attachments.set(id, row)

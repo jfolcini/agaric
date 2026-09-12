@@ -67,7 +67,7 @@ export const attachmentsHandlers = {
       mime_type: a['mimeType'] as string,
       size_bytes: bytes.length,
       fs_path: `attachments/${id}`,
-      created_at: new Date().toISOString(),
+      created_at: Date.now(),
       // The backend stores the blake3 of the bytes; the mock never hashes, and
       // `null` is the wire-legal "no hash" the row carried before migration
       // 0093. The field is present so the row has the `AttachmentRow` shape.
