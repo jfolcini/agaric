@@ -1649,10 +1649,13 @@ function extractSearchTogglesDispatch(): {
     ...new Set([...prepared.matchAll(/filter\.(\w+)/g)].map((m) => m[1] as string)),
   ]
 
+  // #4988 moved the `if !toggles.any()` test into `fts_page_with_toggles`,
+  // so the third arm of `search_with_toggles` is its fall-through call to that
+  // helper; the helper's own body is checked below so the label stays honest.
   const markers = [
     ['blank-query', 'if query.trim().is_empty()'],
     ['regex', 'if toggles.is_regex'],
-    ['no-toggle', 'if !toggles.any()'],
+    ['no-toggle', 'fts_page_with_toggles('],
   ] as const
   const located = markers.map(([label, needle]) => {
     const at = body.indexOf(needle)
@@ -1664,6 +1667,13 @@ function extractSearchTogglesDispatch(): {
     }
     return { label, at }
   })
+  const helper = rustItemBody(RUST_TOGGLE_FILTER_PATH, 'async fn fts_page_with_toggles(')
+  if (!helper.includes('if !toggles.any()')) {
+    throw new Error(
+      `could not find "if !toggles.any()" inside fts_page_with_toggles — the no-toggle ` +
+        `dispatch moved again; update the parser if the source moved.`,
+    )
+  }
   // Sorted by OFFSET, so the returned sequence IS the Rust chain's order: a
   // reordered chain yields a different list rather than the declared one.
   const armOrder = located.toSorted((x, y) => x.at - y.at).map((m) => m.label)
