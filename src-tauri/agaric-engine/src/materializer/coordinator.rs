@@ -465,6 +465,96 @@ impl Materializer {
         )
     }
 
+    /// [`Self::build`]'s consumer spawns: the foreground consumer on the
+    /// write pool, then the background consumer.
+    fn spawn_consumers(
+        &self,
+        fg_rx: mpsc::Receiver<MaterializeTask>,
+        bg_rx: mpsc::Receiver<MaterializeTask>,
+        read_pool_for_consumer: Option<SqlitePool>,
+    ) {
+        {
+            let p = self.write_pool.clone();
+            let s = self.shutdown_flag.clone();
+            let m = self.metrics.clone();
+            let l = Arc::clone(&self.loro);
+            Self::spawn_task(
+                &self.tasks,
+                &self.runtime,
+                consumer::run_foreground(p, fg_rx, s, m, l),
+            );
+        }
+        {
+            let p = self.write_pool.clone();
+            let s = self.shutdown_flag.clone();
+            let m = self.metrics.clone();
+            let d = self.app_data_dir.clone();
+            Self::spawn_task(
+                &self.tasks,
+                &self.runtime,
+                consumer::run_background(p, bg_rx, s, m, read_pool_for_consumer, d),
+            );
+        }
+    }
+
+    /// [`Self::build`]'s one-shot task that seeds
+    /// [`QueueMetrics::cached_block_count`] from a live `COUNT(*)`.
+    fn spawn_initial_block_count_task(&self) {
+        let p = self.reader_pool.clone();
+        let m = self.metrics.clone();
+        // #1059: the completion flag/notify are test-only coordination;
+        // production never observes them, so they are cloned and signalled
+        // only under `#[cfg(test)]`. The `cached_block_count` store below
+        // is the real production behaviour and runs unconditionally.
+        #[cfg(test)]
+        let flag = self
+            .block_count_test_hooks
+            .block_count_cache_ready_flag
+            .clone();
+        #[cfg(test)]
+        let notify = self
+            .block_count_test_hooks
+            .block_count_cache_ready_notify
+            .clone();
+        Self::spawn_task(&self.tasks, &self.runtime, async move {
+            if let Ok(count) =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+                    .fetch_one(&p)
+                    .await
+            {
+                let count_u64: u64 =
+                    u64::try_from(count).expect("invariant: SQL COUNT(*) is non-negative");
+                m.cached_block_count.store(count_u64, Ordering::Relaxed);
+            }
+            // Signal completion so tests can observe a deterministic
+            // post-init state. Release-ordering pairs with the Acquire
+            // load in `wait_for_initial_block_count_cache`. The notify
+            // wake is a belt-and-suspenders addition for waiters that
+            // attached before the flag was set; the double-checked
+            // pattern in the waiter handles the race where notify
+            // fires before anyone is waiting.
+            #[cfg(test)]
+            {
+                flag.store(true, Ordering::Release);
+                notify.notify_waiters();
+            }
+        });
+    }
+
+    /// Senders live in `OnceLock`s instead of `Mutex<Option<…>>`
+    /// since they are written exactly once here and never replaced.
+    /// Reads stay lock-free on the hot path; post-shutdown gating is
+    /// handled by checking `shutdown_flag` inside `fg_sender` /
+    /// `bg_sender`.
+    fn sender_cell(
+        tx: mpsc::Sender<MaterializeTask>,
+    ) -> Arc<OnceLock<mpsc::Sender<MaterializeTask>>> {
+        let cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
+        cell.set(tx)
+            .expect("freshly-constructed OnceLock cannot already be set");
+        cell
+    }
+
     /// Shared constructor that dispatches to the two public variants.
     ///
     /// - `write_pool`: pool used by the foreground consumer and by
@@ -479,7 +569,6 @@ impl Materializer {
     /// - `loro`: per-space Loro engine state the apply path mutates
     ///   (#2249 — threaded explicitly, not process-global).
     /// - `runtime`: the fallback runtime for [`Self::spawn_task`] (#4502).
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn build(
         write_pool: SqlitePool,
         read_pool_for_consumer: Option<SqlitePool>,
@@ -490,131 +579,48 @@ impl Materializer {
     ) -> Self {
         let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let metrics = Arc::new(QueueMetrics::default());
-        let reader_pool = reader_pool_for_caches;
-        #[cfg(test)]
-        let block_count_test_hooks = BlockCountTestHooks::new();
-        #[cfg(test)]
-        let shed_persist_test_hooks = PendingTaskGate::new();
-        #[cfg(test)]
-        let force_shed_after = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1));
-        let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
-        // #2291: shared trailing-debounce state for the inbound-sync
-        // cache-rebuild fan-out; the driver task is spawned after `Self` is
-        // built (it needs a `Materializer` clone for the enqueue path).
-        let inbound_rebuild_debounce = Arc::new(InboundRebuildDebounce::default());
-        // #2935: shared trailing-debounce state for the LOCAL lifecycle
-        // (delete / restore / purge) global cache-rebuild fan-out; its driver
-        // task is spawned alongside the inbound one after `Self` is built.
-        let lifecycle_rebuild_debounce = Arc::new(InboundRebuildDebounce::default());
-        // JoinSet must exist before the `spawn_task` calls
-        // below so every task we spawn is registered for abort-on-shutdown.
-        let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
-        {
-            let p = write_pool.clone();
-            let s = shutdown_flag.clone();
-            let m = metrics.clone();
-            let l = Arc::clone(&loro);
-            Self::spawn_task(
-                &tasks,
-                &runtime,
-                consumer::run_foreground(p, fg_rx, s, m, l),
-            );
-        }
-        // Clone write_pool for the queue-saturation persistence
-        // path before moving the original into `run_background`.
-        let write_pool_for_struct = write_pool.clone();
-        {
-            let s = shutdown_flag.clone();
-            let m = metrics.clone();
-            let d = app_data_dir.clone();
-            Self::spawn_task(
-                &tasks,
-                &runtime,
-                consumer::run_background(write_pool, bg_rx, s, m, read_pool_for_consumer, d),
-            );
-        }
-        {
-            let p = reader_pool.clone();
-            let m = metrics.clone();
-            // #1059: the completion flag/notify are test-only coordination;
-            // production never observes them, so they are cloned and signalled
-            // only under `#[cfg(test)]`. The `cached_block_count` store below
-            // is the real production behaviour and runs unconditionally.
+        // The struct is assembled before any task is spawned: the assembly has
+        // no side effects, and the consumer spawns read their pools, flags and
+        // hooks off `mat`.
+        let mat = Self {
+            fg_tx: Self::sender_cell(fg_tx),
+            bg_tx: Self::sender_cell(bg_tx),
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            metrics: Arc::new(QueueMetrics::default()),
+            reader_pool: reader_pool_for_caches,
+            write_pool,
             #[cfg(test)]
-            let flag = block_count_test_hooks.block_count_cache_ready_flag.clone();
+            block_count_test_hooks: BlockCountTestHooks::new(),
             #[cfg(test)]
-            let notify = block_count_test_hooks
-                .block_count_cache_ready_notify
-                .clone();
-            Self::spawn_task(&tasks, &runtime, async move {
-                if let Ok(count) = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
-                )
-                .fetch_one(&p)
-                .await
-                {
-                    let count_u64: u64 =
-                        u64::try_from(count).expect("invariant: SQL COUNT(*) is non-negative");
-                    m.cached_block_count.store(count_u64, Ordering::Relaxed);
-                }
-                // Signal completion so tests can observe a deterministic
-                // post-init state. Release-ordering pairs with the Acquire
-                // load in `wait_for_initial_block_count_cache`. The notify
-                // wake is a belt-and-suspenders addition for waiters that
-                // attached before the flag was set; the double-checked
-                // pattern in the waiter handles the race where notify
-                // fires before anyone is waiting.
-                #[cfg(test)]
-                {
-                    flag.store(true, Ordering::Release);
-                    notify.notify_waiters();
-                }
-            });
-        }
+            shed_persist_test_hooks: PendingTaskGate::new(),
+            #[cfg(test)]
+            force_shed_after: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
+            app_data_dir: Arc::new(OnceLock::new()),
+            loro,
+            // #2291: shared trailing-debounce state for the inbound-sync
+            // cache-rebuild fan-out; the driver task is spawned after `Self` is
+            // built (it needs a `Materializer` clone for the enqueue path).
+            inbound_rebuild_debounce: Arc::new(InboundRebuildDebounce::default()),
+            // #2935: shared trailing-debounce state for the LOCAL lifecycle
+            // (delete / restore / purge) global cache-rebuild fan-out; its driver
+            // task is spawned alongside the inbound one after `Self` is built.
+            lifecycle_rebuild_debounce: Arc::new(InboundRebuildDebounce::default()),
+            // JoinSet must exist before the `spawn_task` calls
+            // below so every task we spawn is registered for abort-on-shutdown.
+            tasks: Arc::new(Mutex::new(JoinSet::new())),
+            runtime,
+        };
+        mat.spawn_consumers(fg_rx, bg_rx, read_pool_for_consumer);
+        mat.spawn_initial_block_count_task();
         {
-            let m = metrics.clone();
-            let s = shutdown_flag.clone();
+            let m = mat.metrics.clone();
+            let s = mat.shutdown_flag.clone();
             Self::spawn_task(
-                &tasks,
-                &runtime,
+                &mat.tasks,
+                &mat.runtime,
                 Self::metrics_snapshot_task(m, s, lifecycle),
             );
         }
-        // Senders live in `OnceLock`s instead of `Mutex<Option<…>>`
-        // since they are written exactly once here and never replaced.
-        // Reads stay lock-free on the hot path; post-shutdown gating is
-        // handled by checking `shutdown_flag` inside `fg_sender` /
-        // `bg_sender`.
-        let fg_tx_cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
-        fg_tx_cell
-            .set(fg_tx)
-            .expect("freshly-constructed OnceLock cannot already be set");
-        let bg_tx_cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
-        bg_tx_cell
-            .set(bg_tx)
-            .expect("freshly-constructed OnceLock cannot already be set");
-        let mat = Self {
-            fg_tx: fg_tx_cell,
-            bg_tx: bg_tx_cell,
-            shutdown_flag,
-            metrics,
-            reader_pool,
-            write_pool: write_pool_for_struct,
-            #[cfg(test)]
-            block_count_test_hooks,
-            #[cfg(test)]
-            shed_persist_test_hooks,
-            #[cfg(test)]
-            force_shed_after,
-            app_data_dir,
-            loro,
-            inbound_rebuild_debounce,
-            lifecycle_rebuild_debounce,
-            tasks,
-            runtime,
-        };
         // #2291: spawn the trailing-debounce driver for the inbound-sync
         // cache-rebuild fan-out. It holds a `Materializer` clone so it can
         // reuse the exact `try_enqueue_background` fire path; the clone
@@ -1057,16 +1063,98 @@ impl Materializer {
         Ok(())
     }
 
+    /// The spawned write behind [`Self::shed_background_task`]: persist the
+    /// shed task to `materializer_retry_queue`, retrying once after 100ms.
+    async fn persist_shed_task(pool: &SqlitePool, task: &MaterializeTask, metrics: &QueueMetrics) {
+        use super::retry_queue::{SHED_LAST_ERROR, record_failure};
+        match record_failure(pool, task, SHED_LAST_ERROR, metrics).await {
+            Ok(()) => {}
+            Err(e1) => {
+                metrics
+                    .retry_queue_persist_errors
+                    .fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    error = %e1,
+                    "record_failure first attempt failed; retrying after 100ms"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if let Err(e2) = record_failure(pool, task, SHED_LAST_ERROR, metrics).await {
+                    metrics
+                        .retry_queue_persist_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    tracing::error!(
+                        error = %e2,
+                        "record_failure failed on retry — task dropped without persistence"
+                    );
+                }
+            }
+        }
+    }
+
+    /// [`Self::try_enqueue_background`]'s `Full` arm.
+    fn shed_background_task(&self, task: &MaterializeTask) -> BackgroundEnqueueOutcome {
+        // When the bounded background channel is full,
+        // we shed the task and warn — but every dropped fan-out
+        // (RebuildTagsCache, RebuildAgendaCache, …) must also be
+        // visible in the `StatusInfo.bg_dropped` counter. Without
+        // this increment, sustained backpressure silently degrades
+        // cache freshness with no observable signal.
+        //
+        // + audit #423: a task shed *here* at enqueue time
+        // never reaches the consumer's failure path, so it must be
+        // persisted to `materializer_retry_queue` directly or it is
+        // lost with no self-healing. This applies to BOTH global
+        // cache rebuilds (under the `'__GLOBAL__'` sentinel) AND the
+        // per-block reindex tasks (`UpdateFtsBlock`,
+        // `ReindexBlockLinks`, `ReindexBlockTagRefs`, keyed by
+        // block_id) — `record_failure` derives the correct key from
+        // the task. Previously only globals were persisted on this
+        // path on the (incorrect) assumption that per-block tasks
+        // are covered by `consumer.rs`; the consumer failure path
+        // only runs for tasks that were *dequeued and ran*, never
+        // for tasks shed at enqueue, so a saturated queue left a
+        // block's FTS / link / tag-ref index stale until its next
+        // edit. `bg_dropped_global` stays global-only so operators
+        // can still distinguish a cache-freshness gap from a
+        // per-block reindex backlog. The persist is fire-and-forget
+        // via a spawned write (errors warned) because `try_enqueue_*`
+        // is sync and on the hot path.
+        self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+        if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(task) {
+            if kind.is_global() {
+                self.metrics
+                    .bg_dropped_global
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            let pool = self.write_pool.clone();
+            let task_for_spawn = task.clone();
+            let metrics_for_spawn = self.metrics.clone();
+            // #3482: register the persist with the test-only drain
+            // gate BEFORE spawning, so a test that shed a task can
+            // await the write instead of polling the DB on a
+            // wall-clock deadline. Production is unchanged: the gate
+            // and its guard are `#[cfg(test)]`.
+            #[cfg(test)]
+            let shed_guard = self.shed_persist_test_hooks.enter();
+            Self::spawn_task(&self.tasks, &self.runtime, async move {
+                #[cfg(test)]
+                let _shed_guard = shed_guard;
+                Self::persist_shed_task(&pool, &task_for_spawn, &metrics_for_spawn).await;
+            });
+        }
+        tracing::warn!("background queue full, dropping task");
+        BackgroundEnqueueOutcome::Shed
+    }
+
     /// Non-blocking background enqueue. Returns
     /// [`BackgroundEnqueueOutcome::Enqueued`] when the task landed on the
     /// live channel, [`BackgroundEnqueueOutcome::Shed`] when the full channel
     /// forced a drop (with the retryable-task persistence side-effect
-    /// described on the Full arm below). #2541: the outcome is surfaced so
+    /// described on `shed_background_task`). #2541: the outcome is surfaced so
     /// the retry-queue sweeper can distinguish a real re-dispatch from a
     /// shed — pre-fix both returned `Ok(())` and a shed was counted (and
     /// leased) as a successful re-enqueue. Callers that don't care remain
     /// source-compatible via `?;`.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub fn try_enqueue_background(
         &self,
         task: MaterializeTask,
@@ -1101,95 +1189,7 @@ impl Materializer {
                 self.check_queue_pressure();
                 Ok(BackgroundEnqueueOutcome::Enqueued)
             }
-            Err(mpsc::error::TrySendError::Full(task)) => {
-                // When the bounded background channel is full,
-                // we shed the task and warn — but every dropped fan-out
-                // (RebuildTagsCache, RebuildAgendaCache, …) must also be
-                // visible in the `StatusInfo.bg_dropped` counter. Without
-                // this increment, sustained backpressure silently degrades
-                // cache freshness with no observable signal.
-                //
-                // + audit #423: a task shed *here* at enqueue time
-                // never reaches the consumer's failure path, so it must be
-                // persisted to `materializer_retry_queue` directly or it is
-                // lost with no self-healing. This applies to BOTH global
-                // cache rebuilds (under the `'__GLOBAL__'` sentinel) AND the
-                // per-block reindex tasks (`UpdateFtsBlock`,
-                // `ReindexBlockLinks`, `ReindexBlockTagRefs`, keyed by
-                // block_id) — `record_failure` derives the correct key from
-                // the task. Previously only globals were persisted on this
-                // path on the (incorrect) assumption that per-block tasks
-                // are covered by `consumer.rs`; the consumer failure path
-                // only runs for tasks that were *dequeued and ran*, never
-                // for tasks shed at enqueue, so a saturated queue left a
-                // block's FTS / link / tag-ref index stale until its next
-                // edit. `bg_dropped_global` stays global-only so operators
-                // can still distinguish a cache-freshness gap from a
-                // per-block reindex backlog. The persist is fire-and-forget
-                // via a spawned write (errors warned) because `try_enqueue_*`
-                // is sync and on the hot path.
-                self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(&task) {
-                    if kind.is_global() {
-                        self.metrics
-                            .bg_dropped_global
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    let pool = self.write_pool.clone();
-                    let task_for_spawn = task.clone();
-                    let metrics_for_spawn = self.metrics.clone();
-                    // #3482: register the persist with the test-only drain
-                    // gate BEFORE spawning, so a test that shed a task can
-                    // await the write instead of polling the DB on a
-                    // wall-clock deadline. Production is unchanged: the gate
-                    // and its guard are `#[cfg(test)]`.
-                    #[cfg(test)]
-                    let shed_guard = self.shed_persist_test_hooks.enter();
-                    Self::spawn_task(&self.tasks, &self.runtime, async move {
-                        #[cfg(test)]
-                        let _shed_guard = shed_guard;
-                        use super::retry_queue::{SHED_LAST_ERROR, record_failure};
-                        match record_failure(
-                            &pool,
-                            &task_for_spawn,
-                            SHED_LAST_ERROR,
-                            &metrics_for_spawn,
-                        )
-                        .await
-                        {
-                            Ok(()) => {}
-                            Err(e1) => {
-                                metrics_for_spawn
-                                    .retry_queue_persist_errors
-                                    .fetch_add(1, Ordering::Relaxed);
-                                tracing::warn!(
-                                    error = %e1,
-                                    "record_failure first attempt failed; retrying after 100ms"
-                                );
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                if let Err(e2) = record_failure(
-                                    &pool,
-                                    &task_for_spawn,
-                                    SHED_LAST_ERROR,
-                                    &metrics_for_spawn,
-                                )
-                                .await
-                                {
-                                    metrics_for_spawn
-                                        .retry_queue_persist_errors
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    tracing::error!(
-                                        error = %e2,
-                                        "record_failure failed on retry — task dropped without persistence"
-                                    );
-                                }
-                            }
-                        }
-                    });
-                }
-                tracing::warn!("background queue full, dropping task");
-                Ok(BackgroundEnqueueOutcome::Shed)
-            }
+            Err(mpsc::error::TrySendError::Full(task)) => Ok(self.shed_background_task(&task)),
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 Err(AppError::Channel("background queue closed".into()))
             }
@@ -1300,23 +1300,13 @@ impl Materializer {
         self.status_with_sync(SyncStatus::default()).await
     }
 
-    /// Collect status, with the sync layer's contribution passed in: the
-    /// app's `get_status` command builds the [`SyncStatus`] from
-    /// `agaric_sync`, so this module never reads that crate (#4502).
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-    pub async fn status_with_sync(&self, sync: SyncStatus) -> StatusInfo {
-        let fg_depth = self
-            .fg_sender()
-            .map_or(0, |tx| FOREGROUND_CAPACITY - tx.capacity());
-        let bg_depth = self
-            .bg_sender()
-            .map_or(0, |tx| BACKGROUND_CAPACITY - tx.capacity());
-
-        // Convert the raw epoch-ms atomic to RFC 3339 and derive
-        // "seconds since last batch". last_materialize_ms==0 means "no
-        // batch recorded yet" (initial state).
+    /// [`Self::status_with_sync`]'s `(last_materialize_at,
+    /// time_since_last_materialize_secs)` pair: convert the raw epoch-ms
+    /// atomic to RFC 3339 and derive "seconds since last batch".
+    /// last_materialize_ms==0 means "no batch recorded yet" (initial state).
+    fn last_materialize_timing(&self) -> (Option<String>, Option<u64>) {
         let last_ms = self.metrics.last_materialize_ms.load(Ordering::Relaxed);
-        let (last_materialize_at, time_since_last_materialize_secs) = if last_ms == 0 {
+        if last_ms == 0 {
             (None, None)
         } else {
             let secs: i64 = i64::try_from(last_ms / 1000)
@@ -1335,7 +1325,37 @@ impl Materializer {
             .unwrap_or(u64::MAX);
             let elapsed = now_ms.saturating_sub(last_ms) / 1000;
             (rfc, Some(elapsed))
-        };
+        }
+    }
+
+    /// [`Self::status_with_sync`]'s `retry_queue_pending` read.
+    async fn retry_queue_pending_count(&self) -> Option<i64> {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM materializer_retry_queue")
+            .fetch_one(&self.reader_pool)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    query = "retry_queue_pending",
+                    "materializer status query failed"
+                );
+            })
+            .ok()
+    }
+
+    /// Collect status, with the sync layer's contribution passed in: the
+    /// app's `get_status` command builds the [`SyncStatus`] from
+    /// `agaric_sync`, so this module never reads that crate (#4502).
+    pub async fn status_with_sync(&self, sync: SyncStatus) -> StatusInfo {
+        let fg_depth = self
+            .fg_sender()
+            .map_or(0, |tx| FOREGROUND_CAPACITY - tx.capacity());
+        let bg_depth = self
+            .bg_sender()
+            .map_or(0, |tx| BACKGROUND_CAPACITY - tx.capacity());
+
+        let (last_materialize_at, time_since_last_materialize_secs) =
+            self.last_materialize_timing();
 
         // #385: total_ops_in_log is served from a rate-limited cache so the
         // O(rows) `SELECT COUNT(*) FROM op_log` does not run on every ~5s
@@ -1347,18 +1367,7 @@ impl Materializer {
         // correctness path, so the status call never fails because of it.
         let total_ops_in_log: Option<i64> = self.cached_op_log_count().await;
 
-        let retry_queue_pending: Option<i64> =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM materializer_retry_queue")
-                .fetch_one(&self.reader_pool)
-                .await
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        error = %e,
-                        query = "retry_queue_pending",
-                        "materializer status query failed"
-                    );
-                })
-                .ok();
+        let retry_queue_pending: Option<i64> = self.retry_queue_pending_count().await;
 
         StatusInfo {
             foreground_queue_depth: fg_depth,

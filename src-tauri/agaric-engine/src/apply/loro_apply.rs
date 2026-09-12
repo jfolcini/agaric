@@ -427,6 +427,152 @@ pub async fn hydrate_space_block_into_own_engine(
     hydrate_page_subtree_into_engine(tx, state, device_id, &block_id, space_id).await
 }
 
+/// One LIVE row of the owning-page subtree read by
+/// [`hydrate_page_subtree_into_engine`].
+#[derive(sqlx::FromRow)]
+struct SubtreeRow {
+    id: String,
+    block_type: String,
+    content: String,
+    parent_id: Option<String>,
+    // Nullable: the both-`None` create sentinel writes SQL NULL.
+    position: Option<i64>,
+    todo_state: Option<String>,
+    priority: Option<String>,
+    due_date: Option<String>,
+    scheduled_date: Option<String>,
+}
+
+/// A [`SubtreeRow`] with its properties and tags read, ready for the engine
+/// seed in [`hydrate_page_subtree_into_engine`].
+struct SeedNode {
+    id: String,
+    block_type: String,
+    content: String,
+    parent_id: Option<String>,
+    position: i64,
+    properties: Vec<(String, crate::loro::engine::PropertyValue)>,
+    tags: Vec<String>,
+}
+
+/// [`hydrate_page_subtree_into_engine`]'s per-row read: the node's
+/// `block_properties` and `block_tags` rows plus the four reserved keys from
+/// its `blocks` columns.
+async fn read_seed_node(
+    conn: &mut sqlx::SqliteConnection,
+    row: SubtreeRow,
+) -> Result<SeedNode, AppError> {
+    use crate::loro::engine::PropertyValue;
+
+    let SubtreeRow {
+        id,
+        block_type,
+        content,
+        parent_id,
+        position,
+        todo_state,
+        priority,
+        due_date,
+        scheduled_date,
+    } = row;
+    // A NULL `position` (the both-`None` create sentinel) maps to the
+    // engine's append sentinel `i64::MAX`, exactly as the sql_only create
+    // path feeds `apply_create_block`.
+    let position = position.unwrap_or(i64::MAX);
+    let prop_rows = sqlx::query!(
+        r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
+                 FROM block_properties WHERE block_id = ?"#,
+        id,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    // Recover the engine's native `PropertyValue` by the same precedence as
+    // `PropertyValue::from(&SetPropertyPayload)` (text→num→date→ref→bool);
+    // the `exactly_one_value` CHECK guarantees exactly one column is set.
+    // #4801: the reserved keys are `blocks` columns, stored as `Str` in
+    // the engine (see `reproject_block_properties_from_engine`).
+    let mut properties: Vec<(String, PropertyValue)> = [
+        ("todo_state", todo_state),
+        ("priority", priority),
+        ("due_date", due_date),
+        ("scheduled_date", scheduled_date),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| value.map(|v| (key.to_owned(), PropertyValue::Str(v))))
+    .collect();
+    properties.extend(prop_rows.into_iter().map(|r| {
+        let pv = if let Some(t) = r.value_text {
+            PropertyValue::Str(t)
+        } else if let Some(n) = r.value_num {
+            PropertyValue::Num(n)
+        } else if let Some(d) = r.value_date {
+            PropertyValue::Str(d)
+        } else if let Some(rf) = r.value_ref {
+            PropertyValue::Str(rf)
+        } else if let Some(b) = r.value_bool {
+            PropertyValue::Bool(b != 0)
+        } else {
+            PropertyValue::Null
+        };
+        (r.key, pv)
+    }));
+    let tag_rows = sqlx::query!("SELECT tag_id FROM block_tags WHERE block_id = ?", id)
+        .fetch_all(&mut *conn)
+        .await?;
+    let tags = tag_rows.into_iter().map(|r| r.tag_id).collect();
+    Ok(SeedNode {
+        id,
+        block_type,
+        content,
+        parent_id,
+        position,
+        properties,
+        tags,
+    })
+}
+
+/// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed. Returns
+/// the post-seed sibling order of every parent group actually touched.
+fn seed_nodes_into_engine(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    nodes: &[SeedNode],
+) -> Result<Vec<Vec<String>>, AppError> {
+    let mut guard = state
+        .registry
+        .for_space_recording(space_id, device_id, &state.revert)?;
+    let engine = guard.engine_mut();
+    let mut touched_parents: Vec<Option<String>> = Vec::new();
+    for n in nodes {
+        if engine.read_block(&n.id)?.is_some() {
+            continue;
+        }
+        engine.apply_create_block(
+            &n.id,
+            &n.block_type,
+            &n.content,
+            n.parent_id.as_deref(),
+            n.position,
+        )?;
+        for (key, value) in &n.properties {
+            engine.apply_set_property_typed(&n.id, key, value)?;
+        }
+        for tag_id in &n.tags {
+            engine.apply_add_tag(&n.id, tag_id)?;
+        }
+        if !touched_parents.contains(&n.parent_id) {
+            touched_parents.push(n.parent_id.clone());
+        }
+    }
+    let mut orders = Vec::with_capacity(touched_parents.len());
+    for parent in &touched_parents {
+        orders.push(engine.children_ordered_block_ids(parent.as_deref())?);
+    }
+    drop(guard);
+    Ok(orders)
+}
+
 /// #2326: Hydrate a page's whole block subtree into its (now-resolved) space
 /// engine at space-assignment time.
 ///
@@ -469,7 +615,6 @@ pub async fn hydrate_space_block_into_own_engine(
 /// Per the pre-existing engine-vs-SQL contract, the engine seed is not rolled
 /// back if the caller's tx aborts; the seeded nodes are harmless/idempotent and
 /// self-correct on retry. We do NOT try to make it transactional.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn hydrate_page_subtree_into_engine(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -477,7 +622,6 @@ async fn hydrate_page_subtree_into_engine(
     page_id: &agaric_core::ulid::BlockId,
     space_id: &agaric_store::space::SpaceId,
 ) -> Result<(), AppError> {
-    use crate::loro::engine::PropertyValue;
     use crate::loro::projection;
 
     // 1. Read the whole owning-page group: LIVE rows only, parent-before-child
@@ -487,19 +631,6 @@ async fn hydrate_page_subtree_into_engine(
     //    (a `const` recursive-CTE string) and a fixed SELECT — no runtime string
     //    interpolation. Runtime `query_as` only because the CTE prefix comes
     //    from the shared macro; mirrors `project_delete_block_to_sql`.
-    #[derive(sqlx::FromRow)]
-    struct SubtreeRow {
-        id: String,
-        block_type: String,
-        content: String,
-        parent_id: Option<String>,
-        // Nullable: the both-`None` create sentinel writes SQL NULL.
-        position: Option<i64>,
-        todo_state: Option<String>,
-        priority: Option<String>,
-        due_date: Option<String>,
-        scheduled_date: Option<String>,
-    }
     let rows: Vec<SubtreeRow> = sqlx::query_as(concat!(
         agaric_store::descendants_cte_active!(),
         "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
@@ -515,122 +646,17 @@ async fn hydrate_page_subtree_into_engine(
     // 2. Read each node's properties + tags now (async), while we still hold no
     //    engine guard — the per-space guard is `!Send` and cannot cross an
     //    `.await`, so all SQL reads must complete before the sync seed scope.
-    struct SeedNode {
-        id: String,
-        block_type: String,
-        content: String,
-        parent_id: Option<String>,
-        position: i64,
-        properties: Vec<(String, PropertyValue)>,
-        tags: Vec<String>,
-    }
     let mut nodes: Vec<SeedNode> = Vec::with_capacity(rows.len());
-    for SubtreeRow {
-        id,
-        block_type,
-        content,
-        parent_id,
-        position,
-        todo_state,
-        priority,
-        due_date,
-        scheduled_date,
-    } in rows
-    {
-        // A NULL `position` (the both-`None` create sentinel) maps to the
-        // engine's append sentinel `i64::MAX`, exactly as the sql_only create
-        // path feeds `apply_create_block`.
-        let position = position.unwrap_or(i64::MAX);
-        let prop_rows = sqlx::query!(
-            r#"SELECT key, value_text, value_num, value_date, value_ref, value_bool
-                 FROM block_properties WHERE block_id = ?"#,
-            id,
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        // Recover the engine's native `PropertyValue` by the same precedence as
-        // `PropertyValue::from(&SetPropertyPayload)` (text→num→date→ref→bool);
-        // the `exactly_one_value` CHECK guarantees exactly one column is set.
-        // #4801: the reserved keys are `blocks` columns, stored as `Str` in
-        // the engine (see `reproject_block_properties_from_engine`).
-        let mut properties: Vec<(String, PropertyValue)> = [
-            ("todo_state", todo_state),
-            ("priority", priority),
-            ("due_date", due_date),
-            ("scheduled_date", scheduled_date),
-        ]
-        .into_iter()
-        .filter_map(|(key, value)| value.map(|v| (key.to_owned(), PropertyValue::Str(v))))
-        .collect();
-        properties.extend(prop_rows.into_iter().map(|r| {
-            let pv = if let Some(t) = r.value_text {
-                PropertyValue::Str(t)
-            } else if let Some(n) = r.value_num {
-                PropertyValue::Num(n)
-            } else if let Some(d) = r.value_date {
-                PropertyValue::Str(d)
-            } else if let Some(rf) = r.value_ref {
-                PropertyValue::Str(rf)
-            } else if let Some(b) = r.value_bool {
-                PropertyValue::Bool(b != 0)
-            } else {
-                PropertyValue::Null
-            };
-            (r.key, pv)
-        }));
-        let tag_rows = sqlx::query!("SELECT tag_id FROM block_tags WHERE block_id = ?", id)
-            .fetch_all(&mut *conn)
-            .await?;
-        let tags = tag_rows.into_iter().map(|r| r.tag_id).collect();
-        nodes.push(SeedNode {
-            id,
-            block_type,
-            content,
-            parent_id,
-            position,
-            properties,
-            tags,
-        });
+    for row in rows {
+        nodes.push(read_seed_node(conn, row).await?);
     }
 
     // 3. Seed into the (lazily-created) engine in ONE synchronous scope. The
     //    guard is `!Send`, so NO `.await` may run while it is alive. Skip nodes
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
-    let touched_orders: Vec<Vec<String>> = {
-        let mut guard = state
-            .registry
-            .for_space_recording(space_id, device_id, &state.revert)?;
-        let engine = guard.engine_mut();
-        let mut touched_parents: Vec<Option<String>> = Vec::new();
-        for n in &nodes {
-            if engine.read_block(&n.id)?.is_some() {
-                continue;
-            }
-            engine.apply_create_block(
-                &n.id,
-                &n.block_type,
-                &n.content,
-                n.parent_id.as_deref(),
-                n.position,
-            )?;
-            for (key, value) in &n.properties {
-                engine.apply_set_property_typed(&n.id, key, value)?;
-            }
-            for tag_id in &n.tags {
-                engine.apply_add_tag(&n.id, tag_id)?;
-            }
-            if !touched_parents.contains(&n.parent_id) {
-                touched_parents.push(n.parent_id.clone());
-            }
-        }
-        let mut orders = Vec::with_capacity(touched_parents.len());
-        for parent in &touched_parents {
-            orders.push(engine.children_ordered_block_ids(parent.as_deref())?);
-        }
-        drop(guard);
-        orders
-    };
+    let touched_orders: Vec<Vec<String>> =
+        seed_nodes_into_engine(state, device_id, space_id, &nodes)?;
 
     // 4. Reproject each touched parent group so the engine's sibling order and
     //    the SQL dense positions agree (mirrors the create path). Empty on a
@@ -703,6 +729,121 @@ pub async fn apply_delete_block_via_loro(
     Ok(())
 }
 
+/// `(snapshot, old_parent, old_parent_siblings, new_parent_siblings)` from
+/// [`move_block_in_engine`]. A move can change parent, so both the source and
+/// target sibling groups need a dense reprojection (#400). The resulting parent
+/// may differ from the requested one (a cyclic/unknown-parent move keeps the
+/// current parent), so the authoritative new parent is the post-apply
+/// snapshot's `parent_id`.
+type MoveEngineResult = (
+    crate::loro::engine::BlockSnapshot,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+);
+
+/// [`apply_move_block_via_loro`]'s engine scope. `None` requests the SQL-only
+/// fallback (handled after the guard scope closes, since an `.await` cannot
+/// cross the non-`Send` `EngineGuard`).
+fn move_block_in_engine(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    p: &MoveBlockPayload,
+) -> Result<Option<MoveEngineResult>, AppError> {
+    let mut guard = state
+        .registry
+        .for_space_recording(space_id, device_id, &state.revert)?;
+    let engine = guard.engine_mut();
+    let new_parent = p
+        .new_parent_id
+        .as_ref()
+        .map(agaric_core::ulid::BlockId::as_str);
+    // #2250 (#1257 reconciliation): this per-space engine can only apply
+    // the move when BOTH the block and — for a reparent — its target
+    // parent live in THIS space's tree. It cannot when (a) the block was
+    // projected SQL-only during a no-space window (never entered any
+    // engine) or (b) the move is cross-space (the target parent lives in
+    // another space's tree). A single-engine `apply_move_block*` in either
+    // case corrupts parent linkage (it drops the block to the root), so we
+    // fall back to the authoritative SQL projection below and let
+    // boot-replay reconcile the per-space engines.
+    let block_in_engine = engine.read_block(p.block_id.as_str())?.is_some();
+    let parent_in_engine = match new_parent {
+        Some(pid) => engine.read_block(pid)?.is_some(),
+        None => true,
+    };
+    if !block_in_engine || !parent_in_engine {
+        return Ok(None);
+    }
+    let old_parent = engine.read_parent(p.block_id.as_str())?;
+    // #400 routing: new ops carry a 0-based `new_index`; pre-#400 ops
+    // carry the legacy sparse `new_position` (mapped to a slot).
+    match p.new_index {
+        Some(index) => engine.apply_move_block_to(
+            p.block_id.as_str(),
+            new_parent,
+            usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+        )?,
+        None => engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?,
+    }
+    let snap_opt = engine.read_block(p.block_id.as_str())?;
+    let snap = snap_opt.ok_or_else(|| {
+        AppError::validation(format!(
+            "apply_move_block_via_loro: engine read_block returned None for {} \
+             (a MoveBlock op presupposes the block exists)",
+            p.block_id.as_str()
+        ))
+    })?;
+    let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
+    // Same-parent reorder (the common DnD / moveUp / moveDown case):
+    // source and target groups are identical, so reproject once. Only
+    // fetch the second group when the parent actually changed (#400).
+    let new_siblings = if old_parent.as_deref() == snap.parent_id.as_deref() {
+        Vec::new()
+    } else {
+        engine.children_ordered_block_ids(snap.parent_id.as_deref())?
+    };
+    drop(guard);
+    Ok(Some((snap, old_parent, old_siblings, new_siblings)))
+}
+
+/// [`apply_move_block_via_loro`]'s tombstoned-ancestor arm: mirror the swept
+/// cohort's tombstone onto the per-space engine INLINE rather than through
+/// `ApplyEffects` + the post-commit `dispatch_delete_descendants` fan-out. The
+/// op arm has no `DeleteBlock` record to hang a cohort off, and inline keeps
+/// the engine mutation inside the caller's `for_space_recording` checkpoint
+/// window, so a tx rollback rewinds it with everything else this op did.
+/// Without it the engine keeps the subtree ALIVE while SQL says deleted, and
+/// the next `reproject_block_deleted_at_from_engine` would resurrect the rows
+/// — the self-perpetuating divergence #2017 documents in the restore direction.
+fn mirror_swept_cohort_into_engine(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    cohort_ts: i64,
+    cohort: &[String],
+) -> Result<(), AppError> {
+    let mut guard = state
+        .registry
+        .for_space_recording(space_id, device_id, &state.revert)?;
+    let engine = guard.engine_mut();
+    // #109 Phase 2: the engine seed carries `deleted_at` as a String
+    // slot; stringify the cohort timestamp exactly as
+    // `apply_delete_block_via_loro` does.
+    let marker = cohort_ts.to_string();
+    for cohort_id in cohort {
+        // A block projected SQL-only during a no-space window never
+        // entered this engine; skip it rather than erroring (the same
+        // `read_block` probe the delete arm uses).
+        if engine.read_block(cohort_id.as_str())?.is_some() {
+            engine.apply_delete_block(cohort_id.as_str(), &marker)?;
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
 /// Apply MoveBlock through the engine then project to SQL.
 ///
 /// Engine `apply_move_block` writes parent_id + position via per-key
@@ -756,7 +897,6 @@ pub async fn apply_delete_block_via_loro(
 /// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
 /// The canonical statement of the mechanism is on
 /// `super::sql_only::unsweep_inherited_cohort_after_move`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -771,7 +911,6 @@ pub async fn apply_move_block_via_loro(
     // `sql_only` fallback arms (this arm itself never un-sweeps). See the
     // #4204/#4188 note above.
 ) -> Result<Vec<String>, AppError> {
-    use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
     let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
@@ -783,73 +922,8 @@ pub async fn apply_move_block_via_loro(
         return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
-    // `Some((snapshot, old_parent_siblings, new_parent_siblings))` from the
-    // engine path; `None` requests the SQL-only fallback (handled after the
-    // guard scope closes, since an `.await` cannot cross the non-`Send`
-    // `EngineGuard`). A move can change parent, so both the source and target
-    // sibling groups need a dense reprojection (#400). The resulting parent may
-    // differ from the requested one (a cyclic/unknown-parent move keeps the
-    // current parent), so the authoritative new parent is the post-apply
-    // snapshot's `parent_id`.
-    #[allow(clippy::type_complexity)]
-    let engine_result: Option<(BlockSnapshot, Option<String>, Vec<String>, Vec<String>)> = {
-        let mut guard = state
-            .registry
-            .for_space_recording(&space_id, device_id, &state.revert)?;
-        let engine = guard.engine_mut();
-        let new_parent = p
-            .new_parent_id
-            .as_ref()
-            .map(agaric_core::ulid::BlockId::as_str);
-        // #2250 (#1257 reconciliation): this per-space engine can only apply
-        // the move when BOTH the block and — for a reparent — its target
-        // parent live in THIS space's tree. It cannot when (a) the block was
-        // projected SQL-only during a no-space window (never entered any
-        // engine) or (b) the move is cross-space (the target parent lives in
-        // another space's tree). A single-engine `apply_move_block*` in either
-        // case corrupts parent linkage (it drops the block to the root), so we
-        // fall back to the authoritative SQL projection below and let
-        // boot-replay reconcile the per-space engines.
-        let block_in_engine = engine.read_block(p.block_id.as_str())?.is_some();
-        let parent_in_engine = match new_parent {
-            Some(pid) => engine.read_block(pid)?.is_some(),
-            None => true,
-        };
-        if !block_in_engine || !parent_in_engine {
-            None
-        } else {
-            let old_parent = engine.read_parent(p.block_id.as_str())?;
-            // #400 routing: new ops carry a 0-based `new_index`; pre-#400 ops
-            // carry the legacy sparse `new_position` (mapped to a slot).
-            match p.new_index {
-                Some(index) => engine.apply_move_block_to(
-                    p.block_id.as_str(),
-                    new_parent,
-                    usize::try_from(index.max(0)).unwrap_or(usize::MAX),
-                )?,
-                None => engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?,
-            }
-            let snap_opt = engine.read_block(p.block_id.as_str())?;
-            let snap = snap_opt.ok_or_else(|| {
-                AppError::validation(format!(
-                    "apply_move_block_via_loro: engine read_block returned None for {} \
-                     (a MoveBlock op presupposes the block exists)",
-                    p.block_id.as_str()
-                ))
-            })?;
-            let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
-            // Same-parent reorder (the common DnD / moveUp / moveDown case):
-            // source and target groups are identical, so reproject once. Only
-            // fetch the second group when the parent actually changed (#400).
-            let new_siblings = if old_parent.as_deref() == snap.parent_id.as_deref() {
-                Vec::new()
-            } else {
-                engine.children_ordered_block_ids(snap.parent_id.as_deref())?
-            };
-            drop(guard);
-            Some((snap, old_parent, old_siblings, new_siblings))
-        }
-    };
+    let engine_result: Option<MoveEngineResult> =
+        move_block_in_engine(state, device_id, &space_id, p)?;
     let Some((snapshot, old_parent, old_siblings, new_siblings)) = engine_result else {
         super::sql_only_fallback::record(
             "move_block",
@@ -894,35 +968,7 @@ pub async fn apply_move_block_via_loro(
             tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
         }
         Some((cohort_ts, cohort)) => {
-            // Mirror the tombstone onto the per-space engine INLINE rather than
-            // through `ApplyEffects` + the post-commit
-            // `dispatch_delete_descendants` fan-out. The op arm has no
-            // `DeleteBlock` record to hang a cohort off, and inline keeps the
-            // engine mutation inside the caller's `for_space_recording`
-            // checkpoint window, so a tx rollback rewinds it with everything
-            // else this op did. Without it the engine keeps the subtree ALIVE
-            // while SQL says deleted, and the next
-            // `reproject_block_deleted_at_from_engine` would resurrect the
-            // rows — the self-perpetuating divergence #2017 documents in the
-            // restore direction.
-            let mut guard =
-                state
-                    .registry
-                    .for_space_recording(&space_id, device_id, &state.revert)?;
-            let engine = guard.engine_mut();
-            // #109 Phase 2: the engine seed carries `deleted_at` as a String
-            // slot; stringify the cohort timestamp exactly as
-            // `apply_delete_block_via_loro` does.
-            let marker = cohort_ts.to_string();
-            for cohort_id in &cohort {
-                // A block projected SQL-only during a no-space window never
-                // entered this engine; skip it rather than erroring (the same
-                // `read_block` probe the delete arm uses).
-                if engine.read_block(cohort_id.as_str())?.is_some() {
-                    engine.apply_delete_block(cohort_id.as_str(), &marker)?;
-                }
-            }
-            drop(guard);
+            mirror_swept_cohort_into_engine(state, device_id, &space_id, cohort_ts, &cohort)?;
         }
     }
     // #4390: the engine arm un-sweeps nothing — a tombstoned subject never
@@ -1154,39 +1200,22 @@ pub async fn apply_purge_block_via_loro(
     Ok(())
 }
 
-/// SQL-side purge cascade.
+/// [`purge_block_sql_cascade`]'s descendant set: materialise it ONCE into the
+/// `_purge_descendants` TEMP table, then read from the table in each cascade
+/// statement. Pre-refactor each statement re-evaluated the recursive
+/// `descendants_cte_purge!()` CTE end-to-end against the same subtree (15×
+/// walks per cascade), needlessly extending the writer-lock window.
 ///
-/// PURGE walks many tables — much broader than the engine's three
-/// (`blocks`, `block_properties`, `block_tags`) — so it stays SQL-side
-/// rather than being absorbed into a projection. Every row that
-/// descends from the purged block must go. `depth < 100` is the
-/// runaway-recursion guard.
-// `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
-// `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
-// assert remote-purge SQL == local-purge SQL across every derived table.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn purge_block_sql_cascade(
+/// Cleanup pattern: SQLite TEMP tables are connection-scoped and the
+/// connection comes from a pool, so the table can outlive the handler unless
+/// we explicitly DROP it. The defensive `DROP TABLE IF EXISTS` at the top
+/// guards against a prior crash that leaked the table on this connection; the
+/// explicit `DROP TABLE` at the bottom of the caller keeps the connection's
+/// temp namespace clean for the next caller.
+async fn collect_purge_descendants(
     conn: &mut sqlx::SqliteConnection,
-    p: &PurgeBlockPayload,
+    block_id: &str,
 ) -> Result<(), AppError> {
-    let block_id = p.block_id.as_str();
-    sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *conn)
-        .await?;
-    // C: materialise the descendants set ONCE into a TEMP
-    // table, then read from the table in each cascade statement.
-    // Pre-refactor each statement re-evaluated the recursive
-    // `descendants_cte_purge!()` CTE end-to-end against the same
-    // subtree (15× walks per cascade), needlessly extending the
-    // writer-lock window.
-    //
-    // Cleanup pattern: SQLite TEMP tables are connection-scoped and
-    // the connection comes from a pool, so the table can outlive the
-    // handler unless we explicitly DROP it.  The defensive
-    // `DROP TABLE IF EXISTS` at the top guards against a prior crash
-    // that leaked the table on this connection; the explicit
-    // `DROP TABLE` at the bottom keeps the connection's temp namespace
-    // clean for the next caller.
     sqlx::query("DROP TABLE IF EXISTS _purge_descendants")
         .execute(&mut *conn)
         .await?;
@@ -1239,6 +1268,13 @@ pub async fn purge_block_sql_cascade(
              set to the full subtree to avoid a dangling-FK COMMIT abort"
         );
     }
+    Ok(())
+}
+
+/// [`purge_block_sql_cascade`]'s block-to-block / block-to-tag relation rows:
+/// `block_tags`, `block_tag_inherited`, `block_properties` (owned by the
+/// subtree, then `value_ref` into it), `block_links`.
+async fn delete_purge_relation_rows(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM _purge_descendants) \
@@ -1279,6 +1315,13 @@ pub async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+/// [`purge_block_sql_cascade`]'s per-block derived rows: `agenda_cache`,
+/// `tags_cache`, `pages_cache`, `attachments`, `block_drafts`, `fts_blocks`,
+/// `page_aliases`, `projected_agenda_cache`.
+async fn delete_purge_derived_rows(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM agenda_cache \
          WHERE block_id IN (SELECT id FROM _purge_descendants)",
@@ -1327,15 +1370,24 @@ pub async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
-    // block_tag_refs / page_link_cache: both columns of each table FK
-    // into blocks(id) ON DELETE CASCADE, so the final `DELETE FROM blocks`
-    // under `defer_foreign_keys = ON` would clean these up implicitly.
-    // We delete them explicitly anyway (issue #1583): the explicit list
-    // above is the canonical record of every derived table PURGE touches,
-    // and relying on the cascade silently leaks stale rows if a future
-    // migration alters the FK or adds a block-referencing cache without
-    // CASCADE. Delete rows referencing the purged subtree on EITHER FK
-    // column.
+    Ok(())
+}
+
+/// [`purge_block_sql_cascade`]'s tail before `DELETE FROM blocks`:
+/// `block_tag_refs`, `page_link_cache`, `loro_doc_state`.
+///
+/// block_tag_refs / page_link_cache: both columns of each table FK
+/// into blocks(id) ON DELETE CASCADE, so the final `DELETE FROM blocks`
+/// under `defer_foreign_keys = ON` would clean these up implicitly.
+/// We delete them explicitly anyway (issue #1583): the explicit list
+/// above is the canonical record of every derived table PURGE touches,
+/// and relying on the cascade silently leaks stale rows if a future
+/// migration alters the FK or adds a block-referencing cache without
+/// CASCADE. Delete rows referencing the purged subtree on EITHER FK
+/// column.
+async fn delete_purge_link_refs_and_doc_state(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM block_tag_refs \
          WHERE source_id IN (SELECT id FROM _purge_descendants) \
@@ -1371,6 +1423,31 @@ pub async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
+    Ok(())
+}
+
+/// SQL-side purge cascade.
+///
+/// PURGE walks many tables — much broader than the engine's three
+/// (`blocks`, `block_properties`, `block_tags`) — so it stays SQL-side
+/// rather than being absorbed into a projection. Every row that
+/// descends from the purged block must go. `depth < 100` is the
+/// runaway-recursion guard.
+// `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
+// `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
+// assert remote-purge SQL == local-purge SQL across every derived table.
+pub async fn purge_block_sql_cascade(
+    conn: &mut sqlx::SqliteConnection,
+    p: &PurgeBlockPayload,
+) -> Result<(), AppError> {
+    let block_id = p.block_id.as_str();
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *conn)
+        .await?;
+    collect_purge_descendants(conn, block_id).await?;
+    delete_purge_relation_rows(conn).await?;
+    delete_purge_derived_rows(conn).await?;
+    delete_purge_link_refs_and_doc_state(conn).await?;
     sqlx::query(
         "DELETE FROM blocks \
          WHERE id IN (SELECT id FROM _purge_descendants)",
