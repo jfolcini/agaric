@@ -1252,6 +1252,24 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             .expect("seed peer_refs");
         }
     }
+    // Seed page-alias rows (#3830), verbatim: `page_id` expands through
+    // `seed_label_to_id` like `seed.attachments.block_id`, and `alias` is
+    // stored exactly as authored — the column is `COLLATE NOCASE`, so the
+    // readers fold case at compare time, never at write time. The TS twin's
+    // `loadSeed` appends the same `(page_id, alias)` pairs, in fixture order,
+    // into the mock's `pageAliases` map.
+    if let Some(rows) = seed["page_aliases"].as_array() {
+        for r in rows {
+            sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+                .bind(seed_label_to_id(
+                    r["page_id"].as_str().expect("seed page_aliases page_id"),
+                ))
+                .bind(r["alias"].as_str().expect("seed page_aliases alias"))
+                .execute(&pool)
+                .await
+                .expect("seed page_aliases");
+        }
+    }
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {

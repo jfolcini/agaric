@@ -61,6 +61,19 @@ function listPagesWithMetadataLimit(raw: unknown): number {
   return limit
 }
 
+/**
+ * Stands in for SQLite's `NOCASE` collation on `page_aliases.alias`: fold
+ * case, then compare code units. SQLite folds ASCII only; this folds all of
+ * Unicode, which the alias matching around it already does, so a non-ASCII
+ * case-variant pair may order differently here than in the app. Both alias
+ * sorts (`ORDER BY alias`, `ORDER BY length(alias), alias`) go through it.
+ */
+function nocaseCompare(x: string, y: string): number {
+  const a = x.toLowerCase()
+  const b = y.toLowerCase()
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -409,6 +422,9 @@ export const pagesHandlers = {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      // #3081 — the `blocks.space_id` column, which the alias readers below
+      // scope on; the `space` property stays for the handlers that read it.
+      space_id: spaceId,
     }
     blocks.set(id, row)
     if (spaceId) {
@@ -519,7 +535,8 @@ export const pagesHandlers = {
   get_page_aliases: (args) => {
     const a = args as Record<string, unknown>
     const pid = a['pageId'] as string
-    return pageAliases.get(pid) ?? []
+    // `ORDER BY alias` (NOCASE), not insertion order.
+    return (pageAliases.get(pid) ?? []).toSorted(nocaseCompare)
   },
 
   resolve_page_by_alias: (args) => {
@@ -536,10 +553,12 @@ export const pagesHandlers = {
       if (aliases.some((al) => al.toLowerCase() === alias)) {
         const page = blocks.get(pid)
         if (!page) continue
-        if (spaceId !== null) {
-          const space = properties.get(pid)?.get('space')?.['value_ref'] ?? null
-          if (space !== spaceId) continue
-        }
+        // `b.deleted_at IS NULL`: a soft-deleted page keeps its alias rows
+        // (only a purge cascades them) but stops resolving.
+        if (page['deleted_at']) continue
+        // `b.space_id = ?`, the #533 column — not the `space` property row
+        // migrations 0087/0088 retired (#3081).
+        if (spaceId !== null && page['space_id'] !== spaceId) continue
         return [pid, (page['content'] as string) ?? null]
       }
     }
@@ -553,7 +572,7 @@ export const pagesHandlers = {
   // shortest-alias first (then alphabetical), capped at `limit`
   // (default 50). When the IPC arg's `scope` is `{ kind: 'active',
   // space_id }`, restricts matches to aliases pointing at pages whose
-  // `space` property equals the wrapped ULID. Mirrors the backend's
+  // `blocks.space_id` column equals the wrapped ULID. Mirrors the backend's
   // `list_page_aliases_by_prefix_inner` shape.
   list_page_aliases_by_prefix: (args) => {
     const a = args as Record<string, unknown>
@@ -569,13 +588,9 @@ export const pagesHandlers = {
       const page = blocks.get(pid)
       if (!page) continue
       if (page['deleted_at']) continue
-      // Active-space scoping: when `scope.kind === 'active'`,
-      // exclude pages that don't carry `space = ?spaceId` in their
-      // property map.
-      if (spaceId !== null) {
-        const space = properties.get(pid)?.get('space')?.['value_ref'] ?? null
-        if (space !== spaceId) continue
-      }
+      // `b.space_id = ?`, the #533 column — not the `space` property row
+      // migrations 0087/0088 retired (#3081).
+      if (spaceId !== null && page['space_id'] !== spaceId) continue
       const title = (page['content'] as string | null) ?? null
       for (const alias of aliases) {
         if (alias.toLowerCase().includes(query)) {
@@ -583,7 +598,8 @@ export const pagesHandlers = {
         }
       }
     }
-    rows.sort((x, y) => x[1].length - y[1].length || x[1].localeCompare(y[1]))
+    // `ORDER BY length(pa.alias), pa.alias` — the alias column is NOCASE.
+    rows.sort((x, y) => x[1].length - y[1].length || nocaseCompare(x[1], y[1]))
     return rows.slice(0, limit)
   },
 

@@ -426,6 +426,27 @@ pub(super) fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
     token
 }
 
+/// Build `<row[0]>#<name[1]>=<row[1]>…` for one serialized Rust TUPLE (#3830).
+///
+/// A tuple crosses the wire as a JSON ARRAY, so there is no key for
+/// [`row_token`]'s `id_key` to name: the projection is positional, element 0
+/// the head and every later element an attribute under the name at the same
+/// index of `names`. MUST match the `tuple` token kind in the TS twin, which
+/// zips the same array against the same names.
+fn tuple_token(row: &Value, names: &[&str]) -> String {
+    let mut token = token_head(
+        "tuple head",
+        row.get(0).and_then(Value::as_str).unwrap_or("<missing-id>"),
+    );
+    for (i, name) in names.iter().enumerate().skip(1) {
+        token.push('#');
+        token.push_str(name);
+        token.push('=');
+        token.push_str(&attr_value(name, row.get(i)));
+    }
+    token
+}
+
 /// Build `<key>#<ValueType>=<value>` for one serialized `PropertyRow`.
 ///
 /// The `(value_type, value)` derivation is the SAME first-non-null-column
@@ -1454,6 +1475,66 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 rows: v.as_array().map_or_else(Vec::new, |a| {
                     a.iter()
                         .map(|r| row_token(r, "peer_id", PEER_REF_ATTRS))
+                        .collect()
+                }),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        // ── Page aliases (#3830) ──
+        //
+        // Waived as "page-alias table outside the conformance snapshot scope"
+        // until the fixture `seed.page_aliases` section put the same rows on
+        // both stacks (see `replay_fixture`). Each arm calls what the shipped
+        // command calls. The two joined readers answer TUPLES, projected by
+        // position through [`tuple_token`].
+        "get_page_aliases" => {
+            let page_id: PageId = arg_req(args, "pageId");
+            // `ORDER BY alias` under the column's NOCASE collation: the
+            // ordered comparison pins the case-folded sort, not the mock's
+            // insertion order. The alias IS the token, like the tag-id readers.
+            bare_scalars(&get_page_aliases_inner(pool, page_id.as_str()).await?)
+        }
+        "resolve_page_by_alias" => {
+            let hit = resolve_page_by_alias_inner(
+                pool,
+                &arg_req::<String>(args, "alias"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            // `Option<(page_id, title)>`: a hit projects to one token whose
+            // head is the page id (relabeled to its `Bn`) and whose one
+            // attribute is the title; a miss — unknown alias, tombstoned page,
+            // foreign space — to none.
+            let v = serde_json::to_value(&hit).expect("serialize Option<(String, Option<String>)>");
+            RawResult {
+                rows: if v.is_null() {
+                    Vec::new()
+                } else {
+                    vec![tuple_token(&v, &["page_id", "title"])]
+                },
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_page_aliases_by_prefix" => {
+            let rows = list_page_aliases_by_prefix_inner(
+                pool,
+                &arg_req::<String>(args, "prefix"),
+                opt_arg_as(args, "limit"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            // `ORDER BY length(alias), alias` then `LIMIT`: the ordered
+            // comparison pins shortest-first-then-alphabetical and the cap.
+            let v = serde_json::to_value(&rows)
+                .expect("serialize Vec<(String, String, Option<String>)>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter()
+                        .map(|r| tuple_token(r, &["page_id", "alias", "title"]))
                         .collect()
                 }),
                 has_more: None,
@@ -2510,7 +2591,12 @@ pub(super) mod reader_delegation_tests {
     // `peer_refs` (`peer_refs::list_peer_refs`). The table's writers are the
     // pairing / sync-session paths and the peer commands, none a read arm.
     // Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 47;
+    // #3830 (page aliases) wired `get_page_aliases`, `resolve_page_by_alias`
+    // and `list_page_aliases_by_prefix`: three SELECTs over `page_aliases`
+    // (`commands/pages/aliases.rs`), the latter two `JOIN blocks`. The
+    // table's writer is `set_page_aliases`, not a read arm. Writer set
+    // unchanged.
+    const SWEPT_ARM_COUNT: usize = 50;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

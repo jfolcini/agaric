@@ -2563,7 +2563,9 @@ describe('page alias commands', () => {
     const aliases = invoke('get_page_aliases', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as string[]
-    expect(aliases).toEqual(['gs', 'getting-started'])
+    // `ORDER BY alias` (NOCASE), as `get_page_aliases_inner` sorts — not the
+    // seed's insertion order (#3830).
+    expect(aliases).toEqual(['getting-started', 'gs'])
   })
 
   it('set_page_aliases replaces existing aliases', () => {
