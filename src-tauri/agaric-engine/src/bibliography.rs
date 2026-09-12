@@ -225,10 +225,98 @@ enum ValuePart {
     Macro(String),
 }
 
+/// The `{...}` arm of [`parse_value_part`]: `pos` points at the opening
+/// `{`; the value is the body with one outer brace layer stripped.
+fn parse_braced_value(
+    chars: &[char],
+    pos: &mut usize,
+    etype: &str,
+    key: &str,
+    at_line: usize,
+) -> Result<ValuePart, AppError> {
+    let mut depth = 1usize;
+    *pos += 1;
+    let mut out = String::new();
+    while *pos < chars.len() {
+        let c = chars[*pos];
+        match c {
+            '\\' => {
+                out.push('\\');
+                if let Some(next) = chars.get(*pos + 1) {
+                    out.push(*next);
+                }
+                *pos += 2;
+                continue;
+            }
+            '{' => {
+                depth += 1;
+                out.push(c);
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    *pos += 1;
+                    return Ok(ValuePart::Text(out));
+                }
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+        *pos += 1;
+    }
+    Err(unbalanced_error(etype, key, at_line))
+}
+
+/// The `"..."` arm of [`parse_value_part`]: `pos` points at the opening
+/// quote.
+fn parse_quoted_value(
+    chars: &[char],
+    pos: &mut usize,
+    etype: &str,
+    key: &str,
+    at_line: usize,
+) -> Result<ValuePart, AppError> {
+    *pos += 1;
+    let mut out = String::new();
+    // Brace-nesting aware: a `"` inside braces (`"{"}..."`-style TeX
+    // trickery) does not terminate the value.
+    let mut depth = 0usize;
+    while *pos < chars.len() {
+        let c = chars[*pos];
+        match c {
+            '\\' => {
+                out.push('\\');
+                if let Some(next) = chars.get(*pos + 1) {
+                    out.push(*next);
+                }
+                *pos += 2;
+                continue;
+            }
+            '{' => {
+                depth += 1;
+                out.push(c);
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                out.push(c);
+            }
+            '"' if depth == 0 => {
+                *pos += 1;
+                return Ok(ValuePart::Text(out));
+            }
+            _ => out.push(c),
+        }
+        *pos += 1;
+    }
+    Err(AppError::validation(format!(
+        "unterminated quoted value in BibTeX entry '@{etype}{{{key}, ...' \
+         starting at line {at_line}"
+    )))
+}
+
 /// Parse a single value part: `{...}` (one outer brace layer stripped),
 /// `"..."`, a bare number, or a bare identifier (→ [`ValuePart::Macro`],
 /// since `@string` expansion is unsupported).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn parse_value_part(
     chars: &[char],
     pos: &mut usize,
@@ -237,77 +325,8 @@ fn parse_value_part(
     at_line: usize,
 ) -> Result<ValuePart, AppError> {
     match chars.get(*pos) {
-        Some('{') => {
-            let mut depth = 1usize;
-            *pos += 1;
-            let mut out = String::new();
-            while *pos < chars.len() {
-                let c = chars[*pos];
-                match c {
-                    '\\' => {
-                        out.push('\\');
-                        if let Some(next) = chars.get(*pos + 1) {
-                            out.push(*next);
-                        }
-                        *pos += 2;
-                        continue;
-                    }
-                    '{' => {
-                        depth += 1;
-                        out.push(c);
-                    }
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            *pos += 1;
-                            return Ok(ValuePart::Text(out));
-                        }
-                        out.push(c);
-                    }
-                    _ => out.push(c),
-                }
-                *pos += 1;
-            }
-            Err(unbalanced_error(etype, key, at_line))
-        }
-        Some('"') => {
-            *pos += 1;
-            let mut out = String::new();
-            // Brace-nesting aware: a `"` inside braces (`"{"}..."`-style TeX
-            // trickery) does not terminate the value.
-            let mut depth = 0usize;
-            while *pos < chars.len() {
-                let c = chars[*pos];
-                match c {
-                    '\\' => {
-                        out.push('\\');
-                        if let Some(next) = chars.get(*pos + 1) {
-                            out.push(*next);
-                        }
-                        *pos += 2;
-                        continue;
-                    }
-                    '{' => {
-                        depth += 1;
-                        out.push(c);
-                    }
-                    '}' => {
-                        depth = depth.saturating_sub(1);
-                        out.push(c);
-                    }
-                    '"' if depth == 0 => {
-                        *pos += 1;
-                        return Ok(ValuePart::Text(out));
-                    }
-                    _ => out.push(c),
-                }
-                *pos += 1;
-            }
-            Err(AppError::validation(format!(
-                "unterminated quoted value in BibTeX entry '@{etype}{{{key}, ...' \
-                 starting at line {at_line}"
-            )))
-        }
+        Some('{') => parse_braced_value(chars, pos, etype, key, at_line),
+        Some('"') => parse_quoted_value(chars, pos, etype, key, at_line),
         _ => {
             // Bare token: number or (unsupported) macro name.
             let start = *pos;
@@ -327,9 +346,214 @@ fn parse_value_part(
     }
 }
 
+/// Resolve one entry's type and citation key. `pos` points just past the
+/// `@`; on `Some` it points at the `,` or `}` that opens the field list.
+/// `None` means the entry was skipped (directive, non-brace body, missing
+/// key) with its warning pushed.
+fn parse_entry_header(
+    chars: &[char],
+    pos: &mut usize,
+    at_line: usize,
+    warnings: &mut Vec<String>,
+) -> Result<Option<(String, String)>, AppError> {
+    // Entry type identifier.
+    let type_start = *pos;
+    while *pos < chars.len() && chars[*pos].is_ascii_alphabetic() {
+        *pos += 1;
+    }
+    let etype: String = chars[type_start..*pos]
+        .iter()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if etype.is_empty() {
+        warnings.push(format!(
+            "stray '@' at line {at_line} is not followed by an entry type; ignored"
+        ));
+        return Ok(None);
+    }
+    skip_ws(chars, pos);
+
+    // Unsupported directives: skip the whole balanced group with a
+    // warning. NO macro expansion is performed (`@string` definitions
+    // are not remembered).
+    if matches!(etype.as_str(), "comment" | "preamble" | "string") {
+        if chars.get(*pos) == Some(&'{') {
+            skip_balanced(chars, pos, &etype, "", at_line)?;
+        }
+        // A brace-less `@comment ...` comments out the rest of the line
+        // only; resync at the next '@' naturally.
+        warnings.push(format!(
+            "'@{etype}' directive at line {at_line} is not supported and was skipped \
+             (no macro expansion)"
+        ));
+        return Ok(None);
+    }
+
+    if chars.get(*pos) != Some(&'{') {
+        // Includes the parenthesised `@type(...)` form — outside the
+        // documented subset. Resync at the next '@'.
+        warnings.push(format!(
+            "entry '@{etype}' at line {at_line}: expected '{{' after the entry type; \
+             entry skipped"
+        ));
+        return Ok(None);
+    }
+    *pos += 1; // consume '{'
+    skip_ws(chars, pos);
+
+    // Citation key: up to the first ',' (or '}' for a field-less entry).
+    let key_start = *pos;
+    while *pos < chars.len()
+        && !matches!(chars[*pos], ',' | '}' | '{' | '=')
+        && !chars[*pos].is_whitespace()
+    {
+        *pos += 1;
+    }
+    let key: String = chars[key_start..*pos].iter().collect();
+    skip_ws(chars, pos);
+
+    if key.is_empty() || !matches!(chars.get(*pos), Some(',' | '}')) {
+        warnings.push(format!(
+            "entry '@{etype}' at line {at_line} has a missing or malformed citation key; \
+             entry skipped"
+        ));
+        // Skip the remainder of this entry's balanced body (we are at
+        // depth 1 — rewind conceptually by scanning until it closes).
+        skip_entry_remainder(chars, pos, &etype, &key, at_line)?;
+        return Ok(None);
+    }
+    Ok(Some((etype, key)))
+}
+
+/// One field's value, possibly a `part # part # ...` concatenation. `None`
+/// means the field was skipped (concatenation or a macro reference) with
+/// its warning pushed.
+fn parse_field_value(
+    chars: &[char],
+    pos: &mut usize,
+    etype: &str,
+    key: &str,
+    at_line: usize,
+    fname: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Option<String>, AppError> {
+    let mut parts: Vec<ValuePart> = Vec::new();
+    loop {
+        parts.push(parse_value_part(chars, pos, etype, key, at_line)?);
+        skip_ws(chars, pos);
+        if chars.get(*pos) == Some(&'#') {
+            *pos += 1;
+            skip_ws(chars, pos);
+            continue;
+        }
+        break;
+    }
+
+    if parts.len() > 1 {
+        warnings.push(format!(
+            "entry '{key}': field '{fname}' uses '#' string concatenation \
+             (not supported); field skipped"
+        ));
+        return Ok(None);
+    }
+    Ok(match parts.into_iter().next() {
+        Some(ValuePart::Text(s)) => Some(s),
+        Some(ValuePart::Macro(m)) => {
+            warnings.push(format!(
+                "entry '{key}': field '{fname}' references the string macro '{m}' \
+                 (no macro expansion); field skipped"
+            ));
+            None
+        }
+        None => None,
+    })
+}
+
+/// Scan one entry's `name = value` fields into `entry`. Entered with `pos`
+/// at the `,` or `}` after the citation key; returns with it past the
+/// closing `}`. Yields the ignored field names and whether unrecognized
+/// LaTeX was kept literal, for the caller's once-per-entry warnings.
+fn scan_entry_fields(
+    chars: &[char],
+    pos: &mut usize,
+    etype: &str,
+    key: &str,
+    at_line: usize,
+    entry: &mut BibEntry,
+    warnings: &mut Vec<String>,
+) -> Result<(Vec<String>, bool), AppError> {
+    let mut ignored_fields: Vec<String> = Vec::new();
+    let mut seen_fields: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut latex_kept_literal = false;
+
+    loop {
+        skip_ws(chars, pos);
+        match chars.get(*pos) {
+            None => return Err(unbalanced_error(etype, key, at_line)),
+            Some('}') => {
+                *pos += 1;
+                break;
+            }
+            Some(',') => {
+                *pos += 1;
+                continue;
+            }
+            Some(_) => {}
+        }
+
+        // Field name up to '='.
+        let fstart = *pos;
+        while *pos < chars.len() && !matches!(chars[*pos], '=' | ',' | '}') {
+            *pos += 1;
+        }
+        if *pos >= chars.len() {
+            return Err(unbalanced_error(etype, key, at_line));
+        }
+        if chars[*pos] != '=' {
+            warnings.push(format!(
+                "entry '{key}': malformed field near line {}; rest of entry skipped",
+                line_at(chars, fstart)
+            ));
+            skip_entry_remainder(chars, pos, etype, key, at_line)?;
+            // Malformed mid-entry: keep whatever fields parsed before the
+            // malformation (the entry is still identifiable by its key).
+            break;
+        }
+        let fname: String = chars[fstart..*pos]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_ascii_lowercase();
+        *pos += 1; // consume '='
+        skip_ws(chars, pos);
+
+        let Some(raw_value) = parse_field_value(chars, pos, etype, key, at_line, &fname, warnings)?
+        else {
+            continue;
+        };
+
+        if !seen_fields.insert(fname.clone()) {
+            warnings.push(format!(
+                "entry '{key}': field '{fname}' appears more than once; \
+                 keeping the first value"
+            ));
+            continue;
+        }
+
+        apply_bibtex_field(
+            entry,
+            &fname,
+            &raw_value,
+            &mut ignored_fields,
+            &mut latex_kept_literal,
+            warnings,
+        );
+    }
+    Ok((ignored_fields, latex_kept_literal))
+}
+
 /// Parse a BibTeX file into entries + warnings. See the module docs for the
 /// exact supported subset.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
     let chars: Vec<char> = content.chars().collect();
     let len = chars.len();
@@ -363,175 +587,21 @@ pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
         let at_line = cur_line;
         pos += 1;
 
-        // Entry type identifier.
-        let type_start = pos;
-        while pos < len && chars[pos].is_ascii_alphabetic() {
-            pos += 1;
-        }
-        let etype: String = chars[type_start..pos]
-            .iter()
-            .collect::<String>()
-            .to_ascii_lowercase();
-        if etype.is_empty() {
-            warnings.push(format!(
-                "stray '@' at line {at_line} is not followed by an entry type; ignored"
-            ));
+        let Some((etype, key)) = parse_entry_header(&chars, &mut pos, at_line, &mut warnings)?
+        else {
             continue;
-        }
-        skip_ws(&chars, &mut pos);
-
-        // Unsupported directives: skip the whole balanced group with a
-        // warning. NO macro expansion is performed (`@string` definitions
-        // are not remembered).
-        if matches!(etype.as_str(), "comment" | "preamble" | "string") {
-            if chars.get(pos) == Some(&'{') {
-                skip_balanced(&chars, &mut pos, &etype, "", at_line)?;
-            }
-            // A brace-less `@comment ...` comments out the rest of the line
-            // only; resync at the next '@' naturally.
-            warnings.push(format!(
-                "'@{etype}' directive at line {at_line} is not supported and was skipped \
-                 (no macro expansion)"
-            ));
-            continue;
-        }
-
-        if chars.get(pos) != Some(&'{') {
-            // Includes the parenthesised `@type(...)` form — outside the
-            // documented subset. Resync at the next '@'.
-            warnings.push(format!(
-                "entry '@{etype}' at line {at_line}: expected '{{' after the entry type; \
-                 entry skipped"
-            ));
-            continue;
-        }
-        pos += 1; // consume '{'
-        skip_ws(&chars, &mut pos);
-
-        // Citation key: up to the first ',' (or '}' for a field-less entry).
-        let key_start = pos;
-        while pos < len
-            && !matches!(chars[pos], ',' | '}' | '{' | '=')
-            && !chars[pos].is_whitespace()
-        {
-            pos += 1;
-        }
-        let key: String = chars[key_start..pos].iter().collect();
-        skip_ws(&chars, &mut pos);
-
-        if key.is_empty() || !matches!(chars.get(pos), Some(',' | '}')) {
-            warnings.push(format!(
-                "entry '@{etype}' at line {at_line} has a missing or malformed citation key; \
-                 entry skipped"
-            ));
-            // Skip the remainder of this entry's balanced body (we are at
-            // depth 1 — rewind conceptually by scanning until it closes).
-            skip_entry_remainder(&chars, &mut pos, &etype, &key, at_line)?;
-            continue;
-        }
+        };
 
         let mut entry = BibEntry::empty(key.clone(), etype.clone());
-        let mut ignored_fields: Vec<String> = Vec::new();
-        let mut seen_fields: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut latex_kept_literal = false;
-        let mut aborted = false;
-
-        // Field loop. Entered with `pos` at ',' or '}'.
-        loop {
-            skip_ws(&chars, &mut pos);
-            match chars.get(pos) {
-                None => return Err(unbalanced_error(&etype, &key, at_line)),
-                Some('}') => {
-                    pos += 1;
-                    break;
-                }
-                Some(',') => {
-                    pos += 1;
-                    continue;
-                }
-                Some(_) => {}
-            }
-
-            // Field name up to '='.
-            let fstart = pos;
-            while pos < len && !matches!(chars[pos], '=' | ',' | '}') {
-                pos += 1;
-            }
-            if pos >= len {
-                return Err(unbalanced_error(&etype, &key, at_line));
-            }
-            if chars[pos] != '=' {
-                warnings.push(format!(
-                    "entry '{key}': malformed field near line {}; rest of entry skipped",
-                    line_at(&chars, fstart)
-                ));
-                skip_entry_remainder(&chars, &mut pos, &etype, &key, at_line)?;
-                aborted = true;
-                break;
-            }
-            let fname: String = chars[fstart..pos]
-                .iter()
-                .collect::<String>()
-                .trim()
-                .to_ascii_lowercase();
-            pos += 1; // consume '='
-            skip_ws(&chars, &mut pos);
-
-            // Value, possibly a `part # part # ...` concatenation.
-            let mut parts: Vec<ValuePart> = Vec::new();
-            loop {
-                parts.push(parse_value_part(&chars, &mut pos, &etype, &key, at_line)?);
-                skip_ws(&chars, &mut pos);
-                if chars.get(pos) == Some(&'#') {
-                    pos += 1;
-                    skip_ws(&chars, &mut pos);
-                    continue;
-                }
-                break;
-            }
-
-            let value: Option<String> = if parts.len() > 1 {
-                warnings.push(format!(
-                    "entry '{key}': field '{fname}' uses '#' string concatenation \
-                     (not supported); field skipped"
-                ));
-                None
-            } else {
-                match parts.into_iter().next() {
-                    Some(ValuePart::Text(s)) => Some(s),
-                    Some(ValuePart::Macro(m)) => {
-                        warnings.push(format!(
-                            "entry '{key}': field '{fname}' references the string macro '{m}' \
-                             (no macro expansion); field skipped"
-                        ));
-                        None
-                    }
-                    None => None,
-                }
-            };
-            let Some(raw_value) = value else { continue };
-
-            if !seen_fields.insert(fname.clone()) {
-                warnings.push(format!(
-                    "entry '{key}': field '{fname}' appears more than once; \
-                     keeping the first value"
-                ));
-                continue;
-            }
-
-            apply_bibtex_field(
-                &mut entry,
-                &fname,
-                &raw_value,
-                &mut ignored_fields,
-                &mut latex_kept_literal,
-                &mut warnings,
-            );
-        }
-        if aborted {
-            // Malformed mid-entry: keep whatever fields parsed before the
-            // malformation (the entry is still identifiable by its key).
-        }
+        let (ignored_fields, latex_kept_literal) = scan_entry_fields(
+            &chars,
+            &mut pos,
+            &etype,
+            &key,
+            at_line,
+            &mut entry,
+            &mut warnings,
+        )?;
         if !ignored_fields.is_empty() {
             warnings.push(format!(
                 "entry '{key}': ignored unsupported field(s): {}",
@@ -887,8 +957,123 @@ const CSL_KNOWN_KEYS: &[&str] = &[
     "abstract",
 ];
 
+/// Render the CSL `author` elements (`{family, given}` or `{literal}`) into
+/// `out`, in source order.
+fn push_csl_authors(
+    authors: &serde_json::Value,
+    citation_key: &str,
+    out: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    match authors.as_array() {
+        Some(list) => {
+            for author in list {
+                let Some(a) = author.as_object() else {
+                    warnings.push(format!(
+                        "entry '{citation_key}': author element is not an object; skipped"
+                    ));
+                    continue;
+                };
+                let family = a.get("family").and_then(|v| v.as_str()).unwrap_or("");
+                let given = a.get("given").and_then(|v| v.as_str()).unwrap_or("");
+                let literal = a.get("literal").and_then(|v| v.as_str()).unwrap_or("");
+                let display = match (family.trim(), given.trim(), literal.trim()) {
+                    ("", "", "") => {
+                        warnings.push(format!(
+                            "entry '{citation_key}': author with no family/given/literal \
+                             name; skipped"
+                        ));
+                        continue;
+                    }
+                    ("", "", lit) => lit.to_string(),
+                    (family_name, "", _) => family_name.to_string(),
+                    ("", given_name, _) => given_name.to_string(),
+                    (family_name, given_name, _) => format!("{family_name}, {given_name}"),
+                };
+                out.push(display);
+            }
+        }
+        None => warnings.push(format!(
+            "entry '{citation_key}': 'author' is not an array; ignored"
+        )),
+    }
+}
+
+/// Map one CSL-JSON object to an entry. `None` means it has no usable `id`,
+/// with the warning pushed.
+fn csl_entry(
+    ordinal: usize,
+    obj: &serde_json::Map<String, serde_json::Value>,
+    warnings: &mut Vec<String>,
+) -> Option<BibEntry> {
+    // `id` may be a string or a number per the CSL-JSON schema.
+    let citation_key = match obj.get("id") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        _ => {
+            warnings.push(format!(
+                "CSL-JSON entry #{ordinal} has no usable 'id' (citation key); skipped"
+            ));
+            return None;
+        }
+    };
+    let entry_type = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("misc")
+        .trim()
+        .to_string();
+
+    let mut entry = BibEntry::empty(citation_key.clone(), entry_type);
+    entry.title = obj
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    entry.doi = obj
+        .get("DOI")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    entry.url = obj
+        .get("URL")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    entry.journal = obj
+        .get("container-title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    entry.abstract_text = obj
+        .get("abstract")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+
+    // author: [{family, given} | {literal}]
+    if let Some(authors) = obj.get("author") {
+        push_csl_authors(authors, &citation_key, &mut entry.authors, warnings);
+    }
+
+    // issued.date-parts[0][0] → year (number or numeric string).
+    if let Some(issued) = obj.get("issued") {
+        let year = issued
+            .get("date-parts")
+            .and_then(|dp| dp.get(0))
+            .and_then(|first| first.get(0))
+            .and_then(|y| match y {
+                serde_json::Value::Number(n) => n.as_i64(),
+                serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
+                _ => None,
+            });
+        match year {
+            Some(y) => entry.year = Some(y),
+            None => warnings.push(format!(
+                "entry '{citation_key}': 'issued' has no usable date-parts year; ignored"
+            )),
+        }
+    }
+    Some(entry)
+}
+
 /// Parse a CSL-JSON array (or single object) into entries + warnings.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_csl_json(content: &str) -> Result<BibParseOutput, AppError> {
     let value: serde_json::Value = serde_json::from_str(content)
         .map_err(|e| AppError::validation(format!("invalid CSL-JSON: {e}")))?;
@@ -913,101 +1098,9 @@ pub fn parse_csl_json(content: &str) -> Result<BibParseOutput, AppError> {
             ));
             continue;
         };
-        // `id` may be a string or a number per the CSL-JSON schema.
-        let citation_key = match obj.get("id") {
-            Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
-            Some(serde_json::Value::Number(n)) => n.to_string(),
-            _ => {
-                warnings.push(format!(
-                    "CSL-JSON entry #{ordinal} has no usable 'id' (citation key); skipped"
-                ));
-                continue;
-            }
+        let Some(entry) = csl_entry(ordinal, obj, &mut warnings) else {
+            continue;
         };
-        let entry_type = obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or("misc")
-            .trim()
-            .to_string();
-
-        let mut entry = BibEntry::empty(citation_key.clone(), entry_type);
-        entry.title = obj
-            .get("title")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
-        entry.doi = obj
-            .get("DOI")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
-        entry.url = obj
-            .get("URL")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
-        entry.journal = obj
-            .get("container-title")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
-        entry.abstract_text = obj
-            .get("abstract")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
-
-        // author: [{family, given} | {literal}]
-        if let Some(authors) = obj.get("author") {
-            match authors.as_array() {
-                Some(list) => {
-                    for author in list {
-                        let Some(a) = author.as_object() else {
-                            warnings.push(format!(
-                                "entry '{citation_key}': author element is not an object; skipped"
-                            ));
-                            continue;
-                        };
-                        let family = a.get("family").and_then(|v| v.as_str()).unwrap_or("");
-                        let given = a.get("given").and_then(|v| v.as_str()).unwrap_or("");
-                        let literal = a.get("literal").and_then(|v| v.as_str()).unwrap_or("");
-                        let display = match (family.trim(), given.trim(), literal.trim()) {
-                            ("", "", "") => {
-                                warnings.push(format!(
-                                    "entry '{citation_key}': author with no family/given/literal \
-                                     name; skipped"
-                                ));
-                                continue;
-                            }
-                            ("", "", lit) => lit.to_string(),
-                            (family_name, "", _) => family_name.to_string(),
-                            ("", given_name, _) => given_name.to_string(),
-                            (family_name, given_name, _) => format!("{family_name}, {given_name}"),
-                        };
-                        entry.authors.push(display);
-                    }
-                }
-                None => warnings.push(format!(
-                    "entry '{citation_key}': 'author' is not an array; ignored"
-                )),
-            }
-        }
-
-        // issued.date-parts[0][0] → year (number or numeric string).
-        if let Some(issued) = obj.get("issued") {
-            let year = issued
-                .get("date-parts")
-                .and_then(|dp| dp.get(0))
-                .and_then(|first| first.get(0))
-                .and_then(|y| match y {
-                    serde_json::Value::Number(n) => n.as_i64(),
-                    serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
-                    _ => None,
-                });
-            match year {
-                Some(y) => entry.year = Some(y),
-                None => warnings.push(format!(
-                    "entry '{citation_key}': 'issued' has no usable date-parts year; ignored"
-                )),
-            }
-        }
 
         let ignored: Vec<String> = obj
             .keys()
@@ -1016,7 +1109,8 @@ pub fn parse_csl_json(content: &str) -> Result<BibParseOutput, AppError> {
             .collect();
         if !ignored.is_empty() {
             warnings.push(format!(
-                "entry '{citation_key}': ignored unsupported field(s): {}",
+                "entry '{}': ignored unsupported field(s): {}",
+                entry.citation_key,
                 ignored.join(", ")
             ));
         }
