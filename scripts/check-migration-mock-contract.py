@@ -195,7 +195,7 @@ CONTRACT: dict[str, dict[str, object]] = {
         "files": ["handlers/blocks.ts"],
     },
     "app_settings": {
-        "store": "mockReminderSettings",
+        "store": "appSettings",
         "files": ["handlers/properties.ts"],
     },
 }
