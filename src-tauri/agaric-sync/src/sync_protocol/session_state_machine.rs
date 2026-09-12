@@ -885,14 +885,30 @@ impl SyncOrchestrator {
                     agaric_engine::loro::engine::peer_id_for_epoch(&self.device_id, epoch);
                 let local_loro_vvs = self.collect_local_loro_vvs();
                 if check_reset_required(own_peer_id, &local_loro_vvs, &loro_vvs)? {
+                    const REASON: &str = "local engine missing own-authored ops claimed by remote";
                     self.state = SyncState::ResetRequired;
                     self.session.state = SyncState::ResetRequired;
-                    self.emit(crate::sync_events::SyncEvent::Error {
-                        message: "local engine missing own-authored ops claimed by remote".into(),
+                    // #4960: deciding a reset is the same side-exit as receiving
+                    // one, and the snapshot catch-up that follows usually
+                    // satisfies it. `Error` here toasted THIS device's user on
+                    // every session — and, emitted straight from the state
+                    // machine, it bypassed the repeat suppression in
+                    // `SyncScheduler::record_failure_and_take_report`, so the
+                    // toast repeated on every attempt. The diagnostic still goes
+                    // out on the wire and into the log.
+                    tracing::info!(
+                        peer_id = %self.session.remote_device_id,
+                        reason = REASON,
+                        "requiring a reset; handing off to the snapshot catch-up"
+                    );
+                    self.emit(crate::sync_events::SyncEvent::Progress {
+                        state: crate::sync_events::sync_state_label(&self.state).to_string(),
                         remote_device_id: self.session.remote_device_id.clone(),
+                        ops_received: self.session.ops_received,
+                        ops_sent: self.session.ops_sent,
                     });
                     return Ok(Some(SyncMessage::ResetRequired {
-                        reason: "local engine missing own-authored ops claimed by remote".into(),
+                        reason: REASON.into(),
                     }));
                 }
 
@@ -1048,9 +1064,20 @@ impl SyncOrchestrator {
                                 );
                                 self.state = SyncState::ResetRequired;
                                 self.session.state = SyncState::ResetRequired;
-                                self.emit(crate::sync_events::SyncEvent::Error {
-                                    message: full_reason.clone(),
+                                // #4960: same side-exit as the
+                                // `check_reset_required` arm above.
+                                tracing::info!(
+                                    peer_id = %self.session.remote_device_id,
+                                    reason = %full_reason,
+                                    "requiring a reset; handing off to the \
+                                     snapshot catch-up"
+                                );
+                                self.emit(crate::sync_events::SyncEvent::Progress {
+                                    state: crate::sync_events::sync_state_label(&self.state)
+                                        .to_string(),
                                     remote_device_id: self.session.remote_device_id.clone(),
+                                    ops_received: self.session.ops_received,
+                                    ops_sent: self.session.ops_sent,
                                 });
                                 return Ok(Some(SyncMessage::ResetRequired {
                                     reason: full_reason,

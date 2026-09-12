@@ -4915,6 +4915,180 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     init_mat.shutdown();
 }
 
+/// #4960 second slice — the responder that has nothing to offer must stay
+/// silent, and the initiator must record the empty catch-up as a pull.
+///
+/// `feat6_end_to_end_compact_then_snapshot_catchup` above is the same flow with
+/// a responder that CAN export; this is the shape the issue reported. Device B
+/// lost its own-authored ops, so A's advertised version vector claims ops B's
+/// engine cannot produce, B answers `ResetRequired` — and B's engine registry
+/// is empty, so the catch-up it then offers carries nothing.
+///
+/// Two residues of #4979, one per side:
+///
+///   * B's user saw "Sync failed: local engine missing own-authored ops claimed
+///     by remote" on every session. #4979 silenced the initiator's *receipt* of
+///     `ResetRequired`; the arm that DECIDES one still emitted
+///     `SyncEvent::Error`, and emitted straight from the state machine it also
+///     bypassed `SyncScheduler::record_failure_and_take_report`'s repeat
+///     suppression, so the toast came back on every attempt.
+///   * A never stamped `peer_refs.synced_at` on the empty path, so
+///     `peers_due_for_resync` — which reads that column alone — found B due
+///     forever and A redialled every `RESYNC_TICK` while `record_success` kept
+///     clearing the backoff.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn empty_responder_reset_is_progress_and_stamps_synced_at_4960() {
+    const INIT_DEV: &str = "R4960_INIT";
+    const RESP_DEV: &str = "R4960_RESP";
+
+    // ── Responder: paired, but its engine registry is empty ───────────
+    // No `engine_apply` here, unlike feat6: an empty registry is what makes
+    // the catch-up terminate with `SyncComplete` and nothing merged.
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_recorder = Arc::new(RecordingEventSink::new());
+    let resp_sink: Arc<dyn SyncEventSink> = resp_recorder.clone();
+    peer_refs::upsert_peer_ref(&resp_pool, INIT_DEV)
+        .await
+        .unwrap();
+
+    // ── Initiator: empty DB, knows the responder ─────────────────────
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+    assert!(
+        peer_refs::get_peer_ref(&init_pool, RESP_DEV)
+            .await
+            .unwrap()
+            .expect("fixture: the initiator's row for the responder exists")
+            .synced_at
+            .is_none(),
+        "fixture: the initiator has never pulled from this peer, or the stamp \
+         assertion below cannot tell a fresh write from a pre-existing one"
+    );
+
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(&resp_pool, INIT_DEV, &client_key(&harness))
+        .await
+        .unwrap();
+    let server_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
+        resp_scheduler.clone(),
+        resp_sink.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut client = harness.dial().await;
+
+    // The own-lineage-loss claim: a version vector carrying five ops authored
+    // under the RESPONDER's own peer id, for a space its (empty) registry holds
+    // no local vv for. That is `check_reset_required`'s missing-local-space
+    // case, and it is what B's restored-from-an-older-backup engine looks like.
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ4960SPACEXXXXXXXXXXXXX");
+    let crafted_resp_vv = {
+        let mut craft =
+            agaric_engine::loro::engine::LoroEngine::with_peer_id(RESP_DEV).expect("craft engine");
+        for i in 0..5_i64 {
+            craft
+                .apply_create_block(&format!("01HZ4960CRAFT{i:013}"), "content", "x", None, i)
+                .expect("craft op");
+        }
+        craft.version_vector()
+    };
+    send_sync_message(
+        &mut client.send,
+        &SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: INIT_DEV.into(),
+                seq: 0,
+                hash: String::new(),
+            }],
+            loro_vvs: vec![crate::sync_protocol::types::SpaceVersionVector {
+                space_id: space.clone(),
+                vv: crafted_resp_vv,
+            }],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    match recv_sync_message(&mut client.recv).await.unwrap() {
+        SyncMessage::ResetRequired { reason } => assert!(
+            reason.contains("own-authored"),
+            "the wire reply must still carry the responder's diagnostic, got {reason:?}"
+        ),
+        other => panic!("expected ResetRequired, got {other:?}"),
+    }
+
+    let init_state = init_mat.loro_state();
+    crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
+        &mut client.send,
+        &mut client.recv,
+        &init_pool,
+        &init_mat,
+        &init_sink,
+        RESP_DEV,
+        None,
+        Some(crate::sync_daemon::snapshot_transfer::EngineReloadCtx {
+            registry: &init_state.registry,
+            device_id: INIT_DEV,
+        }),
+    )
+    .await
+    .expect("an empty catch-up is not a sync failure");
+
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_task).await;
+
+    // ── The responder's user is not told its sync failed ─────────────
+    let resp_events = resp_recorder.events();
+    let resp_errors: Vec<&SyncEvent> = resp_events
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Error { .. }))
+        .collect();
+    assert!(
+        resp_errors.is_empty(),
+        "#4960: the side that DECIDES the reset must not toast its own user — \
+         the catch-up it hands off to is what settles the session, got {resp_errors:?}"
+    );
+    assert!(
+        resp_events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "reset_required")),
+        "#4960: …and must still report the side-exit as progress, or the UI keeps \
+         the state it last saw, got {resp_events:?}"
+    );
+
+    // ── The initiator stops redialling ───────────────────────────────
+    let peer = peer_refs::get_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap()
+        .expect("the responder's row must survive the catch-up");
+    assert!(
+        peer.synced_at.is_some(),
+        "#4960: an empty catch-up is still a completed pull — `peers_due_for_resync` \
+         reads `synced_at` alone, so leaving it NULL keeps this peer permanently due"
+    );
+    assert_eq!(
+        peer.reset_count, 0,
+        "#2503: nothing was reset, so `reset_count` must not move"
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
 // ======================================================================
 // #602 — two devices with local edits must converge via normal sessions
 // ======================================================================

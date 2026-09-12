@@ -906,6 +906,92 @@ async fn orchestrator_handles_reset_required() {
     materializer.shutdown();
 }
 
+/// #4960: the other arm that DECIDES a reset — the receiver-side reachability
+/// gate — reports it the same way.
+///
+/// `apply_remote` answers `SnapshotFallbackRequested` for an Update whose
+/// `from_vv` our `oplog_vv()` cannot reach, and the orchestrator turns that into
+/// the `ResetRequired` reply plus the hand-off to the snapshot catch-up. An
+/// `Error` here toasted this device's user for a session the catch-up then
+/// settled, on every attempt: emitted from the state machine it never passed
+/// through `SyncScheduler::record_failure_and_take_report`, which is what
+/// suppresses a repeated cause.
+///
+/// The fixture is `apply_remote_update_with_unreachable_from_vv_requests_fallback`
+/// (`loro_sync_tests.rs`) driven one layer up, through `handle_message`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_reports_snapshot_fallback_as_progress_4960() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_engine::loro::engine::LoroEngine;
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_event_sink(Box::new(sink.clone()));
+    let _start = orch.start().await.unwrap();
+
+    // An Update whose `from_vv` claims ops from a peer this device has never
+    // heard of: the import is not attempted, and the gate answers with the
+    // fallback signal.
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ4960FALLBACKSPACEXXXXX");
+    let phantom = LoroEngine::with_peer_id("device-PHANTOM").expect("phantom engine");
+    let empty_vv = phantom.version_vector();
+    let phantom_vv = {
+        let mut ahead = LoroEngine::with_peer_id("device-PHANTOM").expect("phantom engine");
+        ahead
+            .apply_create_block("01HZ4960FALLBACKBLOCKXXXXX", "content", "x", None, 0)
+            .expect("phantom op");
+        ahead.version_vector()
+    };
+
+    let response = orch
+        .handle_message(SyncMessage::LoroSync {
+            msg: LoroSyncMessage::Update {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space,
+                from_vv: phantom_vv,
+                bytes: phantom
+                    .export_update_since(&empty_vv)
+                    .expect("phantom export"),
+            },
+            is_last: true,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(response, Some(SyncMessage::ResetRequired { .. })),
+        "the wire reply is unchanged — the peer is still asked for a catch-up, got {response:?}"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::ResetRequired,
+        "an unreachable from_vv must divert into the catch-up"
+    );
+
+    let events = sink.events();
+    assert!(
+        !events.iter().any(|e| matches!(e, SyncEvent::Error { .. })),
+        "#4960: deciding a reset must not emit a SyncEvent::Error, got {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "reset_required")),
+        "#4960: it must report the side-exit as Progress {{ state: \"reset_required\" }}, \
+         got {events:?}"
+    );
+
+    materializer.shutdown();
+}
+
 /// #705 / #2249: an incoming `LoroSync` payload that cannot be imported
 /// must FAIL the session (transition to `Failed`, return an error) rather
 /// than silently dropping the payload and proceeding to `SyncComplete` —
