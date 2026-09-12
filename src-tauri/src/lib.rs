@@ -1328,8 +1328,8 @@ fn surface_recovery_status<R: tauri::Runtime>(
     }
 }
 
-/// [`spawn_boot_cache_gating`]'s FTS check: schedule a rebuild when the index
-/// is empty but there is content to index (post-migration 0006).
+/// [`spawn_boot_cache_gating`]'s FTS check. An empty index with rows to index
+/// is the post-migration-0006 state, not a fresh install.
 async fn schedule_fts_rebuild_if_empty(
     write_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
@@ -1367,8 +1367,8 @@ async fn schedule_fts_rebuild_if_empty(
     }
 }
 
-/// [`spawn_boot_cache_gating`]'s `block_tag_refs` check: schedule a rebuild
-/// when the table is empty but there is content to scan.
+/// [`spawn_boot_cache_gating`]'s `block_tag_refs` check. An empty table with
+/// rows to scan is the post-migration state, not a fresh install.
 async fn schedule_block_tag_refs_rebuild_if_empty(
     write_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
@@ -1710,7 +1710,6 @@ fn projected_agenda_midnight_job(
 /// minimised window is exactly when a reminder is useful.
 fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance::MaintenanceJob {
     let reminders_pool = pools.write.clone();
-    let reminders_app = app;
     maintenance::MaintenanceJob {
         name: "reminders_tick",
         interval: std::time::Duration::from_secs(60),
@@ -1718,7 +1717,7 @@ fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance
         predicate: Box::new(|| true),
         run: Box::new(move || {
             let pool = reminders_pool.clone();
-            let app = reminders_app.clone();
+            let app = app.clone();
             Box::pin(async move {
                 let notify = move |notification: commands::notifier::TaskNotification| {
                     let app = app.clone();
@@ -1815,7 +1814,7 @@ fn spawn_background_tasks(
     // vector (wal_checkpoint_truncate, op_log_compact,
     // pragma_optimize_tick, cleanup_orphaned_attachments_tick,
     // fts_idle_optimize, tombstone_purge, loro_snapshot_if_dirty,
-    // projected_agenda_midnight). New jobs are added by extending
+    // projected_agenda_midnight, reminders_tick). New jobs are added by extending
     // this vector without re-wiring the daemon.
     //
     // `wal_checkpoint_truncate_job` illustrates the
