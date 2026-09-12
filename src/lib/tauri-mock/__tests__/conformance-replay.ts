@@ -36,12 +36,14 @@ import {
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
+  appSettings,
   attachments,
   blocks,
   blockTags,
   linkMetadata,
   makeBlock,
   opLog,
+  peerRefs,
   properties,
   propertyDefs,
   seedBlocks,
@@ -73,6 +75,19 @@ export interface Fixture {
      * the Rust twin inserts the same columns into the `link_metadata` table.
      */
     link_metadata?: Array<Record<string, unknown>>
+    /**
+     * #3830 — device-local `app_settings` rows, when the fixture pins
+     * `get_reminder_settings`. Copied verbatim into the mock's `appSettings`
+     * map; the Rust twin inserts the same `(key, value)` pairs into the
+     * `app_settings` table.
+     */
+    app_settings?: Array<Record<string, unknown>>
+    /**
+     * #3830 — peer registry rows, when the fixture pins `list_peer_refs`.
+     * Copied verbatim into the mock's `peerRefs` map; the Rust twin inserts
+     * the same thirteen columns into the `peer_refs` table.
+     */
+    peer_refs?: Array<Record<string, unknown>>
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -173,6 +188,26 @@ function loadSeedProperty(p: Record<string, unknown>): void {
   })
 }
 
+/**
+ * The thirteen `peer_refs` columns the Rust seed binds, in `list_peer_refs`'s
+ * SELECT order; every nullable one defaults to `null` when the fixture omits it.
+ */
+const PEER_REF_SEED_COLUMNS = [
+  'peer_id',
+  'last_hash',
+  'last_sent_hash',
+  'synced_at',
+  'streamed_at',
+  'reset_count',
+  'last_reset_at',
+  'cert_hash',
+  'device_name',
+  'remote_device_name',
+  'last_address',
+  'endpoint_id',
+  'unpaired_by_peer_at_ms',
+] as const
+
 /** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
 export function loadSeed(fixture: Fixture): void {
   for (const b of fixture.seed.blocks) {
@@ -226,6 +261,14 @@ export function loadSeed(fixture: Fixture): void {
       auth_required: m['auth_required'],
       not_found: m['not_found'],
     })
+  }
+  for (const s of fixture.seed.app_settings ?? []) {
+    appSettings.set(s['key'] as string, s['value'] as string)
+  }
+  for (const p of fixture.seed.peer_refs ?? []) {
+    const row: Record<string, unknown> = {}
+    for (const col of PEER_REF_SEED_COLUMNS) row[col] = p[col] ?? null
+    peerRefs.set(p['peer_id'] as string, row)
   }
   for (const p of fixture.seed.properties) {
     loadSeedProperty(p)

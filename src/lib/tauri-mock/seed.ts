@@ -75,6 +75,12 @@ export const linkMetadata = new Map<string, Record<string, unknown>>()
 // proof comparison to fail against.
 export const peerRefs = new Map<string, Record<string, unknown>>()
 
+// Device-local `app_settings` rows: key → value, both TEXT as in the table.
+// `get_reminder_settings` / `set_reminder_settings` read and write the two
+// `reminders.*` keys through it the way `reminders::get_settings` /
+// `set_settings` do (#3830).
+export const appSettings = new Map<string, string>()
+
 // #3469 (review) — the "how much longer until the pinned peer shows up"
 // counter that keeps `confirm_pairing` from materializing a peer
 // synchronously. Held here rather than as a module-local in
@@ -308,6 +314,7 @@ export function seedBlocks(): void {
   // `attachmentBytes` had the same pre-existing leak; cleared alongside.
   peerRefs.clear()
   pairingPeerReveal.readsRemaining = 0
+  appSettings.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0

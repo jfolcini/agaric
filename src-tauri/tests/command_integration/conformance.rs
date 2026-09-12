@@ -1200,6 +1200,58 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             .expect("seed link_metadata");
         }
     }
+    // Seed device-local `app_settings` rows (#3830), verbatim: the reminder
+    // reader (`reminders::get_settings`) reads `reminders.enabled` (`'1'` = on)
+    // and `reminders.time` as stored. `updated_at` is never projected, so it
+    // takes the clock. The TS twin's `loadSeed` copies the same `(key, value)`
+    // pairs into the mock's `appSettings` map.
+    if let Some(rows) = seed["app_settings"].as_array() {
+        for s in rows {
+            sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)")
+                .bind(s["key"].as_str().expect("seed app_settings key"))
+                .bind(s["value"].as_str().expect("seed app_settings value"))
+                .bind(agaric_store::db::now_ms())
+                .execute(&pool)
+                .await
+                .expect("seed app_settings");
+        }
+    }
+    // Seed peer registry rows (#3830), verbatim: every column `list_peer_refs`
+    // selects is fixture-authored (the three timestamps included, so they are
+    // comparable across the stacks); `loro_vv_bytes` is not selected and stays
+    // NULL. The TS twin's `loadSeed` copies the same thirteen columns into the
+    // mock's `peerRefs` map.
+    if let Some(rows) = seed["peer_refs"].as_array() {
+        for p in rows {
+            sqlx::query(
+                "INSERT INTO peer_refs \
+                 (peer_id, last_hash, last_sent_hash, synced_at, streamed_at, reset_count, \
+                  last_reset_at, cert_hash, device_name, remote_device_name, last_address, \
+                  endpoint_id, unpaired_by_peer_at_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(p["peer_id"].as_str().expect("seed peer_refs peer_id"))
+            .bind(p["last_hash"].as_str())
+            .bind(p["last_sent_hash"].as_str())
+            .bind(p["synced_at"].as_i64())
+            .bind(p["streamed_at"].as_i64())
+            .bind(
+                p["reset_count"]
+                    .as_i64()
+                    .expect("seed peer_refs reset_count"),
+            )
+            .bind(p["last_reset_at"].as_i64())
+            .bind(p["cert_hash"].as_str())
+            .bind(p["device_name"].as_str())
+            .bind(p["remote_device_name"].as_str())
+            .bind(p["last_address"].as_str())
+            .bind(p["endpoint_id"].as_str())
+            .bind(p["unpaired_by_peer_at_ms"].as_i64())
+            .execute(&pool)
+            .await
+            .expect("seed peer_refs");
+        }
+    }
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {

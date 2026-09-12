@@ -1,0 +1,111 @@
+{
+  "description": "#3830 — READ-command differential over `list_peer_refs`, waived as \"peer registry (device metadata) outside the conformance snapshot scope\" until a fixture could put the same rows on both stacks; `seed.peer_refs` is that, every column the command selects inserted verbatim into the backend `peer_refs` table and the mock's map (`loro_vv_bytes` is not selected and is not seeded). The seed exists to make ORDER discriminate: `peer_refs::list_peer_refs` is `ORDER BY synced_at DESC`, and SQLite sorts NULLs LAST under DESC, so the three rows are seeded in the REVERSE of that order — the never-synced peer first, then the older sync, then the newest — and the ordered comparison pins the sort rather than insertion order, which was one divergence this fixture found and fixed in the mock; the other was two columns (`endpoint_id`, `unpaired_by_peer_at_ms`) the mock's row never carried. The `synced_at` values are distinct on purpose: a tie's order is not something `ORDER BY` promises, so no step pins one. Every other nullable column is null on at least one row and set on at least one other, so a column dropped or mis-mapped on either stack reddens. Peer ids, hashes and names are short fixture labels; `endpoint_id` is 64 hex characters because migration 0107's CHECK demands it. The local device's own `peer_id = ''` sentinel row is not seeded: the command's WHERE hides it, and no mock path ever writes one. NOT pinned: `delete_peer_ref`, `update_peer_name`, `set_peer_address` (mutating peer commands, still waived).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Peers",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "peer_refs_synced_at_desc_nulls_last",
+      "rows": [
+        "peer-new#last_hash=hash-new#last_sent_hash=null#synced_at=2000#streamed_at=1500#reset_count=0#last_reset_at=null#cert_hash=null#device_name=null#remote_device_name=Phone#last_address=null#endpoint_id=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210#unpaired_by_peer_at_ms=null",
+        "peer-old#last_hash=hash-old#last_sent_hash=sent-old#synced_at=1000#streamed_at=null#reset_count=2#last_reset_at=900#cert_hash=cert-old#device_name=Laptop#remote_device_name=null#last_address=192.168.1.5:7001#endpoint_id=null#unpaired_by_peer_at_ms=null",
+        "peer-never#last_hash=null#last_sent_hash=null#synced_at=null#streamed_at=5000#reset_count=0#last_reset_at=null#cert_hash=null#device_name=null#remote_device_name=Tablet#last_address=null#endpoint_id=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#unpaired_by_peer_at_ms=7000"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "query_peer_refs",
+  "ops": [],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_peer_refs",
+      "comment": "`peer-new` (synced 2000), then `peer-old` (1000), then `peer-never` (`synced_at` null) — the reverse of the seed order. Insertion order, or an ascending sort, or NULLs-first, each redden. Every token carries all twelve non-id columns, so the two columns the mock's row lacked (`endpoint_id`, `unpaired_by_peer_at_ms`) and every null/non-null pairing are pinned too.",
+      "name": "peer_refs_synced_at_desc_nulls_last"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Peers",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "peer_refs": [
+      {
+        "cert_hash": null,
+        "device_name": null,
+        "endpoint_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "last_address": null,
+        "last_hash": null,
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-never",
+        "remote_device_name": "Tablet",
+        "reset_count": 0,
+        "streamed_at": 5000,
+        "synced_at": null,
+        "unpaired_by_peer_at_ms": 7000
+      },
+      {
+        "cert_hash": "cert-old",
+        "device_name": "Laptop",
+        "endpoint_id": null,
+        "last_address": "192.168.1.5:7001",
+        "last_hash": "hash-old",
+        "last_reset_at": 900,
+        "last_sent_hash": "sent-old",
+        "peer_id": "peer-old",
+        "remote_device_name": null,
+        "reset_count": 2,
+        "streamed_at": null,
+        "synced_at": 1000,
+        "unpaired_by_peer_at_ms": null
+      },
+      {
+        "cert_hash": null,
+        "device_name": null,
+        "endpoint_id": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "last_address": null,
+        "last_hash": "hash-new",
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-new",
+        "remote_device_name": "Phone",
+        "reset_count": 0,
+        "streamed_at": 1500,
+        "synced_at": 2000,
+        "unpaired_by_peer_at_ms": null
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

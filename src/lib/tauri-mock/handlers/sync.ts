@@ -97,6 +97,14 @@ const PAIRING_PEER_REVEAL_READS = 3
 // passphrase — there is no backend-side check left to model here. (The FE's
 // own "Pair disabled while any word is empty" is a pure client-side
 // affordance and never reaches this handler.)
+function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const sa = a['synced_at'] as number | null
+  const sb = b['synced_at'] as number | null
+  if (sa == null) return sb == null ? 0 : 1
+  if (sb == null) return -1
+  return sb - sa
+}
+
 export const syncHandlers = {
   list_peer_refs: () => {
     // #3469 (review) — a `confirm_pairing` arms a pending reveal; the peer
@@ -122,10 +130,15 @@ export const syncHandlers = {
           device_name: null,
           remote_device_name: 'Paired Device',
           last_address: null,
+          endpoint_id: null,
+          unpaired_by_peer_at_ms: null,
         })
       }
     }
-    return Array.from(peerRefs.values())
+    // `ORDER BY synced_at DESC`, and SQLite sorts NULLs last under DESC. The
+    // mock answered insertion order until `query_peer_refs.json` pinned the
+    // sort (#3830); `toSorted` is stable, so ties keep insertion order.
+    return Array.from(peerRefs.values()).toSorted(bySyncedAtDesc)
   },
   delete_peer_ref: (args) => {
     const a = args as Record<string, unknown>
