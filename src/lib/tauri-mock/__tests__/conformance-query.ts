@@ -273,6 +273,13 @@ type TokenSpec =
    * the `value` location's `<head>#value=<n>`.
    */
   | { readonly kind: 'headed'; readonly head: string; readonly attrKeys: readonly string[] }
+  /**
+   * #3830 — the row is a JSON ARRAY (a Rust tuple), so no key exists for `id`'s
+   * `idKey` to name: element 0 is the head and every later element an attribute
+   * under the name at the same index of `names`. MUST match `tuple_token` in
+   * the Rust twin, which zips the same array against the same names.
+   */
+  | { readonly kind: 'tuple'; readonly names: readonly string[] }
 
 interface WireShape {
   /** How the row array is located in the response. */
@@ -388,6 +395,11 @@ const REMINDER_SETTINGS_TOKEN = {
   head: 'reminder_settings',
   attrKeys: ['enabled', 'time'],
 } as const
+
+/** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
+const PAGE_ALIAS_HIT_TOKEN = { kind: 'tuple', names: ['page_id', 'title'] } as const
+/** `list_page_aliases_by_prefix`'s `(page_id, alias, title)` rows (#3830). */
+const PAGE_ALIAS_PREFIX_TOKEN = { kind: 'tuple', names: ['page_id', 'alias', 'title'] } as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -675,6 +687,33 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   list_peer_refs: {
     rows: { kind: 'bare-array' },
     token: PEER_REF_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
+  // ── Page aliases (#3830) ──
+  //
+  // Seeded on both stacks by a fixture's `seed.page_aliases` section, which is
+  // what lifted the "outside the snapshot scope" waiver on these three.
+  // `get_page_aliases` is `ORDER BY alias` under the column's NOCASE collation
+  // and `list_page_aliases_by_prefix` is `ORDER BY length(alias), alias`, so the
+  // ordered comparison pins both sorts rather than the mock's insertion order;
+  // the two joined readers answer tuples, projected by position.
+  get_page_aliases: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  resolve_page_by_alias: {
+    rows: { kind: 'bare-row' },
+    token: PAGE_ALIAS_HIT_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_page_aliases_by_prefix: {
+    rows: { kind: 'bare-array' },
+    token: PAGE_ALIAS_PREFIX_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
@@ -1179,6 +1218,15 @@ function rowToken(raw: unknown, spec: TokenSpec): string {
     }
     case 'headed': {
       return withAttrs(spec.head, row, spec.attrKeys)
+    }
+    case 'tuple': {
+      const cells = Array.isArray(raw) ? (raw as unknown[]) : []
+      let token = (cells[0] as string | undefined) ?? '<missing-id>'
+      for (const [i, name] of spec.names.entries()) {
+        if (i === 0) continue
+        token += `#${name}=${attrValue(name, cells[i])}`
+      }
+      return token
     }
   }
 }

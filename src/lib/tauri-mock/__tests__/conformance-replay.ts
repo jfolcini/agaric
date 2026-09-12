@@ -43,6 +43,7 @@ import {
   linkMetadata,
   makeBlock,
   opLog,
+  pageAliases,
   peerRefs,
   properties,
   propertyDefs,
@@ -88,6 +89,13 @@ export interface Fixture {
      * the same thirteen columns into the `peer_refs` table.
      */
     peer_refs?: Array<Record<string, unknown>>
+    /**
+     * #3830 — page-alias rows, when the fixture pins the three alias readers.
+     * `page_id` is a seed label; each `alias` is appended, in fixture order,
+     * to that page's list in the mock's `pageAliases` map; the Rust twin
+     * inserts the same `(page_id, alias)` pairs into the `page_aliases` table.
+     */
+    page_aliases?: Array<{ page_id: string; alias: string }>
   }
   ops: CommandOpStep[]
   expected: Record<string, unknown> | null
@@ -269,6 +277,10 @@ export function loadSeed(fixture: Fixture): void {
     const row: Record<string, unknown> = {}
     for (const col of PEER_REF_SEED_COLUMNS) row[col] = p[col] ?? null
     peerRefs.set(p['peer_id'] as string, row)
+  }
+  for (const r of fixture.seed.page_aliases ?? []) {
+    const pageId = seedLabelToId(r.page_id)
+    pageAliases.set(pageId, [...(pageAliases.get(pageId) ?? []), r.alias])
   }
   for (const p of fixture.seed.properties) {
     loadSeedProperty(p)

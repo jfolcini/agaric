@@ -1,0 +1,341 @@
+{
+  "description": "#3830 — READ-command differential over the three page-alias readers: `get_page_aliases`, `resolve_page_by_alias`, `list_page_aliases_by_prefix`. All three were waived as \"page-alias table outside the conformance snapshot scope\" until a fixture could put the same rows on both stacks; `seed.page_aliases` is that, each `(page_id, alias)` pair inserted verbatim into the backend `page_aliases` table and appended, in fixture order, to the mock's `pageAliases` map. The alias column is `COLLATE NOCASE`, and the seed is shaped to make that collation discriminate on every read: S1's aliases are seeded as `planning-notes`, `Roadmap`, `plan` so `get_page_aliases`'s `ORDER BY alias` answers `plan`, `planning-notes`, `Roadmap` — insertion order and a byte-order (uppercase-first) sort each redden; `Roadmap` is stored capitalized and queried as `roadmap` / `road`, and the substring steps query `Plan` against lowercase `plan` aliases, so a case-sensitive equality or `includes` reddens too. `list_page_aliases_by_prefix` is `ORDER BY length(alias), alias LIMIT ?`: the four live substring matches have lengths 4, 8, 8 and 14 with the two eights an alphabetical pair, so a mock sorting alphabetically first, or one that only matched a leading prefix (`Backplan` is a mid-string hit), differs; the `limit: 2` step pins the cap below the match count. The one op soft-deletes S3, whose alias `old-plan` would otherwise be the shortest-but-one match: `resolve` misses it and the listing skips it (`b.deleted_at IS NULL`), while `get_page_aliases` on the tombstone still lists it, because only a purge cascades alias rows. That tombstone is an OP rather than seed state because a seed block cannot carry `deleted_at`. The mock's divergences this fixture found and fixed: `get_page_aliases` answered insertion order; `resolve_page_by_alias` served a tombstoned page. NOT pinned: a foreign-space exclusion — every seed block is stamped into the one harness space and no fixture section can register a second, so the active-scope steps pin only that the in-space page passes the filter; `Global` is pinned on the same data. That is also why the same PR's move of both scoped readers off the retired `block_properties(key='space')` row onto `blocks.space_id` (#3081) is aligned by inspection, not by a step: the mock dual-writes both, so no fixture can tell them apart. Also not pinned: `set_page_aliases` (a writer, still waived) and the out-of-range `limit` refusal (`safeLimit` keeps callers inside the cap).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Planning",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Projects",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Old Plans",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Inbox",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "aliases_sorted_nocase",
+      "rows": ["plan", "planning-notes", "Roadmap"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "aliases_of_tombstoned_page_survive",
+      "rows": ["old-plan"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "aliases_of_page_with_none",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_case_folded_active",
+      "rows": ["B1#title=Planning"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_global_scope",
+      "rows": ["B1#title=Planning"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_tombstoned_page_misses",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_unknown_alias_misses",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_shortest_first_then_alpha",
+      "rows": [
+        "B1#alias=plan#title=Planning",
+        "B2#alias=Backplan#title=Projects",
+        "B2#alias=plan-two#title=Projects",
+        "B1#alias=planning-notes#title=Planning"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_limit_below_match_count",
+      "rows": ["B1#alias=plan#title=Planning", "B2#alias=Backplan#title=Projects"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_global_scope_case_folded",
+      "rows": ["B1#alias=Roadmap#title=Planning"],
+      "total_count": null
+    }
+  ],
+  "name": "query_page_aliases",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "pageId": "S1"
+      },
+      "command": "get_page_aliases",
+      "comment": "`plan`, `planning-notes`, `Roadmap`: `ORDER BY alias` under the column's NOCASE collation. The seed lists them as `planning-notes`, `Roadmap`, `plan`, so insertion order reddens; a byte-order sort puts the capital `Roadmap` first and reddens too.",
+      "name": "aliases_sorted_nocase"
+    },
+    {
+      "args": {
+        "pageId": "S3"
+      },
+      "command": "get_page_aliases",
+      "comment": "S3 is soft-deleted by the op, and its `old-plan` row is still there: `get_page_aliases` reads the table without joining `blocks`, and only a purge cascades alias rows. A mock that dropped aliases on soft delete answers nothing here.",
+      "name": "aliases_of_tombstoned_page_survive"
+    },
+    {
+      "args": {
+        "pageId": "S4"
+      },
+      "command": "get_page_aliases",
+      "comment": "S4 has no alias rows, so the answer is an empty list — not a refusal. Empty on purpose; non-vacuous because the two steps above serve rows through the same command.",
+      "expect_empty": true,
+      "name": "aliases_of_page_with_none"
+    },
+    {
+      "args": {
+        "alias": "roadmap",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "`roadmap` finds the alias stored as `Roadmap` (`COLLATE NOCASE`) and answers S1 with its title. Under the active scope, so the in-space page passes the `b.space_id` filter — a mock reading membership from somewhere the seed never wrote answers null.",
+      "name": "resolve_case_folded_active"
+    },
+    {
+      "args": {
+        "alias": "plan",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "`Global` applies no space filter and finds the same page through a different alias. Pinned on the same data as the active step because the seed cannot express a second space.",
+      "name": "resolve_global_scope"
+    },
+    {
+      "args": {
+        "alias": "old-plan",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "`old-plan` is still an alias row (the step two above proves it), but its page is tombstoned and `resolve` joins `blocks` with `b.deleted_at IS NULL`: a miss, answered `None`. The mock served the tombstone here, which is the divergence this step found.",
+      "expect_empty": true,
+      "name": "resolve_tombstoned_page_misses"
+    },
+    {
+      "args": {
+        "alias": "nothing",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "No page carries `nothing`: `None`, zero rows, not a refusal. The other negative next to the tombstone miss above; non-vacuous because the two hit steps serve rows through the same command.",
+      "expect_empty": true,
+      "name": "resolve_unknown_alias_misses"
+    },
+    {
+      "args": {
+        "prefix": "Plan",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "Substring, case-insensitive: capital `Plan` matches the lowercase `plan` aliases, and `Backplan` matches mid-string. `plan` (4), then the two eights alphabetically — `Backplan` before `plan-two` — then `planning-notes` (14): `ORDER BY length(alias), alias`. An alphabetical-first sort puts `Backplan` at the top and reddens; a prefix-only match drops `Backplan`. S3's `old-plan` (8) is absent: its page is tombstoned. `proj` and `Roadmap` do not match.",
+      "name": "prefix_shortest_first_then_alpha"
+    },
+    {
+      "args": {
+        "limit": 2,
+        "prefix": "Plan",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "The same four matches capped at two: `plan`, `Backplan` — the cap applies after the sort, so it is the two SHORTEST, not the first two seeded.",
+      "name": "prefix_limit_below_match_count"
+    },
+    {
+      "args": {
+        "prefix": "road",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "`road` matches the alias stored as `Roadmap` under `Global`: the LIKE is case-insensitive in the other direction too (lowercase query, capitalized row), and the unscoped branch answers the same rows the seed's one space holds.",
+      "name": "prefix_global_scope_case_folded"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Planning",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Projects",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Old Plans",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Inbox",
+        "id": "S4",
+        "parent_id": null,
+        "position": 4
+      }
+    ],
+    "page_aliases": [
+      {
+        "alias": "planning-notes",
+        "page_id": "S1"
+      },
+      {
+        "alias": "Roadmap",
+        "page_id": "S1"
+      },
+      {
+        "alias": "plan",
+        "page_id": "S1"
+      },
+      {
+        "alias": "proj",
+        "page_id": "S2"
+      },
+      {
+        "alias": "plan-two",
+        "page_id": "S2"
+      },
+      {
+        "alias": "Backplan",
+        "page_id": "S2"
+      },
+      {
+        "alias": "old-plan",
+        "page_id": "S3"
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

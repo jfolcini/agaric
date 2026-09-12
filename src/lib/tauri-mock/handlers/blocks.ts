@@ -642,8 +642,8 @@ export const blocksHandlers = {
     const position = row['position'] as number
     // Stamp the `space` ref property on new pages AND tags so the rest of the
     // scope-aware mock handlers that still read the legacy `space` property
-    // (`load_page_subtree`, trash, `count_backlinks_batch`,
-    // `resolve_page_by_alias`, etc.) treat the block as living in the active
+    // (`load_page_subtree`, trash, `count_backlinks_batch`, etc.) treat the
+    // block as living in the active
     // space — same invariant as `create_page_in_space`. #3081: tags are
     // dual-written here (property + the `blocks.space_id` column stamped above),
     // mirroring the seed tags, so a freshly-created tag's page loads via
