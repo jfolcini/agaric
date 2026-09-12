@@ -295,56 +295,15 @@ pub(super) async fn compacted_floor_above(
 /// replay walk).
 ///
 /// Returns `true` if it reset the cursor.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool, AppError> {
-    let cursor: i64 = sqlx::query_scalar!(
-        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
-    )
-    .fetch_one(pool)
-    .await?;
-    if cursor == 0 {
+    let Some(RewindPlan {
+        cursor,
+        max_seq,
+        reset_to,
+        snapshot_count,
+    }) = plan_cursor_rewind(pool).await?
+    else {
         return Ok(false);
-    }
-
-    // #2481: locally-authored ops only (see `read_apply_cursor`).
-    let max_seq: i64 = sqlx::query_scalar!(
-        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
-    )
-    .fetch_one(pool)
-    .await?
-    .unwrap_or(0);
-    if max_seq == 0 {
-        return Ok(false);
-    }
-
-    let snapshot_count: i64 =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
-            .fetch_one(pool)
-            .await?;
-
-    // How far back to rewind the cursor so replay catches every behind
-    // engine up to the materialised frontier.
-    let reset_to: i64 = if snapshot_count == 0 {
-        // No persisted snapshot at all — every engine boots empty; rebuild
-        // the whole op-log.
-        0
-    } else {
-        // Snapshots exist. Each reflects ops only up to its
-        // `applied_through_seq`; the most-stale one bounds what replay must
-        // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
-        // for that space, which is correct — and #3309 makes it genuinely
-        // one-time: the first `save_all_engines` pass after the rebuild
-        // advances that row even if its space is never touched again.
-        let min_watermark: i64 = sqlx::query_scalar!(
-            r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
-        )
-        .fetch_one(pool)
-        .await?;
-        if cursor <= min_watermark {
-            // Every snapshot already covers the cursor — nothing to heal.
-            return Ok(false);
-        }
-        min_watermark
     };
 
     // #619: compaction-floor check. `compact_op_log` purges ops below the
@@ -423,6 +382,75 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
     .execute(pool)
     .await?;
     Ok(true)
+}
+
+/// How far [`heal_orphaned_apply_cursor`] must rewind the apply cursor, and
+/// the readings that justify it. `None` when every snapshot already covers
+/// the cursor and there is nothing to heal.
+struct RewindPlan {
+    cursor: i64,
+    max_seq: i64,
+    reset_to: i64,
+    snapshot_count: i64,
+}
+
+async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, AppError> {
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    if cursor == 0 {
+        return Ok(None);
+    }
+
+    // #2481: locally-authored ops only (see `read_apply_cursor`).
+    let max_seq: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+    if max_seq == 0 {
+        return Ok(None);
+    }
+
+    let snapshot_count: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
+            .fetch_one(pool)
+            .await?;
+
+    // How far back to rewind the cursor so replay catches every behind
+    // engine up to the materialised frontier.
+    let reset_to: i64 = if snapshot_count == 0 {
+        // No persisted snapshot at all — every engine boots empty; rebuild
+        // the whole op-log.
+        0
+    } else {
+        // Snapshots exist. Each reflects ops only up to its
+        // `applied_through_seq`; the most-stale one bounds what replay must
+        // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
+        // for that space, which is correct — and #3309 makes it genuinely
+        // one-time: the first `save_all_engines` pass after the rebuild
+        // advances that row even if its space is never touched again.
+        let min_watermark: i64 = sqlx::query_scalar!(
+            r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+        )
+        .fetch_one(pool)
+        .await?;
+        if cursor <= min_watermark {
+            // Every snapshot already covers the cursor — nothing to heal.
+            return Ok(None);
+        }
+        min_watermark
+    };
+
+    Ok(Some(RewindPlan {
+        cursor,
+        max_seq,
+        reset_to,
+        snapshot_count,
+    }))
 }
 
 /// Re-enqueue the background fan-out for every op boot replay just applied,
@@ -507,13 +535,121 @@ async fn fan_out_replayed_ops(
 ///
 /// No-op when the op log has no rows past the cursor.
 #[tracing::instrument(skip_all, err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_unmaterialized_ops(
     pool: &SqlitePool,
     materializer: &Materializer,
 ) -> Result<ReplayReport, AppError> {
     let cursor = read_apply_cursor(pool).await?;
+    ensure_single_device_op_log(pool).await?;
 
+    // Count first so we can log the size before kicking off the walk.
+    // The reader pool would be marginally cheaper but the writer pool
+    // is the one we own at boot — see fn-level docs.
+    let total: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE is_replicated = 0 AND seq > ?"#,
+        cursor,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if total == 0 {
+        tracing::debug!(cursor, "replay: no unmaterialized ops");
+        return Ok(ReplayReport::default());
+    }
+
+    tracing::info!(
+        cursor,
+        ops_to_replay = total,
+        "replay: enqueuing unmaterialized ops on foreground queue"
+    );
+
+    let mut report = ReplayReport::default();
+
+    // #2295 — the per-space Loro engine state the apply pipeline mutates.
+    // Boot replay drives every op through `apply_op_tx(chunk = None)`, so each
+    // replayed create/move would reproject its whole sibling group INLINE
+    // (O(N²) across a recovery boot). Instead we SUPPRESS the inline
+    // reprojection for the duration of the replay window and reproject each
+    // touched parent ONCE, below, from the engine's FINAL state.
+    let state = materializer.loro_state();
+
+    // #2896 — the EXPLICIT reprojection-deferral sink. This replaces the retired
+    // ambient boot-replay suppression global on `LoroState` + its comment-enforced
+    // quiescence invariant: instead of flipping a process-wide flag, we OWN this
+    // sink here and thread a clone into every op we enqueue (via
+    // `MaterializeTask::ReplayApplyOp`), so each replayed create/move records its
+    // touched `(space_id, parent)` group HERE instead of reprojecting inline.
+    // Any op NOT dispatched by this driver (a concurrent live/remote op) carries
+    // no sink and reprojects inline by construction — it can never inherit this
+    // suppression. Nothing needs to be cleared on the error path: an aborted
+    // replay simply drops the sink, and the next boot re-replays (the apply
+    // cursor only advances on successful apply).
+    let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
+
+    let (last_seen, replay_device_id) =
+        enqueue_ops_for_replay(pool, materializer, cursor, &dirty, &mut report).await?;
+
+    // Drain the foreground queue via a Barrier so the caller observes
+    // a fully-applied state on return. Without this, recover_at_boot's
+    // step 2 (drafts) could enqueue synthetic edit_block ops that
+    // interleave with the replayed real ops.
+    materializer.flush_foreground().await?;
+
+    // #2295/#2896 — every replayed op has now applied, so the per-space engines
+    // hold FINAL state. Drain the replay-owned sink and reproject each touched
+    // `(space_id, parent)` group ONCE from that final sibling order. No flag to
+    // clear: the sink is local to this driver, so any op that applied without it
+    // (there should be none during boot, but a concurrent applier is now
+    // harmless by construction) already reprojected inline.
+    let dirty = dirty.drain();
+    let mut parents_reprojected = 0usize;
+    if let Some(device_id) = replay_device_id.as_deref() {
+        let orderings = read_final_child_orderings(state, device_id, &dirty, &mut report);
+        parents_reprojected = reproject_orderings(pool, &orderings, &mut report).await;
+    }
+
+    tracing::debug!(
+        parents_reprojected,
+        "replay: batched end-of-replay reproject complete (#2295)"
+    );
+
+    // #3298 — re-derive the per-block indexes the replayed ops invalidated.
+    // AFTER the barrier and the reproject: a background task must see committed
+    // `blocks` rows and final `position` ranks, the same ordering `dispatch_op`
+    // documents.
+    // Recorded, not `?`-propagated: this runs after every op applied and the
+    // cursor advanced, so a read failure here is stale indexes, not an aborted
+    // replay. `?` would reach `recover_at_boot` and surface `ops_replayed: 0`
+    // plus the user-visible replay-failed banner for a replay that succeeded.
+    // The [`REPROJECT_DEGRADED_PREFIX`] marker is what keeps it a diagnostic
+    // (#3311), the same treatment the dense reproject above gives its errors.
+    match fan_out_replayed_ops(pool, materializer, cursor, last_seen).await {
+        Ok(fanned_out) => tracing::debug!(
+            fanned_out,
+            "replay: re-derived per-block index tasks for the replayed ops (#3298)"
+        ),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "replay: could not walk the replayed range to re-derive its per-block \
+                 indexes — they stay stale until each block is next edited (#3298)"
+            );
+            report
+                .replay_errors
+                .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}"));
+        }
+    }
+
+    tracing::info!(
+        ops_replayed = report.ops_replayed,
+        replay_errors = report.replay_errors.len(),
+        "replay: complete"
+    );
+
+    Ok(report)
+}
+
+async fn ensure_single_device_op_log(pool: &SqlitePool) -> Result<(), AppError> {
     // #412: the apply cursor is a SINGLE GLOBAL scalar, but `op_log.seq` is a
     // PER-DEVICE counter (PK `(device_id, seq)`). The `WHERE seq > cursor` walk
     // below is only sound when the entire op_log belongs to ONE device — with
@@ -551,52 +687,23 @@ pub async fn replay_unmaterialized_ops(
              required before multi-device replay (backend audit #412)"
         )));
     }
+    Ok(())
+}
 
-    // Count first so we can log the size before kicking off the walk.
-    // The reader pool would be marginally cheaper but the writer pool
-    // is the one we own at boot — see fn-level docs.
-    let total: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE is_replicated = 0 AND seq > ?"#,
-        cursor,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if total == 0 {
-        tracing::debug!(cursor, "replay: no unmaterialized ops");
-        return Ok(ReplayReport::default());
-    }
-
-    tracing::info!(
-        cursor,
-        ops_to_replay = total,
-        "replay: enqueuing unmaterialized ops on foreground queue"
-    );
-
-    let mut report = ReplayReport::default();
+/// Enqueue every locally-authored op past `cursor` as a `ReplayApplyOp`,
+/// carrying `dirty` so each replayed create/move defers its inline
+/// reprojection to the single end-of-replay pass.
+///
+/// Returns the highest seq the walk reached and the device id the
+/// end-of-replay reproject needs to reach the per-space engine.
+async fn enqueue_ops_for_replay(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    cursor: i64,
+    dirty: &agaric_engine::apply::kernel::ReplayDirtyParents,
+    report: &mut ReplayReport,
+) -> Result<(i64, Option<String>), AppError> {
     let mut last_seen: i64 = cursor;
-
-    // #2295 — the per-space Loro engine state the apply pipeline mutates.
-    // Boot replay drives every op through `apply_op_tx(chunk = None)`, so each
-    // replayed create/move would reproject its whole sibling group INLINE
-    // (O(N²) across a recovery boot). Instead we SUPPRESS the inline
-    // reprojection for the duration of the replay window and reproject each
-    // touched parent ONCE, below, from the engine's FINAL state.
-    let state = materializer.loro_state();
-
-    // #2896 — the EXPLICIT reprojection-deferral sink. This replaces the retired
-    // ambient boot-replay suppression global on `LoroState` + its comment-enforced
-    // quiescence invariant: instead of flipping a process-wide flag, we OWN this
-    // sink here and thread a clone into every op we enqueue (via
-    // `MaterializeTask::ReplayApplyOp`), so each replayed create/move records its
-    // touched `(space_id, parent)` group HERE instead of reprojecting inline.
-    // Any op NOT dispatched by this driver (a concurrent live/remote op) carries
-    // no sink and reprojects inline by construction — it can never inherit this
-    // suppression. Nothing needs to be cleared on the error path: an aborted
-    // replay simply drops the sink, and the next boot re-replays (the apply
-    // cursor only advances on successful apply).
-    let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
-
     // #2295 — remember the (single, per the #412 guard above) device id so we
     // can acquire the right per-space engine for the end-of-replay reproject.
     let mut replay_device_id: Option<String> = None;
@@ -653,162 +760,128 @@ pub async fn replay_unmaterialized_ops(
         }
     }
 
-    // Drain the foreground queue via a Barrier so the caller observes
-    // a fully-applied state on return. Without this, recover_at_boot's
-    // step 2 (drafts) could enqueue synthetic edit_block ops that
-    // interleave with the replayed real ops.
-    materializer.flush_foreground().await?;
+    Ok((last_seen, replay_device_id))
+}
 
-    // #2295/#2896 — every replayed op has now applied, so the per-space engines
-    // hold FINAL state. Drain the replay-owned sink and reproject each touched
-    // `(space_id, parent)` group ONCE from that final sibling order. No flag to
-    // clear: the sink is local to this driver, so any op that applied without it
-    // (there should be none during boot, but a concurrent applier is now
-    // harmless by construction) already reprojected inline.
-    let dirty = dirty.drain();
-    let mut parents_reprojected = 0usize;
-    if let Some(device_id) = replay_device_id.as_deref() {
-        use agaric_store::space::SpaceId;
+/// #2541: per-group failures are LOGGED + RECORDED, never propagated.
+/// The dirty set is already drained and the apply cursor has already
+/// advanced past every replayed op, so a `?` here was unretryable —
+/// one poisoned group aborted the dense reproject for every REMAINING
+/// group (their SQL `position` ranks stayed stale with no later pass
+/// to heal them; no background task rebuilds positions — RebuildPageIds
+/// covers `page_id` only). Instead, each group is attempted
+/// independently and failures land in `report.replay_errors` with the
+/// [`REPROJECT_DEGRADED_PREFIX`] prefix. #3311: that prefix is what
+/// `RecoveryReport::replay_failed` filters on, so a degraded
+/// reprojection no longer raises the user-visible "replay failed"
+/// signal reserved for an aborted replay — it stays a diagnostic.
+fn record_group_error(
+    errors: &mut Vec<String>,
+    space_id: &str,
+    parent: Option<&str>,
+    stage: &str,
+    e: &AppError,
+) {
+    tracing::error!(
+        space_id,
+        parent = parent.unwrap_or("<root>"),
+        stage,
+        error = %e,
+        "replay: end-of-replay dense reproject failed for one sibling \
+         group — continuing with the remaining groups (#2541); this \
+         group's SQL positions stay stale until its next move/create"
+    );
+    // #3311: the prefix is the STRUCTURAL marker `replay_failed()`
+    // filters on — it must stay in lockstep with the constant.
+    errors.push(format!(
+        "{REPROJECT_DEGRADED_PREFIX}{space_id}/{}, {stage}): {e}",
+        parent.unwrap_or("<root>")
+    ));
+}
 
-        // #2541: per-group failures are LOGGED + RECORDED, never propagated.
-        // The dirty set is already drained and the apply cursor has already
-        // advanced past every replayed op, so a `?` here was unretryable —
-        // one poisoned group aborted the dense reproject for every REMAINING
-        // group (their SQL `position` ranks stayed stale with no later pass
-        // to heal them; no background task rebuilds positions — RebuildPageIds
-        // covers `page_id` only). Instead, each group is attempted
-        // independently and failures land in `report.replay_errors` with the
-        // [`REPROJECT_DEGRADED_PREFIX`] prefix. #3311: that prefix is what
-        // `RecoveryReport::replay_failed` filters on, so a degraded
-        // reprojection no longer raises the user-visible "replay failed"
-        // signal reserved for an aborted replay — it stays a diagnostic.
-        let record_group_error = |errors: &mut Vec<String>,
-                                  space_id: &str,
-                                  parent: Option<&str>,
-                                  stage: &str,
-                                  e: &AppError| {
-            tracing::error!(
+/// Read each dirty group's FINAL ordered child ids from its per-space
+/// engine.
+///
+/// Synchronous on purpose: the per-space `EngineGuard` is `!Send` and must
+/// not be held across an `.await`, so every guard is taken and dropped here,
+/// before [`reproject_orderings`] runs the async writes.
+fn read_final_child_orderings<'a>(
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    dirty: &'a [(String, Option<String>)],
+    report: &mut ReplayReport,
+) -> Vec<(&'a String, &'a Option<String>, Vec<String>)> {
+    use agaric_store::space::SpaceId;
+
+    let mut orderings: Vec<(&String, &Option<String>, Vec<String>)> =
+        Vec::with_capacity(dirty.len());
+    for (space_id, parent) in dirty {
+        let space = SpaceId::from_trusted(space_id);
+        // `for_space` lazily creates an engine for an absent space; a fresh
+        // engine has no such parent node, so `children_ordered_block_ids`
+        // returns empty and the reproject below is a no-op — the
+        // "skip absent space/engine" behaviour, without a special case.
+        let read: Result<Vec<String>, AppError> = (|| {
+            let mut guard = state.registry.for_space(&space, device_id)?;
+            guard
+                .engine_mut()
+                .children_ordered_block_ids(parent.as_deref())
+        })();
+        match read {
+            Ok(ordered) => orderings.push((space_id, parent, ordered)),
+            Err(e) => record_group_error(
+                &mut report.replay_errors,
                 space_id,
-                parent = parent.unwrap_or("<root>"),
-                stage,
-                error = %e,
-                "replay: end-of-replay dense reproject failed for one sibling \
-                 group — continuing with the remaining groups (#2541); this \
-                 group's SQL positions stay stale until its next move/create"
-            );
-            // #3311: the prefix is the STRUCTURAL marker `replay_failed()`
-            // filters on — it must stay in lockstep with the constant.
-            errors.push(format!(
-                "{REPROJECT_DEGRADED_PREFIX}{space_id}/{}, {stage}): {e}",
-                parent.unwrap_or("<root>")
-            ));
-        };
-
-        // Do ALL engine reads first (the per-space `EngineGuard` is `!Send` and
-        // must not be held across an `.await`): for each dirty group, take the
-        // guard, read the final ordered child ids, drop the guard. Collect the
-        // orderings, THEN run the async reproject loop with no guard held.
-        let mut orderings: Vec<(&String, &Option<String>, Vec<String>)> =
-            Vec::with_capacity(dirty.len());
-        for (space_id, parent) in &dirty {
-            let space = SpaceId::from_trusted(space_id);
-            // `for_space` lazily creates an engine for an absent space; a fresh
-            // engine has no such parent node, so `children_ordered_block_ids`
-            // returns empty and the reproject below is a no-op — the
-            // "skip absent space/engine" behaviour, without a special case.
-            let read: Result<Vec<String>, AppError> = (|| {
-                let mut guard = state.registry.for_space(&space, device_id)?;
-                guard
-                    .engine_mut()
-                    .children_ordered_block_ids(parent.as_deref())
-            })();
-            match read {
-                Ok(ordered) => orderings.push((space_id, parent, ordered)),
-                Err(e) => record_group_error(
-                    &mut report.replay_errors,
-                    space_id,
-                    parent.as_deref(),
-                    "engine read",
-                    &e,
-                ),
-            }
+                parent.as_deref(),
+                "engine read",
+                &e,
+            ),
         }
+    }
+    orderings
+}
 
-        match pool.acquire().await {
-            Ok(mut conn) => {
-                for (space_id, parent, ordered) in &orderings {
-                    match agaric_engine::loro::projection::reproject_dense_positions(
-                        &mut conn, ordered,
-                    )
+/// Write each group's dense `position` ranks from the orderings already read
+/// out of the engines. Returns how many groups were reprojected.
+async fn reproject_orderings(
+    pool: &SqlitePool,
+    orderings: &[(&String, &Option<String>, Vec<String>)],
+    report: &mut ReplayReport,
+) -> usize {
+    let mut parents_reprojected = 0usize;
+    match pool.acquire().await {
+        Ok(mut conn) => {
+            for (space_id, parent, ordered) in orderings {
+                match agaric_engine::loro::projection::reproject_dense_positions(&mut conn, ordered)
                     .await
-                    {
-                        Ok(()) => parents_reprojected += 1,
-                        Err(e) => record_group_error(
-                            &mut report.replay_errors,
-                            space_id,
-                            parent.as_deref(),
-                            "sql reproject",
-                            &e,
-                        ),
-                    }
-                }
-            }
-            Err(e) => {
-                // No connection at all — every group is degraded, but the
-                // replay itself (ops applied, cursor advanced) still stands.
-                let e = AppError::from(e);
-                for (space_id, parent, _) in &orderings {
-                    record_group_error(
+                {
+                    Ok(()) => parents_reprojected += 1,
+                    Err(e) => record_group_error(
                         &mut report.replay_errors,
                         space_id,
                         parent.as_deref(),
-                        "acquire conn",
+                        "sql reproject",
                         &e,
-                    );
+                    ),
                 }
             }
         }
-    }
-
-    tracing::debug!(
-        parents_reprojected,
-        "replay: batched end-of-replay reproject complete (#2295)"
-    );
-
-    // #3298 — re-derive the per-block indexes the replayed ops invalidated.
-    // AFTER the barrier and the reproject: a background task must see committed
-    // `blocks` rows and final `position` ranks, the same ordering `dispatch_op`
-    // documents.
-    // Recorded, not `?`-propagated: this runs after every op applied and the
-    // cursor advanced, so a read failure here is stale indexes, not an aborted
-    // replay. `?` would reach `recover_at_boot` and surface `ops_replayed: 0`
-    // plus the user-visible replay-failed banner for a replay that succeeded.
-    // The [`REPROJECT_DEGRADED_PREFIX`] marker is what keeps it a diagnostic
-    // (#3311), the same treatment the dense reproject above gives its errors.
-    match fan_out_replayed_ops(pool, materializer, cursor, last_seen).await {
-        Ok(fanned_out) => tracing::debug!(
-            fanned_out,
-            "replay: re-derived per-block index tasks for the replayed ops (#3298)"
-        ),
         Err(e) => {
-            tracing::error!(
-                error = %e,
-                "replay: could not walk the replayed range to re-derive its per-block \
-                 indexes — they stay stale until each block is next edited (#3298)"
-            );
-            report
-                .replay_errors
-                .push(format!("{REPROJECT_DEGRADED_PREFIX}#3298 fan-out): {e}"));
+            // No connection at all — every group is degraded, but the
+            // replay itself (ops applied, cursor advanced) still stands.
+            let e = AppError::from(e);
+            for (space_id, parent, _) in orderings {
+                record_group_error(
+                    &mut report.replay_errors,
+                    space_id,
+                    parent.as_deref(),
+                    "acquire conn",
+                    &e,
+                );
+            }
         }
     }
-
-    tracing::info!(
-        ops_replayed = report.ops_replayed,
-        replay_errors = report.replay_errors.len(),
-        "replay: complete"
-    );
-
-    Ok(report)
+    parents_reprojected
 }
 
 #[cfg(test)]

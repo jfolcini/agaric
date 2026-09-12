@@ -14,6 +14,7 @@
 //! before the crash — or replaying the same slot across two boots — is safe.
 
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 
 use agaric_core::error::AppError;
 use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -94,25 +95,13 @@ use agaric_engine::materializer::Materializer;
 /// the condition is visible in logs rather than silent.
 ///
 /// Returns the number of slots successfully replayed (and thereby cleared).
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_sync_inbox(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<u64, AppError> {
-    use crate::recovery::replay::REPLAY_CHUNK_SIZE;
-    use std::collections::HashSet;
-
-    let mut replayed: u64 = 0;
-    // #3226: slots moved to durable quarantine during this walk.
-    let mut quarantined: u64 = 0;
-    let mut errors: Vec<String> = Vec::new();
-    // #2541: accumulate the per-row changed / tombstone-purged block ids so
-    // the inbound cache/FTS fan-out fires exactly once after the walk (sets:
-    // the same block can recur across slots; the fan-out is per-id).
-    let mut changed_all: HashSet<agaric_core::ulid::BlockId> = HashSet::new();
-    let mut purged_all: HashSet<agaric_core::ulid::BlockId> = HashSet::new();
+    let mut tally = InboxReplayTally::default();
     // FIFO by the AUTOINCREMENT id (authoritative insert order). Start below
     // the smallest possible id (1) so the first chunk includes every row.
     let mut last_seen: i64 = 0;
@@ -121,135 +110,20 @@ pub async fn replay_sync_inbox(
     // raw blobs are resident at once (#1574). Re-read by `id > last_seen`
     // each iteration — stateless across chunks, exactly like the op-log walk.
     loop {
-        let rows = sqlx::query!(
-            "SELECT id, space_id, bytes, purged_ids FROM loro_sync_inbox \
-             WHERE id > ? ORDER BY id ASC LIMIT ?",
-            last_seen,
-            REPLAY_CHUNK_SIZE,
-        )
-        .fetch_all(pool)
-        .await?;
-
-        if rows.is_empty() {
+        let groups = next_chunk_grouped_by_space(pool, &mut last_seen).await?;
+        if groups.is_empty() {
             break;
         }
-
-        // #3164: rows of the SAME space are replayed as ONE batch (one
-        // `import_batch`, one union projection, one tx). Group in first-seen
-        // space order, preserving id order inside each group — the batch gate
-        // walks a group's blobs in that order against a cumulative version
-        // base, so a single peer's linear dep chain still passes.
-        let mut groups: Vec<(String, Vec<crate::sync_protocol::loro_sync::InboxSlot>)> = Vec::new();
-
-        for row in rows {
-            // Advance the cursor past this row BEFORE attempting it so a
-            // poison slot (left in place on error) can never be re-fetched
-            // into the next chunk — see fn docs.
-            last_seen = last_seen.max(row.id);
-
-            // #1574: surface a purged/unregistered target space. This does
-            // NOT block the replay — `import_and_project` tolerates it (the
-            // blocks land with a NULL `space_id`); we only log so the
-            // condition is observable rather than silent.
-            let space_exists: Option<i64> = sqlx::query_scalar!(
-                r#"SELECT 1 as "exists!: i64" FROM spaces WHERE id = ?"#,
-                row.space_id,
-            )
-            .fetch_optional(pool)
-            .await?;
-            if space_exists.is_none() {
-                tracing::warn!(
-                    inbox_id = row.id,
-                    space_id = %row.space_id,
-                    "#1574: sync-inbox slot targets a purged/unregistered space — \
-                     replaying anyway; projected blocks will land space-less (NULL \
-                     space_id) until the space block re-syncs"
-                );
-            }
-
-            // #2292: decode this row's durable purged-id tombstone (a JSON
-            // array written by the crashed apply BEFORE its projection tx).
-            // NULL → no purge delta → empty set. A malformed tombstone must
-            // NOT wedge boot: log + fall back to empty (the pre-#2292 additive
-            // behaviour), never propagate the parse error out of the walk.
-            let tombstone_purged: Vec<agaric_core::ulid::BlockId> = match row.purged_ids.as_deref()
-            {
-                None => Vec::new(),
-                Some(json) => match serde_json::from_str(json) {
-                    Ok(ids) => ids,
-                    Err(e) => {
-                        tracing::warn!(
-                            inbox_id = row.id,
-                            space_id = %row.space_id,
-                            error = %e,
-                            "#2292: sync-inbox slot has an unparseable purged_ids \
-                             tombstone — re-sweeping nothing from it (additive \
-                             fallback still applies)"
-                        );
-                        Vec::new()
-                    }
-                },
-            };
-
-            let slot = crate::sync_protocol::loro_sync::InboxSlot {
-                id: row.id,
-                bytes: row.bytes,
-                tombstone_purged,
-            };
-            match groups.iter_mut().find(|(s, _)| *s == row.space_id) {
-                Some((_, slots)) => slots.push(slot),
-                None => groups.push((row.space_id, vec![slot])),
-            }
-        }
-
-        // Replay each space's slots as one batch. A batch is all-or-nothing at
-        // the SQL layer (projection + slot deletes share a tx), and falls back
-        // to a per-slot walk internally if the batched engine import fails —
-        // so a single poison blob still cannot strand its space's other slots
-        // (#3164; #535 unchanged: a slot is cleared iff its projection landed).
-        for (space_id, slots) in groups {
-            let slot_count = slots.len();
-            match crate::sync_protocol::loro_sync::replay_inbox_batch(
-                pool, registry, device_id, &space_id, slots,
-            )
-            .await
-            {
-                Ok(outcome) => {
-                    replayed += outcome.replayed;
-                    // #3226: slots this batch moved to `loro_sync_quarantine`.
-                    // Counted separately from `replayed` (nothing was projected)
-                    // and from `errors` (they are no longer retried). The boot
-                    // report gets the authoritative figure from the quarantine
-                    // census in `boot.rs`; this is the per-space log line.
-                    quarantined += outcome.quarantined;
-                    changed_all.extend(outcome.changed);
-                    purged_all.extend(outcome.purged);
-                    for err in &outcome.errors {
-                        tracing::error!(
-                            space_id = %space_id,
-                            error = %err,
-                            "sync-inbox replay failed for a slot — leaving it for a later boot"
-                        );
-                    }
-                    errors.extend(outcome.errors);
-                }
-                Err(e) => {
-                    // Infra-level failure (e.g. the pool went away) — the
-                    // batch cleared nothing, so every one of its slots stays
-                    // for a later boot. Log + continue with the next space,
-                    // exactly as the per-row walk did on a row error.
-                    tracing::error!(
-                        space_id = %space_id,
-                        slots = slot_count,
-                        error = %e,
-                        "sync-inbox batch replay failed — leaving the batch's slots \
-                         for a later boot"
-                    );
-                    errors.push(format!("space {space_id} ({slot_count} slots): {e}"));
-                }
-            }
-        }
+        replay_space_batches(pool, registry, device_id, groups, &mut tally).await;
     }
+
+    let InboxReplayTally {
+        replayed,
+        quarantined,
+        errors,
+        changed_all,
+        purged_all,
+    } = tally;
 
     // #2541: fire the inbound cache/FTS fan-out ONCE for everything the walk
     // imported — the exact rebuild set the live path enqueues after each
@@ -283,6 +157,180 @@ pub async fn replay_sync_inbox(
     }
 
     Ok(replayed)
+}
+
+/// What one boot's sync-inbox walk accumulated across every space batch.
+#[derive(Default)]
+struct InboxReplayTally {
+    /// Slots whose projection committed (and which are therefore cleared).
+    replayed: u64,
+    /// #3226: slots moved to durable quarantine during this walk.
+    quarantined: u64,
+    errors: Vec<String>,
+    /// #2541: the per-row changed / tombstone-purged block ids, so the inbound
+    /// cache/FTS fan-out fires exactly once after the walk (sets: the same
+    /// block can recur across slots; the fan-out is per-id).
+    changed_all: HashSet<agaric_core::ulid::BlockId>,
+    purged_all: HashSet<agaric_core::ulid::BlockId>,
+}
+
+/// The next bounded chunk of inbox rows, grouped so each space's slots replay
+/// as one batch (#3164). Empty means the walk is done.
+///
+/// `last_seen` advances over the WHOLE chunk before any of it is replayed —
+/// the monotonic-walk guarantee [`replay_sync_inbox`] documents.
+async fn next_chunk_grouped_by_space(
+    pool: &SqlitePool,
+    last_seen: &mut i64,
+) -> Result<Vec<(String, Vec<crate::sync_protocol::loro_sync::InboxSlot>)>, AppError> {
+    use crate::recovery::replay::REPLAY_CHUNK_SIZE;
+
+    let rows = sqlx::query!(
+        "SELECT id, space_id, bytes, purged_ids FROM loro_sync_inbox \
+         WHERE id > ? ORDER BY id ASC LIMIT ?",
+        *last_seen,
+        REPLAY_CHUNK_SIZE,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // #3164: rows of the SAME space are replayed as ONE batch (one
+    // `import_batch`, one union projection, one tx). Group in first-seen
+    // space order, preserving id order inside each group — the batch gate
+    // walks a group's blobs in that order against a cumulative version
+    // base, so a single peer's linear dep chain still passes.
+    let mut groups: Vec<(String, Vec<crate::sync_protocol::loro_sync::InboxSlot>)> = Vec::new();
+
+    for row in rows {
+        // Advance the cursor past this row BEFORE attempting it so a
+        // poison slot (left in place on error) can never be re-fetched
+        // into the next chunk — see fn docs.
+        *last_seen = (*last_seen).max(row.id);
+
+        // #1574: surface a purged/unregistered target space. This does
+        // NOT block the replay — `import_and_project` tolerates it (the
+        // blocks land with a NULL `space_id`); we only log so the
+        // condition is observable rather than silent.
+        let space_exists: Option<i64> = sqlx::query_scalar!(
+            r#"SELECT 1 as "exists!: i64" FROM spaces WHERE id = ?"#,
+            row.space_id,
+        )
+        .fetch_optional(pool)
+        .await?;
+        if space_exists.is_none() {
+            tracing::warn!(
+                inbox_id = row.id,
+                space_id = %row.space_id,
+                "#1574: sync-inbox slot targets a purged/unregistered space — \
+                 replaying anyway; projected blocks will land space-less (NULL \
+                 space_id) until the space block re-syncs"
+            );
+        }
+
+        let tombstone_purged =
+            decode_purged_tombstone(row.id, &row.space_id, row.purged_ids.as_deref());
+
+        let slot = crate::sync_protocol::loro_sync::InboxSlot {
+            id: row.id,
+            bytes: row.bytes,
+            tombstone_purged,
+        };
+        match groups.iter_mut().find(|(s, _)| *s == row.space_id) {
+            Some((_, slots)) => slots.push(slot),
+            None => groups.push((row.space_id, vec![slot])),
+        }
+    }
+
+    Ok(groups)
+}
+
+/// #2292: decode this row's durable purged-id tombstone (a JSON
+/// array written by the crashed apply BEFORE its projection tx).
+/// NULL → no purge delta → empty set. A malformed tombstone must
+/// NOT wedge boot: log + fall back to empty (the pre-#2292 additive
+/// behaviour), never propagate the parse error out of the walk.
+fn decode_purged_tombstone(
+    inbox_id: i64,
+    space_id: &str,
+    purged_ids: Option<&str>,
+) -> Vec<agaric_core::ulid::BlockId> {
+    match purged_ids {
+        None => Vec::new(),
+        Some(json) => match serde_json::from_str(json) {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    inbox_id,
+                    space_id = %space_id,
+                    error = %e,
+                    "#2292: sync-inbox slot has an unparseable purged_ids \
+                     tombstone — re-sweeping nothing from it (additive \
+                     fallback still applies)"
+                );
+                Vec::new()
+            }
+        },
+    }
+}
+
+/// Replay each space's slots as one batch, folding every outcome into `tally`.
+///
+/// A batch is all-or-nothing at the SQL layer (projection + slot deletes share
+/// a tx), and falls back to a per-slot walk internally if the batched engine
+/// import fails — so a single poison blob still cannot strand its space's
+/// other slots (#3164; #535 unchanged: a slot is cleared iff its projection
+/// landed).
+async fn replay_space_batches(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    groups: Vec<(String, Vec<crate::sync_protocol::loro_sync::InboxSlot>)>,
+    tally: &mut InboxReplayTally,
+) {
+    for (space_id, slots) in groups {
+        let slot_count = slots.len();
+        match crate::sync_protocol::loro_sync::replay_inbox_batch(
+            pool, registry, device_id, &space_id, slots,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tally.replayed += outcome.replayed;
+                // #3226: slots this batch moved to `loro_sync_quarantine`.
+                // Counted separately from `replayed` (nothing was projected)
+                // and from `errors` (they are no longer retried). The boot
+                // report gets the authoritative figure from the quarantine
+                // census in `boot.rs`; this is the per-space log line.
+                tally.quarantined += outcome.quarantined;
+                tally.changed_all.extend(outcome.changed);
+                tally.purged_all.extend(outcome.purged);
+                for err in &outcome.errors {
+                    tracing::error!(
+                        space_id = %space_id,
+                        error = %err,
+                        "sync-inbox replay failed for a slot — leaving it for a later boot"
+                    );
+                }
+                tally.errors.extend(outcome.errors);
+            }
+            Err(e) => {
+                // Infra-level failure (e.g. the pool went away) — the
+                // batch cleared nothing, so every one of its slots stays
+                // for a later boot. Log + continue with the next space,
+                // exactly as the per-row walk did on a row error.
+                tracing::error!(
+                    space_id = %space_id,
+                    slots = slot_count,
+                    error = %e,
+                    "sync-inbox batch replay failed — leaving the batch's slots \
+                     for a later boot"
+                );
+                tally
+                    .errors
+                    .push(format!("space {space_id} ({slot_count} slots): {e}"));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

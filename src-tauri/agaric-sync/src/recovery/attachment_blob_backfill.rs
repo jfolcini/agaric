@@ -79,11 +79,60 @@ struct Row {
 /// - [`AppError::Database`] — the initial candidate SELECT failed. Per-blob /
 ///   per-row failures are logged and skipped, never propagated, so one bad
 ///   group cannot abort the whole pass.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn backfill_attachment_blobs(
     pool: &SqlitePool,
     app_data_dir: &Path,
 ) -> Result<BlobBackfillReport, AppError> {
+    let by_hash = hash_groups_canonical_first(pool).await?;
+
+    let mut report = BlobBackfillReport::default();
+
+    for (hash, group) in by_hash {
+        // Choose a canonical file: the first row in the group whose file is
+        // actually present on disk. If none survive, we cannot create a blob.
+        let mut canonical: Option<&Row> = None;
+        for r in &group {
+            let full = app_data_dir.join(&r.fs_path);
+            if tokio::fs::try_exists(&full).await.unwrap_or(false) {
+                canonical = Some(r);
+                break;
+            }
+        }
+        let Some(canonical) = canonical else {
+            tracing::warn!(
+                content_hash = %hash,
+                rows = group.len(),
+                "blob backfill: no surviving file for hash group — skipping"
+            );
+            report.skipped_no_file += 1;
+            continue;
+        };
+
+        let Some(on_disk_path) = canonical_path_for_hash(pool, &hash, canonical, &mut report).await
+        else {
+            continue;
+        };
+
+        repoint_rows_to_canonical(pool, &group, &on_disk_path, &mut report).await;
+    }
+
+    if report.blobs_created > 0 || report.rows_repointed > 0 || report.skipped_no_file > 0 {
+        tracing::info!(
+            blobs_created = report.blobs_created,
+            rows_repointed = report.rows_repointed,
+            skipped_no_file = report.skipped_no_file,
+            "attachment blob backfill complete (#1993)"
+        );
+    }
+
+    Ok(report)
+}
+
+/// Every hashed `attachments` row, grouped by `content_hash` with the row that
+/// should be preferred as the group's canonical file first.
+async fn hash_groups_canonical_first(
+    pool: &SqlitePool,
+) -> Result<HashMap<String, Vec<Row>>, AppError> {
     // #3654: EVERY row, not just the live ones. This pass used to scope with
     // `WHERE deleted_at IS NULL` under a comment claiming it matched "the
     // refcount semantics used by the GC" — which was the opposite of what the
@@ -136,61 +185,51 @@ pub async fn backfill_attachment_blobs(
         });
     }
 
-    let mut report = BlobBackfillReport::default();
+    Ok(by_hash)
+}
 
-    for (hash, group) in by_hash {
-        // Choose a canonical file: the first row in the group whose file is
-        // actually present on disk. If none survive, we cannot create a blob.
-        let mut canonical: Option<&Row> = None;
-        for r in &group {
-            let full = app_data_dir.join(&r.fs_path);
-            if tokio::fs::try_exists(&full).await.unwrap_or(false) {
-                canonical = Some(r);
-                break;
-            }
-        }
-        let Some(canonical) = canonical else {
+/// The path the blob store holds for `hash` once this pass has (idempotently)
+/// created its row — which may pre-date this run and differ from `canonical`,
+/// so repointing must follow the STORED path rather than our pick.
+///
+/// `None` when the blob row could not be written: the group is skipped rather
+/// than repointed at a blob that does not exist.
+async fn canonical_path_for_hash(
+    pool: &SqlitePool,
+    hash: &str,
+    canonical: &Row,
+    report: &mut BlobBackfillReport,
+) -> Option<String> {
+    // Create the blob row (idempotent). created_at uses now_ms(); the blob
+    // table is a derived store, not the op log, so a fresh timestamp is
+    // correct (the bytes' provenance lives in the op log via AddAttachment).
+    let now = now_ms();
+    let insert = sqlx::query!(
+        "INSERT OR IGNORE INTO attachment_blobs \
+         (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, ?, ?, ?)",
+        hash,
+        canonical.fs_path,
+        canonical.size_bytes,
+        now,
+    )
+    .execute(pool)
+    .await;
+    match insert {
+        Ok(r) if r.rows_affected() > 0 => report.blobs_created += 1,
+        Ok(_) => { /* blob already existed — idempotent re-run */ }
+        Err(e) => {
             tracing::warn!(
                 content_hash = %hash,
-                rows = group.len(),
-                "blob backfill: no surviving file for hash group — skipping"
+                error = %e,
+                "blob backfill: INSERT attachment_blobs failed — skipping group"
             );
-            report.skipped_no_file += 1;
-            continue;
-        };
-
-        // Create the blob row (idempotent). created_at uses now_ms(); the blob
-        // table is a derived store, not the op log, so a fresh timestamp is
-        // correct (the bytes' provenance lives in the op log via AddAttachment).
-        let now = now_ms();
-        let insert = sqlx::query!(
-            "INSERT OR IGNORE INTO attachment_blobs \
-             (content_hash, on_disk_path, size_bytes, created_at) \
-             VALUES (?, ?, ?, ?)",
-            hash,
-            canonical.fs_path,
-            canonical.size_bytes,
-            now,
-        )
-        .execute(pool)
-        .await;
-        match insert {
-            Ok(r) if r.rows_affected() > 0 => report.blobs_created += 1,
-            Ok(_) => { /* blob already existed — idempotent re-run */ }
-            Err(e) => {
-                tracing::warn!(
-                    content_hash = %hash,
-                    error = %e,
-                    "blob backfill: INSERT attachment_blobs failed — skipping group"
-                );
-                continue;
-            }
+            return None;
         }
+    }
 
-        // The canonical on_disk_path is whatever the blob row ended up with
-        // (which may pre-date this run if it already existed). Read it back so
-        // repointing is consistent with the stored blob, not just our pick.
-        let on_disk_path = match sqlx::query_scalar!(
+    Some(
+        match sqlx::query_scalar!(
             "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
             hash
         )
@@ -203,46 +242,42 @@ pub async fn backfill_attachment_blobs(
                 tracing::warn!(content_hash = %hash, error = %e, "blob backfill: blob read-back failed");
                 canonical.fs_path.clone()
             }
-        };
+        },
+    )
+}
 
-        // Repoint every row in the group whose fs_path differs from the
-        // canonical blob path.
-        for r in &group {
-            if r.fs_path == on_disk_path {
-                continue;
-            }
-            let updated = sqlx::query!(
-                "UPDATE attachments SET fs_path = ? WHERE id = ? AND fs_path <> ?",
-                on_disk_path,
-                r.id,
-                on_disk_path,
-            )
-            .execute(pool)
-            .await;
-            match updated {
-                Ok(u) if u.rows_affected() > 0 => report.rows_repointed += 1,
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        attachment_id = %r.id,
-                        error = %e,
-                        "blob backfill: repoint UPDATE failed — leaving fs_path as-is"
-                    );
-                }
+/// Repoint every row in the group whose `fs_path` still differs from the
+/// canonical blob path.
+async fn repoint_rows_to_canonical(
+    pool: &SqlitePool,
+    group: &[Row],
+    on_disk_path: &str,
+    report: &mut BlobBackfillReport,
+) {
+    for r in group {
+        if r.fs_path == on_disk_path {
+            continue;
+        }
+        let updated = sqlx::query!(
+            "UPDATE attachments SET fs_path = ? WHERE id = ? AND fs_path <> ?",
+            on_disk_path,
+            r.id,
+            on_disk_path,
+        )
+        .execute(pool)
+        .await;
+        match updated {
+            Ok(u) if u.rows_affected() > 0 => report.rows_repointed += 1,
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    attachment_id = %r.id,
+                    error = %e,
+                    "blob backfill: repoint UPDATE failed — leaving fs_path as-is"
+                );
             }
         }
     }
-
-    if report.blobs_created > 0 || report.rows_repointed > 0 || report.skipped_no_file > 0 {
-        tracing::info!(
-            blobs_created = report.blobs_created,
-            rows_repointed = report.rows_repointed,
-            skipped_no_file = report.skipped_no_file,
-            "attachment blob backfill complete (#1993)"
-        );
-    }
-
-    Ok(report)
 }
 
 #[cfg(test)]

@@ -49,7 +49,6 @@ fn check_block_id_shape(block_id: &str) -> Result<(), AppError> {
 /// merge or `save_all_engines`. Background cache rebuilds (tags, pages,
 /// FTS, block_links) are still handled separately by
 /// `refresh_caches_for_recovered_drafts`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -154,87 +153,95 @@ pub(super) async fn recover_single_draft(
     let matching_ops = row;
 
     if matching_ops == 0 {
-        // #3262: never append an over-cap op. `edit_block_inner` and the flush
-        // paths reject this content, so recovery must not smuggle it into the
-        // op log and on to peers. This LOSES that text, deliberately: recovery
-        // was the one path that persisted an over-cap paste, so such a draft
-        // used to survive a boot and no longer does. The `block_drafts` row
-        // stays — the #2540 invariant — but nothing reads one back. `Err`, not
-        // `Ok(false)`, because the caller deletes the row on either `Ok`.
-        if draft.content.len() > agaric_engine::block_ops::MAX_CONTENT_LENGTH {
-            return Err(AppError::validation(format!(
-                "draft content {} exceeds maximum {}",
-                draft.content.len(),
-                agaric_engine::block_ops::MAX_CONTENT_LENGTH,
-            )));
-        }
-
-        // Draft was NOT flushed — recover it.
-        let prev_edit = find_prev_edit(pool, draft.block_id.as_str(), device_id).await?;
-
-        let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: BlockId::from_trusted(draft.block_id.as_str()),
-            to_text: draft.content.clone(),
-            prev_edit,
-        });
-
-        // F01: Use a single IMMEDIATE transaction to atomically write the
-        // synthetic op AND update blocks.content — same pattern as
-        // commands::edit_block_inner. The direct content UPDATE keeps SQL
-        // consistent with op_log even if the engine dispatch below fails.
-        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        let record =
-            append_local_op_in_tx(&mut tx, device_id, op, agaric_store::db::now_ms()).await?;
-        // #2895 slice 2: the direct content UPDATE now lives behind the
-        // `blocks`-owning engine crate (`set_block_content` — unguarded
-        // `UPDATE blocks SET content = ? WHERE id = ?`, byte-identical SQL).
-        agaric_engine::block_ops::set_block_content(
-            &mut tx,
-            draft.block_id.as_str(),
-            &draft.content,
-        )
-        .await?;
-        tx.commit().await?;
-
-        // #620 / #1322: dispatch the synthetic record to the materializer as a
-        // foreground ApplyOp so the Loro engine applies the recovered content
-        // and the apply cursor advances over the synthetic seq. The apply is
-        // idempotent over the direct SQL write above (the EditBlock projection
-        // writes the same content).
-        //
-        // #1322: if the enqueue fails, the op is committed to op_log but the
-        // engine never observes it — it sits with `seq > cursor`, unapplied.
-        // Returning `Ok(true)` here would let the caller push this block into
-        // `drafts_recovered` and report a phantom success while the engine is
-        // silently stale. Instead we escalate to `error!` and return `Err`, so
-        // the caller funnels it into `draft_errors` (an honest failure report).
-        // The committed op_log row is NOT rolled back — the SQL recovery is
-        // intact and a later boot replay can still apply it; only the
-        // success-claim is withheld.
-        if let Err(e) = materializer
-            .enqueue_foreground(agaric_engine::materializer::MaterializeTask::ApplyOp(
-                std::sync::Arc::new(record),
-            ))
-            .await
-        {
-            tracing::error!(
-                block_id = %draft.block_id,
-                error = %e,
-                "draft recovery: failed to enqueue synthetic edit op for engine \
-                 apply — the Loro engine has not observed the recovered content; \
-                 reporting recovery as failed rather than a phantom success (#1322)"
-            );
-            return Err(AppError::Channel(format!(
-                "draft recovery: failed to enqueue synthetic edit op for block {}: {e}",
-                draft.block_id
-            )));
-        }
-
-        tracing::info!(block_id = %draft.block_id, "recovered unflushed draft");
+        write_back_unflushed_draft(pool, device_id, materializer, draft).await?;
         Ok(true)
     } else {
         Ok(false)
     }
+}
+
+/// Write an unflushed draft back as a real edit: the synthetic `edit_block`
+/// op and the `blocks.content` update land in one IMMEDIATE transaction, and
+/// the op is then dispatched so the engine observes the recovered text.
+async fn write_back_unflushed_draft(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &agaric_engine::materializer::Materializer,
+    draft: &agaric_engine::draft::Draft,
+) -> Result<(), AppError> {
+    // #3262: never append an over-cap op. `edit_block_inner` and the flush
+    // paths reject this content, so recovery must not smuggle it into the
+    // op log and on to peers. This LOSES that text, deliberately: recovery
+    // was the one path that persisted an over-cap paste, so such a draft
+    // used to survive a boot and no longer does. The `block_drafts` row
+    // stays — the #2540 invariant — but nothing reads one back. `Err`, not
+    // `Ok(false)`, because the caller deletes the row on either `Ok`.
+    if draft.content.len() > agaric_engine::block_ops::MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "draft content {} exceeds maximum {}",
+            draft.content.len(),
+            agaric_engine::block_ops::MAX_CONTENT_LENGTH,
+        )));
+    }
+
+    // Draft was NOT flushed — recover it.
+    let prev_edit = find_prev_edit(pool, draft.block_id.as_str(), device_id).await?;
+
+    let op = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::from_trusted(draft.block_id.as_str()),
+        to_text: draft.content.clone(),
+        prev_edit,
+    });
+
+    // F01: Use a single IMMEDIATE transaction to atomically write the
+    // synthetic op AND update blocks.content — same pattern as
+    // commands::edit_block_inner. The direct content UPDATE keeps SQL
+    // consistent with op_log even if the engine dispatch below fails.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let record = append_local_op_in_tx(&mut tx, device_id, op, agaric_store::db::now_ms()).await?;
+    // #2895 slice 2: the direct content UPDATE now lives behind the
+    // `blocks`-owning engine crate (`set_block_content` — unguarded
+    // `UPDATE blocks SET content = ? WHERE id = ?`, byte-identical SQL).
+    agaric_engine::block_ops::set_block_content(&mut tx, draft.block_id.as_str(), &draft.content)
+        .await?;
+    tx.commit().await?;
+
+    // #620 / #1322: dispatch the synthetic record to the materializer as a
+    // foreground ApplyOp so the Loro engine applies the recovered content
+    // and the apply cursor advances over the synthetic seq. The apply is
+    // idempotent over the direct SQL write above (the EditBlock projection
+    // writes the same content).
+    //
+    // #1322: if the enqueue fails, the op is committed to op_log but the
+    // engine never observes it — it sits with `seq > cursor`, unapplied.
+    // Returning `Ok(true)` here would let the caller push this block into
+    // `drafts_recovered` and report a phantom success while the engine is
+    // silently stale. Instead we escalate to `error!` and return `Err`, so
+    // the caller funnels it into `draft_errors` (an honest failure report).
+    // The committed op_log row is NOT rolled back — the SQL recovery is
+    // intact and a later boot replay can still apply it; only the
+    // success-claim is withheld.
+    if let Err(e) = materializer
+        .enqueue_foreground(agaric_engine::materializer::MaterializeTask::ApplyOp(
+            std::sync::Arc::new(record),
+        ))
+        .await
+    {
+        tracing::error!(
+            block_id = %draft.block_id,
+            error = %e,
+            "draft recovery: failed to enqueue synthetic edit op for engine \
+             apply — the Loro engine has not observed the recovered content; \
+             reporting recovery as failed rather than a phantom success (#1322)"
+        );
+        return Err(AppError::Channel(format!(
+            "draft recovery: failed to enqueue synthetic edit op for block {}: {e}",
+            draft.block_id
+        )));
+    }
+
+    tracing::info!(block_id = %draft.block_id, "recovered unflushed draft");
+    Ok(())
 }
 
 /// Find the most recent edit head for a given block using DAG-based resolution.
