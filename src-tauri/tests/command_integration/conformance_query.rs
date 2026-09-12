@@ -238,6 +238,19 @@ const ATTACHMENT_ATTRS: &[&str] = &[
     "content_hash",
 ];
 
+/// A `LinkMetadata` (#3830), whose token head is the url and whose attributes
+/// are every other column. `fetched_at` is fixture-authored epoch-ms on a
+/// seeded row, not `now_ms()`, so it is comparable. MUST match
+/// `LINK_METADATA_TOKEN` in the TS twin.
+const LINK_METADATA_ATTRS: &[&str] = &[
+    "title",
+    "favicon_url",
+    "description",
+    "fetched_at",
+    "auth_required",
+    "not_found",
+];
+
 /// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
 /// id. MUST match `HISTORY_TOKEN` in the TS twin.
 ///
@@ -1366,6 +1379,28 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Link metadata cache (#3830) ──
+        //
+        // Waived as "cache outside the snapshot scope" until the fixture
+        // `seed.link_metadata` section put the same rows on both stacks (see
+        // `replay_fixture`). Calls what the shipped command calls.
+        "get_link_metadata" => {
+            let row = link_metadata::get_link_metadata_inner(pool, arg_req::<String>(args, "url"))
+                .await?;
+            // `Option<LinkMetadata>`: a hit projects to one token, a miss to
+            // none — the present-vs-absent distinction the step pins.
+            let v = serde_json::to_value(&row).expect("serialize Option<LinkMetadata>");
+            RawResult {
+                rows: if v.is_null() {
+                    Vec::new()
+                } else {
+                    vec![row_token(&v, "url", LINK_METADATA_ATTRS)]
+                },
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Point reads over blocks / properties / tags (#3826) ──
         //
         // The #763 snapshot already diffs the ROWS these serve. What it does
@@ -2402,7 +2437,12 @@ pub(super) mod reader_delegation_tests {
     // `attachments` (`commands/attachments.rs`), the batch one a `json_each`
     // SELECT grouped in Rust, the meta one a `fetch_optional` that maps a
     // miss to `NotFound`. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 44;
+    // #3830 (link metadata) wired `get_link_metadata`: one `query_as` SELECT
+    // over `link_metadata` (`link_metadata::get_cached`, a `fetch_optional`
+    // whose miss is `None`). The table's writer is `link_metadata::upsert`,
+    // reached only by `fetch_link_metadata`, which is not a read arm. Writer
+    // set unchanged.
+    const SWEPT_ARM_COUNT: usize = 45;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

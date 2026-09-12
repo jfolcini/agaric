@@ -345,6 +345,14 @@ const ATTACHMENT_TOKEN = {
     'content_hash',
   ],
 } as const
+/** A `LinkMetadata` (#3830): the url plus every other column. `fetched_at` is
+ *  fixture-authored epoch-ms on a seeded row, not a clock. MUST match
+ *  `LINK_METADATA_ATTRS` in the Rust twin. */
+const LINK_METADATA_TOKEN = {
+  kind: 'id',
+  idKey: 'url',
+  attrKeys: ['title', 'favicon_url', 'description', 'fetched_at', 'auth_required', 'not_found'],
+} as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
@@ -600,6 +608,18 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   read_attachment_meta: {
     rows: { kind: 'bare-row' },
     token: ATTACHMENT_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
+  // ── Link metadata cache (#3830) ──
+  //
+  // Seeded on both stacks by a fixture's `seed.link_metadata` section, which
+  // is what lifted the "cache outside the snapshot scope" waiver. An
+  // `Option<LinkMetadata>`: a hit is one token, a miss is `null`, zero rows.
+  get_link_metadata: {
+    rows: { kind: 'bare-row' },
+    token: LINK_METADATA_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
