@@ -88,9 +88,10 @@ sites this slice removes — unchanged.)
 - `cargo fmt --all -- --check`: clean (rustfmt reflowed four files after the
   dedent; the run above is post-`cargo fmt --all`).
 - `node scripts/check-bulk-equivalence.mjs`:
-  `OK: 53 bulk-named function(s) inventoried (6 converged, 13 covered, 2
-  exception, 1 gap, 7 not-a-fan-out, 9 read-only, 15 wrapper), no new entries,
-  no stale entries`, exit 0.
+  `OK: 54 bulk-named function(s) inventoried (6 converged, 13 covered, 2
+  exception, 1 gap, 8 not-a-fan-out, 9 read-only, 15 wrapper), no new entries,
+  no stale entries`, exit 0. (It read 53 before the rebase onto #5006, which
+  brought that slice's `on_op_log_batch` entry into the base.)
 - `cargo nextest run -p agaric-sync`:
   `Summary [117.445s] 968 tests run: 968 passed (2 slow), 1 skipped`.
 - `cargo check -p agaric --lib`: `Finished dev profile … in 46.76s` — the
@@ -104,5 +105,9 @@ sites this slice removes — unchanged.)
   before, 1 after** (`replay.rs`, the dirty-group read). Unchanged, and now in
   a non-`async fn`.
 
-Not run in this session, left to the reviewer: `cargo nextest run --workspace`,
-`cargo test --doc`, the `prek` hook set, Playwright.
+Not run while building, and run afterwards rather than left owed: the
+reviewer ran `cargo nextest run --workspace` (6318 passed, 13 skipped) and
+`cargo test --doc --workspace` (ok), and the same workspace suite was re-run
+on the rebased tree with the same result, since rebasing onto #5006 changed
+what was under test. The `prek` hook set ran at commit time and was green.
+Playwright was not run: no frontend file is touched.
