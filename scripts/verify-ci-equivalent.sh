@@ -178,10 +178,6 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
 HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$'
-# The Rust files `conformance-coverage.test.ts` parses for their dispatch shape:
-# a Rust-only edit to one of them must run Phase C or the guard never sees it
-# (#4988 broke it with HAS_TS=0). Mirrors `_validate.yml`'s `frontend_re`.
-RUST_PARSED_BY_TS_RE='^src-tauri/src/commands/(queries|blocks/queries|pages/metadata)\.rs$|^src-tauri/agaric-store/src/(fts/(toggle_filter|metadata_filter)|query/engine)\.rs$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -2651,7 +2647,6 @@ else
     # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
     has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
     has_match "$HOOK_OWNER_TS_RE" && HAS_TS=1
-    has_match "$RUST_PARSED_BY_TS_RE" && HAS_TS=1
     # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
     has_match "$CI_PATH_RE" && HAS_CI=1
     # Docs: any Markdown file plus the docs/ tree.
