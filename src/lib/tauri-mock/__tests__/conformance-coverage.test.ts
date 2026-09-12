@@ -366,7 +366,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
  *     step; it simply is not written. This is the honest majority. Every entry
  *     in this category is a to-do, not a verdict.
  *   - `<X> outside the conformance snapshot scope` — reads state the fixture
- *     seed cannot express (drafts, aliases, spaces, peers).
+ *     seed cannot express (drafts, aliases, spaces).
  *   - `<return shape>` — the response carries no row identity the query
  *     projection can bind: a bare scalar, a rendered string, a keyed count
  *     map, or a multi-partition envelope. `conformance-query.ts` projects one
@@ -505,7 +505,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   resolve_page_by_alias: 'page-alias table outside the conformance snapshot scope',
   list_spaces: 'space registry outside the single-space conformance snapshot scope',
   list_drafts: 'draft staging table outside the conformance snapshot scope',
-  list_peer_refs: 'peer registry (device metadata) outside the conformance snapshot scope',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -513,9 +512,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_device_id: 'no domain state — this install’s device identity',
   get_status: 'no domain state — sync transport status',
   get_recovery_status: 'no domain state — boot recovery status',
-  get_reminder_settings:
-    'device-local reminder preferences in `app_settings`, outside the conformance snapshot ' +
-    'scope — the read side of `set_reminder_settings`',
   get_mdns_status: 'no domain state — mDNS discovery status',
   get_bind_exposure_status: 'no domain state — sync endpoint bind exposure',
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
@@ -710,10 +706,8 @@ const NOT_YET_PINNED_READ: readonly string[] = [
   'export_page_markdown',
   'get_compaction_status',
   'get_page_aliases',
-  'get_reminder_settings',
   'list_drafts',
   'list_page_aliases_by_prefix',
-  'list_peer_refs',
   'list_projected_agenda',
   'list_spaces',
   'resolve_page_by_alias',

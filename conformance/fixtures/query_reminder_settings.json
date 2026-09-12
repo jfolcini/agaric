@@ -1,0 +1,70 @@
+{
+  "description": "#3830 — READ-command differential over `get_reminder_settings`, waived as \"device-local reminder preferences in `app_settings`, outside the conformance snapshot scope\" until a fixture could put the same rows on both stacks; `seed.app_settings` is that, `(key, value)` pairs inserted verbatim into the backend `app_settings` table and the mock's map. `reminders::get_settings` reads two keys: `reminders.enabled` is on iff the stored value is the string `'1'`, and `reminders.time` is served as stored. Seeded on, at `07:30` — neither is the default, so a mock answering a hard-coded `ReminderSettings::default()` fails on both attributes; the defaults themselves are pinned by `query_reminder_settings_defaults.json`, which seeds no `app_settings` at all. The answer is a bare struct with no id, so it projects to ONE token under the fixed head `reminder_settings`. NOT pinned: `set_reminder_settings` (still waived — a device-local writer outside the snapshot).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Reminders",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "reminder_settings_seeded_on",
+      "rows": ["reminder_settings#enabled=true#time=07:30"],
+      "total_count": null
+    }
+  ],
+  "name": "query_reminder_settings",
+  "ops": [],
+  "queries": [
+    {
+      "args": {},
+      "command": "get_reminder_settings",
+      "comment": "Both keys seeded away from the defaults: `enabled` is the boolean `true` because the stored value is `'1'`, and `time` is `07:30` as stored. The defaults (`false` / `09:00`) fail on both attributes.",
+      "name": "reminder_settings_seeded_on"
+    }
+  ],
+  "seed": {
+    "app_settings": [
+      {
+        "key": "reminders.enabled",
+        "value": "1"
+      },
+      {
+        "key": "reminders.time",
+        "value": "07:30"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Reminders",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

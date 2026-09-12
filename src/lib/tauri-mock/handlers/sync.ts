@@ -40,6 +40,16 @@ import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 // Add a reader, re-derive this number. Mock-only; no production risk.
 const PAIRING_PEER_REVEAL_READS = 3
 
+// `list_peer_refs` is `ORDER BY synced_at DESC` on the backend; SQLite sorts
+// NULLs last under DESC, so a never-synced peer sorts after every synced one.
+function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const sa = a['synced_at'] as number | null
+  const sb = b['synced_at'] as number | null
+  if (sa == null) return sb == null ? 0 : 1
+  if (sb == null) return -1
+  return sb - sa
+}
+
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
 // returnUndefined`), an unconditional no-op success that hid the real bug
 // (the FE unconditionally started a competing pairing session on every
@@ -122,10 +132,15 @@ export const syncHandlers = {
           device_name: null,
           remote_device_name: 'Paired Device',
           last_address: null,
+          endpoint_id: null,
+          unpaired_by_peer_at_ms: null,
         })
       }
     }
-    return Array.from(peerRefs.values())
+    // `ORDER BY synced_at DESC`, and SQLite sorts NULLs last under DESC. The
+    // mock answered insertion order until `query_peer_refs.json` pinned the
+    // sort (#3830); `toSorted` is stable, so ties keep insertion order.
+    return Array.from(peerRefs.values()).toSorted(bySyncedAtDesc)
   },
   delete_peer_ref: (args) => {
     const a = args as Record<string, unknown>

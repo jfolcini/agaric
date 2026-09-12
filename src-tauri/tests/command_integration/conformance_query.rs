@@ -251,6 +251,25 @@ const LINK_METADATA_ATTRS: &[&str] = &[
     "not_found",
 ];
 
+/// A `PeerRef` (#3830), whose token head is the `peer_id` and whose attributes
+/// are the other twelve columns `list_peer_refs` selects, in SELECT order. The
+/// three timestamps are fixture-authored epoch-ms on a seeded row, not a
+/// clock, so they are comparable. MUST match `PEER_REF_TOKEN` in the TS twin.
+const PEER_REF_ATTRS: &[&str] = &[
+    "last_hash",
+    "last_sent_hash",
+    "synced_at",
+    "streamed_at",
+    "reset_count",
+    "last_reset_at",
+    "cert_hash",
+    "device_name",
+    "remote_device_name",
+    "last_address",
+    "endpoint_id",
+    "unpaired_by_peer_at_ms",
+];
+
 /// A `HistoryEntry` (#3824), whose token head is the `op_type` rather than an
 /// id. MUST match `HISTORY_TOKEN` in the TS twin.
 ///
@@ -1401,6 +1420,47 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Device-local state (#3830) ──
+        //
+        // Waived as "outside the conformance snapshot scope" until the fixture
+        // `seed.app_settings` / `seed.peer_refs` sections put the same rows on
+        // both stacks (see `replay_fixture`). Both arms call what the shipped
+        // command calls.
+        "get_reminder_settings" => {
+            let settings = agaric_lib::reminders::get_settings(pool).await?;
+            // A bare struct with no id: the whole answer IS the single token,
+            // under a fixed head, each field crossing [`attr_value`] like any
+            // other attribute. Projected from the serialized value, not the
+            // struct fields, so the token carries the wire spelling the TS
+            // twin reads.
+            let v = serde_json::to_value(&settings).expect("serialize ReminderSettings");
+            RawResult {
+                rows: vec![format!(
+                    "reminder_settings#enabled={}#time={}",
+                    attr_value("enabled", v.get("enabled")),
+                    attr_value("time", v.get("time")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_peer_refs" => {
+            let rows = list_peer_refs_inner(pool).await?;
+            // `ORDER BY synced_at DESC`, NULLs last: the ordered comparison
+            // pins that order, not the mock's insertion order.
+            let v = serde_json::to_value(&rows).expect("serialize Vec<PeerRef>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter()
+                        .map(|r| row_token(r, "peer_id", PEER_REF_ATTRS))
+                        .collect()
+                }),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Point reads over blocks / properties / tags (#3826) ──
         //
         // The #763 snapshot already diffs the ROWS these serve. What it does
@@ -2442,7 +2502,15 @@ pub(super) mod reader_delegation_tests {
     // whose miss is `None`). The table's writer is `link_metadata::upsert`,
     // reached only by `fetch_link_metadata`, which is not a read arm. Writer
     // set unchanged.
-    const SWEPT_ARM_COUNT: usize = 45;
+    // #3830 (reminder settings) wired `get_reminder_settings`: one `query!`
+    // SELECT over `app_settings` (`reminders::get_settings`). The table's
+    // reminder writer is `set_reminder_settings`, not a read arm. Writer set
+    // unchanged.
+    // #3830 (peer refs) wired `list_peer_refs`: one `query_as!` SELECT over
+    // `peer_refs` (`peer_refs::list_peer_refs`). The table's writers are the
+    // pairing / sync-session paths and the peer commands, none a read arm.
+    // Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 47;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

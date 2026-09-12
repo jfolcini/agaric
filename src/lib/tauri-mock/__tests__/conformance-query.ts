@@ -267,6 +267,12 @@ type TokenSpec =
   | { readonly kind: 'property' }
   /** The row IS a bare string (the tag-id readers) — relabeled like any id. */
   | { readonly kind: 'scalar' }
+  /**
+   * #3830 — a bare struct with no id (`ReminderSettings`): a FIXED head plus
+   * one `#key=value` segment per `attrKeys` entry — the row-shaped cousin of
+   * the `value` location's `<head>#value=<n>`.
+   */
+  | { readonly kind: 'headed'; readonly head: string; readonly attrKeys: readonly string[] }
 
 interface WireShape {
   /** How the row array is located in the response. */
@@ -352,6 +358,35 @@ const LINK_METADATA_TOKEN = {
   kind: 'id',
   idKey: 'url',
   attrKeys: ['title', 'favicon_url', 'description', 'fetched_at', 'auth_required', 'not_found'],
+} as const
+/** A `PeerRef` (#3830): the `peer_id` plus the other twelve columns
+ *  `list_peer_refs` selects, in SELECT order. The three timestamps are
+ *  fixture-authored epoch-ms on a seeded row, not a clock. MUST match
+ *  `PEER_REF_ATTRS` in the Rust twin. */
+const PEER_REF_TOKEN = {
+  kind: 'id',
+  idKey: 'peer_id',
+  attrKeys: [
+    'last_hash',
+    'last_sent_hash',
+    'synced_at',
+    'streamed_at',
+    'reset_count',
+    'last_reset_at',
+    'cert_hash',
+    'device_name',
+    'remote_device_name',
+    'last_address',
+    'endpoint_id',
+    'unpaired_by_peer_at_ms',
+  ],
+} as const
+/** The `ReminderSettings` struct (#3830): no id, so a fixed head. MUST match
+ *  the `get_reminder_settings` arm in the Rust twin. */
+const REMINDER_SETTINGS_TOKEN = {
+  kind: 'headed',
+  head: 'reminder_settings',
+  attrKeys: ['enabled', 'time'],
 } as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
@@ -620,6 +655,26 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   get_link_metadata: {
     rows: { kind: 'bare-row' },
     token: LINK_METADATA_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // ── Device-local state (#3830) ──
+  //
+  // Seeded on both stacks by a fixture's `seed.app_settings` / `seed.peer_refs`
+  // section, which is what lifted the "outside the snapshot scope" waiver on
+  // these two. `get_reminder_settings` answers one bare struct, so its token
+  // sits under a fixed head; `list_peer_refs` is `ORDER BY synced_at DESC`
+  // (NULLs last) on the backend, so the ordered comparison pins the mock's
+  // sort rather than its insertion order.
+  get_reminder_settings: {
+    rows: { kind: 'bare-row' },
+    token: REMINDER_SETTINGS_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_peer_refs: {
+    rows: { kind: 'bare-array' },
+    token: PEER_REF_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
@@ -1069,7 +1124,16 @@ export function idToken(
   idKey: string,
   attrKeys: readonly string[],
 ): string {
-  let token = (row[idKey] as string | undefined) ?? '<missing-id>'
+  return withAttrs((row[idKey] as string | undefined) ?? '<missing-id>', row, attrKeys)
+}
+
+/** `head` plus one `#<attr>=<value>` segment per `attrKeys` entry. */
+function withAttrs(
+  head: string,
+  row: Record<string, unknown>,
+  attrKeys: readonly string[],
+): string {
+  let token = head
   for (const attr of attrKeys) {
     token += `#${attr}=${attrValue(attr, row[attr])}`
   }
@@ -1112,6 +1176,9 @@ function rowToken(raw: unknown, spec: TokenSpec): string {
     }
     case 'property': {
       return propertyToken(row)
+    }
+    case 'headed': {
+      return withAttrs(spec.head, row, spec.attrKeys)
     }
   }
 }

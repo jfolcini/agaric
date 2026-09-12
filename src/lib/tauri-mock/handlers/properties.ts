@@ -19,10 +19,11 @@ import {
   returnEmptyPage,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
+import { appSettings, blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
-/** #4554 — mirrors `ReminderSettings::default()`; module-local like the clipboard text. */
-let mockReminderSettings: { enabled: boolean; time: string } = { enabled: false, time: '09:00' }
+/** #4554 — the two `app_settings` keys `reminders::get_settings` reads; `'1'` = enabled. */
+const REMINDERS_ENABLED_KEY = 'reminders.enabled'
+const REMINDERS_TIME_KEY = 'reminders.time'
 
 /**
  * #3079 — reserved column-backed property keys and the block-row value channel
@@ -640,7 +641,12 @@ export const propertiesHandlers = {
 
   // Mirrors `reminders::get_settings` / `set_settings` (#4554): device-local
   // preferences in `app_settings`, defaults off / 09:00, `HH:MM` validated.
-  get_reminder_settings: () => ({ ...mockReminderSettings }),
+  // Read through the `appSettings` rows rather than a module-local struct so
+  // a fixture's `seed.app_settings` section reaches it (#3830).
+  get_reminder_settings: () => ({
+    enabled: appSettings.get(REMINDERS_ENABLED_KEY) === '1',
+    time: appSettings.get(REMINDERS_TIME_KEY) ?? '09:00',
+  }),
 
   set_reminder_settings: (args) => {
     const a = args as { settings?: { enabled?: unknown; time?: unknown } }
@@ -654,7 +660,8 @@ export const propertiesHandlers = {
         message: `reminder time must be HH:MM, got ${JSON.stringify(time)}`,
       })
     }
-    mockReminderSettings = { enabled, time }
+    appSettings.set(REMINDERS_ENABLED_KEY, enabled ? '1' : '0')
+    appSettings.set(REMINDERS_TIME_KEY, time)
     return undefined
   },
 
