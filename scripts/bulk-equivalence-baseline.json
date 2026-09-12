@@ -129,6 +129,12 @@
     "reason": "Shim over ingest_replicated_batch_inner with a synthetic per-record fault injected; #[cfg(any(test, feature = \"test-util\"))], no production path reaches it"
   },
   {
+    "fn": "src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs::on_op_log_batch",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: the `SyncMessage::OpLogBatch` handler, extracted from `handle_message` (#4639). It buffers the message's audit records into `pending_ingest_records` and either waits for the rest of the stream or completes the pull — the ingest itself happens later, in `complete_pull_session`. No N-key input reaches a query and it writes nothing durable. Caught by the `batch` name segment, which mirrors the protocol message it handles; recorded here rather than renamed, because the heuristic's whole point is that narrowing scope is how a real fan-out escapes it"
+  },
+  {
     "fn": "src-tauri/agaric-sync/src/transport/bulk.rs::bulk_err",
     "kind": "read-only",
     "status": "not-a-fan-out",
