@@ -40,6 +40,16 @@ import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 // Add a reader, re-derive this number. Mock-only; no production risk.
 const PAIRING_PEER_REVEAL_READS = 3
 
+// `list_peer_refs` is `ORDER BY synced_at DESC` on the backend; SQLite sorts
+// NULLs last under DESC, so a never-synced peer sorts after every synced one.
+function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const sa = a['synced_at'] as number | null
+  const sb = b['synced_at'] as number | null
+  if (sa == null) return sb == null ? 0 : 1
+  if (sb == null) return -1
+  return sb - sa
+}
+
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
 // returnUndefined`), an unconditional no-op success that hid the real bug
 // (the FE unconditionally started a competing pairing session on every
@@ -97,14 +107,6 @@ const PAIRING_PEER_REVEAL_READS = 3
 // passphrase — there is no backend-side check left to model here. (The FE's
 // own "Pair disabled while any word is empty" is a pure client-side
 // affordance and never reaches this handler.)
-function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
-  const sa = a['synced_at'] as number | null
-  const sb = b['synced_at'] as number | null
-  if (sa == null) return sb == null ? 0 : 1
-  if (sb == null) return -1
-  return sb - sa
-}
-
 export const syncHandlers = {
   list_peer_refs: () => {
     // #3469 (review) — a `confirm_pairing` arms a pending reveal; the peer
