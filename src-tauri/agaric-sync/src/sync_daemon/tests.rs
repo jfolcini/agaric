@@ -260,7 +260,6 @@ fn shutdown_notifies_waiter() {
     let daemon = SyncDaemon {
         shutdown_notify: shutdown_notify.clone(),
         cancel: Arc::new(AtomicBool::new(false)),
-        scheduler: Arc::new(SyncScheduler::new()),
         handle: None,
         activation: DaemonActivation::default(),
     };

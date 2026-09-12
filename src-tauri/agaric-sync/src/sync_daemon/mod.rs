@@ -329,9 +329,6 @@ pub struct SyncDaemon {
     // `SyncDaemon { … }` directly across the crate boundary.
     pub shutdown_notify: Arc<Notify>,
     pub cancel: Arc<AtomicBool>,
-    /// Shared scheduler handle; the cancel flag is gated on its
-    /// live-session activity (`commands::sync_cmds::cancel_sync_inner`).
-    pub scheduler: Arc<SyncScheduler>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
     /// graceful shutdown after `shutdown()`. The production drop path
@@ -492,11 +489,9 @@ impl SyncDaemon {
     fn spawn_dormant_waiter(ctx: SyncDaemonContext) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_task = shutdown_notify.clone();
-        // Clone the shared cancel flag + scheduler for the returned handle;
-        // the owned `ctx` (carrying the same Arcs) is moved into
-        // `daemon_loop` below.
+        // Clone the shared cancel flag for the returned handle; the owned
+        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
         let cancel = ctx.cancel.clone();
-        let scheduler = ctx.scheduler.clone();
         let activation = DaemonActivation::default();
         let activation_task = activation.clone();
         // #4037: this waiter watches the RAW change counter, not
@@ -566,7 +561,6 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
-            scheduler,
             handle: Some(handle),
             activation,
         })
@@ -644,11 +638,9 @@ impl SyncDaemon {
     ) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
-        // Clone the shared cancel flag + scheduler for the returned handle;
-        // the owned `ctx` (carrying the same Arcs) is moved into
-        // `daemon_loop` below.
+        // Clone the shared cancel flag for the returned handle; the owned
+        // `ctx` (carrying the same Arc) is moved into `daemon_loop` below.
         let cancel = ctx.cancel.clone();
-        let scheduler = ctx.scheduler.clone();
         // This path *is* the active one — there is no dormant waiter to leave,
         // so the daemon is active from the start rather than at some later
         // transition. Flipped here, synchronously, BEFORE `tokio::spawn`: the
@@ -669,7 +661,6 @@ impl SyncDaemon {
         Ok(Self {
             shutdown_notify,
             cancel,
-            scheduler,
             handle: Some(handle),
             activation,
         })

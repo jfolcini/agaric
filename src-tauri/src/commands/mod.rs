@@ -130,11 +130,10 @@ pub use link_metadata::{
 };
 pub use logging::log_frontend;
 pub use mcp::{
-    McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_socket_path_inner,
-    get_mcp_rw_status, get_mcp_rw_status_inner, get_mcp_socket_path_inner, get_mcp_status,
-    get_mcp_status_inner, mcp_disconnect_all, mcp_disconnect_all_inner, mcp_rw_disconnect_all,
-    mcp_rw_disconnect_all_inner, mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled,
-    mcp_set_enabled_inner,
+    McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_status,
+    get_mcp_rw_status_inner, get_mcp_status, get_mcp_status_inner, mcp_disconnect_all,
+    mcp_disconnect_all_inner, mcp_rw_disconnect_all, mcp_rw_disconnect_all_inner,
+    mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled, mcp_set_enabled_inner,
 };
 pub use pages::{
     ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading,
