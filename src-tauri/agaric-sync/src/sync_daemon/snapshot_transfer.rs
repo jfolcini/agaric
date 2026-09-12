@@ -255,7 +255,9 @@ fn catchup_peer_identity<'a>(
 /// [`SyncMessage::LoroSync`] to `receive_loro_snapshot_catchup`, which merges
 /// each per-space snapshot into the local engine and reprojects SQL. A
 /// terminal [`SyncMessage::SyncComplete`] means the responder had nothing
-/// exportable to offer and returns `Ok(())` (#4960). Any other variant returns
+/// exportable to offer and returns `Ok(())` (#4960) — after the same
+/// `record_catchup_pull` stamp the merging path takes, because a pull that
+/// merged nothing still happened. Any other variant returns
 /// [`AppError::InvalidOperation`] so the caller records a sync failure (same
 /// treatment as a malformed delta exchange).
 ///
@@ -266,11 +268,12 @@ fn catchup_peer_identity<'a>(
 /// when `remote_device_id` is empty (a `HeadExchange` that only
 /// carried our own heads), the function falls back to
 /// `expected_remote_id` for the [`peer_refs`] upsert. If both are
-/// empty the catch-up returns
+/// empty the merging shape returns
 /// [`AppError::InvalidOperation`] so the caller records a failed
 /// session instead of silently merging peer state whose origin
 /// peer cannot be remembered (the next sync would treat this peer
-/// as fully unknown again).
+/// as fully unknown again). The empty shape merged nothing to
+/// misattribute, so it logs and skips the stamp instead.
 ///
 /// #4097 resolves that choice **once, up front** rather than at the
 /// completion write, so the resolved id is what every `Progress` /
@@ -347,6 +350,25 @@ pub async fn try_receive_snapshot_catchup(
                 peer_id = %remote_device_id,
                 "snapshot catch-up: peer had nothing to catch us up with"
             );
+            // #4960: an empty catch-up is still a completed pull from this
+            // peer, so `synced_at` has to advance. `record_success` clears the
+            // backoff while `peers_due_for_resync` reads `synced_at` alone, so
+            // a session that left it stale kept this peer permanently due and
+            // the initiator redialled it every `RESYNC_TICK`, forever.
+            match engine_reload {
+                // The merging path's two preconditions: an identity to key the
+                // row on (#4097) and our own device id to name our frontier
+                // with. Nothing was merged here, so missing either costs a
+                // stamp and a log line, not the session.
+                Some(ctx) if !remote_device_id.is_empty() => {
+                    record_catchup_pull(pool, remote_device_id, ctx.device_id).await;
+                }
+                _ => tracing::warn!(
+                    peer_id = %remote_device_id,
+                    "snapshot catch-up: nothing to key the peer_refs stamp on; \
+                     this peer stays due for resync"
+                ),
+            }
             // The one terminal event of this session for this role (#2539):
             // the orchestrator ends in `ResetRequired` and emits none itself,
             // so without this the UI keeps the `reset_required` state it last
@@ -523,31 +545,7 @@ async fn receive_loro_snapshot_catchup(
     }
     let resolved_peer_id: &str = remote_device_id;
 
-    // `last_hash` is our own post-merge local frontier hash — this catch-up
-    // is a PULL (we received, did not send), so it advances the pull
-    // bookkeeping exactly like a normal LoroSync completion. There is no
-    // reset: `reset_count` is NOT bumped.
-    let last_hash = crate::sync_protocol::get_local_heads(pool)
-        .await?
-        .into_iter()
-        .find(|h| h.device_id == device_id)
-        .map(|h| h.hash)
-        .unwrap_or_default();
-
-    let bookkeeping = async {
-        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, resolved_peer_id).await?;
-        peer_refs::update_on_sync_in_tx(&mut tx, resolved_peer_id, &last_hash, "").await?;
-        tx.commit().await?;
-        Ok::<(), AppError>(())
-    };
-    if let Err(e) = bookkeeping.await {
-        tracing::warn!(
-            peer_id = %resolved_peer_id,
-            error = %e,
-            "loro-snapshot catch-up: failed to record merge in peer_refs (non-fatal)"
-        );
-    }
+    record_catchup_pull(pool, resolved_peer_id, device_id).await;
 
     tracing::info!(
         peer_id = %resolved_peer_id,
@@ -566,6 +564,40 @@ async fn receive_loro_snapshot_catchup(
     });
 
     Ok(())
+}
+
+/// Record a finished snapshot catch-up in `peer_refs` — the pull bookkeeping
+/// both catch-up shapes share (#4960).
+///
+/// A catch-up only ever receives, so this advances the PULL bookkeeping exactly
+/// like a normal `LoroSync` completion: `last_hash` is our own local frontier
+/// and `""` is the documented "we sent nothing this session" sentinel of
+/// [`peer_refs::update_on_sync_in_tx`]. No reset occurred either way, so
+/// `reset_count` is NOT bumped.
+///
+/// Best-effort: the merge it follows has already committed (or there was none),
+/// so a failed stamp is logged and the session still succeeds.
+async fn record_catchup_pull(pool: &SqlitePool, peer_id: &str, local_device_id: &str) {
+    let stamp = async {
+        let last_hash = crate::sync_protocol::get_local_heads(pool)
+            .await?
+            .into_iter()
+            .find(|h| h.device_id == local_device_id)
+            .map(|h| h.hash)
+            .unwrap_or_default();
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
+        peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await?;
+        tx.commit().await?;
+        Ok::<(), AppError>(())
+    };
+    if let Err(e) = stamp.await {
+        tracing::warn!(
+            peer_id = %peer_id,
+            error = %e,
+            "snapshot catch-up: failed to record the pull in peer_refs (non-fatal)"
+        );
+    }
 }
 
 /// #2696 — boot-time sweep of orphaned snapshot-receive temp files.
