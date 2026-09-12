@@ -1374,9 +1374,10 @@ async fn verify_restorable_in_tx(
     Ok(block_type)
 }
 
-/// [`restore_block_inner`]'s post-commit fan-out: the restored seed cohort
-/// and ancestor chain onto the engine, then their link and FTS re-index.
-async fn dispatch_restore_fanout(
+/// One restored root's post-commit engine and link fan-out: the seed cohort
+/// and the ancestor chain onto the per-space Loro engine, then their link
+/// repair. [`dispatch_restore_fanout`] runs it once; the batch path loops it.
+async fn dispatch_restore_root_fanout(
     pool: &SqlitePool,
     materializer: &Materializer,
     op_record: &op_log::OpRecord,
@@ -1466,6 +1467,25 @@ async fn dispatch_restore_fanout(
     // this site and not only in `handlers::apply` (the remote/replay
     // counterpart). The seed is repeated (idempotent) rather than filtered out.
     crate::materializer::reindex_restored_cohort_links(pool, restore_cohort, restored_chain).await;
+}
+
+/// [`restore_block_inner`]'s post-commit fan-out: the restored seed cohort
+/// and ancestor chain onto the engine, then their link and FTS re-index.
+async fn dispatch_restore_fanout(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    op_record: &op_log::OpRecord,
+    restore_cohort: &[String],
+    restored_chain: &[String],
+) {
+    dispatch_restore_root_fanout(
+        pool,
+        materializer,
+        op_record,
+        restore_cohort,
+        restored_chain,
+    )
+    .await;
     // #4733: the FTS half of the same two sets — `UpdateFtsBlock` reached the
     // seed alone, and the delete's cohort removal is what created the debt.
     let restored_fts: Vec<&str> = restore_cohort
@@ -2360,37 +2380,8 @@ async fn dispatch_restore_batch_fanout(
     materializer: &Materializer,
     restore_fanout: &[(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)],
 ) {
-    // #1257 POST-COMMIT engine fan-out. Restore each root's captured
-    // cohort on the per-space Loro engine (mirrors `apply_op`'s
-    // `dispatch_restore_descendants`). The fan-out resolves the space inline
-    // from the pool — valid because the cohort is alive again post-commit.
-    // Engine `apply_restore_block` is idempotent. Engine-absent is a no-op.
-    //
-    // #3834: the UPWARD ancestor chain is fanned out here too, symmetrically —
-    // the caller's SQL walk only cleared `deleted_at` on it, and the replay arm
-    // that used to be cited for the engine half never fires for a local op. Left
-    // undone, the ancestors stay live in SQL and tombstoned in the CRDT, and the
-    // next `reproject_block_deleted_at_from_engine` re-deletes them in SQL.
-    // Same call shape as `apply_op`'s pair (descendants first, then ancestors);
-    // an empty chain returns immediately.
     for (op_record, cohort, ancestors) in restore_fanout {
-        crate::materializer::dispatch_restore_descendants(
-            pool,
-            op_record,
-            cohort,
-            materializer.loro_state(),
-        )
-        .await;
-        crate::materializer::dispatch_restore_ancestors(
-            pool,
-            op_record,
-            ancestors,
-            materializer.loro_state(),
-        )
-        .await;
-        // #4285: LINK repair for the same pair — see `dispatch_restore_fanout`,
-        // whose single-root fan-out this loop is the batch form of.
-        crate::materializer::reindex_restored_cohort_links(pool, cohort, ancestors).await;
+        dispatch_restore_root_fanout(pool, materializer, op_record, cohort, ancestors).await;
     }
     // #4733: the FTS rows of every restored cohort AND ancestor chain, in ONE
     // pass — same reason as `restore_all_deleted_inner`: `reindex_fts_for_ids`

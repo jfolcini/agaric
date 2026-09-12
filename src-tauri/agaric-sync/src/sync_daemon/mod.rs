@@ -325,20 +325,14 @@ impl DaemonActivation {
 /// task will clean up mDNS announcements and close the QUIC endpoint
 /// before exiting.
 pub struct SyncDaemon {
-    // #2621 Sync-D: `pub` so the app-hosted daemon tests can construct a
-    // `SyncDaemon { … }` directly across the crate boundary.
     pub shutdown_notify: Arc<Notify>,
     /// Read only by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
     /// graceful shutdown after `shutdown()`. The production drop path
     /// doesn't read it, but the field is *held* (rather than
     /// `.detach()`-ed or dropped at construction) so the spawned task
-    /// is anchored to the daemon's lifetime — the `#[cfg_attr]`
-    /// silences the resulting `dead_code` warning on non-test builds
-    /// without sacrificing the join-able test handle.
-    // #2621 Sync-D: `pub` so the app-hosted `sync_daemon::tests` (which assert on
-    // the join handle across the crate boundary) can read it; also silences the
-    // dead_code lint on non-test builds without the `#[cfg_attr]` gymnastics.
+    /// is anchored to the daemon's lifetime; `pub` is what keeps the
+    /// `dead_code` lint quiet on non-test builds.
     pub handle: Option<JoinHandle<()>>,
     /// Whether the daemon has committed to the active path — see
     /// [`DaemonActivation`] for why the dormant→active transition needs an
