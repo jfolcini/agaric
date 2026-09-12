@@ -183,8 +183,8 @@ struct PageAliasPrefixRow {
 /// even if a user has hundreds of substring-matched aliases.
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the
-/// result set to aliases pointing at pages whose `space` property
-/// equals the wrapped [`SpaceId`](agaric_store::space::SpaceId). Mirrors the
+/// result set to aliases pointing at pages whose `blocks.space_id`
+/// column equals the wrapped [`SpaceId`](agaric_store::space::SpaceId). Mirrors the
 /// `(?N IS NULL OR ... IN (...))` short-circuit pattern used by
 /// `pagination::list_by_tag` and friends. [`SpaceScope::Global`] keeps
 /// the cross-space behaviour for callers that span every space.

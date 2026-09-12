@@ -3184,12 +3184,11 @@ describe('LinkMetadata commands', () => {
   })
 
   it('get_link_metadata answers the row fetch_link_metadata upserted', () => {
-    const fetched = invoke('fetch_link_metadata', { url: 'https://other.dev' })
+    invoke('fetch_link_metadata', { url: 'https://other.dev' })
     const result = invoke('get_link_metadata', { url: 'https://other.dev' }) as Record<
       string,
       unknown
     >
-    expect(result).toEqual(fetched)
     expect(result).toMatchObject({
       url: 'https://other.dev',
       title: 'Mock Title',

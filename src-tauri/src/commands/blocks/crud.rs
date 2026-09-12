@@ -2123,18 +2123,17 @@ pub async fn restore_all_deleted_inner(
     // clears EVERY tombstone, so an ancestor chain is either inside a root's
     // cohort or is a root of its own, so the #1884 upward walk is vacuous on
     // this path (which is what hid #3818 on the batch path that copied it).
-    // The fan-out resolves
-    // each root's space inline — valid because the rows are alive again
-    // post-commit — and engine `apply_restore_block` is idempotent, so
-    // overlapping cohorts are harmless. Infallible / log-only.
+    // The fan-out resolves each root's space inline — valid because the rows
+    // are alive again post-commit — and engine `apply_restore_block` is
+    // idempotent, so overlapping cohorts are harmless. Infallible / log-only.
     for (op_record, cohort) in &restore_fanout {
         dispatch_restore_root_fanout(pool, materializer, op_record, cohort, &[]).await;
     }
     // #4733: the FTS rows of every restored cohort, in ONE pass. Unlike the
-    // link repair inside the fan-out, `reindex_fts_for_ids` pays a `load_ref_maps` — a full
-    // scan of every tag and page block — per CALL, so a per-root call would
-    // cost N of them to reach the same answer. The helper dedupes what it is
-    // handed, so overlapping cohorts are free.
+    // link repair inside the fan-out, `reindex_fts_for_ids` pays a
+    // `load_ref_maps` — a full scan of every tag and page block — per CALL,
+    // so a per-root call would cost N of them to reach the same answer. The
+    // helper dedupes what it is handed, so overlapping cohorts are free.
     let restored_union: Vec<&str> = restore_fanout
         .iter()
         .flat_map(|(_, cohort)| cohort.iter())

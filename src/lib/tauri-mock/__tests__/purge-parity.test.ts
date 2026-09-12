@@ -138,7 +138,7 @@ describe('#3091 purge parity', () => {
         mime_type: 'text/plain',
         size_bytes: 3,
         fs_path: '/mock/f.txt',
-        created_at: '2026-01-01T00:00:00Z',
+        created_at: 1767225600000,
       })
       attachmentBytes.set(attId, [1, 2, 3])
       dispatch('delete_block', { blockId: A })
