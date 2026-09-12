@@ -5,8 +5,8 @@
 //! returns [`super::loro_sync::ApplyOutcome::SnapshotFallbackRequested`] so
 //! the daemon layer drives a fresh snapshot catch-up. Each such
 //! occurrence is already surfaced **once per protocol session** as a
-//! `SyncEvent::Error` / `SyncMessage::ResetRequired` line by the
-//! orchestrator.
+//! `SyncMessage::ResetRequired` reply (and a `reset_required` progress
+//! event, #4960) by the orchestrator.
 //!
 //! That per-session line is invisible to an operator asking "why does sync
 //! keep falling back?" — there is nothing that correlates the pattern

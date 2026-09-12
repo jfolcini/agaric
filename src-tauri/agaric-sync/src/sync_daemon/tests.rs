@@ -259,7 +259,6 @@ fn shutdown_notifies_waiter() {
     let shutdown_notify = Arc::new(Notify::new());
     let daemon = SyncDaemon {
         shutdown_notify: shutdown_notify.clone(),
-        cancel: Arc::new(AtomicBool::new(false)),
         handle: None,
         activation: DaemonActivation::default(),
     };
