@@ -122,7 +122,6 @@ pub(crate) fn resolve_filter<'a>(
 /// `PropertyIsEmpty`) scope their SQL query to the candidate set via
 /// `json_each()` instead of scanning the entire `blocks` table.  This
 /// avoids materialising thousands of rows only to intersect them in Rust.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn resolve_filter_with_candidates<'a>(
     pool: &'a SqlitePool,
     filter: &'a BacklinkFilter,
@@ -139,229 +138,28 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
         }
         match filter {
             BacklinkFilter::PropertyText { key, op, value } => {
-                // Build the comparison clause dynamically so SQLite
-                // filters by operator rather than materialising every row
-                // with this key and filtering in Rust.  Mirrors the pattern
-                // in `pagination/properties.rs::query_by_property`.
-                //
-                // For LIKE-based operators (`Contains` / `StartsWith`) the
-                // user-supplied `value` is escaped via `escape_like` and
-                // the SQL uses `ESCAPE '\'` so `%` / `_` / `\` in the user
-                // input match literally.
-                let (sql_op, needs_escape) = match op {
-                    CompareOp::Eq => ("=", false),
-                    CompareOp::Neq => ("<>", false),
-                    CompareOp::Lt => ("<", false),
-                    CompareOp::Gt => (">", false),
-                    CompareOp::Lte => ("<=", false),
-                    CompareOp::Gte => (">=", false),
-                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
-                };
-                let bind_value: String = match op {
-                    CompareOp::Contains => format!("%{}%", escape_like(value)),
-                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
-                    _ => value.clone(),
-                };
-                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
-                let sql = format!(
-                    "SELECT bp.block_id \
-                     FROM block_properties bp \
-                     JOIN blocks b ON b.id = bp.block_id \
-                     WHERE bp.key = ?1 AND bp.value_text IS NOT NULL \
-                       AND bp.value_text {sql_op} ?2{escape_clause} \
-                       AND b.deleted_at IS NULL"
-                );
-                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
-                    .bind(key)
-                    .bind(&bind_value)
-                    .fetch_all(pool)
-                    .await?;
-                Ok(rows.into_iter().collect())
+                resolve_property_text(pool, key, op, value).await
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {
-                // Push operator comparison into SQL so SQLite filters
-                // by operator rather than materialising every row with this
-                // key and filtering in Rust.  Mirrors the `PropertyText` arm
-                // above.
-                //
-                // Behaviour note: `Eq` now uses SQL `=` rather than the prior
-                // `f64::EPSILON` Rust-side check.  This matches how
-                // `pagination/properties.rs::query_by_property` compares
-                // numeric properties.  `Contains` / `StartsWith` are
-                // meaningless for numeric values and short-circuit to an
-                // empty set (matching the prior `false` filter behaviour).
-                let sql_op = match op {
-                    CompareOp::Eq => "=",
-                    CompareOp::Neq => "<>",
-                    CompareOp::Lt => "<",
-                    CompareOp::Gt => ">",
-                    CompareOp::Lte => "<=",
-                    CompareOp::Gte => ">=",
-                    CompareOp::Contains | CompareOp::StartsWith => {
-                        return Ok(FxHashSet::default());
-                    }
-                };
-                let sql = format!(
-                    "SELECT bp.block_id \
-                     FROM block_properties bp \
-                     JOIN blocks b ON b.id = bp.block_id \
-                     WHERE bp.key = ?1 AND bp.value_num IS NOT NULL \
-                       AND bp.value_num {sql_op} ?2 \
-                       AND b.deleted_at IS NULL"
-                );
-                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
-                    .bind(key)
-                    .bind(*value)
-                    .fetch_all(pool)
-                    .await?;
-                Ok(rows.into_iter().collect())
+                resolve_property_num(pool, key, op, *value).await
             }
 
             BacklinkFilter::PropertyDate { key, op, value } => {
-                // Push operator comparison into SQL so SQLite filters
-                // by operator rather than materialising every row with this
-                // key and filtering in Rust.  Mirrors the `PropertyText` arm
-                // above.
-                //
-                // SQLite string comparison is lexicographic, which on
-                // ISO-8601 date strings (YYYY-MM-DD…) preserves chronological
-                // order and matches the prior Rust `&str` compare semantics.
-                // `Contains` / `StartsWith` use the same `escape_like` +
-                // `ESCAPE '\\'` shape as `PropertyText` so `%` / `_` / `\`
-                // in user input match literally.
-                let (sql_op, needs_escape) = match op {
-                    CompareOp::Eq => ("=", false),
-                    CompareOp::Neq => ("<>", false),
-                    CompareOp::Lt => ("<", false),
-                    CompareOp::Gt => (">", false),
-                    CompareOp::Lte => ("<=", false),
-                    CompareOp::Gte => (">=", false),
-                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
-                };
-                let bind_value: String = match op {
-                    CompareOp::Contains => format!("%{}%", escape_like(value)),
-                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
-                    _ => value.clone(),
-                };
-                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
-                let sql = format!(
-                    "SELECT bp.block_id \
-                     FROM block_properties bp \
-                     JOIN blocks b ON b.id = bp.block_id \
-                     WHERE bp.key = ?1 AND bp.value_date IS NOT NULL \
-                       AND bp.value_date {sql_op} ?2{escape_clause} \
-                       AND b.deleted_at IS NULL"
-                );
-                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
-                    .bind(key)
-                    .bind(&bind_value)
-                    .fetch_all(pool)
-                    .await?;
-                Ok(rows.into_iter().collect())
+                resolve_property_date(pool, key, op, value).await
             }
 
-            BacklinkFilter::PropertyIsSet { key } => {
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT bp.block_id \
-                     FROM block_properties bp \
-                     JOIN blocks b ON b.id = bp.block_id \
-                     WHERE bp.key = ?1 \
-                       AND b.deleted_at IS NULL",
-                )
-                .bind(key)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().collect())
-            }
+            BacklinkFilter::PropertyIsSet { key } => resolve_property_is_set(pool, key).await,
 
             BacklinkFilter::PropertyIsEmpty { key } => {
-                // Blocks that do NOT have the property set.
-                //
-                // When a candidate set is provided, scope the query to only
-                // those IDs via json_each() — avoids scanning the entire
-                // blocks table just to intersect in Rust afterwards.
-                if let Some(cands) = candidates {
-                    if cands.is_empty() {
-                        return Ok(FxHashSet::default());
-                    }
-                    let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT value AS id FROM json_each(?1) \
-                         WHERE CAST(value AS TEXT) NOT IN \
-                           (SELECT block_id FROM block_properties WHERE key = ?2)",
-                    )
-                    .bind(&json_ids)
-                    .bind(key)
-                    .fetch_all(pool)
-                    .await?;
-                    return Ok(rows.into_iter().collect());
-                }
-
-                // Fallback: no candidate set — scan all non-deleted blocks.
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT b.id FROM blocks b \
-                     WHERE b.deleted_at IS NULL \
-                       AND NOT EXISTS ( \
-                         SELECT 1 FROM block_properties bp \
-                         WHERE bp.block_id = b.id AND bp.key = ?1 \
-                       )",
-                )
-                .bind(key)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().collect())
+                resolve_property_is_empty(pool, key, candidates).await
             }
 
-            BacklinkFilter::TodoState { state } => {
-                let rows: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM blocks WHERE todo_state = ? AND deleted_at IS NULL",
-                )
-                .bind(state)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().map(|r| r.0).collect())
-            }
+            BacklinkFilter::TodoState { state } => resolve_todo_state(pool, state).await,
 
-            BacklinkFilter::Priority { level } => {
-                let rows: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM blocks WHERE priority = ? AND deleted_at IS NULL",
-                )
-                .bind(level)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().map(|r| r.0).collect())
-            }
+            BacklinkFilter::Priority { level } => resolve_priority(pool, level).await,
 
-            BacklinkFilter::DueDate { op, value } => {
-                let sql = match op {
-                    CompareOp::Eq => {
-                        "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL"
-                    }
-                    CompareOp::Neq => {
-                        "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL"
-                    }
-                    CompareOp::Lt => {
-                        "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL"
-                    }
-                    CompareOp::Lte => {
-                        "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
-                    }
-                    CompareOp::Gt => {
-                        "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL"
-                    }
-                    CompareOp::Gte => {
-                        "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
-                    }
-                    CompareOp::Contains | CompareOp::StartsWith => {
-                        return Err(AppError::validation(format!(
-                            "DueDate filter does not support {op:?} operator"
-                        )));
-                    }
-                };
-                let rows: Vec<(String,)> = sqlx::query_as(sql).bind(value).fetch_all(pool).await?;
-                Ok(rows.into_iter().map(|r| r.0).collect())
-            }
+            BacklinkFilter::DueDate { op, value } => resolve_due_date(pool, op, value).await,
 
             BacklinkFilter::HasTag { tag_id } => {
                 // Shares leaf SQL with `tag_query::resolve_expr`
@@ -379,303 +177,612 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 Ok(rows.into_iter().collect())
             }
 
-            BacklinkFilter::Contains { query } => {
-                if query.trim().is_empty() {
-                    return Ok(FxHashSet::default());
-                }
-                let sanitized = sanitize_fts_query(query);
-                if sanitized.is_empty() {
-                    return Ok(FxHashSet::default());
-                }
-                // Query FTS5 index, join back to blocks to get block id and
-                // exclude deleted blocks.
-                //
-                // #672 — cap the scan at `FTS_ROW_CAP` rows, matching
-                // `eval_unlinked_references`. A short common token (e.g. "the")
-                // matches a large fraction of the vault; without a cap every
-                // matching id is materialised into the `FxHashSet` here and
-                // then into a JSON bind downstream. We fetch `FTS_ROW_CAP + 1`
-                // to detect truncation, then trim to `FTS_ROW_CAP` and warn.
-                let fts_sql = format!(
-                    "SELECT fb.block_id \
-                     FROM fts_blocks fb \
-                     JOIN blocks b ON b.id = fb.block_id \
-                     WHERE fts_blocks MATCH ?1 \
-                       AND b.deleted_at IS NULL \
-                     ORDER BY fb.block_id \
-                     LIMIT {}",
-                    FTS_ROW_CAP + 1
-                );
-                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
-                    .bind(&sanitized)
-                    .fetch_all(pool)
-                    .await?;
-                if rows.len() > FTS_ROW_CAP {
-                    tracing::warn!(
-                        cap = FTS_ROW_CAP,
-                        "backlink Contains filter truncated: the query matched more than \
-                         the FTS row cap; results limited to the first {FTS_ROW_CAP} blocks"
-                    );
-                    return Ok(rows.into_iter().take(FTS_ROW_CAP).collect());
-                }
-                Ok(rows.into_iter().collect())
-            }
+            BacklinkFilter::Contains { query } => resolve_contains(pool, query).await,
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                // #670 — reject an unparseable bound loudly instead of silently
-                // widening the filter to "all blocks".
-                let after_prefix = resolve_range_bound(after.as_ref())?;
-                let before_prefix = resolve_range_bound(before.as_ref())?;
-
-                // Build SQL with optional ULID range bounds.  ULID prefix comparison
-                // works because Crockford base32 preserves sort order and SQLite
-                // string comparison treats shorter strings as less-than.
-                let mut sql = String::from("SELECT id FROM blocks WHERE deleted_at IS NULL");
-                let mut bind_idx = 1u32;
-                if after_prefix.is_some() {
-                    sql.push_str(&format!(" AND id >= ?{bind_idx}"));
-                    bind_idx += 1;
-                }
-                if before_prefix.is_some() {
-                    sql.push_str(&format!(" AND id < ?{bind_idx}"));
-                }
-
-                let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
-                if let Some(ref lo) = after_prefix {
-                    query = query.bind(lo.as_str());
-                }
-                if let Some(ref hi) = before_prefix {
-                    query = query.bind(hi.as_str());
-                }
-                let rows = query.fetch_all(pool).await?;
-                Ok(rows.into_iter().collect())
+                resolve_created_in_range(pool, after, before).await
             }
 
             BacklinkFilter::BlockType { block_type } => {
-                // I-Search-9: when a candidate set is provided, scope the
-                // query to those IDs via json_each() instead of loading
-                // every active block of the given type into memory.  For
-                // common types like "content" the unscoped path can return
-                // 10K+ rows that get discarded by the subsequent
-                // intersection in `eval_backlink_query`.
-                if let Some(cands) = candidates {
-                    if cands.is_empty() {
-                        return Ok(FxHashSet::default());
-                    }
-                    let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks \
-                         WHERE block_type = ?1 \
-                           AND deleted_at IS NULL \
-                           AND id IN (SELECT value FROM json_each(?2))",
-                    )
-                    .bind(block_type)
-                    .bind(&json_ids)
-                    .fetch_all(pool)
-                    .await?;
-                    return Ok(rows.into_iter().collect());
-                }
-
-                // Fallback: no candidate set — scan every active block of
-                // this type.  Reached when no candidate set is in scope:
-                // top-level grouped queries, or nested inside `Or`/`Not`
-                // (which deliberately stay unscoped — see those arms). The
-                // `And` combinator now threads the parent candidate set
-                // through its conjuncts (#379), so `And { BlockType, … }`
-                // takes the scoped json_each path above instead of this
-                // whole-vault scan.
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks \
-                     WHERE block_type = ?1 AND deleted_at IS NULL",
-                )
-                .bind(block_type)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().collect())
+                resolve_block_type(pool, block_type, candidates).await
             }
 
             BacklinkFilter::SourcePage { included, excluded } => {
-                let result: FxHashSet<String>;
-
-                if !included.is_empty() {
-                    // Get all descendants of included pages.
-                    // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
-                    // Above the threshold.
-                    result = fetch_descendants_of(pool, included).await?;
-
-                    // Apply exclusion on top of included set if needed
-                    if !excluded.is_empty() {
-                        let excluded_set = fetch_descendants_of(pool, excluded).await?;
-                        // Shadow with filtered result (result is not mut)
-                        let mut result = result;
-                        result.retain(|id| !excluded_set.contains(id));
-                        return Ok(result);
-                    }
-                } else if !excluded.is_empty() {
-                    // Exclusion-only: push exclusion into SQL to avoid loading full table.
-                    // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
-                    // Above the threshold.
-                    if excluded.len() <= SMALL_IN_LIMIT {
-                        let placeholders = std::iter::repeat_n("?", excluded.len())
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-                        let sql = format!(
-                            "SELECT id FROM blocks WHERE deleted_at IS NULL \
-                             AND id NOT IN ( \
-                               WITH RECURSIVE desc(id, depth) AS ( \
-                                 SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL \
-                                 UNION ALL \
-                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
-                               ) SELECT id FROM desc \
-                             )"
-                        );
-                        let mut q =
-                            sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
-                        for id in excluded {
-                            q = q.bind(id);
-                        }
-                        result = q.fetch_all(pool).await?.into_iter().collect();
-                    } else {
-                        let json_ids = serde_json::to_string(&excluded)?;
-                        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-                        let rows = sqlx::query_scalar::<_, String>(
-                            "SELECT id FROM blocks WHERE deleted_at IS NULL \
-                             AND id NOT IN ( \
-                               WITH RECURSIVE desc(id, depth) AS ( \
-                                 SELECT value AS id, 0 AS depth FROM json_each(?1) \
-                                 UNION ALL \
-                                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
-                               ) SELECT id FROM desc \
-                             )",
-                        )
-                        .bind(&json_ids)
-                        .fetch_all(pool)
-                        .await?;
-                        result = rows.into_iter().collect();
-                    }
-                } else {
-                    // No inclusion AND no exclusion — all blocks
-                    result = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
-                    )
-                    .fetch_all(pool)
-                    .await?
-                    .into_iter()
-                    .collect();
-                }
-
-                Ok(result)
+                resolve_source_page(pool, included, excluded).await
             }
 
-            BacklinkFilter::And { filters } => {
-                if filters.is_empty() {
-                    return Ok(FxHashSet::default());
-                }
-                // #379: thread the parent candidate set through every
-                // conjunct. `And` is a set INTERSECTION, and the final
-                // result is a subset of every conjunct — so scoping each
-                // conjunct to `candidates` only drops ids that the
-                // intersection (and, for the top-level caller, the outer
-                // intersection against `candidates`) would drop anyway.
-                // This is provably behaviour-preserving while letting
-                // candidate-aware leaves (e.g. `BlockType`,
-                // `PropertyIsEmpty`) scope their SQL to the candidate set
-                // via `json_each` instead of scanning the whole vault and
-                // discarding the surplus in Rust.
-                //
-                // Resolve all sub-filters concurrently (#319) instead of
-                // sequentially, turning N serial DB round-trips into N
-                // concurrent ones.
-                let futures = filters
-                    .iter()
-                    .map(|f| resolve_filter_with_candidates(pool, f, depth + 1, candidates));
-                let results = try_join_all(futures).await?;
-                let mut iter = results.into_iter();
-                let mut result = iter.next().unwrap();
-                for set in iter {
-                    result.retain(|id| set.contains(id));
-                }
-                Ok(result)
-            }
+            BacklinkFilter::And { filters } => resolve_and(pool, filters, depth, candidates).await,
 
-            BacklinkFilter::Or { filters } => {
-                // #379: `Or` is a set UNION, NOT an intersection. Scoping a
-                // disjunct to `candidates` would WRONGLY drop matches that
-                // lie outside `candidates` but should still appear in the
-                // union (the union may legitimately exceed `candidates`,
-                // and the parent And/intersection — if any — has not yet
-                // been applied at this point). So we deliberately resolve
-                // disjuncts UNSCOPED via the no-candidate `resolve_filter`
-                // wrapper. Correctness is preserved; only perf is left on
-                // the table for `Or` subtrees.
-                //
-                // Resolve all sub-filters concurrently (#319) instead of
-                // sequentially, turning N serial DB round-trips into N
-                // concurrent ones.
-                let futures = filters.iter().map(|f| resolve_filter(pool, f, depth + 1));
-                let results = try_join_all(futures).await?;
-                let mut combined = FxHashSet::default();
-                for set in results {
-                    combined.extend(set);
-                }
-                Ok(combined)
-            }
+            BacklinkFilter::Or { filters } => resolve_or(pool, filters, depth).await,
 
-            BacklinkFilter::Not { filter } => {
-                // #379: `Not` is a set COMPLEMENT over all non-deleted
-                // blocks. Scoping the INNER filter to `candidates` would
-                // shrink the set being complemented, which inverts to a
-                // LARGER (wrong) complement. The complement itself must
-                // also range over the whole vault, not `candidates`. So the
-                // inner filter is resolved UNSCOPED. Correctness is
-                // preserved; only perf is left on the table for `Not`.
-                let inner_set = resolve_filter(pool, filter, depth + 1).await?;
-
-                if inner_set.is_empty() {
-                    // Not of empty set = all non-deleted blocks
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
-                    )
-                    .fetch_all(pool)
-                    .await?;
-                    return Ok(rows.into_iter().collect());
-                }
-
-                // For small exclusion sets, push NOT IN into SQL to avoid loading
-                // all block IDs into memory.  SQLite variable limit is 999 in older
-                // builds, so cap at SMALL_IN_LIMIT to be safe.
-                if inner_set.len() <= SMALL_IN_LIMIT {
-                    let placeholders: String = std::iter::repeat_n("?", inner_set.len())
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let sql = format!(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL \
-                         AND id NOT IN ({placeholders})"
-                    );
-                    let mut query =
-                        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
-                    for id in &inner_set {
-                        query = query.bind(id.as_str());
-                    }
-                    let rows = query.fetch_all(pool).await?;
-                    return Ok(rows.into_iter().collect());
-                }
-
-                // For large exclusion sets, use json_each() to push NOT
-                // into SQL — avoids loading all block IDs into memory.
-                let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())?;
-                let rows = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL \
-                     AND id NOT IN (SELECT value FROM json_each(?))",
-                )
-                .bind(&json_ids)
-                .fetch_all(pool)
-                .await?;
-                Ok(rows.into_iter().collect())
-            }
+            BacklinkFilter::Not { filter } => resolve_not(pool, filter, depth).await,
         }
     })
+}
+
+/// A `PropertyText` leaf: the operator is pushed into SQL so SQLite
+/// filters by it rather than materialising every row with this key.
+async fn resolve_property_text(
+    pool: &SqlitePool,
+    key: &str,
+    op: &CompareOp,
+    value: &str,
+) -> Result<FxHashSet<String>, AppError> {
+    // Build the comparison clause dynamically so SQLite
+    // filters by operator rather than materialising every row
+    // with this key and filtering in Rust.  Mirrors the pattern
+    // in `pagination/properties.rs::query_by_property`.
+    //
+    // For LIKE-based operators (`Contains` / `StartsWith`) the
+    // user-supplied `value` is escaped via `escape_like` and
+    // the SQL uses `ESCAPE '\'` so `%` / `_` / `\` in the user
+    // input match literally.
+    let (sql_op, needs_escape) = match op {
+        CompareOp::Eq => ("=", false),
+        CompareOp::Neq => ("<>", false),
+        CompareOp::Lt => ("<", false),
+        CompareOp::Gt => (">", false),
+        CompareOp::Lte => ("<=", false),
+        CompareOp::Gte => (">=", false),
+        CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+    };
+    let bind_value: String = match op {
+        CompareOp::Contains => format!("%{}%", escape_like(value)),
+        CompareOp::StartsWith => format!("{}%", escape_like(value)),
+        _ => value.to_string(),
+    };
+    let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+    let sql = format!(
+        "SELECT bp.block_id \
+         FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 AND bp.value_text IS NOT NULL \
+           AND bp.value_text {sql_op} ?2{escape_clause} \
+           AND b.deleted_at IS NULL"
+    );
+    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(key)
+        .bind(&bind_value)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `PropertyNum` leaf. `Contains`/`StartsWith` are meaningless for a
+/// numeric value and short-circuit to the empty set.
+async fn resolve_property_num(
+    pool: &SqlitePool,
+    key: &str,
+    op: &CompareOp,
+    value: f64,
+) -> Result<FxHashSet<String>, AppError> {
+    // Push operator comparison into SQL so SQLite filters
+    // by operator rather than materialising every row with this
+    // key and filtering in Rust.  Mirrors the `PropertyText` arm
+    // above.
+    //
+    // Behaviour note: `Eq` now uses SQL `=` rather than the prior
+    // `f64::EPSILON` Rust-side check.  This matches how
+    // `pagination/properties.rs::query_by_property` compares
+    // numeric properties.  `Contains` / `StartsWith` are
+    // meaningless for numeric values and short-circuit to an
+    // empty set (matching the prior `false` filter behaviour).
+    let sql_op = match op {
+        CompareOp::Eq => "=",
+        CompareOp::Neq => "<>",
+        CompareOp::Lt => "<",
+        CompareOp::Gt => ">",
+        CompareOp::Lte => "<=",
+        CompareOp::Gte => ">=",
+        CompareOp::Contains | CompareOp::StartsWith => {
+            return Ok(FxHashSet::default());
+        }
+    };
+    let sql = format!(
+        "SELECT bp.block_id \
+         FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 AND bp.value_num IS NOT NULL \
+           AND bp.value_num {sql_op} ?2 \
+           AND b.deleted_at IS NULL"
+    );
+    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(key)
+        .bind(value)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `PropertyDate` leaf. SQLite's lexicographic compare on ISO-8601
+/// strings preserves chronological order.
+async fn resolve_property_date(
+    pool: &SqlitePool,
+    key: &str,
+    op: &CompareOp,
+    value: &str,
+) -> Result<FxHashSet<String>, AppError> {
+    // Push operator comparison into SQL so SQLite filters
+    // by operator rather than materialising every row with this
+    // key and filtering in Rust.  Mirrors the `PropertyText` arm
+    // above.
+    //
+    // SQLite string comparison is lexicographic, which on
+    // ISO-8601 date strings (YYYY-MM-DD…) preserves chronological
+    // order and matches the prior Rust `&str` compare semantics.
+    // `Contains` / `StartsWith` use the same `escape_like` +
+    // `ESCAPE '\\'` shape as `PropertyText` so `%` / `_` / `\`
+    // in user input match literally.
+    let (sql_op, needs_escape) = match op {
+        CompareOp::Eq => ("=", false),
+        CompareOp::Neq => ("<>", false),
+        CompareOp::Lt => ("<", false),
+        CompareOp::Gt => (">", false),
+        CompareOp::Lte => ("<=", false),
+        CompareOp::Gte => (">=", false),
+        CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+    };
+    let bind_value: String = match op {
+        CompareOp::Contains => format!("%{}%", escape_like(value)),
+        CompareOp::StartsWith => format!("{}%", escape_like(value)),
+        _ => value.to_string(),
+    };
+    let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+    let sql = format!(
+        "SELECT bp.block_id \
+         FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 AND bp.value_date IS NOT NULL \
+           AND bp.value_date {sql_op} ?2{escape_clause} \
+           AND b.deleted_at IS NULL"
+    );
+    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(key)
+        .bind(&bind_value)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `PropertyIsSet` leaf: blocks carrying the property at all.
+async fn resolve_property_is_set(
+    pool: &SqlitePool,
+    key: &str,
+) -> Result<FxHashSet<String>, AppError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT bp.block_id \
+         FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ?1 \
+           AND b.deleted_at IS NULL",
+    )
+    .bind(key)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `PropertyIsEmpty` leaf: blocks that do NOT carry the property.
+async fn resolve_property_is_empty(
+    pool: &SqlitePool,
+    key: &str,
+    candidates: Option<&FxHashSet<String>>,
+) -> Result<FxHashSet<String>, AppError> {
+    // Blocks that do NOT have the property set.
+    //
+    // When a candidate set is provided, scope the query to only
+    // those IDs via json_each() — avoids scanning the entire
+    // blocks table just to intersect in Rust afterwards.
+    if let Some(cands) = candidates {
+        if cands.is_empty() {
+            return Ok(FxHashSet::default());
+        }
+        let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT value AS id FROM json_each(?1) \
+             WHERE CAST(value AS TEXT) NOT IN \
+               (SELECT block_id FROM block_properties WHERE key = ?2)",
+        )
+        .bind(&json_ids)
+        .bind(key)
+        .fetch_all(pool)
+        .await?;
+        return Ok(rows.into_iter().collect());
+    }
+
+    // Fallback: no candidate set — scan all non-deleted blocks.
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT b.id FROM blocks b \
+         WHERE b.deleted_at IS NULL \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM block_properties bp \
+             WHERE bp.block_id = b.id AND bp.key = ?1 \
+           )",
+    )
+    .bind(key)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `TodoState` leaf, off the native column.
+async fn resolve_todo_state(pool: &SqlitePool, state: &str) -> Result<FxHashSet<String>, AppError> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM blocks WHERE todo_state = ? AND deleted_at IS NULL")
+            .bind(state)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// A `Priority` leaf, off the native column.
+async fn resolve_priority(pool: &SqlitePool, level: &str) -> Result<FxHashSet<String>, AppError> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM blocks WHERE priority = ? AND deleted_at IS NULL")
+            .bind(level)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// A `DueDate` leaf. `Contains`/`StartsWith` have no meaning on a date
+/// column and are rejected rather than silently widened.
+async fn resolve_due_date(
+    pool: &SqlitePool,
+    op: &CompareOp,
+    value: &str,
+) -> Result<FxHashSet<String>, AppError> {
+    let sql = match op {
+        CompareOp::Eq => "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL",
+        CompareOp::Neq => {
+            "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+        }
+        CompareOp::Lt => {
+            "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+        }
+        CompareOp::Lte => {
+            "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+        }
+        CompareOp::Gt => {
+            "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+        }
+        CompareOp::Gte => {
+            "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+        }
+        CompareOp::Contains | CompareOp::StartsWith => {
+            return Err(AppError::validation(format!(
+                "DueDate filter does not support {op:?} operator"
+            )));
+        }
+    };
+    let rows: Vec<(String,)> = sqlx::query_as(sql).bind(value).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// A `Contains` leaf, over the FTS index and capped at `FTS_ROW_CAP`.
+async fn resolve_contains(pool: &SqlitePool, query: &str) -> Result<FxHashSet<String>, AppError> {
+    if query.trim().is_empty() {
+        return Ok(FxHashSet::default());
+    }
+    let sanitized = sanitize_fts_query(query);
+    if sanitized.is_empty() {
+        return Ok(FxHashSet::default());
+    }
+    // Query FTS5 index, join back to blocks to get block id and
+    // exclude deleted blocks.
+    //
+    // #672 — cap the scan at `FTS_ROW_CAP` rows, matching
+    // `eval_unlinked_references`. A short common token (e.g. "the")
+    // matches a large fraction of the vault; without a cap every
+    // matching id is materialised into the `FxHashSet` here and
+    // then into a JSON bind downstream. We fetch `FTS_ROW_CAP + 1`
+    // to detect truncation, then trim to `FTS_ROW_CAP` and warn.
+    let fts_sql = format!(
+        "SELECT fb.block_id \
+         FROM fts_blocks fb \
+         JOIN blocks b ON b.id = fb.block_id \
+         WHERE fts_blocks MATCH ?1 \
+           AND b.deleted_at IS NULL \
+         ORDER BY fb.block_id \
+         LIMIT {}",
+        FTS_ROW_CAP + 1
+    );
+    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
+        .bind(&sanitized)
+        .fetch_all(pool)
+        .await?;
+    if rows.len() > FTS_ROW_CAP {
+        tracing::warn!(
+            cap = FTS_ROW_CAP,
+            "backlink Contains filter truncated: the query matched more than \
+             the FTS row cap; results limited to the first {FTS_ROW_CAP} blocks"
+        );
+        return Ok(rows.into_iter().take(FTS_ROW_CAP).collect());
+    }
+    Ok(rows.into_iter().collect())
+}
+
+/// A `CreatedInRange` leaf, as a ULID prefix range on `blocks.id`.
+async fn resolve_created_in_range(
+    pool: &SqlitePool,
+    after: &Option<String>,
+    before: &Option<String>,
+) -> Result<FxHashSet<String>, AppError> {
+    // #670 — reject an unparseable bound loudly instead of silently
+    // widening the filter to "all blocks".
+    let after_prefix = resolve_range_bound(after.as_ref())?;
+    let before_prefix = resolve_range_bound(before.as_ref())?;
+
+    // Build SQL with optional ULID range bounds.  ULID prefix comparison
+    // works because Crockford base32 preserves sort order and SQLite
+    // string comparison treats shorter strings as less-than.
+    let mut sql = String::from("SELECT id FROM blocks WHERE deleted_at IS NULL");
+    let mut bind_idx = 1u32;
+    if after_prefix.is_some() {
+        sql.push_str(&format!(" AND id >= ?{bind_idx}"));
+        bind_idx += 1;
+    }
+    if before_prefix.is_some() {
+        sql.push_str(&format!(" AND id < ?{bind_idx}"));
+    }
+
+    let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+    if let Some(ref lo) = after_prefix {
+        query = query.bind(lo.as_str());
+    }
+    if let Some(ref hi) = before_prefix {
+        query = query.bind(hi.as_str());
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `BlockType` leaf.
+async fn resolve_block_type(
+    pool: &SqlitePool,
+    block_type: &str,
+    candidates: Option<&FxHashSet<String>>,
+) -> Result<FxHashSet<String>, AppError> {
+    // I-Search-9: when a candidate set is provided, scope the
+    // query to those IDs via json_each() instead of loading
+    // every active block of the given type into memory.  For
+    // common types like "content" the unscoped path can return
+    // 10K+ rows that get discarded by the subsequent
+    // intersection in `eval_backlink_query`.
+    if let Some(cands) = candidates {
+        if cands.is_empty() {
+            return Ok(FxHashSet::default());
+        }
+        let json_ids = serde_json::to_string(&cands.iter().collect::<Vec<_>>())?;
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM blocks \
+             WHERE block_type = ?1 \
+               AND deleted_at IS NULL \
+               AND id IN (SELECT value FROM json_each(?2))",
+        )
+        .bind(block_type)
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        return Ok(rows.into_iter().collect());
+    }
+
+    // Fallback: no candidate set — scan every active block of
+    // this type.  Reached when no candidate set is in scope:
+    // top-level grouped queries, or nested inside `Or`/`Not`
+    // (which deliberately stay unscoped — see those arms). The
+    // `And` combinator now threads the parent candidate set
+    // through its conjuncts (#379), so `And { BlockType, … }`
+    // takes the scoped json_each path above instead of this
+    // whole-vault scan.
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks \
+         WHERE block_type = ?1 AND deleted_at IS NULL",
+    )
+    .bind(block_type)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// A `SourcePage` leaf: the descendants of the included pages, minus the
+/// descendants of the excluded ones.
+async fn resolve_source_page(
+    pool: &SqlitePool,
+    included: &[String],
+    excluded: &[String],
+) -> Result<FxHashSet<String>, AppError> {
+    let result: FxHashSet<String>;
+
+    if !included.is_empty() {
+        // Get all descendants of included pages.
+        // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
+        // Above the threshold.
+        result = fetch_descendants_of(pool, included).await?;
+
+        // Apply exclusion on top of included set if needed
+        if !excluded.is_empty() {
+            let excluded_set = fetch_descendants_of(pool, excluded).await?;
+            // Shadow with filtered result (result is not mut)
+            let mut result = result;
+            result.retain(|id| !excluded_set.contains(id));
+            return Ok(result);
+        }
+    } else if !excluded.is_empty() {
+        // Exclusion-only: push exclusion into SQL to avoid loading full table.
+        // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
+        // Above the threshold.
+        if excluded.len() <= SMALL_IN_LIMIT {
+            let placeholders = std::iter::repeat_n("?", excluded.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+            let sql = format!(
+                "SELECT id FROM blocks WHERE deleted_at IS NULL \
+                 AND id NOT IN ( \
+                   WITH RECURSIVE desc(id, depth) AS ( \
+                     SELECT id, 0 FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                   ) SELECT id FROM desc \
+                 )"
+            );
+            let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+            for id in excluded {
+                q = q.bind(id);
+            }
+            result = q.fetch_all(pool).await?.into_iter().collect();
+        } else {
+            let json_ids = serde_json::to_string(&excluded)?;
+            // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+            let rows = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE deleted_at IS NULL \
+                 AND id NOT IN ( \
+                   WITH RECURSIVE desc(id, depth) AS ( \
+                     SELECT value AS id, 0 AS depth FROM json_each(?1) \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                   ) SELECT id FROM desc \
+                 )",
+            )
+            .bind(&json_ids)
+            .fetch_all(pool)
+            .await?;
+            result = rows.into_iter().collect();
+        }
+    } else {
+        // No inclusion AND no exclusion — all blocks
+        result = sqlx::query_scalar::<_, String>("SELECT id FROM blocks WHERE deleted_at IS NULL")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+    }
+
+    Ok(result)
+}
+
+/// An `And` node: a set INTERSECTION, so the parent candidate set can be
+/// threaded through every conjunct (#379).
+async fn resolve_and<'a>(
+    pool: &'a SqlitePool,
+    filters: &'a [BacklinkFilter],
+    depth: u32,
+    candidates: Option<&'a FxHashSet<String>>,
+) -> Result<FxHashSet<String>, AppError> {
+    if filters.is_empty() {
+        return Ok(FxHashSet::default());
+    }
+    // #379: thread the parent candidate set through every
+    // conjunct. `And` is a set INTERSECTION, and the final
+    // result is a subset of every conjunct — so scoping each
+    // conjunct to `candidates` only drops ids that the
+    // intersection (and, for the top-level caller, the outer
+    // intersection against `candidates`) would drop anyway.
+    // This is provably behaviour-preserving while letting
+    // candidate-aware leaves (e.g. `BlockType`,
+    // `PropertyIsEmpty`) scope their SQL to the candidate set
+    // via `json_each` instead of scanning the whole vault and
+    // discarding the surplus in Rust.
+    //
+    // Resolve all sub-filters concurrently (#319) instead of
+    // sequentially, turning N serial DB round-trips into N
+    // concurrent ones.
+    let futures = filters
+        .iter()
+        .map(|f| resolve_filter_with_candidates(pool, f, depth + 1, candidates));
+    let results = try_join_all(futures).await?;
+    let mut iter = results.into_iter();
+    let mut result = iter.next().unwrap();
+    for set in iter {
+        result.retain(|id| set.contains(id));
+    }
+    Ok(result)
+}
+
+/// An `Or` node: a set UNION, so the disjuncts stay UNSCOPED (#379).
+async fn resolve_or<'a>(
+    pool: &'a SqlitePool,
+    filters: &'a [BacklinkFilter],
+    depth: u32,
+) -> Result<FxHashSet<String>, AppError> {
+    // #379: `Or` is a set UNION, NOT an intersection. Scoping a
+    // disjunct to `candidates` would WRONGLY drop matches that
+    // lie outside `candidates` but should still appear in the
+    // union (the union may legitimately exceed `candidates`,
+    // and the parent And/intersection — if any — has not yet
+    // been applied at this point). So we deliberately resolve
+    // disjuncts UNSCOPED via the no-candidate `resolve_filter`
+    // wrapper. Correctness is preserved; only perf is left on
+    // the table for `Or` subtrees.
+    //
+    // Resolve all sub-filters concurrently (#319) instead of
+    // sequentially, turning N serial DB round-trips into N
+    // concurrent ones.
+    let futures = filters.iter().map(|f| resolve_filter(pool, f, depth + 1));
+    let results = try_join_all(futures).await?;
+    let mut combined = FxHashSet::default();
+    for set in results {
+        combined.extend(set);
+    }
+    Ok(combined)
+}
+
+/// A `Not` node: a set COMPLEMENT over all non-deleted blocks, so the
+/// inner filter is resolved UNSCOPED (#379).
+async fn resolve_not<'a>(
+    pool: &'a SqlitePool,
+    filter: &'a BacklinkFilter,
+    depth: u32,
+) -> Result<FxHashSet<String>, AppError> {
+    // #379: `Not` is a set COMPLEMENT over all non-deleted
+    // blocks. Scoping the INNER filter to `candidates` would
+    // shrink the set being complemented, which inverts to a
+    // LARGER (wrong) complement. The complement itself must
+    // also range over the whole vault, not `candidates`. So the
+    // inner filter is resolved UNSCOPED. Correctness is
+    // preserved; only perf is left on the table for `Not`.
+    let inner_set = resolve_filter(pool, filter, depth + 1).await?;
+
+    if inner_set.is_empty() {
+        // Not of empty set = all non-deleted blocks
+        let rows =
+            sqlx::query_scalar::<_, String>("SELECT id FROM blocks WHERE deleted_at IS NULL")
+                .fetch_all(pool)
+                .await?;
+        return Ok(rows.into_iter().collect());
+    }
+
+    // For small exclusion sets, push NOT IN into SQL to avoid loading
+    // all block IDs into memory.  SQLite variable limit is 999 in older
+    // builds, so cap at SMALL_IN_LIMIT to be safe.
+    if inner_set.len() <= SMALL_IN_LIMIT {
+        let placeholders: String = std::iter::repeat_n("?", inner_set.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id FROM blocks WHERE deleted_at IS NULL \
+             AND id NOT IN ({placeholders})"
+        );
+        let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+        for id in &inner_set {
+            query = query.bind(id.as_str());
+        }
+        let rows = query.fetch_all(pool).await?;
+        return Ok(rows.into_iter().collect());
+    }
+
+    // For large exclusion sets, use json_each() to push NOT
+    // into SQL — avoids loading all block IDs into memory.
+    let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())?;
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks WHERE deleted_at IS NULL \
+         AND id NOT IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&json_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +938,6 @@ fn compare_op_to_date_predicate(op: &CompareOp, value: &str) -> Option<DatePredi
 /// resolved once via the existing helpers and embedded as a `json_each` id
 /// set rather than correlated per row — recursion / FTS / tag scans must not
 /// run once per candidate source block.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn compile_backlink_filter<'a>(
     pool: &'a SqlitePool,
     filter: &'a BacklinkFilter,
@@ -874,96 +980,21 @@ pub(crate) fn compile_backlink_filter<'a>(
                 Ok(route_has_property(key, &PropertyPredicate::NotExists))
             }
 
-            BacklinkFilter::TodoState { state } => {
-                let prim = FilterPrimitive::State {
-                    values: vec![state.clone()],
-                    is_null: false,
-                    exclude: false,
-                };
-                Ok(BacklinkProjection::to_compiled(
-                    BacklinkProjection.compile(&prim),
-                ))
-            }
+            BacklinkFilter::TodoState { state } => Ok(compile_todo_state(state)),
 
-            BacklinkFilter::Priority { level } => {
-                let prim = FilterPrimitive::Priority {
-                    values: vec![level.clone()],
-                    is_null: false,
-                    exclude: false,
-                };
-                Ok(BacklinkProjection::to_compiled(
-                    BacklinkProjection.compile(&prim),
-                ))
-            }
+            BacklinkFilter::Priority { level } => Ok(compile_priority(level)),
 
-            BacklinkFilter::DueDate { op, value } => {
-                // `Eq`/`Lt`/`Gt`/`Lte`/`Gte` route through the projection's
-                // `DatePredicate`. `Neq` has NO `DatePredicate` counterpart
-                // (the vocabulary is `On/Before/After/OnOrBefore/OnOrAfter/
-                // Between/IsNull`), so it stays inline — byte-identical to the
-                // legacy `(b.due_date != ? AND b.due_date IS NOT NULL)`.
-                // `Contains`/`StartsWith` keep the legacy loud rejection.
-                match op {
-                    CompareOp::Neq => Ok(CompiledFilter {
-                        sql: "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
-                        binds: vec![FilterBind::Text(value.clone())],
-                    }),
-                    CompareOp::Contains | CompareOp::StartsWith => Err(AppError::validation(
-                        format!("DueDate filter does not support {op:?} operator"),
-                    )),
-                    _ => {
-                        let predicate =
-                            compare_op_to_date_predicate(op, value).ok_or_else(|| {
-                                AppError::validation(format!(
-                                    "DueDate filter does not support {op:?} operator"
-                                ))
-                            })?;
-                        let prim = FilterPrimitive::DueDate { predicate };
-                        Ok(BacklinkProjection::to_compiled(
-                            BacklinkProjection.compile(&prim),
-                        ))
-                    }
-                }
-            }
+            BacklinkFilter::DueDate { op, value } => compile_due_date(op, value),
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                // #670 — keep the loud rejection here so the resolver path and
-                // the compiled path agree on validity BEFORE routing (the
-                // projection itself treats an unparseable bound as absent).
-                resolve_range_bound(after.as_ref())?;
-                resolve_range_bound(before.as_ref())?;
-                let prim = FilterPrimitive::Created {
-                    after: after.clone(),
-                    before: before.clone(),
-                };
-                Ok(BacklinkProjection::to_compiled(
-                    BacklinkProjection.compile(&prim),
-                ))
+                compile_created_in_range(after, before)
             }
 
-            BacklinkFilter::BlockType { block_type } => {
-                let prim = FilterPrimitive::BlockType {
-                    values: vec![block_type.clone()],
-                    exclude: false,
-                };
-                Ok(BacklinkProjection::to_compiled(
-                    BacklinkProjection.compile(&prim),
-                ))
-            }
+            BacklinkFilter::BlockType { block_type } => Ok(compile_block_type(block_type)),
 
             // ── Hybrid leaves: pre-resolve once, embed as a json_each set ──
             BacklinkFilter::Contains { query } => {
-                // Empty / whitespace-only / sanitizes-to-empty ⇒ empty set,
-                // matching the resolver's early returns.
-                if query.trim().is_empty() {
-                    return Ok(CompiledFilter::never());
-                }
-                let sanitized = sanitize_fts_query(query);
-                if sanitized.is_empty() {
-                    return Ok(CompiledFilter::never());
-                }
-                let ids = resolve_filter(pool, filter, depth).await?;
-                membership_fragment(&ids)
+                compile_contains(pool, filter, query, depth).await
             }
 
             BacklinkFilter::HasTag { .. }
@@ -974,58 +1005,9 @@ pub(crate) fn compile_backlink_filter<'a>(
             }
 
             // ── Boolean combinators ──
-            BacklinkFilter::And { filters } => {
-                // Preserve the resolver's empty-And semantics: it returns the
-                // empty set (`1=0`), NOT the neutral "all" element.
-                if filters.is_empty() {
-                    return Ok(CompiledFilter::never());
-                }
-                let compiled = try_join_all(
-                    filters
-                        .iter()
-                        .map(|f| compile_backlink_filter(pool, f, depth + 1)),
-                )
-                .await?;
-                let mut binds = Vec::new();
-                let parts: Vec<String> = compiled
-                    .into_iter()
-                    .map(|c| {
-                        binds.extend(c.binds);
-                        c.sql
-                    })
-                    .collect();
-                Ok(CompiledFilter {
-                    sql: format!("({})", parts.join(" AND ")),
-                    binds,
-                })
-            }
+            BacklinkFilter::And { filters } => compile_and(pool, filters, depth).await,
 
-            BacklinkFilter::Or { filters } => {
-                // Resolver's empty-Or returns the empty set (the fold starts
-                // from an empty accumulator and never unions anything), so an
-                // empty `Or` is `1=0`, NOT `1=1`.
-                if filters.is_empty() {
-                    return Ok(CompiledFilter::never());
-                }
-                let compiled = try_join_all(
-                    filters
-                        .iter()
-                        .map(|f| compile_backlink_filter(pool, f, depth + 1)),
-                )
-                .await?;
-                let mut binds = Vec::new();
-                let parts: Vec<String> = compiled
-                    .into_iter()
-                    .map(|c| {
-                        binds.extend(c.binds);
-                        c.sql
-                    })
-                    .collect();
-                Ok(CompiledFilter {
-                    sql: format!("({})", parts.join(" OR ")),
-                    binds,
-                })
-            }
+            BacklinkFilter::Or { filters } => compile_or(pool, filters, depth).await,
 
             BacklinkFilter::Not { filter: inner } => {
                 // Three-valued-logic guard: the resolver's `Not` computes the
@@ -1048,6 +1030,166 @@ pub(crate) fn compile_backlink_filter<'a>(
                 })
             }
         }
+    })
+}
+
+/// A `TodoState` leaf, through the projection.
+fn compile_todo_state(state: &str) -> CompiledFilter {
+    let prim = FilterPrimitive::State {
+        values: vec![state.to_string()],
+        is_null: false,
+        exclude: false,
+    };
+    BacklinkProjection::to_compiled(BacklinkProjection.compile(&prim))
+}
+
+/// A `Priority` leaf, through the projection.
+fn compile_priority(level: &str) -> CompiledFilter {
+    let prim = FilterPrimitive::Priority {
+        values: vec![level.to_string()],
+        is_null: false,
+        exclude: false,
+    };
+    BacklinkProjection::to_compiled(BacklinkProjection.compile(&prim))
+}
+
+/// A `BlockType` leaf, through the projection.
+fn compile_block_type(block_type: &str) -> CompiledFilter {
+    let prim = FilterPrimitive::BlockType {
+        values: vec![block_type.to_string()],
+        exclude: false,
+    };
+    BacklinkProjection::to_compiled(BacklinkProjection.compile(&prim))
+}
+
+/// A `DueDate` leaf.
+fn compile_due_date(op: &CompareOp, value: &str) -> Result<CompiledFilter, AppError> {
+    // `Eq`/`Lt`/`Gt`/`Lte`/`Gte` route through the projection's
+    // `DatePredicate`. `Neq` has NO `DatePredicate` counterpart
+    // (the vocabulary is `On/Before/After/OnOrBefore/OnOrAfter/
+    // Between/IsNull`), so it stays inline — byte-identical to the
+    // legacy `(b.due_date != ? AND b.due_date IS NOT NULL)`.
+    // `Contains`/`StartsWith` keep the legacy loud rejection.
+    match op {
+        CompareOp::Neq => Ok(CompiledFilter {
+            sql: "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
+            binds: vec![FilterBind::Text(value.to_string())],
+        }),
+        CompareOp::Contains | CompareOp::StartsWith => Err(AppError::validation(format!(
+            "DueDate filter does not support {op:?} operator"
+        ))),
+        _ => {
+            let predicate = compare_op_to_date_predicate(op, value).ok_or_else(|| {
+                AppError::validation(format!("DueDate filter does not support {op:?} operator"))
+            })?;
+            let prim = FilterPrimitive::DueDate { predicate };
+            Ok(BacklinkProjection::to_compiled(
+                BacklinkProjection.compile(&prim),
+            ))
+        }
+    }
+}
+
+/// A `CreatedInRange` leaf.
+fn compile_created_in_range(
+    after: &Option<String>,
+    before: &Option<String>,
+) -> Result<CompiledFilter, AppError> {
+    // #670 — keep the loud rejection here so the resolver path and
+    // the compiled path agree on validity BEFORE routing (the
+    // projection itself treats an unparseable bound as absent).
+    resolve_range_bound(after.as_ref())?;
+    resolve_range_bound(before.as_ref())?;
+    let prim = FilterPrimitive::Created {
+        after: after.clone(),
+        before: before.clone(),
+    };
+    Ok(BacklinkProjection::to_compiled(
+        BacklinkProjection.compile(&prim),
+    ))
+}
+
+/// A `Contains` leaf: resolved ONCE through the FTS helper and embedded as
+/// a set, never correlated per outer row.
+async fn compile_contains<'a>(
+    pool: &'a SqlitePool,
+    filter: &'a BacklinkFilter,
+    query: &str,
+    depth: u32,
+) -> Result<CompiledFilter, AppError> {
+    // Empty / whitespace-only / sanitizes-to-empty ⇒ empty set,
+    // matching the resolver's early returns.
+    if query.trim().is_empty() {
+        return Ok(CompiledFilter::never());
+    }
+    let sanitized = sanitize_fts_query(query);
+    if sanitized.is_empty() {
+        return Ok(CompiledFilter::never());
+    }
+    let ids = resolve_filter(pool, filter, depth).await?;
+    membership_fragment(&ids)
+}
+
+/// An `And` node: the conjunct fragments, AND-joined.
+async fn compile_and<'a>(
+    pool: &'a SqlitePool,
+    filters: &'a [BacklinkFilter],
+    depth: u32,
+) -> Result<CompiledFilter, AppError> {
+    // Preserve the resolver's empty-And semantics: it returns the
+    // empty set (`1=0`), NOT the neutral "all" element.
+    if filters.is_empty() {
+        return Ok(CompiledFilter::never());
+    }
+    let compiled = try_join_all(
+        filters
+            .iter()
+            .map(|f| compile_backlink_filter(pool, f, depth + 1)),
+    )
+    .await?;
+    let mut binds = Vec::new();
+    let parts: Vec<String> = compiled
+        .into_iter()
+        .map(|c| {
+            binds.extend(c.binds);
+            c.sql
+        })
+        .collect();
+    Ok(CompiledFilter {
+        sql: format!("({})", parts.join(" AND ")),
+        binds,
+    })
+}
+
+/// An `Or` node: the disjunct fragments, OR-joined.
+async fn compile_or<'a>(
+    pool: &'a SqlitePool,
+    filters: &'a [BacklinkFilter],
+    depth: u32,
+) -> Result<CompiledFilter, AppError> {
+    // Resolver's empty-Or returns the empty set (the fold starts
+    // from an empty accumulator and never unions anything), so an
+    // empty `Or` is `1=0`, NOT `1=1`.
+    if filters.is_empty() {
+        return Ok(CompiledFilter::never());
+    }
+    let compiled = try_join_all(
+        filters
+            .iter()
+            .map(|f| compile_backlink_filter(pool, f, depth + 1)),
+    )
+    .await?;
+    let mut binds = Vec::new();
+    let parts: Vec<String> = compiled
+        .into_iter()
+        .map(|c| {
+            binds.extend(c.binds);
+            c.sql
+        })
+        .collect();
+    Ok(CompiledFilter {
+        sql: format!("({})", parts.join(" OR ")),
+        binds,
     })
 }
 

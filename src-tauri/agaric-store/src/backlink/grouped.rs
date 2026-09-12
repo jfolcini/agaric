@@ -95,7 +95,6 @@ fn groups_after_cursor<'a>(
 /// it makes the group list reshuffle on every edit and defeats muscle
 /// memory. The frontend mirrors this contract in
 /// `BacklinkGroupRenderer.tsx`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn eval_backlink_query_grouped(
     pool: &SqlitePool,
     block_id: &str,
@@ -133,37 +132,13 @@ pub async fn eval_backlink_query_grouped(
     let is_first_page = page.after.is_none();
 
     let total_count: usize = if is_first_page {
-        let total_count_i64: i64 = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM block_links bl \
-             JOIN blocks b ON b.id = bl.source_id \
-             JOIN blocks tgt ON tgt.id = ?1 \
-             WHERE bl.target_id = ?1 \
-               AND bl.source_id != ?1 \
-               AND b.deleted_at IS NULL \
-               AND b.page_id IS NOT NULL \
-               AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-               AND (?2 IS NULL OR b.space_id = ?2) \
-               AND (?3 IS NULL OR bl.kind = ?3)",
-        )
-        .bind(block_id)
-        .bind(space_id)
-        .bind(kind)
-        .fetch_one(pool)
-        .await?;
-        usize::try_from(total_count_i64).unwrap_or(0)
+        count_grouped_backlinks(pool, block_id, space_id, kind).await?
     } else {
         0
     };
 
     if is_first_page && total_count == 0 {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: 0,
-            filtered_count: 0,
-            truncated: false,
-        });
+        return Ok(empty_grouped_response(0, 0, false));
     }
 
     // 2. Compile filters (if any) into a single correlated SQL WHERE
@@ -178,6 +153,7 @@ pub async fn eval_backlink_query_grouped(
     //    short-circuit below handles.
     let compiled_filter: Option<CompiledFilter> =
         compile_backlink_filters(pool, filters.as_deref()).await?;
+    let filter = compiled_filter.as_ref();
 
     // #2042 — the OLD path materialised the ENTIRE post-filter source-id
     // set into a Rust `FxHashSet`, resolved root pages for ALL of them,
@@ -212,7 +188,7 @@ pub async fn eval_backlink_query_grouped(
     // when a filter is present) and the grouped keyset page query (step b).
     // An absent filter emits no extra clause (identical to the old `?3 IS
     // NULL` no-op branch), so it must stay in scope for the page query.
-    let filter_clause = match compiled_filter.as_ref() {
+    let filter_clause = match filter {
         Some(cf) => format!(" AND ({})", cf.sql),
         None => String::new(),
     };
@@ -234,38 +210,11 @@ pub async fn eval_backlink_query_grouped(
     // page the existing behaviour is preserved: no filter reuses `total_count`
     // (proved equal, see above), a present filter runs the narrowing COUNT.
     let filtered_count: usize = if is_first_page {
-        match compiled_filter.as_ref() {
+        match filter {
             None => total_count,
             Some(cf) => {
-                let filtered_count_sql = format!(
-                    "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                     JOIN blocks b ON b.id = bl.source_id \
-                     JOIN blocks tgt ON tgt.id = ? \
-                     WHERE bl.target_id = ? \
-                       AND bl.source_id != ? \
-                       AND b.deleted_at IS NULL \
-                       AND b.page_id IS NOT NULL \
-                       AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-                       AND (? IS NULL OR b.space_id = ?) \
-                       AND (? IS NULL OR bl.kind = ?){filter_clause}"
-                );
-                let mut fc_q =
-                    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
-                        .bind(block_id) // tgt.id = ?
-                        .bind(block_id) // bl.target_id = ?
-                        .bind(block_id) // bl.source_id != ?
-                        .bind(space_id) // ? IS NULL
-                        .bind(space_id) // b.space_id = ?
-                        .bind(kind) // ? IS NULL
-                        .bind(kind); // bl.kind = ?
-                for b in &cf.binds {
-                    fc_q = match b {
-                        FilterBind::Text(s) => fc_q.bind(s.clone()),
-                        FilterBind::Num(n) => fc_q.bind(*n),
-                    };
-                }
-                let filtered_count_i64: i64 = fc_q.fetch_one(pool).await?;
-                usize::try_from(filtered_count_i64).unwrap_or(0)
+                count_filtered_grouped_backlinks(pool, block_id, space_id, kind, cf, &filter_clause)
+                    .await?
             }
         }
     } else {
@@ -273,16 +222,165 @@ pub async fn eval_backlink_query_grouped(
     };
 
     if is_first_page && filtered_count == 0 {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count,
-            filtered_count: 0,
-            truncated: false,
-        });
+        return Ok(empty_grouped_response(total_count, 0, false));
     }
 
+    let GroupPage {
+        groups: visible_groups,
+        has_more,
+    } = fetch_group_page(pool, block_id, space_id, kind, filter, &filter_clause, page).await?;
+
+    if visible_groups.is_empty() {
+        return Ok(empty_grouped_response(total_count, filtered_count, false));
+    }
+
+    let member_rows =
+        fetch_group_members(pool, block_id, space_id, kind, filter, &visible_groups).await?;
+
+    let groups = sorted_capped_groups(pool, &visible_groups, &member_rows, sort).await?;
+
+    // Build cursor from the last VISIBLE group's (page_title, page_id) if
+    // has_more. #625 — the cursor carries the sort key (title + id) so the
+    // next page resumes via the keyset filter in (b), surviving a vanished
+    // group by construction (the keyset resumes at the next-greater group).
+    let next_cursor = if has_more {
+        let last = visible_groups.last().expect("has_more implies non-empty");
+        Some(Cursor::for_group(last.page_id.clone(), last.page_title.clone()).encode()?)
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+        truncated: false,
+    })
+}
+
+/// The no-groups response. The counts still travel: the header reports
+/// them even when this page holds nothing.
+fn empty_grouped_response(
+    total_count: usize,
+    filtered_count: usize,
+    truncated: bool,
+) -> GroupedBacklinkResponse {
+    GroupedBacklinkResponse {
+        groups: vec![],
+        next_cursor: None,
+        has_more: false,
+        total_count,
+        filtered_count,
+        truncated,
+    }
+}
+
+/// The pre-filter base count for a grouped query.
+async fn count_grouped_backlinks(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    kind: Option<&str>,
+) -> Result<usize, AppError> {
+    let total_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks tgt ON tgt.id = ?1 \
+         WHERE bl.target_id = ?1 \
+           AND bl.source_id != ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
+           AND (?3 IS NULL OR bl.kind = ?3)",
+    )
+    .bind(block_id)
+    .bind(space_id)
+    .bind(kind)
+    .fetch_one(pool)
+    .await?;
+    Ok(usize::try_from(total_count_i64).unwrap_or(0))
+}
+
+/// The post-filter count: the compiled fragment is spliced in and its binds
+/// follow the base binds, so the two are applied together.
+async fn count_filtered_grouped_backlinks(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    kind: Option<&str>,
+    cf: &CompiledFilter,
+    filter_clause: &str,
+) -> Result<usize, AppError> {
+    let filtered_count_sql = format!(
+        "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         JOIN blocks tgt ON tgt.id = ? \
+         WHERE bl.target_id = ? \
+           AND bl.source_id != ? \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IS NOT NULL \
+           AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
+           AND (? IS NULL OR b.space_id = ?) \
+           AND (? IS NULL OR bl.kind = ?){filter_clause}"
+    );
+    let mut fc_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(filtered_count_sql))
+        .bind(block_id) // tgt.id = ?
+        .bind(block_id) // bl.target_id = ?
+        .bind(block_id) // bl.source_id != ?
+        .bind(space_id) // ? IS NULL
+        .bind(space_id) // b.space_id = ?
+        .bind(kind) // ? IS NULL
+        .bind(kind); // bl.kind = ?
+    for b in &cf.binds {
+        fc_q = match b {
+            FilterBind::Text(s) => fc_q.bind(s.clone()),
+            FilterBind::Num(n) => fc_q.bind(*n),
+        };
+    }
+    let filtered_count_i64: i64 = fc_q.fetch_one(pool).await?;
+    Ok(usize::try_from(filtered_count_i64).unwrap_or(0))
+}
+
+#[derive(sqlx::FromRow)]
+struct GroupRow {
+    page_id: String,
+    page_title: Option<String>,
+    cnt: i64,
+}
+
+/// The page of groups the cursor asked for, and whether another page
+/// follows — the `+1` probe row never leaves [`fetch_group_page`].
+struct GroupPage {
+    groups: Vec<GroupRow>,
+    has_more: bool,
+}
+
+/// Groups STRICTLY GREATER than the cursor in [`cmp_group`] order (#625).
+/// Bare `?` placeholders in appearance order (#2195): cursor_title,
+/// cursor_title, cursor_title, cursor_title, cursor_pid,
+/// cursor_title, cursor_pid.
+const GROUP_KEYSET_CLAUSE: &str = " AND ( \
+            ( (p.content IS NULL) AND (? IS NOT NULL) ) \
+            OR ( (p.content IS NOT NULL) AND (? IS NOT NULL) \
+                 AND ( p.content > ? OR (p.content = ? AND b.page_id > ?) ) ) \
+            OR ( (p.content IS NULL) AND (? IS NULL) AND b.page_id > ?) \
+          )";
+
+/// The grouped keyset page query: compose and bind chain read together,
+/// because the bare `?` placeholders are positional — base, filter
+/// fragment, cursor, limit — and a reordered bind silently shifts the page.
+async fn fetch_group_page(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    kind: Option<&str>,
+    filter: Option<&CompiledFilter>,
+    filter_clause: &str,
+    page: &PageRequest,
+) -> Result<GroupPage, AppError> {
     // (b) #2042 — grouped keyset page query. ONE SQL pass that buckets the
     //     post-filter source blocks by root page (`GROUP BY b.page_id`),
     //     returns `(page_id, page_title, cnt)`, applies the keyset cursor,
@@ -313,22 +411,13 @@ pub async fn eval_backlink_query_grouped(
     //         already LESS than a null cursor, so it is correctly excluded).
     //     This resumes correctly from the last non-null group into the
     //     remaining non-null groups and then the null-title groups.
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
     let fetch_limit_i64 = page.limit.saturating_add(1);
     let (cursor_title, cursor_pid): (Option<&str>, Option<&str>) = match page.after.as_ref() {
         Some(c) => (c.deleted_at.as_deref(), Some(c.id.as_str())),
         None => (None, None),
     };
     let keyset_clause = if cursor_pid.is_some() {
-        // Bare `?` placeholders in appearance order (#2195): cursor_title,
-        // cursor_title, cursor_title, cursor_title, cursor_pid,
-        // cursor_title, cursor_pid.
-        " AND ( \
-            ( (p.content IS NULL) AND (? IS NOT NULL) ) \
-            OR ( (p.content IS NOT NULL) AND (? IS NOT NULL) \
-                 AND ( p.content > ? OR (p.content = ? AND b.page_id > ?) ) ) \
-            OR ( (p.content IS NULL) AND (? IS NULL) AND b.page_id > ?) \
-          )"
+        GROUP_KEYSET_CLAUSE
     } else {
         ""
     };
@@ -350,14 +439,6 @@ pub async fn eval_backlink_query_grouped(
          ORDER BY (p.content IS NULL) ASC, p.content ASC, b.page_id ASC \
          LIMIT ?"
     );
-
-    #[derive(sqlx::FromRow)]
-    struct GroupRow {
-        page_id: String,
-        page_title: Option<String>,
-        cnt: i64,
-    }
-
     // dynamic-sql (#2195): bare `?` placeholders bound left-to-right so the
     // compiled filter fragment's binds interleave between the kind clause
     // and the keyset clause. Order: block_id ×3, space_id ×2, kind ×2,
@@ -371,7 +452,7 @@ pub async fn eval_backlink_query_grouped(
         .bind(space_id) // b.space_id = ?
         .bind(kind) // ? IS NULL
         .bind(kind); // bl.kind = ?
-    if let Some(cf) = compiled_filter.as_ref() {
+    if let Some(cf) = filter {
         for b in &cf.binds {
             gq = match b {
                 FilterBind::Text(s) => gq.bind(s.clone()),
@@ -390,25 +471,25 @@ pub async fn eval_backlink_query_grouped(
             .bind(cursor_pid); // b.page_id > ?
     }
     let group_rows: Vec<GroupRow> = gq.bind(fetch_limit_i64).fetch_all(pool).await?;
-
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
     let has_more = group_rows.len() > limit_usize;
-    let visible_groups: &[GroupRow] = if has_more {
-        &group_rows[..limit_usize]
-    } else {
-        &group_rows[..]
-    };
-
-    if visible_groups.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count,
-            filtered_count,
-            truncated: false,
-        });
+    let mut groups = group_rows;
+    if has_more {
+        groups.truncate(limit_usize);
     }
+    Ok(GroupPage { groups, has_more })
+}
 
+/// The member ids of the visible groups, over the same predicates as the
+/// group page plus the visible-page-id membership test.
+async fn fetch_group_members(
+    pool: &SqlitePool,
+    block_id: &str,
+    space_id: Option<&str>,
+    kind: Option<&str>,
+    filter: Option<&CompiledFilter>,
+    visible_groups: &[GroupRow],
+) -> Result<Vec<(String, String)>, AppError> {
     // (c) #2042 — member-id fetch for the VISIBLE groups only. The visible
     //     page-id set is small (≤ `limit`, typically ≤ ~50), so a single
     //     `json_each(?)` membership test is the simplest bound — no need for
@@ -424,7 +505,7 @@ pub async fn eval_backlink_query_grouped(
     // compiled filter fragment's binds interleave between the kind clause
     // and the visible-page-id membership clause. Order: block_id ×3,
     // space_id ×2, kind ×2, fragment binds, then the visible-pids JSON array.
-    let member_filter_clause = match compiled_filter.as_ref() {
+    let member_filter_clause = match filter {
         Some(cf) => format!(" AND ({})", cf.sql),
         None => String::new(),
     };
@@ -449,7 +530,7 @@ pub async fn eval_backlink_query_grouped(
         .bind(space_id) // b.space_id = ?
         .bind(kind) // ? IS NULL
         .bind(kind); // bl.kind = ?
-    if let Some(cf) = compiled_filter.as_ref() {
+    if let Some(cf) = filter {
         for b in &cf.binds {
             mq = match b {
                 FilterBind::Text(s) => mq.bind(s.clone()),
@@ -458,10 +539,30 @@ pub async fn eval_backlink_query_grouped(
         }
     }
     let member_rows: Vec<(String, String)> = mq.bind(&visible_pids_json).fetch_all(pool).await?;
+    Ok(member_rows)
+}
 
+/// One group's page-ordered, capped member ids. `truncated` comes from the
+/// TRUE group size, not from this list, so the badge stays accurate after
+/// the cap (#380).
+struct CappedGroup<'a> {
+    page_id: &'a str,
+    page_title: &'a Option<String>,
+    ids: Vec<&'a str>,
+    truncated: bool,
+}
+
+/// The visible groups' blocks, sorted by the user's sort and capped per
+/// group before any row is fetched.
+async fn sorted_capped_groups(
+    pool: &SqlitePool,
+    visible_groups: &[GroupRow],
+    member_rows: &[(String, String)],
+    sort: Option<BacklinkSort>,
+) -> Result<Vec<BacklinkGroup>, AppError> {
     // Bucket member ids by page_id (bounded by #visible groups).
     let mut members_by_page: FxHashMap<&str, Vec<String>> = FxHashMap::default();
-    for (source_id, page_id) in &member_rows {
+    for (source_id, page_id) in member_rows {
         members_by_page
             .entry(page_id.as_str())
             .or_default()
@@ -488,8 +589,7 @@ pub async fn eval_backlink_query_grouped(
     // as the keyset page (b). `truncated` comes from the TRUE `cnt` (b), so
     // the badge stays accurate (#380) even though the cap bounds the
     // materialised slice to `MAX_BLOCKS_PER_GROUP`.
-    let mut capped_groups: Vec<(&str, &Option<String>, Vec<&str>, bool)> =
-        Vec::with_capacity(visible_groups.len());
+    let mut capped_groups: Vec<CappedGroup<'_>> = Vec::with_capacity(visible_groups.len());
     for g in visible_groups {
         // `cnt` is `COUNT(DISTINCT …)` so it is non-negative; compare on the
         // usize side to avoid a (lint-flagged) usize→i64 cast.
@@ -507,15 +607,28 @@ pub async fn eval_backlink_query_grouped(
             blocks.truncate(super::MAX_BLOCKS_PER_GROUP);
         }
         let ids: Vec<&str> = blocks.into_iter().map(|(bid, _)| bid).collect();
-        capped_groups.push((g.page_id.as_str(), &g.page_title, ids, group_truncated));
+        capped_groups.push(CappedGroup {
+            page_id: g.page_id.as_str(),
+            page_title: &g.page_title,
+            ids,
+            truncated: group_truncated,
+        });
     }
 
-    // (d) #2042 — fetch full BlockRow data for ONLY the capped,
-    //     post-truncation id set — one batch, bounded by
-    //     `#visible groups * MAX_BLOCKS_PER_GROUP`.
+    distribute_rows_into_groups(pool, &capped_groups).await
+}
+
+/// Fetch rows for the capped ids in ONE batch and hand each group its own,
+/// still in sort order. Both grouped surfaces filter `deleted_at IS NULL`
+/// upstream, so the rows are active by construction and the boundary cast
+/// records that claim.
+async fn distribute_rows_into_groups(
+    pool: &SqlitePool,
+    capped_groups: &[CappedGroup<'_>],
+) -> Result<Vec<BacklinkGroup>, AppError> {
     let fetch_ids: Vec<&str> = capped_groups
         .iter()
-        .flat_map(|(_, _, ids, _)| ids.iter().copied())
+        .flat_map(|g| g.ids.iter().copied())
         .collect();
     let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
 
@@ -523,44 +636,23 @@ pub async fn eval_backlink_query_grouped(
     let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
-    // Distribute fetched rows back into groups (already in sort order). The
-    // grouped base set filters `deleted_at IS NULL`, so the per-group rows
-    // are active by construction; the boundary cast records that claim.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
-    for (page_id, page_title, ids, group_truncated) in &capped_groups {
-        let block_rows: Vec<crate::pagination::ActiveBlockRow> = ids
+    for g in capped_groups {
+        let block_rows: Vec<crate::pagination::ActiveBlockRow> = g
+            .ids
             .iter()
             .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
             .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
         groups.push(BacklinkGroup {
-            page_id: (*page_id).to_string(),
-            page_title: (*page_title).clone(),
+            page_id: g.page_id.to_string(),
+            page_title: g.page_title.clone(),
             blocks: block_rows,
-            truncated: *group_truncated,
+            truncated: g.truncated,
         });
     }
-
-    // Build cursor from the last VISIBLE group's (page_title, page_id) if
-    // has_more. #625 — the cursor carries the sort key (title + id) so the
-    // next page resumes via the keyset filter in (b), surviving a vanished
-    // group by construction (the keyset resumes at the next-greater group).
-    let next_cursor = if has_more {
-        let last = visible_groups.last().expect("has_more implies non-empty");
-        Some(Cursor::for_group(last.page_id.clone(), last.page_title.clone()).encode()?)
-    } else {
-        None
-    };
-
-    Ok(GroupedBacklinkResponse {
-        groups,
-        next_cursor,
-        has_more,
-        total_count,
-        filtered_count,
-        truncated: false,
-    })
+    Ok(groups)
 }
 
 // ---------------------------------------------------------------------------
@@ -592,7 +684,6 @@ pub async fn eval_backlink_query_grouped(
 ///     post-self-reference-exclusion count (parity with
 ///     `eval_backlink_query_grouped:128`); `filtered_count` is the
 ///     post-filter, post-grouping sum.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn eval_unlinked_references(
     pool: &SqlitePool,
     page_id: &str,
@@ -601,6 +692,103 @@ pub async fn eval_unlinked_references(
     page: &PageRequest,
     space_id: Option<&str>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
+    let Some(fts_query) = unlinked_fts_query(pool, page_id).await? else {
+        return Ok(empty_grouped_response(0, 0, false));
+    };
+
+    let (matching_ids, truncated) =
+        unlinked_fts_matches(pool, &fts_query, page_id, space_id).await?;
+
+    if matching_ids.is_empty() {
+        return Ok(empty_grouped_response(0, 0, truncated));
+    }
+
+    // 4. Resolve root pages for the entire FTS match set up front so we
+    //    can capture `total_count` *before* user filters apply. This
+    //    mirrors `eval_backlink_query_grouped` (see line 128 in this
+    //    file): both functions expose a pre-filter,
+    //    post-self-reference-exclusion `total_count`, so the UI badge
+    //    reports the same base regardless of the active filter
+    //    expression. The cost is bounded — `matching_ids` is capped at
+    //    `FTS_ROW_CAP` rows above. Reusing this `root_map` downstream
+    //    also avoids a second pass over the database during grouping.
+    let root_map = resolve_root_pages(pool, &matching_ids).await?;
+
+    // 5. The pre-filter count, captured before the user filters apply.
+    let total_count = unlinked_total_count(&matching_ids, &root_map, page_id);
+
+    // 6. Apply filters (AND semantics at top level) — mirrors
+    //    eval_backlink_query_grouped step #2. Filters compile to a single
+    //    correlated SQL fragment (#2195) via `compile_backlink_filters` (the
+    //    SAME pushdown the flat path uses) instead of resolving each leaf to
+    //    a whole-vault Rust set. The fragment is correlated on `b`; we
+    //    intersect it with the FTS match set by embedding `matching_ids` as
+    //    a `json_each(?)` membership test and letting SQLite evaluate the
+    //    fragment row-by-row over that set. An absent/empty filter leaves the
+    //    FTS set untouched; an empty-set leaf compiles to `1=0`, yielding an
+    //    empty intersection.
+    let compiled_filter: Option<CompiledFilter> =
+        compile_backlink_filters(pool, filters.as_deref()).await?;
+    let filtered_matching =
+        filter_matching_ids(pool, matching_ids, compiled_filter.as_ref()).await?;
+
+    if filtered_matching.is_empty() {
+        return Ok(empty_grouped_response(total_count, 0, truncated));
+    }
+
+    let (group_list, filtered_count) =
+        group_unlinked_matches(&filtered_matching, &root_map, page_id);
+
+    // 8. Apply cursor pagination on groups. #625 — resume by sort-order
+    //    comparison (next-greater group), NOT by equality on the cursor's
+    //    page_id, so a vanished cursor group does not terminate pagination.
+    let groups_after_cursor = groups_after_cursor(&group_list, page.after.as_ref());
+
+    // page.limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    let fetch_limit = limit_usize.saturating_add(1);
+    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
+        groups_after_cursor.into_iter().take(fetch_limit).collect();
+    let has_more = page_groups_slice.len() > limit_usize;
+    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
+        page_groups_slice[..limit_usize].to_vec()
+    } else {
+        page_groups_slice
+    };
+
+    if actual_groups.is_empty() {
+        return Ok(empty_grouped_response(
+            total_count,
+            filtered_count,
+            truncated,
+        ));
+    }
+
+    let groups = sorted_capped_unlinked_groups(pool, &actual_groups, sort).await?;
+
+    // 13. Build cursor from last group's (page_title, page_id) if has_more.
+    //     #625 — carry the sort key so the next page resumes via `cmp_group`
+    //     comparison, surviving a vanished group.
+    let next_cursor = if has_more {
+        let last = actual_groups.last().expect("has_more implies non-empty");
+        Some(Cursor::for_group(last.0.clone(), last.1.clone()).encode()?)
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+        truncated,
+    })
+}
+
+/// The FTS5 query matching a page's title or any of its aliases, or `None`
+/// when neither yields a usable term.
+async fn unlinked_fts_query(pool: &SqlitePool, page_id: &str) -> Result<Option<String>, AppError> {
     // 1. Fetch the page title.
     //    Filter  so a conflict-copy page id never resolves to a
     //    title that drives the unlinked-references search (mirrors the sister
@@ -639,16 +827,8 @@ pub async fn eval_unlinked_references(
             }
         }
     }
-
     if terms.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: 0,
-            filtered_count: 0,
-            truncated: false,
-        });
+        return Ok(None);
     }
 
     // FTS5 OR query: matches blocks containing ANY of the terms
@@ -662,7 +842,17 @@ pub async fn eval_unlinked_references(
             .collect::<Vec<_>>()
             .join(" OR ")
     };
+    Ok(Some(fts_query))
+}
 
+/// The FTS match set the unlinked-references base starts from, and whether
+/// the row cap truncated it.
+async fn unlinked_fts_matches(
+    pool: &SqlitePool,
+    fts_query: &str,
+    page_id: &str,
+    space_id: Option<&str>,
+) -> Result<(FxHashSet<String>, bool), AppError> {
     // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks.
     //    Cap at FTS_ROW_CAP + 1 rows so we can detect truncation (return at most
     //    FTS_ROW_CAP). The `+ 1` literal is derived from the constant via
@@ -716,7 +906,7 @@ pub async fn eval_unlinked_references(
     );
     let fts_rows: Vec<String> =
         sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
-            .bind(&fts_query)
+            .bind(fts_query)
             .bind(page_id)
             .bind(space_id)
             .fetch_all(pool)
@@ -728,55 +918,40 @@ pub async fn eval_unlinked_references(
     } else {
         fts_rows.into_iter().collect()
     };
+    Ok((matching_ids, truncated))
+}
 
-    if matching_ids.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: 0,
-            filtered_count: 0,
-            truncated,
-        });
-    }
-
-    // 4. Resolve root pages for the entire FTS match set up front so we
-    //    can capture `total_count` *before* user filters apply. This
-    //    mirrors `eval_backlink_query_grouped` (see line 128 in this
-    //    file): both functions expose a pre-filter,
-    //    post-self-reference-exclusion `total_count`, so the UI badge
-    //    reports the same base regardless of the active filter
-    //    expression. The cost is bounded — `matching_ids` is capped at
-    //    `FTS_ROW_CAP` rows above. Reusing this `root_map` downstream
-    //    also avoids a second pass over the database during grouping.
-    let root_map = resolve_root_pages(pool, &matching_ids).await?;
-
+/// Matches whose root page resolves and is not the target page. Orphans and
+/// self-references drop out here so the pre-filter count matches what the
+/// grouping step produces on the unfiltered set.
+fn unlinked_total_count(
+    matching_ids: &FxHashSet<String>,
+    root_map: &FxHashMap<String, (String, Option<String>)>,
+    page_id: &str,
+) -> usize {
     // 5. Capture `total_count` = matches whose root page resolves and is
     //    *not* the target page. Orphans (no resolvable root page) and
     //    self-references (root page == target) are dropped here so the
     //    count matches what the grouping step at #7 would produce on the
     //    unfiltered set.
-    let total_count: usize = matching_ids
+    matching_ids
         .iter()
         .filter(|bid| match root_map.get(bid.as_str()) {
             Some((root_page_id, _)) => root_page_id != page_id,
             None => false,
         })
-        .count();
+        .count()
+}
 
-    // 6. Apply filters (AND semantics at top level) — mirrors
-    //    eval_backlink_query_grouped step #2. Filters compile to a single
-    //    correlated SQL fragment (#2195) via `compile_backlink_filters` (the
-    //    SAME pushdown the flat path uses) instead of resolving each leaf to
-    //    a whole-vault Rust set. The fragment is correlated on `b`; we
-    //    intersect it with the FTS match set by embedding `matching_ids` as
-    //    a `json_each(?)` membership test and letting SQLite evaluate the
-    //    fragment row-by-row over that set. An absent/empty filter leaves the
-    //    FTS set untouched; an empty-set leaf compiles to `1=0`, yielding an
-    //    empty intersection.
-    let compiled_filter: Option<CompiledFilter> =
-        compile_backlink_filters(pool, filters.as_deref()).await?;
-    let filtered_matching: FxHashSet<String> = match compiled_filter.as_ref() {
+/// Intersect the FTS match set with the compiled filter in SQL: the set
+/// rides along as a `json_each` membership test instead of being
+/// intersected in Rust.
+async fn filter_matching_ids(
+    pool: &SqlitePool,
+    matching_ids: FxHashSet<String>,
+    filter: Option<&CompiledFilter>,
+) -> Result<FxHashSet<String>, AppError> {
+    let filtered_matching: FxHashSet<String> = match filter {
         None => matching_ids,
         Some(cf) => {
             let matching_json = serde_json::to_string(&matching_ids.iter().collect::<Vec<_>>())?;
@@ -799,25 +974,28 @@ pub async fn eval_unlinked_references(
             fq.fetch_all(pool).await?.into_iter().collect()
         }
     };
+    Ok(filtered_matching)
+}
 
-    if filtered_matching.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count,
-            filtered_count: 0,
-            truncated,
-        });
-    }
+/// One unlinked-references group before the cursor cuts the page: the source
+/// page id, its title, and the matching block ids under it.
+type UnlinkedGroup = (String, Option<String>, Vec<String>);
 
+/// Bucket the filtered matches by root page and order the groups by
+/// [`cmp_group`], with the post-filter, post-grouping count of the blocks
+/// the user actually sees.
+fn group_unlinked_matches(
+    filtered_matching: &FxHashSet<String>,
+    root_map: &FxHashMap<String, (String, Option<String>)>,
+    page_id: &str,
+) -> (Vec<UnlinkedGroup>, usize) {
     // 7a. Group filtered blocks by root page, excluding blocks whose root
     //     page is the target page. `root_map` covers `matching_ids ⊇
     //     filtered_matching` from step #4, so no second resolve is needed.
     // Mirror the `eval_backlink_query_grouped` flavour
     // and use `FxHashMap` for the by-page bucket.
     let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
-    for block_id_item in &filtered_matching {
+    for block_id_item in filtered_matching {
         if let Some((root_page_id, page_title)) = root_map.get(block_id_item) {
             // Exclude self-references
             if root_page_id == page_id {
@@ -844,35 +1022,16 @@ pub async fn eval_unlinked_references(
         .map(|(pid, (title, blocks))| (pid, title, blocks))
         .collect();
     group_list.sort_by(|a, b| cmp_group(a.1.as_deref(), &a.0, b.1.as_deref(), &b.0));
+    (group_list, filtered_count)
+}
 
-    // 8. Apply cursor pagination on groups. #625 — resume by sort-order
-    //    comparison (next-greater group), NOT by equality on the cursor's
-    //    page_id, so a vanished cursor group does not terminate pagination.
-    let groups_after_cursor = groups_after_cursor(&group_list, page.after.as_ref());
-
-    // page.limit is a validated positive pagination bound; safe to convert
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let fetch_limit = limit_usize.saturating_add(1);
-    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
-        groups_after_cursor.into_iter().take(fetch_limit).collect();
-    let has_more = page_groups_slice.len() > limit_usize;
-    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
-        page_groups_slice[..limit_usize].to_vec()
-    } else {
-        page_groups_slice
-    };
-
-    if actual_groups.is_empty() {
-        return Ok(GroupedBacklinkResponse {
-            groups: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count,
-            filtered_count,
-            truncated,
-        });
-    }
-
+/// The unlinked-references page's groups, sorted by the user's sort and
+/// capped per group before any row is fetched.
+async fn sorted_capped_unlinked_groups(
+    pool: &SqlitePool,
+    actual_groups: &[&UnlinkedGroup],
+    sort: Option<BacklinkSort>,
+) -> Result<Vec<BacklinkGroup>, AppError> {
     // 9. Sort all block IDs across groups by the user-specified sort, then
     //    distribute. Mirrors eval_backlink_query_grouped step #7 — default
     //    to Created Asc (ULID order). The expensive
@@ -895,9 +1054,8 @@ pub async fn eval_unlinked_references(
     //     truncation (#380). `filtered_count` (step #7) reflects the
     //     untruncated sizes, so the badge stays accurate; only the
     //     materialised slice is bounded to `MAX_BLOCKS_PER_GROUP`.
-    let mut capped_groups: Vec<(&String, &Option<String>, Vec<&str>, bool)> =
-        Vec::with_capacity(actual_groups.len());
-    for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
+    let mut capped_groups: Vec<CappedGroup<'_>> = Vec::with_capacity(actual_groups.len());
+    for (group_page_id, page_title, block_ids_in_group) in actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group
             .iter()
             .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
@@ -909,59 +1067,12 @@ pub async fn eval_unlinked_references(
             blocks.truncate(super::MAX_BLOCKS_PER_GROUP);
         }
         let ids: Vec<&str> = blocks.into_iter().map(|(bid, _)| bid).collect();
-        capped_groups.push((group_page_id, page_title, ids, group_truncated));
-    }
-
-    // 11. Fetch full BlockRow data for ONLY the capped, post-truncation id
-    //     set — one batch, bounded by `#groups * MAX_BLOCKS_PER_GROUP`.
-    let fetch_ids: Vec<&str> = capped_groups
-        .iter()
-        .flat_map(|(_, _, ids, _)| ids.iter().copied())
-        .collect();
-    let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
-
-    // Build a lookup map from id -> BlockRow.
-    // Same `FxHashMap` swap as the sister
-    // `eval_backlink_query_grouped` block-row lookup.
-    let row_map: FxHashMap<&str, &BlockRow> =
-        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
-
-    // 12. Distribute fetched rows back into groups (already in sort order).
-    // Same active-only invariant as above; the
-    //     unlinked-references query path also filters
-    //     deleted_at IS NULL` upstream.
-    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
-    for (group_page_id, page_title, ids, group_truncated) in capped_groups {
-        let block_rows: Vec<crate::pagination::ActiveBlockRow> = ids
-            .iter()
-            .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
-            .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
-            .collect();
-
-        groups.push(BacklinkGroup {
-            page_id: group_page_id.clone(),
-            page_title: page_title.clone(),
-            blocks: block_rows,
+        capped_groups.push(CappedGroup {
+            page_id: group_page_id.as_str(),
+            page_title,
+            ids,
             truncated: group_truncated,
         });
     }
-
-    // 13. Build cursor from last group's (page_title, page_id) if has_more.
-    //     #625 — carry the sort key so the next page resumes via `cmp_group`
-    //     comparison, surviving a vanished group.
-    let next_cursor = if has_more {
-        let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(Cursor::for_group(last.0.clone(), last.1.clone()).encode()?)
-    } else {
-        None
-    };
-
-    Ok(GroupedBacklinkResponse {
-        groups,
-        next_cursor,
-        has_more,
-        total_count,
-        filtered_count,
-        truncated,
-    })
+    distribute_rows_into_groups(pool, &capped_groups).await
 }
