@@ -726,14 +726,76 @@ fn init_log_bridge(max_level: tracing_log::log::LevelFilter) {
     }
 }
 
+/// [`init_logging`]'s tail: announce the outcome, then park the appender and
+/// OTel guards plus the frontend-span ingestor in managed state.
+fn manage_logging_guards<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    log_dir: &std::path::Path,
+    obs_config: &agaric_observability::ObservabilityConfig,
+    obs_enabled: bool,
+    log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+    obs_guard: Option<agaric_observability::ObservabilityGuard>,
+) {
+    use tauri::Manager;
+
+    // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
+    // silent (no new log line) when off so the existing logging output is
+    // unchanged.
+    if obs_enabled {
+        tracing::info!(
+            traces_dir = %log_dir.join("traces").display(),
+            otel_logs_dir = %log_dir.join("otel-logs").display(),
+            sampling_ratio = obs_config.sampling_ratio,
+            "OpenTelemetry traces + logs enabled"
+        );
+    }
+
+    if log_guard.is_some() {
+        tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+    } else {
+        tracing::warn!(
+            log_dir = %log_dir.display(),
+            "log directory unwritable — logging to stderr only"
+        );
+    }
+
+    // Issue #157 sub-item A — retention is now enforced by the
+    // RollingFileAppender::builder().max_log_files(14) call above,
+    // Continuously rather than boot-only. The previous boot
+    // sweep (`cleanup_old_log_files`) was removed along with its
+    // tests.
+
+    // Keep the non-blocking appender's worker guard alive for the
+    // lifetime of the app so buffered writes are never lost. #635:
+    // only present when the file appender was built; on the
+    // stderr-only degrade path there is nothing to flush.
+    if let Some(log_guard) = log_guard {
+        app.manage(LogGuard(log_guard));
+    }
+
+    // #2110 M1a — keep the OTel trace pipeline alive for the app lifetime so
+    // spans flush + the provider shuts down cleanly on exit (mirrors LogGuard).
+    // Only present when traces were enabled and the file exporter was built.
+    if let Some(obs_guard) = obs_guard {
+        app.manage(obs_guard);
+    }
+
+    // #2110 M3b — manage the frontend-span ingestor so `ingest_otel_spans`'s
+    // `State` resolves. Built with the SAME enabled flag as the trace pipeline:
+    // when observability is off it holds no sink and `ingest` is a no-op, so the
+    // command stays a zero-cost local-file write that never leaves the machine.
+    app.manage(agaric_observability::build_frontend_ingestor(
+        log_dir,
+        obs_enabled,
+    ));
+}
+
 /// Boot-phase 1 — install the tracing-appender file/stderr subscriber and
 /// Keep the non-blocking worker guard alive in managed state (#635).
 ///
 /// Must run with the OS-correct `app_data_dir` so the on-disk log files and
 /// the "Open logs folder" action resolve to the same path on every platform.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path::Path) {
-    use tauri::Manager;
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
@@ -907,56 +969,14 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
         .try_init()
         .ok();
 
-    // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
-    // silent (no new log line) when off so the existing logging output is
-    // unchanged.
-    if obs_enabled {
-        tracing::info!(
-            traces_dir = %log_dir.join("traces").display(),
-            otel_logs_dir = %log_dir.join("otel-logs").display(),
-            sampling_ratio = obs_config.sampling_ratio,
-            "OpenTelemetry traces + logs enabled"
-        );
-    }
-
-    if log_guard.is_some() {
-        tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
-    } else {
-        tracing::warn!(
-            log_dir = %log_dir.display(),
-            "log directory unwritable — logging to stderr only"
-        );
-    }
-
-    // Issue #157 sub-item A — retention is now enforced by the
-    // RollingFileAppender::builder().max_log_files(14) call above,
-    // Continuously rather than boot-only. The previous boot
-    // sweep (`cleanup_old_log_files`) was removed along with its
-    // tests.
-
-    // Keep the non-blocking appender's worker guard alive for the
-    // lifetime of the app so buffered writes are never lost. #635:
-    // only present when the file appender was built; on the
-    // stderr-only degrade path there is nothing to flush.
-    if let Some(log_guard) = log_guard {
-        app.manage(LogGuard(log_guard));
-    }
-
-    // #2110 M1a — keep the OTel trace pipeline alive for the app lifetime so
-    // spans flush + the provider shuts down cleanly on exit (mirrors LogGuard).
-    // Only present when traces were enabled and the file exporter was built.
-    if let Some(obs_guard) = obs_guard {
-        app.manage(obs_guard);
-    }
-
-    // #2110 M3b — manage the frontend-span ingestor so `ingest_otel_spans`'s
-    // `State` resolves. Built with the SAME enabled flag as the trace pipeline:
-    // when observability is off it holds no sink and `ingest` is a no-op, so the
-    // command stays a zero-cost local-file write that never leaves the machine.
-    app.manage(agaric_observability::build_frontend_ingestor(
+    manage_logging_guards(
+        app,
         &log_dir,
+        &obs_config,
         obs_enabled,
-    ));
+        log_guard,
+        obs_guard,
+    );
 }
 
 /// Boot-phase 3 — open the read/write SQLite pools and resolve the persistent
@@ -1308,6 +1328,115 @@ fn surface_recovery_status<R: tauri::Runtime>(
     }
 }
 
+/// [`spawn_boot_cache_gating`]'s FTS check: schedule a rebuild when the index
+/// is empty but there is content to index (post-migration 0006).
+async fn schedule_fts_rebuild_if_empty(
+    write_pool: &sqlx::SqlitePool,
+    materializer_handle: &materializer::Materializer,
+) {
+    use materializer::MaterializeTask;
+
+    // Rebuild FTS index if the table is empty (post-migration 0006).
+    let fts_count: i64 = log_or_zero(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fts_blocks")
+            .fetch_one(write_pool)
+            .await,
+        "fts_blocks_count",
+    );
+    if fts_count == 0 {
+        let block_count: i64 = log_or_zero(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
+                 AND content IS NOT NULL",
+            )
+            .fetch_one(write_pool)
+            .await,
+            "fts_indexable_block_count",
+        );
+        if block_count > 0 {
+            tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
+            if let Err(e) =
+                materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
+            {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enqueue FTS rebuild at boot",
+                );
+            }
+        }
+    }
+}
+
+/// [`spawn_boot_cache_gating`]'s `block_tag_refs` check: schedule a rebuild
+/// when the table is empty but there is content to scan.
+async fn schedule_block_tag_refs_rebuild_if_empty(
+    write_pool: &sqlx::SqlitePool,
+    materializer_handle: &materializer::Materializer,
+) {
+    use materializer::MaterializeTask;
+
+    // Rebuild `block_tag_refs` if the table is empty
+    // but there is content to scan. Migration 0034 creates
+    // the table but intentionally does not SQL-backfill
+    // (SQLite lacks the regex support we need).
+    let btr_count: i64 = log_or_zero(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+            .fetch_one(write_pool)
+            .await,
+        "block_tag_refs_count",
+    );
+    if btr_count == 0 {
+        let block_count: i64 = log_or_zero(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
+                 AND content IS NOT NULL",
+            )
+            .fetch_one(write_pool)
+            .await,
+            "btr_indexable_block_count",
+        );
+        if block_count > 0 {
+            tracing::info!(
+                blocks = block_count,
+                "block_tag_refs empty (migration 0034 backfill) — scheduling \
+                 rebuild",
+            );
+            if let Err(e) = materializer_handle
+                .try_enqueue_background(MaterializeTask::RebuildBlockTagRefsCache)
+            {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enqueue block_tag_refs rebuild at boot",
+                );
+            }
+        }
+    }
+}
+
+/// [`spawn_boot_maintenance`]'s off-critical-path spawn: link-metadata GC,
+/// then the FTS and `block_tag_refs` empty-table gating, in that order.
+fn spawn_boot_cache_gating(
+    write_pool: sqlx::SqlitePool,
+    materializer_handle: materializer::Materializer,
+) {
+    tauri::async_runtime::spawn(async move {
+        // Clean up stale link metadata entries (>30 days, non-auth).
+        match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
+            Ok(deleted) => {
+                if deleted > 0 {
+                    tracing::info!(deleted, "cleaned up stale link metadata entries");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to clean up stale link metadata");
+            }
+        }
+
+        schedule_fts_rebuild_if_empty(&write_pool, &materializer_handle).await;
+        schedule_block_tag_refs_rebuild_if_empty(&write_pool, &materializer_handle).await;
+    });
+}
+
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
 /// critical path, plus the remaining synchronous boot enqueues and the
 /// post-draft-recovery cache refresh.
@@ -1316,7 +1445,6 @@ fn surface_recovery_status<R: tauri::Runtime>(
 /// (link-metadata GC, FTS / `block_tag_refs` gating) is created first, then
 /// `RebuildPageIds` / `CleanupOrphanedAttachments` are enqueued, then caches
 /// for recovered drafts are refreshed synchronously.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn spawn_boot_maintenance(
     pools: &db::DbPools,
     materializer: &materializer::Materializer,
@@ -1339,90 +1467,7 @@ fn spawn_boot_maintenance(
     // `bootstrap_spaces`. That migration is deleted, so the ordering
     // constraint it imposed on this spawn is gone with it — nothing
     // here depends on `bootstrap_spaces` any more.
-    {
-        let write_pool = pools.write.clone();
-        let materializer_handle = materializer.clone();
-        tauri::async_runtime::spawn(async move {
-            // Clean up stale link metadata entries (>30 days, non-auth).
-            match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
-                Ok(deleted) => {
-                    if deleted > 0 {
-                        tracing::info!(deleted, "cleaned up stale link metadata entries");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to clean up stale link metadata");
-                }
-            }
-
-            // Rebuild FTS index if the table is empty (post-migration 0006).
-            let fts_count: i64 = log_or_zero(
-                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fts_blocks")
-                    .fetch_one(&write_pool)
-                    .await,
-                "fts_blocks_count",
-            );
-            if fts_count == 0 {
-                let block_count: i64 = log_or_zero(
-                    sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
-                         AND content IS NOT NULL",
-                    )
-                    .fetch_one(&write_pool)
-                    .await,
-                    "fts_indexable_block_count",
-                );
-                if block_count > 0 {
-                    tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
-                    if let Err(e) =
-                        materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            "failed to enqueue FTS rebuild at boot",
-                        );
-                    }
-                }
-            }
-
-            // Rebuild `block_tag_refs` if the table is empty
-            // but there is content to scan. Migration 0034 creates
-            // the table but intentionally does not SQL-backfill
-            // (SQLite lacks the regex support we need).
-            let btr_count: i64 = log_or_zero(
-                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
-                    .fetch_one(&write_pool)
-                    .await,
-                "block_tag_refs_count",
-            );
-            if btr_count == 0 {
-                let block_count: i64 = log_or_zero(
-                    sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
-                         AND content IS NOT NULL",
-                    )
-                    .fetch_one(&write_pool)
-                    .await,
-                    "btr_indexable_block_count",
-                );
-                if block_count > 0 {
-                    tracing::info!(
-                        blocks = block_count,
-                        "block_tag_refs empty (migration 0034 backfill) — scheduling \
-                         rebuild",
-                    );
-                    if let Err(e) = materializer_handle
-                        .try_enqueue_background(MaterializeTask::RebuildBlockTagRefsCache)
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            "failed to enqueue block_tag_refs rebuild at boot",
-                        );
-                    }
-                }
-            }
-        });
-    }
+    spawn_boot_cache_gating(pools.write.clone(), materializer.clone());
 
     // Rebuild page_id column at boot to ensure consistency.
     if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
@@ -1462,13 +1507,266 @@ fn spawn_boot_maintenance(
     }
 }
 
+/// Issue #157 — the `wal_checkpoint_truncate` job; its predicate is the
+/// canonical pattern described at [`spawn_background_tasks`].
+fn wal_checkpoint_truncate_job(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pools: &db::DbPools,
+) -> maintenance::MaintenanceJob {
+    let lifecycle_for_wal = lifecycle.clone();
+    let wal_write_pool = pools.write.clone();
+    maintenance::MaintenanceJob {
+        name: "wal_checkpoint_truncate",
+        interval: std::time::Duration::from_secs(3600),
+        last_run: None,
+        predicate: Box::new(move || {
+            !lifecycle_for_wal
+                .is_foreground
+                .load(std::sync::atomic::Ordering::Acquire)
+        }),
+        run: Box::new(move || {
+            let pool = wal_write_pool.clone();
+            Box::pin(async move { maintenance::wal_checkpoint_truncate(&pool).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item C — periodic op-log compaction
+/// (24 h, idle predicate, 90-day retention).
+fn op_log_compact_job(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pools: &db::DbPools,
+) -> maintenance::MaintenanceJob {
+    let lifecycle_for_compact = lifecycle.clone();
+    let compact_write_pool = pools.write.clone();
+    maintenance::MaintenanceJob {
+        name: "op_log_compact",
+        interval: std::time::Duration::from_secs(24 * 3600),
+        last_run: None,
+        predicate: Box::new(move || {
+            !lifecycle_for_compact
+                .is_foreground
+                .load(std::sync::atomic::Ordering::Acquire)
+        }),
+        run: Box::new(move || {
+            let pool = compact_write_pool.clone();
+            Box::pin(async move { maintenance::op_log_compact(&pool).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item G — periodic PRAGMA optimize.
+fn pragma_optimize_tick_job(pools: &db::DbPools) -> maintenance::MaintenanceJob {
+    let optimize_write_pool = pools.write.clone();
+    maintenance::MaintenanceJob {
+        name: "pragma_optimize_tick",
+        interval: std::time::Duration::from_secs(4 * 3600),
+        last_run: None,
+        predicate: Box::new(|| true),
+        run: Box::new(move || {
+            let pool = optimize_write_pool.clone();
+            Box::pin(async move { maintenance::pragma_optimize(&pool).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item F — enqueue
+/// `CleanupOrphanedAttachments` every 24 h.
+fn cleanup_orphaned_attachments_tick_job(
+    materializer: &materializer::Materializer,
+) -> maintenance::MaintenanceJob {
+    let materializer_for_cleanup = materializer.clone();
+    maintenance::MaintenanceJob {
+        name: "cleanup_orphaned_attachments_tick",
+        interval: std::time::Duration::from_secs(24 * 3600),
+        last_run: None,
+        predicate: Box::new(|| true),
+        run: Box::new(move || {
+            let mat = materializer_for_cleanup.clone();
+            Box::pin(async move { maintenance::enqueue_cleanup_orphaned_attachments(&mat).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item J — enqueue `FtsOptimize` every
+/// 24 h, gated on `fts_edits_since_optimize > 0`.
+fn fts_idle_optimize_job(materializer: &materializer::Materializer) -> maintenance::MaintenanceJob {
+    let materializer_for_fts = materializer.clone();
+    let materializer_for_fts_predicate = materializer.clone();
+    maintenance::MaintenanceJob {
+        name: "fts_idle_optimize",
+        interval: std::time::Duration::from_secs(24 * 3600),
+        last_run: None,
+        predicate: Box::new(move || {
+            materializer_for_fts_predicate
+                .metrics()
+                .fts_edits_since_optimize
+                .load(std::sync::atomic::Ordering::Acquire)
+                > 0
+        }),
+        run: Box::new(move || {
+            let mat = materializer_for_fts.clone();
+            Box::pin(async move { maintenance::enqueue_fts_idle_optimize(&mat).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item E — periodic tombstone purge
+/// (24 h cadence, idle predicate, 90-day retention).
+fn tombstone_purge_job(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pools: &db::DbPools,
+    device_id: &str,
+    materializer: &materializer::Materializer,
+) -> maintenance::MaintenanceJob {
+    let lifecycle_for_tombstone = lifecycle.clone();
+    let tombstone_write_pool = pools.write.clone();
+    let tombstone_device_id = device_id.to_owned();
+    let tombstone_materializer = materializer.clone();
+    maintenance::MaintenanceJob {
+        name: "tombstone_purge",
+        interval: std::time::Duration::from_secs(24 * 3600),
+        last_run: None,
+        predicate: Box::new(move || {
+            !lifecycle_for_tombstone
+                .is_foreground
+                .load(std::sync::atomic::Ordering::Acquire)
+        }),
+        run: Box::new(move || {
+            let pool = tombstone_write_pool.clone();
+            let device_id = tombstone_device_id.clone();
+            let mat = tombstone_materializer.clone();
+            Box::pin(async move { maintenance::tombstone_purge(&pool, &device_id, &mat).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item I — fire save_all_engines every
+/// 60 s while backgrounded AND when the registry's
+/// dirty-engines proxy counter is non-zero.
+fn loro_snapshot_if_dirty_job(
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+    pools: &db::DbPools,
+    materializer: &materializer::Materializer,
+) -> maintenance::MaintenanceJob {
+    let lifecycle_for_loro_pred = lifecycle.clone();
+    let loro_snapshot_write_pool = pools.write.clone();
+    // #2249: the maintenance predicate + job read engine state through
+    // clones of the materializer's Arc (no process global).
+    let loro_state_for_pred = Arc::clone(materializer.loro_state());
+    let loro_state_for_snapshot_job = Arc::clone(materializer.loro_state());
+    maintenance::MaintenanceJob {
+        name: "loro_snapshot_if_dirty",
+        interval: std::time::Duration::from_secs(60),
+        last_run: None,
+        predicate: Box::new(move || {
+            if lifecycle_for_loro_pred
+                .is_foreground
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return false;
+            }
+            loro_state_for_pred.registry.dirty_count() > 0
+        }),
+        run: Box::new(move || {
+            let pool = loro_snapshot_write_pool.clone();
+            let state = Arc::clone(&loro_state_for_snapshot_job);
+            Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &state).await })
+        }),
+    }
+}
+
+/// Issue #157 sub-item H — projected-agenda midnight
+/// refresh (60 s outer tick + always-on predicate;
+/// body gates on a UTC-day-number atomic so the
+/// rebuild fires at most once per calendar day).
+fn projected_agenda_midnight_job(
+    materializer: &materializer::Materializer,
+) -> maintenance::MaintenanceJob {
+    let projected_agenda_materializer = materializer.clone();
+    // Issue #157 sub-item H — shared "last fired UTC day"
+    // sentinel for the projected_agenda_midnight job.
+    // `i32::MIN` = "never fired"; the first tick post-boot
+    // enqueues a rebuild, then subsequent ticks only enqueue
+    // when the UTC day number advances.
+    let projected_agenda_last_day = Arc::new(std::sync::atomic::AtomicI32::new(i32::MIN));
+    maintenance::MaintenanceJob {
+        name: "projected_agenda_midnight",
+        interval: std::time::Duration::from_secs(60),
+        last_run: None,
+        predicate: Box::new(|| true),
+        run: Box::new(move || {
+            let mat = projected_agenda_materializer.clone();
+            let last_day = projected_agenda_last_day.clone();
+            Box::pin(
+                async move { maintenance::projected_agenda_midnight_tick(&mat, &last_day).await },
+            )
+        }),
+    }
+}
+
+/// #4554 — due-today task reminders. Always-on predicate: unlike the
+/// WAL and op-log jobs it must NOT gate on `is_foreground`, because a
+/// minimised window is exactly when a reminder is useful.
+fn reminders_tick_job(pools: &db::DbPools, app: tauri::AppHandle) -> maintenance::MaintenanceJob {
+    let reminders_pool = pools.write.clone();
+    let reminders_app = app;
+    maintenance::MaintenanceJob {
+        name: "reminders_tick",
+        interval: std::time::Duration::from_secs(60),
+        last_run: None,
+        predicate: Box::new(|| true),
+        run: Box::new(move || {
+            let pool = reminders_pool.clone();
+            let app = reminders_app.clone();
+            Box::pin(async move {
+                let notify = move |notification: commands::notifier::TaskNotification| {
+                    let app = app.clone();
+                    let fut: std::pin::Pin<
+                        Box<
+                            dyn std::future::Future<
+                                    Output = Result<(), agaric_core::error::AppError>,
+                                > + Send,
+                        >,
+                    > = Box::pin(async move {
+                        commands::notifier::notify_task_inner(&app, &notification).await
+                    });
+                    fut
+                };
+                reminders::reminders_tick(&pool, &notify).await
+            })
+        }),
+    }
+}
+
+/// [`spawn_background_tasks`]'s maintenance-daemon job vector, in the order
+/// the daemon ticks them.
+fn build_maintenance_jobs(
+    app: tauri::AppHandle,
+    pools: &db::DbPools,
+    device_id: &str,
+    materializer: &materializer::Materializer,
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+) -> Vec<maintenance::MaintenanceJob> {
+    vec![
+        wal_checkpoint_truncate_job(lifecycle, pools),
+        op_log_compact_job(lifecycle, pools),
+        pragma_optimize_tick_job(pools),
+        cleanup_orphaned_attachments_tick_job(materializer),
+        fts_idle_optimize_job(materializer),
+        tombstone_purge_job(lifecycle, pools, device_id, materializer),
+        loro_snapshot_if_dirty_job(lifecycle, pools, materializer),
+        projected_agenda_midnight_job(materializer),
+        reminders_tick_job(pools, app),
+    ]
+}
+
 /// Boot-phase 8/9/10 — spawn the long-running background tasks: the
 /// retry-queue + orphan-drafts sweepers, the maintenance daemon (its job
 /// vector built here), and the periodic Loro-snapshot task.
 ///
 /// Each task receives an `Arc<AtomicBool>` shutdown flag that is never set
 /// (#703) — the flags exist only to keep the spawn signatures stable.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn spawn_background_tasks(
     app: tauri::AppHandle,
     pools: &db::DbPools,
@@ -1520,7 +1818,7 @@ fn spawn_background_tasks(
     // projected_agenda_midnight). New jobs are added by extending
     // this vector without re-wiring the daemon.
     //
-    // The wal_checkpoint_truncate job below illustrates the
+    // `wal_checkpoint_truncate_job` illustrates the
     // canonical predicate pattern.
     //
     // The predicate gates on the lifecycle.is_foreground flag —
@@ -1532,194 +1830,7 @@ fn spawn_background_tasks(
     // PRAGMA itself also returns `busy != 0` when a concurrent
     // writer holds the WAL, so the gating is double-belted.)
     let maintenance_shutdown = Arc::new(AtomicBool::new(false));
-    let lifecycle_for_wal = lifecycle.clone();
-    let lifecycle_for_compact = lifecycle.clone();
-    let lifecycle_for_tombstone = lifecycle.clone();
-    let lifecycle_for_loro_pred = lifecycle.clone();
-    let wal_write_pool = pools.write.clone();
-    let compact_write_pool = pools.write.clone();
-    let optimize_write_pool = pools.write.clone();
-    let materializer_for_cleanup = materializer.clone();
-    let materializer_for_fts = materializer.clone();
-    let materializer_for_fts_predicate = materializer.clone();
-    let tombstone_write_pool = pools.write.clone();
-    let tombstone_device_id = device_id.to_owned();
-    let tombstone_materializer = materializer.clone();
-    let loro_snapshot_write_pool = pools.write.clone();
-    // #2249: the maintenance predicate + job read engine state through
-    // clones of the materializer's Arc (no process global).
-    let loro_state_for_pred = Arc::clone(materializer.loro_state());
-    let loro_state_for_snapshot_job = Arc::clone(materializer.loro_state());
-    let projected_agenda_materializer = materializer.clone();
-    // Issue #157 sub-item H — shared "last fired UTC day"
-    // sentinel for the projected_agenda_midnight job.
-    // `i32::MIN` = "never fired"; the first tick post-boot
-    // enqueues a rebuild, then subsequent ticks only enqueue
-    // when the UTC day number advances.
-    let projected_agenda_last_day = Arc::new(std::sync::atomic::AtomicI32::new(i32::MIN));
-    let reminders_pool = pools.write.clone();
-    let reminders_app = app;
-    let jobs = vec![
-        maintenance::MaintenanceJob {
-            name: "wal_checkpoint_truncate",
-            interval: std::time::Duration::from_secs(3600),
-            last_run: None,
-            predicate: Box::new(move || {
-                !lifecycle_for_wal
-                    .is_foreground
-                    .load(std::sync::atomic::Ordering::Acquire)
-            }),
-            run: Box::new(move || {
-                let pool = wal_write_pool.clone();
-                Box::pin(async move { maintenance::wal_checkpoint_truncate(&pool).await })
-            }),
-        },
-        // Issue #157 sub-item C — periodic op-log compaction
-        // (24 h, idle predicate, 90-day retention).
-        maintenance::MaintenanceJob {
-            name: "op_log_compact",
-            interval: std::time::Duration::from_secs(24 * 3600),
-            last_run: None,
-            predicate: Box::new(move || {
-                !lifecycle_for_compact
-                    .is_foreground
-                    .load(std::sync::atomic::Ordering::Acquire)
-            }),
-            run: Box::new(move || {
-                let pool = compact_write_pool.clone();
-                Box::pin(async move { maintenance::op_log_compact(&pool).await })
-            }),
-        },
-        // Issue #157 sub-item G — periodic PRAGMA optimize.
-        maintenance::MaintenanceJob {
-            name: "pragma_optimize_tick",
-            interval: std::time::Duration::from_secs(4 * 3600),
-            last_run: None,
-            predicate: Box::new(|| true),
-            run: Box::new(move || {
-                let pool = optimize_write_pool.clone();
-                Box::pin(async move { maintenance::pragma_optimize(&pool).await })
-            }),
-        },
-        // Issue #157 sub-item F — enqueue
-        // `CleanupOrphanedAttachments` every 24 h.
-        maintenance::MaintenanceJob {
-            name: "cleanup_orphaned_attachments_tick",
-            interval: std::time::Duration::from_secs(24 * 3600),
-            last_run: None,
-            predicate: Box::new(|| true),
-            run: Box::new(move || {
-                let mat = materializer_for_cleanup.clone();
-                Box::pin(
-                    async move { maintenance::enqueue_cleanup_orphaned_attachments(&mat).await },
-                )
-            }),
-        },
-        // Issue #157 sub-item J — enqueue `FtsOptimize` every
-        // 24 h, gated on `fts_edits_since_optimize > 0`.
-        maintenance::MaintenanceJob {
-            name: "fts_idle_optimize",
-            interval: std::time::Duration::from_secs(24 * 3600),
-            last_run: None,
-            predicate: Box::new(move || {
-                materializer_for_fts_predicate
-                    .metrics()
-                    .fts_edits_since_optimize
-                    .load(std::sync::atomic::Ordering::Acquire)
-                    > 0
-            }),
-            run: Box::new(move || {
-                let mat = materializer_for_fts.clone();
-                Box::pin(async move { maintenance::enqueue_fts_idle_optimize(&mat).await })
-            }),
-        },
-        // Issue #157 sub-item E — periodic tombstone purge
-        // (24 h cadence, idle predicate, 90-day retention).
-        maintenance::MaintenanceJob {
-            name: "tombstone_purge",
-            interval: std::time::Duration::from_secs(24 * 3600),
-            last_run: None,
-            predicate: Box::new(move || {
-                !lifecycle_for_tombstone
-                    .is_foreground
-                    .load(std::sync::atomic::Ordering::Acquire)
-            }),
-            run: Box::new(move || {
-                let pool = tombstone_write_pool.clone();
-                let device_id = tombstone_device_id.clone();
-                let mat = tombstone_materializer.clone();
-                Box::pin(async move { maintenance::tombstone_purge(&pool, &device_id, &mat).await })
-            }),
-        },
-        // Issue #157 sub-item I — fire save_all_engines every
-        // 60 s while backgrounded AND when the registry's
-        // dirty-engines proxy counter is non-zero.
-        maintenance::MaintenanceJob {
-            name: "loro_snapshot_if_dirty",
-            interval: std::time::Duration::from_secs(60),
-            last_run: None,
-            predicate: Box::new(move || {
-                if lifecycle_for_loro_pred
-                    .is_foreground
-                    .load(std::sync::atomic::Ordering::Acquire)
-                {
-                    return false;
-                }
-                loro_state_for_pred.registry.dirty_count() > 0
-            }),
-            run: Box::new(move || {
-                let pool = loro_snapshot_write_pool.clone();
-                let state = Arc::clone(&loro_state_for_snapshot_job);
-                Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &state).await })
-            }),
-        },
-        // Issue #157 sub-item H — projected-agenda midnight
-        // refresh (60 s outer tick + always-on predicate;
-        // body gates on a UTC-day-number atomic so the
-        // rebuild fires at most once per calendar day).
-        maintenance::MaintenanceJob {
-            name: "projected_agenda_midnight",
-            interval: std::time::Duration::from_secs(60),
-            last_run: None,
-            predicate: Box::new(|| true),
-            run: Box::new(move || {
-                let mat = projected_agenda_materializer.clone();
-                let last_day = projected_agenda_last_day.clone();
-                Box::pin(async move {
-                    maintenance::projected_agenda_midnight_tick(&mat, &last_day).await
-                })
-            }),
-        },
-        // #4554 — due-today task reminders. Always-on predicate: unlike the
-        // WAL and op-log jobs it must NOT gate on `is_foreground`, because a
-        // minimised window is exactly when a reminder is useful.
-        maintenance::MaintenanceJob {
-            name: "reminders_tick",
-            interval: std::time::Duration::from_secs(60),
-            last_run: None,
-            predicate: Box::new(|| true),
-            run: Box::new(move || {
-                let pool = reminders_pool.clone();
-                let app = reminders_app.clone();
-                Box::pin(async move {
-                    let notify = move |notification: commands::notifier::TaskNotification| {
-                        let app = app.clone();
-                        let fut: std::pin::Pin<
-                            Box<
-                                dyn std::future::Future<
-                                        Output = Result<(), agaric_core::error::AppError>,
-                                    > + Send,
-                            >,
-                        > = Box::pin(async move {
-                            commands::notifier::notify_task_inner(&app, &notification).await
-                        });
-                        fut
-                    };
-                    reminders::reminders_tick(&pool, &notify).await
-                })
-            }),
-        },
-    ];
+    let jobs = build_maintenance_jobs(app, pools, device_id, materializer, lifecycle);
     // #703: flag never set; daemon observes constant `false`.
     maintenance::spawn_daemon(jobs, maintenance_shutdown);
 
@@ -2298,37 +2409,9 @@ fn show_fatal_error_dialog(title: &str, body: &str) {
     }
 }
 
-// #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
-// `--cfg fuzzing` to reach the byte-level parsers
-// (`deeplink::parse_deep_link`). `run()` is the tauri app entry; its
-// `generate_context!` ACL codegen is both irrelevant to fuzzing pure parsers and
-// fragile under the nightly + sanitizer fuzz build, so exclude the whole GUI
-// builder from the fuzz build. Only `main.rs` (not compiled by the fuzz crate's
-// path dependency) calls `run()`.
-#[cfg(not(fuzzing))]
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub fn run() {
-    // #1058: most boot-wiring imports moved into the focused helper
-    // functions above `run`. `WritePool` is still referenced by the
-    // `RunEvent::Exit` handler; `Manager` by `app.path()` / `app.handle()`
-    // in the orchestrator closure; `Builder` by the command-builder setup.
-    use db::WritePool;
-    use tauri::Manager;
-    use tauri_specta::Builder;
-
-    #[cfg(target_os = "linux")]
-    disable_webkit_dmabuf_if_unset();
-
-    // Tracing-appender setup moved into the Tauri `setup()` hook so
-    // it can use `app.path().app_data_dir()` (OS-correct location on every
-    // platform) instead of a hard-coded Linux XDG path. The panic hook is
-    // installed here early — it uses the global tracing subscriber and is
-    // a no-op until the subscriber is installed in `setup()`.
-
-    // / #634: Install a custom panic hook so panics are captured in the
-    // log file AND survive `panic = "abort"` (release profile, Cargo.toml).
-    //
+/// #634: install a custom panic hook so panics are captured in the log file
+/// AND survive `panic = "abort"` (release profile, Cargo.toml).
+fn install_panic_hook() {
     // Two abort-safety problems the previous hook had:
     //   1. The file sink is `tracing_appender::non_blocking` — `tracing::error!`
     //      only enqueues the PANIC line onto a background worker thread that
@@ -2366,11 +2449,12 @@ pub fn run() {
         // before us.
         previous_hook(info);
     }));
+}
 
-    // I-Core-7: command list lives in the `agaric_commands!` macro near the
-    // top of this file. Edit that macro to add or remove a command.
-    let builder = Builder::<tauri::Wry>::new().commands(agaric_commands!());
-
+/// [`run`]'s plugin registration, in the order upstream requires:
+/// `tauri-plugin-single-instance` first, then the cross-platform set, then the
+/// desktop-only plugins.
+fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
     // `mut` is only consumed by the `#[cfg(desktop)]` / `#[cfg(not(mobile))]`
     // plugin registrations below. On Android/iOS the binding is never
     // reassigned, so allow the warning there without relaxing it globally.
@@ -2511,309 +2595,356 @@ pub fn run() {
             tauri_builder = tauri_builder.plugin(tauri_plugin_updater::Builder::new().build());
         }
     }
-
     tauri_builder
-        .setup(|app| {
-            // #1058: the boot sequence below is decomposed into focused
-            // helper functions (see above `run`). This closure is now a
-            // thin, ordered orchestrator — the ORDER of every step is
-            // load-bearing and byte-identical to the pre-#1058 inline
-            // body. Each helper takes the shared pieces it needs as
-            // explicit (cheap `Arc`) clones, so the former implicit
-            // "clone-before-move" discipline is now enforced by the
-            // borrow checker.
+}
 
-            // #2919 / #2972 — run the boot orchestration inside a fallible block
-            // so ANY failure (corrupt SQLite page, failed `sqlx::migrate!` run —
-            // e.g. `MigrateError::VersionMissing` after a downgrade — or a failed
-            // engine reprojection) surfaces to the user in a native dialog rather
-            // than a silent `exit(1)`. We handle the error here (dialog + exit)
-            // instead of returning it so the same failure does NOT also bubble to
-            // the `.build().unwrap_or_else` handler and pop a second dialog.
-            let boot_result: Result<(), Box<dyn std::error::Error>> = (|| {
-                // #3334 — resolve the app data directory through the single
-                // `app_paths` seam: normally the OS-standard directory derived
-                // from the `tauri.conf.json` identifier, but `AGARIC_DATA_DIR`
-                // relocates it and `AGARIC_E2E_SANDBOX` makes that relocation
-                // MANDATORY. A sandboxed harness whose override went missing
-                // fails here — loudly, in the boot dialog — rather than
-                // quietly opening the user's real vault.
-                let app_data_dir = crate::app_paths::resolve_app_data_dir(app)?;
-                std::fs::create_dir_all(&app_data_dir)?;
-                let db_path = app_data_dir.join("notes.db");
+/// [`boot`]'s `SyncDaemonWiring`, assembled from clones while the originals
+/// are still live. `cancel_flag` is a placeholder that `boot` replaces with the
+/// one `register_managed_state` allocates, so the daemon and `cancel_sync`
+/// share the same flag (#528).
+fn build_sync_daemon_wiring(
+    app: &tauri::App,
+    pools: &db::DbPools,
+    device_id: &str,
+    materializer: &materializer::Materializer,
+    scheduler: &Arc<agaric_sync::sync_scheduler::SyncScheduler>,
+    endpoint_secret: agaric_sync::transport::SecretKey,
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
+) -> SyncDaemonWiring {
+    SyncDaemonWiring {
+        pool: pools.write.clone(),
+        device_id: device_id.to_owned(),
+        materializer: materializer.clone(),
+        scheduler: Arc::clone(scheduler),
+        endpoint_secret,
+        // #4717: place a synced-in space-less block when the
+        // session completes, not at the next boot.
+        sink: std::sync::Arc::new(spaces::SpacePlacementSink::new(
+            std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
+            pools.write.clone(),
+            pools.read.clone(),
+            device_id.to_owned(),
+            materializer.clone(),
+            std::sync::Arc::new(mcp::view_notify::TauriViewChangeEmitter::new(
+                app.handle().clone(),
+            )),
+        )),
+        app_handle: app.handle().clone(),
+        lifecycle: lifecycle.clone(),
+        // `cancel_flag` is filled in below from the value
+        // `register_managed_state` allocates + registers, so the
+        // daemon and `cancel_sync` share the same flag (#528).
+        cancel_flag: Arc::new(AtomicBool::new(false)),
+    }
+}
 
-                // Tracing-appender setup using the OS-correct
-                // `app_data_dir`; keeps the worker guard alive in managed state.
-                init_logging(app, &app_data_dir);
+/// [`boot`]'s `McpServerWiring`: the pools, materializer and device-id clones
+/// the MCP RO and RW servers need, taken before the originals move.
+fn build_mcp_server_wiring(
+    pools: &db::DbPools,
+    materializer: &materializer::Materializer,
+    device_id: &str,
+) -> McpServerWiring {
+    McpServerWiring {
+        ro_read_pool: pools.read.clone(),
+        ro_write_pool: pools.write.clone(),
+        ro_materializer: materializer.clone(),
+        ro_device_id: device_id.to_owned(),
+        rw_write_pool: pools.write.clone(),
+        rw_materializer: materializer.clone(),
+        rw_device_id: device_id.to_owned(),
+    }
+}
 
-                // AppImage first-run desktop self-integration (Linux).
-                // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
-                // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
-                #[cfg(target_os = "linux")]
-                appimage_integration::integrate_appimage_if_running();
+/// [`setup_app`]'s boot orchestration. The ORDER of every step is load-bearing.
+/// Each helper takes the shared pieces it needs as explicit (cheap `Arc`)
+/// clones, so the "clone-before-move" discipline is enforced by the borrow
+/// checker.
+fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::Manager;
 
-                // Install the deep-link router as early as possible
-                // so launch-time `agaric://…` URLs are routed once the rest of
-                // setup completes.  The frontend `useDeepLinkRouter` hook
-                // additionally calls `getCurrent()` on mount to backfill any
-                // event the listener missed before it was registered.
-                deeplink::register_deeplink_handlers(app.handle());
+    // #3334 — resolve the app data directory through the single
+    // `app_paths` seam: normally the OS-standard directory derived
+    // from the `tauri.conf.json` identifier, but `AGARIC_DATA_DIR`
+    // relocates it and `AGARIC_E2E_SANDBOX` makes that relocation
+    // MANDATORY. A sandboxed harness whose override went missing
+    // fails here — loudly, in the boot dialog — rather than
+    // quietly opening the user's real vault.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(app)?;
+    std::fs::create_dir_all(&app_data_dir)?;
+    let db_path = app_data_dir.join("notes.db");
 
-                // Open the read/write pools and resolve device-id + sync cert.
-                let (pools, device_id, endpoint_secret) =
-                    init_persistence(&db_path, &app_data_dir)?;
+    // Tracing-appender setup using the OS-correct
+    // `app_data_dir`; keeps the worker guard alive in managed state.
+    init_logging(app, &app_data_dir);
 
-                // C-2b: build the materializer BEFORE recovery so the boot-time
-                // op-log replay can drive ApplyOp tasks through the foreground queue.
-                let (lifecycle, materializer, loro_state) =
-                    build_materializer(&pools, &app_data_dir);
-                // #2249: expose engine state to the Tauri state graph — the
-                // `RunEvent::Exit` handler resolves it via `try_state` for the
-                // shutdown snapshot save.
-                app.manage(std::sync::Arc::clone(&loro_state));
+    // AppImage first-run desktop self-integration (Linux).
+    // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
+    // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
+    #[cfg(target_os = "linux")]
+    appimage_integration::integrate_appimage_if_running();
 
-                // Loro init + rehydrate, crash recovery, and per-space bootstrap
-                // (bootstrap_spaces is boot-fatal).
-                let report = recover_and_bootstrap(&pools, &device_id, &materializer)?;
+    // Install the deep-link router as early as possible
+    // so launch-time `agaric://…` URLs are routed once the rest of
+    // setup completes.  The frontend `useDeepLinkRouter` hook
+    // additionally calls `getCurrent()` on mount to backfill any
+    // event the listener missed before it was registered.
+    deeplink::register_deeplink_handlers(app.handle());
 
-                // #1255: surface a degraded boot to the user. When the C-2b
-                // op-log replay failed wholesale (`replay_errors` non-empty),
-                // the materialized view is behind the canonical `op_log` —
-                // previously this was downgraded to a `warn` and the user
-                // edited a stale view with zero signal. Store the status in
-                // managed state (so a late-mounting frontend can backfill it
-                // via `get_recovery_status`), emit a durable `recovery:degraded`
-                // event, and log at `error` (not `info`). Boot still continues —
-                // the app is usable and the op_log is canonical.
-                surface_recovery_status(app, &report);
+    // Open the read/write pools and resolve device-id + sync cert.
+    let (pools, device_id, endpoint_secret) = init_persistence(&db_path, &app_data_dir)?;
 
-                // Best-effort boot maintenance (off-critical-path spawn + the
-                // remaining synchronous enqueues + post-draft-recovery refresh).
-                spawn_boot_maintenance(&pools, &materializer, &report);
+    // C-2b: build the materializer BEFORE recovery so the boot-time
+    // op-log replay can drive ApplyOp tasks through the foreground queue.
+    let (lifecycle, materializer, loro_state) = build_materializer(&pools, &app_data_dir);
+    // #2249: expose engine state to the Tauri state graph — the
+    // `RunEvent::Exit` handler resolves it via `try_state` for the
+    // shutdown snapshot save.
+    app.manage(std::sync::Arc::clone(&loro_state));
 
-                // Long-running background tasks: sweepers, maintenance daemon,
-                // periodic Loro snapshot.
-                spawn_background_tasks(
-                    app.handle().clone(),
-                    &pools,
-                    &device_id,
-                    &materializer,
-                    &lifecycle,
-                );
+    // Loro init + rehydrate, crash recovery, and per-space bootstrap
+    // (bootstrap_spaces is boot-fatal).
+    let report = recover_and_bootstrap(&pools, &device_id, &materializer)?;
 
-                // Create scheduler wrapped in Arc for sharing with the SyncDaemon
-                let scheduler =
-                    std::sync::Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new());
+    // #1255: surface a degraded boot to the user. When the C-2b
+    // op-log replay failed wholesale (`replay_errors` non-empty),
+    // the materialized view is behind the canonical `op_log` —
+    // previously this was downgraded to a `warn` and the user
+    // edited a stale view with zero signal. Store the status in
+    // managed state (so a late-mounting frontend can backfill it
+    // via `get_recovery_status`), emit a durable `recovery:degraded`
+    // event, and log at `error` (not `info`). Boot still continues —
+    // the app is usable and the op_log is canonical.
+    surface_recovery_status(app, &report);
 
-                // #1058: gather the cheap `Arc` clones each downstream consumer
-                // needs BEFORE the originals are moved into managed state by
-                // `register_managed_state`. Passing them through the wiring
-                // function signatures is what collapses the old
-                // clone-before-move hazard — the borrow checker now enforces
-                // that the originals are still live here.
-                let daemon_wiring = SyncDaemonWiring {
-                    pool: pools.write.clone(),
-                    device_id: device_id.clone(),
-                    materializer: materializer.clone(),
-                    scheduler: scheduler.clone(),
-                    endpoint_secret,
-                    // #4717: place a synced-in space-less block when the
-                    // session completes, not at the next boot.
-                    sink: std::sync::Arc::new(spaces::SpacePlacementSink::new(
-                        std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
-                        pools.write.clone(),
-                        pools.read.clone(),
-                        device_id.clone(),
-                        materializer.clone(),
-                        std::sync::Arc::new(mcp::view_notify::TauriViewChangeEmitter::new(
-                            app.handle().clone(),
-                        )),
-                    )),
-                    app_handle: app.handle().clone(),
-                    lifecycle: lifecycle.clone(),
-                    // `cancel_flag` is filled in below from the value
-                    // `register_managed_state` allocates + registers, so the
-                    // daemon and `cancel_sync` share the same flag (#528).
-                    cancel_flag: Arc::new(AtomicBool::new(false)),
-                };
+    // Best-effort boot maintenance (off-critical-path spawn + the
+    // remaining synchronous enqueues + post-draft-recovery refresh).
+    spawn_boot_maintenance(&pools, &materializer, &report);
 
-                // Slice 2 — clone the pools + materializer +
-                // device_id the MCP RO and RW servers need before the move.
-                let mcp_ro_read_pool = pools.read.clone();
-                let mcp_ro_write_pool = pools.write.clone();
-                let mcp_ro_materializer = materializer.clone();
-                let mcp_ro_device_id = device_id.clone();
-                let mcp_rw_write_pool = pools.write.clone();
-                let mcp_rw_materializer = materializer.clone();
-                let mcp_rw_device_id = device_id.clone();
+    // Long-running background tasks: sweepers, maintenance daemon,
+    // periodic Loro snapshot.
+    spawn_background_tasks(
+        app.handle().clone(),
+        &pools,
+        &device_id,
+        &materializer,
+        &lifecycle,
+    );
 
-                // Move all originals into Tauri managed state + install the
-                // window-focus lifecycle listener. Returns the shared sync
-                // cancel flag (#528) used by the daemon spawned next.
-                let cancel_flag = register_managed_state(
-                    app,
-                    pools,
-                    device_id,
-                    materializer,
-                    scheduler,
-                    &lifecycle,
-                );
+    // Create scheduler wrapped in Arc for sharing with the SyncDaemon
+    let scheduler = std::sync::Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new());
 
-                // #2506: register the mDNS-status managed state BEFORE the daemon
-                // spawns below, so `TauriEventSink::on_sync_event` can always
-                // find it via `try_state` the moment mDNS init runs (which can
-                // happen almost immediately if peers already exist —
-                // `start_if_peers_exist_with_lifecycle` skips dormant mode).
-                // `get_mdns_status` resolves this state for a frontend that
-                // mounts after that first emission.
-                app.manage(agaric_sync::sync_events::MdnsStatusState(
-                    std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
-                ));
+    // #1058: gather the cheap `Arc` clones each downstream consumer
+    // needs BEFORE the originals are moved into managed state by
+    // `register_managed_state`. Passing them through the wiring
+    // function signatures is what collapses the old
+    // clone-before-move hazard — the borrow checker now enforces
+    // that the originals are still live here.
+    let daemon_wiring = build_sync_daemon_wiring(
+        app,
+        &pools,
+        &device_id,
+        &materializer,
+        &scheduler,
+        endpoint_secret,
+        &lifecycle,
+    );
 
-                // #3864: same deal for the internet-facing-bind status, and the
-                // ordering matters more here — the endpoint binds within the
-                // first moments of `daemon_loop`, so this must be managed
-                // before the daemon spawns or the one emission of
-                // `SyncEvent::InternetFacingBind` lands nowhere and
-                // `get_bind_exposure_status` reports a clean device that isn't.
-                app.manage(agaric_sync::sync_events::BindExposureStatusState(
-                    std::sync::Mutex::new(agaric_sync::sync_events::BindExposureStatus::default()),
-                ));
+    // Slice 2 — clone the pools + materializer +
+    // device_id the MCP RO and RW servers need before the move.
+    let mcp_wiring = build_mcp_server_wiring(&pools, &materializer, &device_id);
 
-                // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
-                // `app_data_dir` by a previous process that died mid-receive
-                // (SIGKILL / OOM / power-loss, where the receive path's temp-file
-                // guard never ran). #3487 deleted that receive path, so no NEW
-                // orphan can appear — this sweeps ones a pre-#3487 build left
-                // behind, which can be 256 MB each. Safe to delete unconditionally
-                // here because it
-                // runs BEFORE `wire_sync_daemon` below starts accepting inbound
-                // connections, so no snapshot receive can be in flight yet.
-                agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
+    // Move all originals into Tauri managed state + install the
+    // window-focus lifecycle listener. Returns the shared sync
+    // cancel flag (#528) used by the daemon spawned next.
+    let cancel_flag =
+        register_managed_state(app, pools, device_id, materializer, scheduler, &lifecycle);
 
-                // #4298 — publish this device's hostname before the daemon
-                // spawns, so the first session that reaches `HeadExchange` has
-                // a name to advertise and the peer stops rendering this device
-                // as a truncated UUID.
-                spawn_local_device_name_refresh(daemon_wiring.pool.clone());
+    // #2506: register the mDNS-status managed state BEFORE the daemon
+    // spawns below, so `TauriEventSink::on_sync_event` can always
+    // find it via `try_state` the moment mDNS init runs (which can
+    // happen almost immediately if peers already exist —
+    // `start_if_peers_exist_with_lifecycle` skips dormant mode).
+    // `get_mdns_status` resolves this state for a frontend that
+    // mounts after that first emission.
+    app.manage(agaric_sync::sync_events::MdnsStatusState(
+        std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
+    ));
 
-                // Install rustls + spawn the SyncDaemon (#382/#383/#278).
-                let daemon_wiring = SyncDaemonWiring {
-                    cancel_flag,
-                    ..daemon_wiring
-                };
-                wire_sync_daemon(daemon_wiring);
+    // #3864: same deal for the internet-facing-bind status, and the
+    // ordering matters more here — the endpoint binds within the
+    // first moments of `daemon_loop`, so this must be managed
+    // before the daemon spawns or the one emission of
+    // `SyncEvent::InternetFacingBind` lands nowhere and
+    // `get_bind_exposure_status` reports a clean device that isn't.
+    app.manage(agaric_sync::sync_events::BindExposureStatusState(
+        std::sync::Mutex::new(agaric_sync::sync_events::BindExposureStatus::default()),
+    ));
 
-                // / 4h — MCP read-only + read-write servers.
-                wire_mcp_servers(
-                    app,
-                    &app_data_dir,
-                    McpServerWiring {
-                        ro_read_pool: mcp_ro_read_pool,
-                        ro_write_pool: mcp_ro_write_pool,
-                        ro_materializer: mcp_ro_materializer,
-                        ro_device_id: mcp_ro_device_id,
-                        rw_write_pool: mcp_rw_write_pool,
-                        rw_materializer: mcp_rw_materializer,
-                        rw_device_id: mcp_rw_device_id,
-                    },
-                );
+    // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
+    // `app_data_dir` by a previous process that died mid-receive
+    // (SIGKILL / OOM / power-loss, where the receive path's temp-file
+    // guard never ran). #3487 deleted that receive path, so no NEW
+    // orphan can appear — this sweeps ones a pre-#3487 build left
+    // behind, which can be 256 MB each. Safe to delete unconditionally
+    // here because it
+    // runs BEFORE `wire_sync_daemon` below starts accepting inbound
+    // connections, so no snapshot receive can be in flight yet.
+    agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
 
-                Ok(())
-            })();
+    // #4298 — publish this device's hostname before the daemon
+    // spawns, so the first session that reaches `HeadExchange` has
+    // a name to advertise and the peer stops rendering this device
+    // as a truncated UUID.
+    spawn_local_device_name_refresh(daemon_wiring.pool.clone());
 
-            if let Err(e) = boot_result {
-                tracing::error!(error = %e, "fatal error during application setup");
-                // #2919 — a downgrade / failed update, a corrupt vault database,
-                // or a failed reprojection reaches here. Show it, then exit.
-                show_fatal_error_dialog(
-                    "Agaric failed to start",
-                    &format!(
-                        "Agaric could not open your vault and had to close.\n\n{e}\n\n\
-                         This can happen after a failed or downgraded update, where an \
-                         older version cannot open a vault that a newer one upgraded, \
-                         or if the vault database is damaged. A pre-migration backup of \
-                         the database is kept next to it when possible, so your data \
-                         should be recoverable.\n\n\
-                         Details are in the log files under your app data directory \
-                         (the \"logs\" folder, agaric.log)."
-                    ),
-                );
-                std::process::exit(1);
+    // Install rustls + spawn the SyncDaemon (#382/#383/#278).
+    let daemon_wiring = SyncDaemonWiring {
+        cancel_flag,
+        ..daemon_wiring
+    };
+    wire_sync_daemon(daemon_wiring);
+
+    // / 4h — MCP read-only + read-write servers.
+    wire_mcp_servers(app, &app_data_dir, mcp_wiring);
+
+    Ok(())
+}
+
+/// The Tauri `setup` hook: run [`boot`] and turn any failure into a native
+/// dialog + exit.
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // #2919 / #2972 — run the boot orchestration through the fallible `boot`
+    // so ANY failure (corrupt SQLite page, failed `sqlx::migrate!` run —
+    // e.g. `MigrateError::VersionMissing` after a downgrade — or a failed
+    // engine reprojection) surfaces to the user in a native dialog rather
+    // than a silent `exit(1)`. We handle the error here (dialog + exit)
+    // instead of returning it so the same failure does NOT also bubble to
+    // the `.build().unwrap_or_else` handler and pop a second dialog.
+    if let Err(e) = boot(app) {
+        tracing::error!(error = %e, "fatal error during application setup");
+        // #2919 — a downgrade / failed update, a corrupt vault database,
+        // or a failed reprojection reaches here. Show it, then exit.
+        show_fatal_error_dialog(
+            "Agaric failed to start",
+            &format!(
+                "Agaric could not open your vault and had to close.\n\n{e}\n\n\
+                 This can happen after a failed or downgraded update, where an \
+                 older version cannot open a vault that a newer one upgraded, \
+                 or if the vault database is damaged. A pre-migration backup of \
+                 the database is kept next to it when possible, so your data \
+                 should be recoverable.\n\n\
+                 Details are in the log files under your app data directory \
+                 (the \"logs\" folder, agaric.log)."
+            ),
+        );
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// #2110 M3 — wrap the tauri-specta invoke handler to extract a W3C
+/// `traceparent` header (set by the frontend `invoke` shim) and re-parent
+/// this request's span onto the frontend trace. Tauri's `tracing` feature
+/// makes the async command future run under an `ipc::request::run` span
+/// created *here*, synchronously, while `ipc.frontend` is entered — so it
+/// (and every command + subsystem `#[instrument]` span beneath it) becomes
+/// a child of the frontend interaction. No `traceparent` (the default, and
+/// whenever observability is off) ⇒ the inner handler runs unwrapped and
+/// the command starts a fresh root trace, exactly as before.
+fn build_invoke_handler(
+    builder: &tauri_specta::Builder<tauri::Wry>,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    let specta_invoke_handler = builder.invoke_handler();
+    // #2654 — `read_attachment` returns a raw-byte `tauri::ipc::Response`
+    // (see its doc comment) which cannot be a tauri-specta command, so it
+    // lives on its own generated handler and is routed here by command
+    // name. Every other command flows through the tauri-specta handler.
+    let raw_bytes_invoke_handler: Box<
+        dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync,
+    > = Box::new(tauri::generate_handler![
+        crate::commands::attachments::read_attachment
+    ]);
+    move |invoke| {
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        // #2110 M6 — time each IPC command dispatch and record it to the
+        // `agaric.ipc.duration` histogram, attributed by the command
+        // NAME (an opaque compile-time identifier, never user data).
+        //
+        // #2282 — gate the timing on the process-global IPC-metrics flag
+        // (set in `agaric_observability::init` only when the meter is
+        // installed). When observability is OFF (the default) this skips
+        // BOTH per-invoke `String` allocations — the command-name clone
+        // here and the `KeyValue` inside `record_ipc_duration` — so the
+        // wrapper costs one relaxed atomic load on the hot path. When on,
+        // the command name is captured BEFORE dispatch (which consumes
+        // `invoke`). The trace re-parenting below is independent of this
+        // gate and still runs whenever a `traceparent` is present.
+        let ipc_timing = agaric_observability::ipc_metrics_enabled().then(|| {
+            (
+                invoke.message.command().to_owned(),
+                std::time::Instant::now(),
+            )
+        });
+        // Route raw-byte commands to their dedicated handler; the command
+        // name is an opaque compile-time identifier (never user data).
+        let is_raw_bytes = invoke.message.command() == "read_attachment";
+        let dispatch = |invoke| {
+            if is_raw_bytes {
+                raw_bytes_invoke_handler(invoke)
+            } else {
+                specta_invoke_handler(invoke)
             }
-
-            Ok(())
-        })
-        // #2110 M3 — wrap the tauri-specta invoke handler to extract a W3C
-        // `traceparent` header (set by the frontend `invoke` shim) and re-parent
-        // this request's span onto the frontend trace. Tauri's `tracing` feature
-        // makes the async command future run under an `ipc::request::run` span
-        // created *here*, synchronously, while `ipc.frontend` is entered — so it
-        // (and every command + subsystem `#[instrument]` span beneath it) becomes
-        // a child of the frontend interaction. No `traceparent` (the default, and
-        // whenever observability is off) ⇒ the inner handler runs unwrapped and
-        // the command starts a fresh root trace, exactly as before.
-        .invoke_handler({
-            let specta_invoke_handler = builder.invoke_handler();
-            // #2654 — `read_attachment` returns a raw-byte `tauri::ipc::Response`
-            // (see its doc comment) which cannot be a tauri-specta command, so it
-            // lives on its own generated handler and is routed here by command
-            // name. Every other command flows through the tauri-specta handler.
-            let raw_bytes_invoke_handler: Box<
-                dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync,
-            > = Box::new(tauri::generate_handler![
-                crate::commands::attachments::read_attachment
-            ]);
-            move |invoke| {
-                use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-                // #2110 M6 — time each IPC command dispatch and record it to the
-                // `agaric.ipc.duration` histogram, attributed by the command
-                // NAME (an opaque compile-time identifier, never user data).
-                //
-                // #2282 — gate the timing on the process-global IPC-metrics flag
-                // (set in `agaric_observability::init` only when the meter is
-                // installed). When observability is OFF (the default) this skips
-                // BOTH per-invoke `String` allocations — the command-name clone
-                // here and the `KeyValue` inside `record_ipc_duration` — so the
-                // wrapper costs one relaxed atomic load on the hot path. When on,
-                // the command name is captured BEFORE dispatch (which consumes
-                // `invoke`). The trace re-parenting below is independent of this
-                // gate and still runs whenever a `traceparent` is present.
-                let ipc_timing = agaric_observability::ipc_metrics_enabled().then(|| {
-                    (
-                        invoke.message.command().to_owned(),
-                        std::time::Instant::now(),
-                    )
-                });
-                // Route raw-byte commands to their dedicated handler; the command
-                // name is an opaque compile-time identifier (never user data).
-                let is_raw_bytes = invoke.message.command() == "read_attachment";
-                let dispatch = |invoke| {
-                    if is_raw_bytes {
-                        raw_bytes_invoke_handler(invoke)
-                    } else {
-                        specta_invoke_handler(invoke)
-                    }
-                };
-                let response =
-                    match agaric_observability::extract_trace_context(invoke.message.headers()) {
-                        Some(parent_cx) => {
-                            let span = tracing::info_span!("ipc.frontend");
-                            let _ = span.set_parent(parent_cx);
-                            let _enter = span.enter();
-                            dispatch(invoke)
-                        }
-                        None => dispatch(invoke),
-                    };
-                if let Some((cmd, started)) = ipc_timing {
-                    agaric_observability::record_ipc_duration(
-                        started.elapsed().as_secs_f64() * 1000.0,
-                        &cmd,
-                    );
-                }
-                response
+        };
+        let response = match agaric_observability::extract_trace_context(invoke.message.headers()) {
+            Some(parent_cx) => {
+                let span = tracing::info_span!("ipc.frontend");
+                let _ = span.set_parent(parent_cx);
+                let _enter = span.enter();
+                dispatch(invoke)
             }
-        })
+            None => dispatch(invoke),
+        };
+        if let Some((cmd, started)) = ipc_timing {
+            agaric_observability::record_ipc_duration(
+                started.elapsed().as_secs_f64() * 1000.0,
+                &cmd,
+            );
+        }
+        response
+    }
+}
+
+// #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
+// `--cfg fuzzing` to reach the byte-level parsers
+// (`deeplink::parse_deep_link`). `run()` is the tauri app entry; its
+// `generate_context!` ACL codegen is both irrelevant to fuzzing pure parsers and
+// fragile under the nightly + sanitizer fuzz build, so exclude the whole GUI
+// builder from the fuzz build. Only `main.rs` (not compiled by the fuzz crate's
+// path dependency) calls `run()`.
+#[cfg(not(fuzzing))]
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    use db::WritePool;
+    use tauri_specta::Builder;
+
+    #[cfg(target_os = "linux")]
+    disable_webkit_dmabuf_if_unset();
+
+    // Tracing-appender setup lives in the Tauri `setup()` hook so it can use
+    // `app.path().app_data_dir()`. The panic hook is installed here early —
+    // it uses the global tracing subscriber and is a no-op until the
+    // subscriber is installed in `setup()`.
+    install_panic_hook();
+
+    // I-Core-7: command list lives in the `agaric_commands!` macro near the
+    // top of this file. Edit that macro to add or remove a command.
+    let builder = Builder::<tauri::Wry>::new().commands(agaric_commands!());
+
+    build_tauri_builder()
+        .setup(setup_app)
+        .invoke_handler(build_invoke_handler(&builder))
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to build Tauri application");
