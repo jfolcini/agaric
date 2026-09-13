@@ -81,6 +81,7 @@ const TAG_ULID: &str = "01HQTAG000000000000000TAG1";
 const PAGE_ULID: &str = "01HQPAGE00000000000000PG01";
 const BLOCK_A: &str = "01HQBLKA00000000000000BKA1";
 const BLOCK_B: &str = "01HQBLKB00000000000000BKB1";
+const PAIRING_PAGE_B: &str = "01HQPAGE00000000000000PG02";
 const BLOCK_C: &str = "01HQBLKC00000000000000BKC1";
 const BLOCK_D: &str = "01HQBLKD00000000000000BKD1";
 const UNKNOWN_ULID: &str = "01HQUNKN00000000000000UK01";
@@ -5045,6 +5046,92 @@ async fn partitioned_content_is_capped_to_preview_prefix_snippet_and_order_uncha
         content_ids,
         vec![BLOCK_A, BLOCK_B],
         "content-row order must be unchanged by the DB-side content cap"
+    );
+}
+
+/// #4639: each partition measures `has_more` against ITS OWN limit.
+///
+/// The split moved that pairing into `partitions_from_probe_windows`, whose
+/// `(pages_rows, page_limit, blocks_rows, block_limit)` is two same-typed
+/// pairs a transposition would cross-wire silently. Every other partitioned
+/// test passes equal limits, where a swap is invisible; asymmetric limits
+/// pin both arms, so neither half of the pair is left open.
+#[tokio::test]
+async fn partition_has_more_is_measured_against_each_partitions_own_limit() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two matching pages and one matching content block. The pages
+    // partition is page-only (2 rows); the blocks partition is
+    // unrestricted, so it carries both pages plus the content row (3).
+    insert_block(
+        &pool,
+        PAGE_ULID,
+        "page",
+        "pairing needle page one",
+        None,
+        Some(0),
+    )
+    .await;
+    insert_block(
+        &pool,
+        PAIRING_PAGE_B,
+        "page",
+        "pairing needle page two",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "pairing needle body",
+        None,
+        Some(2),
+    )
+    .await;
+    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+    let scan = crate::fts::search::search_fts_partitioned(
+        &pool,
+        "pairing",
+        1, // page_limit
+        3, // block_limit
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // 2 pages against page_limit 1 → truncated, and more remain. Measured
+    // against block_limit 3 this would read `false`.
+    assert_eq!(
+        scan.pages.len(),
+        1,
+        "pages partition must truncate to page_limit"
+    );
+    assert!(
+        scan.pages_has_more,
+        "2 page rows against page_limit 1 must report has_more"
+    );
+
+    // 3 blocks against block_limit 3 → nothing beyond. Measured against
+    // page_limit 1 this would read `true`.
+    assert_eq!(
+        scan.blocks.len(),
+        3,
+        "blocks partition carries both pages and the content row"
+    );
+    assert!(
+        !scan.blocks_has_more,
+        "3 block rows against block_limit 3 must not report has_more"
     );
 }
 

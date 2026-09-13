@@ -11,7 +11,7 @@ use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
 use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
-use super::fetch::{build_fts_fetch, execute_fts_fetch};
+use super::fetch::{PreparedFtsFetch, build_fts_fetch, execute_fts_fetch};
 use super::row::fts_row_to_block_row;
 use super::sanitizer::sanitize_fts_query;
 
@@ -82,7 +82,6 @@ const POST_FILTER_MAX_WINDOWS: usize = 10;
 /// [`search_fts`]: super::cursor::search_fts
 /// [`fts_fetch_rows`]: super::fetch::fts_fetch_rows
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(in crate::fts) async fn fts_fetch_post_filtered_page<F>(
     pool: &SqlitePool,
     query: &str,
@@ -133,28 +132,18 @@ where
     // Seed the FTS cursor from the incoming page cursor (same shape as
     // `search_fts`). Subsequent windows advance this by the LAST CANDIDATE
     // of each fetched window so dropped rows are never re-scanned.
-    let (mut cursor_flag, mut cursor_rank, mut cursor_id): (Option<i64>, f64, String) =
+    let (cursor_flag, cursor_rank, cursor_id): (Option<i64>, f64, String) =
         match page.after.as_ref() {
             Some(c) => (Some(1), c.rank.unwrap_or(0.0), c.id.clone()),
             None => (None, 0.0, String::new()),
         };
-
-    let window_usize = usize::try_from(POST_FILTER_WINDOW).unwrap_or(usize::MAX);
-    // `(SearchBlockRow, rank)` survivors. The rank rides alongside each
-    // survivor so the final `next_cursor` can be built from the last
-    // RETURNED survivor (which `SearchBlockRow` alone cannot carry — it
-    // has no rank field).
-    let mut survivors: Vec<(SearchBlockRow, f64)> = Vec::with_capacity(target);
-
-    // #1556 — distinguish "the FTS scan ran dry" from "the window-count
-    // ceiling stopped us mid-scan". The loop has two truncating exits
-    // (`fetched == 0` and `fetched < window_usize`) that mean the source is
-    // genuinely exhausted; set this flag there. If the loop instead runs out
-    // of windows while the FTS scan is still live (last window came back
-    // full), this stays `false`, signalling there may be matching rows past
-    // the scan ceiling — so `has_more` must be reported `true` even though we
-    // never filled a page.
-    let mut fts_exhausted = false;
+    let mut scan = PostFilterScan {
+        survivors: Vec::with_capacity(target),
+        cursor_flag,
+        cursor_rank,
+        cursor_id,
+        fts_exhausted: false,
+    };
 
     // #2282 — assemble the invariant FTS query (MATCH + every structural filter
     // + LIMIT + snippet projection) ONCE. The window loop below re-executes it
@@ -175,19 +164,63 @@ where
         None,
     );
 
+    scan_post_filtered_windows(pool, &prepared, &sanitized, target, &mut scan, &mut keep).await?;
+
+    post_filtered_page_from_scan(scan, limit_usize)
+}
+
+/// The window loop's running state: survivors with their ranks, the FTS cursor
+/// the loop advances past every candidate, and whether the scan ran dry.
+/// Bundled so the loop and the page assembly share one record instead of
+/// threading five same-typed locals between them.
+struct PostFilterScan {
+    /// `(SearchBlockRow, rank)` survivors. The rank rides alongside each
+    /// survivor so the final `next_cursor` can be built from the last
+    /// RETURNED survivor (which `SearchBlockRow` alone cannot carry — it
+    /// has no rank field).
+    survivors: Vec<(SearchBlockRow, f64)>,
+    cursor_flag: Option<i64>,
+    cursor_rank: f64,
+    cursor_id: String,
+    /// #1556 — distinguish "the FTS scan ran dry" from "the window-count
+    /// ceiling stopped us mid-scan". The loop has two truncating exits
+    /// (`fetched == 0` and `fetched < window_usize`) that mean the source is
+    /// genuinely exhausted; set this flag there. If the loop instead runs out
+    /// of windows while the FTS scan is still live (last window came back
+    /// full), this stays `false`, signalling there may be matching rows past
+    /// the scan ceiling — so `has_more` must be reported `true` even though we
+    /// never filled a page.
+    fts_exhausted: bool,
+}
+
+/// Scan candidate windows until `target` survivors are collected, the FTS scan
+/// runs dry, or the [`POST_FILTER_MAX_WINDOWS`] ceiling stops us — advancing
+/// `scan`'s cursor past dropped candidates as it goes.
+async fn scan_post_filtered_windows<F>(
+    pool: &SqlitePool,
+    prepared: &PreparedFtsFetch,
+    sanitized: &str,
+    target: usize,
+    scan: &mut PostFilterScan,
+    keep: &mut F,
+) -> Result<(), AppError>
+where
+    F: FnMut(&mut SearchBlockRow) -> bool,
+{
+    let window_usize = usize::try_from(POST_FILTER_WINDOW).unwrap_or(usize::MAX);
     for _ in 0..POST_FILTER_MAX_WINDOWS {
-        if survivors.len() >= target {
+        if scan.survivors.len() >= target {
             break;
         }
         // #2282 — re-execute the prebuilt query, rebinding only the advancing
         // cursor for this window (the SQL + filters were assembled once above).
         let rows = execute_fts_fetch(
             pool,
-            &prepared,
-            &sanitized,
-            cursor_flag,
-            cursor_rank,
-            &cursor_id,
+            prepared,
+            sanitized,
+            scan.cursor_flag,
+            scan.cursor_rank,
+            &scan.cursor_id,
             POST_FILTER_WINDOW,
             None,
         )
@@ -195,7 +228,7 @@ where
 
         let fetched = rows.len();
         if fetched == 0 {
-            fts_exhausted = true;
+            scan.fts_exhausted = true;
             break;
         }
 
@@ -207,12 +240,12 @@ where
             // of the window wins) so dropped rows are never re-scanned by a
             // later window — including an all-drop window, which still makes
             // forward progress instead of looping on the same rows.
-            cursor_flag = Some(1);
-            cursor_rank = rank;
-            cursor_id = id_clone;
+            scan.cursor_flag = Some(1);
+            scan.cursor_rank = rank;
+            scan.cursor_id = id_clone;
             if keep(&mut block_row) {
-                survivors.push((block_row, rank));
-                if survivors.len() >= target {
+                scan.survivors.push((block_row, rank));
+                if scan.survivors.len() >= target {
                     break;
                 }
             }
@@ -221,10 +254,27 @@ where
         // FTS exhausted — a window returned fewer rows than requested, so
         // there is nothing left to scan. Stop regardless of survivor count.
         if fetched < window_usize {
-            fts_exhausted = true;
+            scan.fts_exhausted = true;
             break;
         }
     }
+    Ok(())
+}
+
+/// Assemble the page from a finished scan: the window ceiling can stop a live
+/// FTS scan short (#1556), which still means `has_more`, and then the cursor
+/// resumes from the last candidate reached rather than the last survivor.
+fn post_filtered_page_from_scan(
+    scan: PostFilterScan,
+    limit_usize: usize,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    let PostFilterScan {
+        mut survivors,
+        cursor_rank,
+        cursor_id,
+        fts_exhausted,
+        ..
+    } = scan;
 
     let page_full = survivors.len() > limit_usize;
     if page_full {

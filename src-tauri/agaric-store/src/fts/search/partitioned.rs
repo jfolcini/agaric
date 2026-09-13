@@ -11,7 +11,7 @@ use agaric_core::error::AppError;
 use super::super::metadata_filter::MetadataPredicates;
 use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
 use super::fetch::fts_fetch_rows;
-use super::row::fts_row_to_block_row;
+use super::row::{FtsSearchRow, fts_row_to_block_row};
 use super::sanitizer::sanitize_fts_query;
 
 /// Outcome of [`search_fts_partitioned`] — two pre-partitioned candidate
@@ -102,7 +102,6 @@ pub struct FtsPartitionedScan {
 /// [`fts_fetch_rows`]: super::fetch::fts_fetch_rows
 /// [`CancellationGuard`]: crate::cancellation::CancellationGuard
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn search_fts_partitioned(
     pool: &SqlitePool,
     query: &str,
@@ -213,6 +212,22 @@ pub(crate) async fn search_fts_partitioned(
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 
+    Ok(partitions_from_probe_windows(
+        pages_rows,
+        page_limit,
+        blocks_rows,
+        block_limit,
+    ))
+}
+
+/// Package both probe windows, measuring each partition's `has_more` against
+/// its own clamped limit before the probe row is dropped.
+fn partitions_from_probe_windows(
+    pages_rows: Vec<FtsSearchRow>,
+    page_limit: u32,
+    blocks_rows: Vec<FtsSearchRow>,
+    block_limit: u32,
+) -> FtsPartitionedScan {
     // Clamp the comparison limit to the same
     // `MAX_SEARCH_RESULTS` ceiling the fetch was clamped to. The fetch
     // probes `min(limit, MAX_SEARCH_RESULTS) + 1` rows, so `has_more`
@@ -249,12 +264,12 @@ pub(crate) async fn search_fts_partitioned(
         .map(fts_row_to_block_row)
         .collect();
 
-    Ok(FtsPartitionedScan {
+    FtsPartitionedScan {
         pages,
         blocks,
         pages_has_more,
         blocks_has_more,
-    })
+    }
 }
 
 /// Compute the per-partition fetch `LIMIT`: the effective page limit
