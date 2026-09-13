@@ -1166,25 +1166,6 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
     }
 }
 
-/// Resolve a [`GroupKey`] into its SQL group-key expression, an optional
-/// `JOIN` clause, and an optional bound parameter.
-///
-/// The returned `key_expr` is the RAW key SQL (callers wrap it in
-/// `COALESCE(<expr>, 'none')` so a NULL/absent key renders as the `"none"`
-/// bucket). It is built ENTIRELY from static column literals + literal
-/// `strftime` formats, so it is safe to repeat verbatim wherever the group
-/// key appears (SELECT / GROUP BY / PARTITION BY / IN). The
-/// `block_properties` lookup is materialised 1:1 in the JOIN clause (a PK
-/// seek), so it is evaluated ONCE per candidate row instead of re-run at
-/// every occurrence (#2269); the op_log MIN/MAX date buckets deliberately
-/// stay correlated scalar subqueries — see the comment on the
-/// `Created`/`LastEdited` arms for the measured reason.
-///
-/// The ONLY user-controlled input ([`GroupKey::Property`]'s `key`) is returned
-/// as a [`Bind`] placed at the explicit `?{pos}` slot IN THE JOIN's `ON` clause
-/// — never interpolated as an identifier — so grouping cannot inject SQL.
-/// `pos` is that `?N` slot; the bind appears once (in the JOIN) and is
-/// positional, so its number is independent of textual placement.
 /// The per-group aggregate SQL the group-page statement needs: the resolved
 /// terms, their property-key binds, and the rendered `, CAST(…) AS aN` select
 /// list. One value because the three are produced together and consumed
@@ -1208,6 +1189,25 @@ struct GroupKeySql<'a> {
     bind: Option<&'a Bind>,
 }
 
+/// Resolve a [`GroupKey`] into its SQL group-key expression, an optional
+/// `JOIN` clause, and an optional bound parameter.
+///
+/// The returned `key_expr` is the RAW key SQL (callers wrap it in
+/// `COALESCE(<expr>, 'none')` so a NULL/absent key renders as the `"none"`
+/// bucket). It is built ENTIRELY from static column literals + literal
+/// `strftime` formats, so it is safe to repeat verbatim wherever the group
+/// key appears (SELECT / GROUP BY / PARTITION BY / IN). The
+/// `block_properties` lookup is materialised 1:1 in the JOIN clause (a PK
+/// seek), so it is evaluated ONCE per candidate row instead of re-run at
+/// every occurrence (#2269); the op_log MIN/MAX date buckets deliberately
+/// stay correlated scalar subqueries — see the comment on the
+/// `Created`/`LastEdited` arms for the measured reason.
+///
+/// The ONLY user-controlled input ([`GroupKey::Property`]'s `key`) is returned
+/// as a [`Bind`] placed at the explicit `?{pos}` slot IN THE JOIN's `ON` clause
+/// — never interpolated as an identifier — so grouping cannot inject SQL.
+/// `pos` is that `?N` slot; the bind appears once (in the JOIN) and is
+/// positional, so its number is independent of textual placement.
 fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) {
     match key {
         GroupKey::Tag => (
@@ -1522,14 +1522,13 @@ async fn fetch_group_buckets(
     key: &GroupKeySql<'_>,
     aggs: &GroupAggSql<'_>,
     cursor: Option<&GroupCursor>,
-    next_pos: usize,
+    mut next_pos: usize,
     limit: i64,
 ) -> Result<Vec<GroupBucketRow>, AppError> {
     // Named locals so the statement below reads as the one `run_grouped` used
     // to inline, and so `format!`'s inline captures still resolve.
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
     let (agg_terms, agg_binds, agg_select) = (aggs.terms, aggs.binds, aggs.select);
-    let mut next_pos = next_pos;
     let having = if cursor.is_some() {
         let p_count = next_pos;
         let p_count2 = next_pos + 1;

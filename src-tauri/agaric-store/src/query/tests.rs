@@ -2079,20 +2079,9 @@ async fn group_by_property_with_aggregates_binds_key_before_aggregates() {
     seed(&pool).await;
     seed_estimates(&pool).await;
     // status: B1/B2 open, B3 closed. estimate: B1=3, B2=5, B3=8, B4="big".
-    for (bid, val) in [
-        ("01B1000000000000000000000", "open"),
-        ("01B2000000000000000000000", "open"),
-        ("01B3000000000000000000000", "closed"),
-    ] {
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'status', ?)",
-        )
-        .bind(bid)
-        .bind(val)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
+    set_property(&pool, "01B1000000000000000000000", "status", "open").await;
+    set_property(&pool, "01B2000000000000000000000", "status", "open").await;
+    set_property(&pool, "01B3000000000000000000000", "status", "closed").await;
 
     let mut request = group_req(
         default_filter(),
