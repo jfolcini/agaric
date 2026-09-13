@@ -347,7 +347,8 @@ async fn list_global_history(
 }
 
 /// One page's sheet: the ops against the page's own block subtree, plus the
-/// attachment ops the two probes in the doc above attribute back to it.
+/// attachment ops the two probes documented on [`list_page_history`] attribute
+/// back to it.
 async fn list_single_page_history(
     pool: &SqlitePool,
     page_id: &str,

@@ -184,13 +184,11 @@ pub fn sanitize_fts_query(query: &str) -> String {
 }
 
 /// Turn a raw user query into the MATCH expression the FTS entry points run,
-/// or `None` when there is nothing to run.
+/// or `None` when there is nothing to run — an empty MATCH is an FTS5 syntax
+/// error, so each entry point short-circuits to its own empty result instead.
 ///
-/// Both `None` cases — a blank query, and one that sanitises away entirely
-/// (sub-trigram tokens, a bare `OR`) — would reach FTS5 as an empty MATCH and
-/// come back a syntax error, so each entry point short-circuits to its own
-/// empty result instead. The length cap runs before the NFC-normalise +
-/// tokenise walk, mirroring the regex path's `MAX_PATTERN_LEN`.
+/// The length cap runs before the NFC-normalise + tokenise walk, mirroring the
+/// regex path's `MAX_PATTERN_LEN`.
 pub(super) fn prepare_match_expression(query: &str) -> Result<Option<String>, AppError> {
     // Not redundant with the sanitised-empty check below: it is what keeps a
     // blank query past `MAX_QUERY_LEN` an empty page rather than a validation error.
