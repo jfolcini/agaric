@@ -6137,27 +6137,33 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
     }
     rebuild_fts_index(&pool).await.unwrap();
 
-    let page = PageRequest::new(None, Some(5)).unwrap();
-    let result = search_with_toggles(
-        &pool,
-        "Cat",
-        &page,
-        None,
-        None,
-        None,
-        &[],
-        &[],
-        SearchToggles {
-            case_sensitive: true,
-            whole_word: false,
-            is_regex: false,
-        },
-        None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    // Both pages differ only by their `PageRequest`; every other term of the
+    // query is fixed, so bind it once instead of repeating twelve arguments.
+    let pool_ref = &pool;
+    let search_page = move |page: PageRequest| async move {
+        search_with_toggles(
+            pool_ref,
+            "Cat",
+            &page,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            SearchToggles {
+                case_sensitive: true,
+                whole_word: false,
+                is_regex: false,
+            },
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
+        )
+        .await
+        .unwrap()
+    };
+
+    let result = search_page(PageRequest::new(None, Some(5)).unwrap()).await;
 
     assert_eq!(
         result.items.len(),
@@ -6182,26 +6188,7 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
     // back to the same ceiling, so the survivor is never reached and the caller
     // pages forever. Follow the cursor and require the row the first page could
     // not reach.
-    let resumed = search_with_toggles(
-        &pool,
-        "Cat",
-        &PageRequest::new(Some(resume_cursor), Some(5)).unwrap(),
-        None,
-        None,
-        None,
-        &[],
-        &[],
-        SearchToggles {
-            case_sensitive: true,
-            whole_word: false,
-            is_regex: false,
-        },
-        None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let resumed = search_page(PageRequest::new(Some(resume_cursor), Some(5)).unwrap()).await;
 
     assert_eq!(
         resumed.items.len(),
