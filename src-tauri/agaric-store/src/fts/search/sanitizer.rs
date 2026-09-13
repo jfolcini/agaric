@@ -2,6 +2,9 @@
 //! expression, supporting a whitelisted subset of FTS5 operators and the
 //! trigram length filter.
 
+use agaric_core::error::AppError;
+
+use super::constants::MAX_QUERY_LEN;
 use super::tokenizer::{QueryToken, tokenize_query};
 
 /// Sanitize a raw user query for safe use in an FTS5 MATCH expression.
@@ -178,4 +181,28 @@ pub fn sanitize_fts_query(query: &str) -> String {
     }
 
     output_parts.join(" ")
+}
+
+/// Turn a raw user query into the MATCH expression the FTS entry points run,
+/// or `None` when there is nothing to run.
+///
+/// Both `None` cases — a blank query, and one that sanitises away entirely
+/// (sub-trigram tokens, a bare `OR`) — would reach FTS5 as an empty MATCH and
+/// come back a syntax error, so each entry point short-circuits to its own
+/// empty result instead. The length cap runs before the NFC-normalise +
+/// tokenise walk, mirroring the regex path's `MAX_PATTERN_LEN`.
+pub(super) fn prepare_match_expression(query: &str) -> Result<Option<String>, AppError> {
+    // Not redundant with the sanitised-empty check below: it is what keeps a
+    // blank query past `MAX_QUERY_LEN` an empty page rather than a validation error.
+    if query.trim().is_empty() {
+        return Ok(None);
+    }
+    if query.len() > MAX_QUERY_LEN {
+        return Err(AppError::validation(format!(
+            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
+            query.len()
+        )));
+    }
+    let sanitized = sanitize_fts_query(query);
+    Ok((!sanitized.is_empty()).then_some(sanitized))
 }

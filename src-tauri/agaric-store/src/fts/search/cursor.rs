@@ -8,10 +8,10 @@ use crate::search_types::SearchBlockRow;
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
-use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
+use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::fts_fetch_rows;
 use super::row::{FtsSearchRow, fts_row_to_block_row};
-use super::sanitizer::sanitize_fts_query;
+use super::sanitizer::prepare_match_expression;
 
 /// Search blocks via FTS5 MATCH with cursor-based pagination.
 ///
@@ -45,6 +45,8 @@ use super::sanitizer::sanitize_fts_query;
 /// queries shorter than 3 characters return no results.  Earlier
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
+///
+/// [`sanitize_fts_query`]: super::sanitizer::sanitize_fts_query
 #[allow(clippy::too_many_arguments)] //  added include/exclude path glob params; refactor to a struct lives in .
 pub async fn search_fts(
     pool: &SqlitePool,
@@ -62,43 +64,14 @@ pub async fn search_fts(
     // `None`; the MCP `search` tool passes `Some(SEARCH_SNIPPET_CAP)`.
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    // Guard: empty/whitespace queries would cause an FTS5 syntax error.
-    if query.trim().is_empty() {
+    let Some(sanitized) = prepare_match_expression(query)? else {
         return Ok(PageResponse {
             items: vec![],
             next_cursor: None,
             has_more: false,
             total_count: None,
         });
-    }
-
-    // Reject over-long queries up front, before the
-    // NFC-normalise + tokenise walk. Mirrors the regex path's
-    // `MAX_PATTERN_LEN` guard.
-    if query.len() > MAX_QUERY_LEN {
-        return Err(AppError::validation(format!(
-            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
-            query.len()
-        )));
-    }
-
-    // Sanitize user input for safe FTS5 MATCH (F01: prevent operator injection).
-    let sanitized = sanitize_fts_query(query);
-
-    // Guard: I-Search-2 — `sanitize_fts_query` now drops sub-trigram
-    // tokens (≤ 2 chars) and a non-operator-position `OR`. A query that
-    // is exclusively those tokens (e.g. `"OR"`, `"a b"`, `"*"`) sanitises
-    // to an empty string, which would otherwise be passed to FTS5 MATCH
-    // and produce a syntax error. Mirror the raw-empty short-circuit
-    // above so empty post-sanitisation also yields an empty page.
-    if sanitized.is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
-    }
+    };
 
     // Cap page limit to MAX_SEARCH_RESULTS
     let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);

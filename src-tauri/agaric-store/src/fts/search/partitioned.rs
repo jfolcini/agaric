@@ -9,10 +9,10 @@ use crate::search_types::SearchBlockRow;
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
-use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
+use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::fts_fetch_rows;
 use super::row::{FtsSearchRow, fts_row_to_block_row};
-use super::sanitizer::sanitize_fts_query;
+use super::sanitizer::prepare_match_expression;
 
 /// Outcome of [`search_fts_partitioned`] — two pre-partitioned candidate
 /// sets (page-only + unrestricted), each with its own `has_more` flag
@@ -123,36 +123,14 @@ pub(crate) async fn search_fts_partitioned(
     snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<FtsPartitionedScan, AppError> {
-    // Guard: empty/whitespace queries would cause an FTS5 syntax error.
-    if query.trim().is_empty() {
+    let Some(sanitized) = prepare_match_expression(query)? else {
         return Ok(FtsPartitionedScan {
             pages: Vec::new(),
             blocks: Vec::new(),
             pages_has_more: false,
             blocks_has_more: false,
         });
-    }
-
-    // Same up-front length cap as `search_fts`.
-    if query.len() > MAX_QUERY_LEN {
-        return Err(AppError::validation(format!(
-            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
-            query.len()
-        )));
-    }
-
-    let sanitized = sanitize_fts_query(query);
-
-    // Guard: post-sanitisation may yield empty (e.g. all sub-trigram
-    // tokens) — same short-circuit as `search_fts`.
-    if sanitized.is_empty() {
-        return Ok(FtsPartitionedScan {
-            pages: Vec::new(),
-            blocks: Vec::new(),
-            pages_has_more: false,
-            blocks_has_more: false,
-        });
-    }
+    };
 
     // Each scan independently caps at `MAX_SEARCH_RESULTS`
     // and asks for `limit + 1` to probe for overflow. `u64` math
