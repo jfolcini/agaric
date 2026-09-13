@@ -35,9 +35,12 @@ const POST_FILTER_WINDOW: i64 = MAX_SEARCH_RESULTS;
 /// is `100 * 10 = 1000` FTS candidates scanned per page — the same
 /// order-of-magnitude bound the regex-mode path uses
 /// (`REGEX_PRE_FILTER_CAP` = 1000). If a filter is so selective that it
-/// drops > 1000 candidates without filling a page, we stop scanning and
-/// report `has_more = false` (best-effort: matches beyond the window are
-/// not surfaced, mirroring the regex-mode contract). 10 windows is a
+/// drops > 1000 candidates without filling a page, we stop scanning — but
+/// the FTS source is still live, so the page reports `has_more = true` and
+/// carries a cursor resuming past the ceiling, rather than declaring the
+/// results exhausted (#1556, pinned by
+/// `be_a10_post_filter_max_windows_bound_stops_without_hanging`). Only a
+/// genuinely exhausted scan reports `has_more = false`. 10 windows is a
 /// round design figure, not a benchmarked value.
 const POST_FILTER_MAX_WINDOWS: usize = 10;
 
