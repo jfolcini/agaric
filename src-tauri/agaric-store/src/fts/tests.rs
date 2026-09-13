@@ -6173,9 +6173,49 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
         result.has_more,
         "window-cap truncation with the FTS scan still live must report has_more = true (#1556)"
     );
+    let resume_cursor = result
+        .next_cursor
+        .expect("window-cap truncation must hand back a resuming next_cursor (#1556)");
+
+    // #1556 — `is_some()` says the cursor exists, not where it resumes. A
+    // cursor carrying the wrong rank satisfies it while sending the next page
+    // back to the same ceiling, so the survivor is never reached and the caller
+    // pages forever. Follow the cursor and require the row the first page could
+    // not reach.
+    let resumed = search_with_toggles(
+        &pool,
+        "Cat",
+        &PageRequest::new(Some(resume_cursor), Some(5)).unwrap(),
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resumed.items.len(),
+        1,
+        "resuming past the window cap must reach the lone survivor (#1556)"
+    );
+    assert_eq!(
+        resumed.items[0].id.as_str(),
+        pt_block_id(survivor_index),
+        "the resumed page must return the survivor at index 1040, not restart the scan (#1556)"
+    );
     assert!(
-        result.next_cursor.is_some(),
-        "window-cap truncation must hand back a resuming next_cursor (#1556)"
+        !resumed.has_more,
+        "the resumed page exhausts the remaining ~50 rows, so has_more must be false (#1556)"
     );
 }
 
