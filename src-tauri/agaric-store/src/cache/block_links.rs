@@ -539,7 +539,6 @@ fn diff_link_targets<'a>(
 /// `block_links` cannot be (the missing row is the thing being looked up). The
 /// push side lives in the materializer's `ReindexBlockLinks` handler, which
 /// asks that index "who was waiting for this block?" after reindexing it.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reindex_block_links_conn(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -570,36 +569,7 @@ pub async fn reindex_block_links_conn(
         })
         .collect();
 
-    // 3. Get existing outbound links (same tx — consistent snapshot), AND
-    //    (#4118) the source's currently-recorded unresolved tokens.
-    //
-    //    One `UNION ALL` rather than two statements: the unresolved read is
-    //    needed on EVERY reindex (that is how a stale row gets dropped), and
-    //    the create path this rides on is the one #3843 is measuring. Both
-    //    sides are source-keyed index seeks and the second is almost always
-    //    empty, so folding them into the existing round-trip keeps the added
-    //    cost of the whole #4118 mechanism at zero statements for a block with
-    //    no link tokens.
-    let existing_rows = sqlx::query!(
-        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
-           FROM block_links WHERE source_id = ?1 \
-         UNION ALL \
-         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
-           FROM block_links_unresolved WHERE source_id = ?1",
-        block_id,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut old_targets: HashMap<String, String> = HashMap::new();
-    let mut had_unresolved_rows = false;
-    for row in existing_rows {
-        if row.unresolved == 0 {
-            old_targets.insert(row.target_id, row.kind);
-        } else {
-            had_unresolved_rows = true;
-        }
-    }
+    let (old_targets, had_unresolved_rows) = read_recorded_link_targets(conn, block_id).await?;
 
     // 4. Diff — see [`diff_link_targets`].
     let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
@@ -659,6 +629,207 @@ pub async fn reindex_block_links_conn(
     // Batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
     // 2N round-trip per-target loops.
+    write_block_link_diff(conn, block_id, &to_delete, &to_insert, source_space).await?;
+
+    // #4118: record whatever the INSERT above declined to link, so the edge is
+    // recoverable when the target becomes linkable. Same connection, so the
+    // unresolved index commits or rolls back atomically with the edges it
+    // describes — including on the in-tx create/edit hook, where "the edge and
+    // the note that it is owed" must not be able to disagree.
+    sync_unresolved_links(
+        &mut *conn,
+        block_id,
+        &new_targets,
+        had_unresolved_rows,
+        to_insert.is_empty(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Read/write split variant (Phase 1A)
+// ---------------------------------------------------------------------------
+
+/// Read/write split variant of [`reindex_block_links`].
+///
+/// Reads block content and existing links from `read_pool`, computes a diff,
+/// and applies inserts/deletes on `write_pool`.
+/// Used by the materializer when a separate read pool is available.
+pub async fn reindex_block_links_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    // Read phase from read_pool
+
+    // 1. Get current content. Soft-deleted blocks do not contribute
+    // Outbound links to `block_links`.
+    let row = sqlx::query!(
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(read_pool)
+    .await?;
+
+    let content = match row {
+        Some(r) => r.content.unwrap_or_default(),
+        // Block not found or deleted — remove all links
+        None => String::new(),
+    };
+
+    // 2. Parse [[ULID]] and ((ULID)) tokens, each classified by kind.
+    let new_targets: HashMap<String, &'static str> = super::ulid_link_re()
+        .captures_iter(&content)
+        .map(|cap| {
+            let target = cap[1].to_string();
+            let kind = classify_link_kind(&content, &target);
+            (target, kind)
+        })
+        .collect();
+
+    let (old_targets, had_unresolved_rows) =
+        read_recorded_link_targets_split(read_pool, block_id).await?;
+
+    // 4. Diff — see [`diff_link_targets`].
+    let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
+
+    // #375: resolve the source space so the INSERT below can exclude
+    // cross-space targets, identically to the single-pool `reindex_block_links`
+    // (Phase 3 / #345/#346). The split path reads from `read_pool`, so
+    // the resolution does too (consistent with the content/target reads above).
+    // Without this the production split path silently re-admits exactly the
+    // cross-space rows the canonical path is careful to exclude.
+    let source_space: Option<String> = if to_insert.is_empty() {
+        None
+    } else {
+        let source_block_id = agaric_core::ulid::BlockId::from_trusted(block_id);
+        crate::space::resolve_block_space(read_pool, &source_block_id)
+            .await?
+            .map(|s| s.as_str().to_owned())
+    };
+
+    // #4118: `had_unresolved_rows` joins the "nothing to write" test rather
+    // than the early return being dropped outright as in the single-pool
+    // variant — this one opens a WRITE transaction on the far side of it, so
+    // an unconditional fall-through would put a write tx on the split path's
+    // every no-op reindex. A source with no recorded unresolved tokens and an
+    // empty diff still writes nothing.
+    if to_delete.is_empty() && to_insert.is_empty() && !had_unresolved_rows {
+        // No changes — nothing to write.
+        return Ok(());
+    }
+
+    // Write phase on write pool
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_links_reindex_write").await?;
+
+    // Batch DELETE/INSERT via `json_each` — one round-trip per side
+    // regardless of the number of changed targets, replacing the previous
+    // 2N round-trip per-target loops.
+    write_block_link_diff_split(&mut tx, block_id, &to_delete, &to_insert, source_space).await?;
+
+    // #4118: same unresolved-index maintenance as the single-pool variant, on
+    // the WRITE transaction — its read-back of `block_links` must observe the
+    // INSERT above, which the read pool cannot yet see.
+    sync_unresolved_links(
+        &mut tx,
+        block_id,
+        &new_targets,
+        had_unresolved_rows,
+        to_insert.is_empty(),
+    )
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The targets `block_links` already records for `block_id`, plus whether
+/// `block_links_unresolved` still holds a row for it. Read-only.
+async fn read_recorded_link_targets(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<(HashMap<String, String>, bool), AppError> {
+    // 3. Get existing outbound links (same tx — consistent snapshot), AND
+    //    (#4118) the source's currently-recorded unresolved tokens.
+    //
+    //    One `UNION ALL` rather than two statements: the unresolved read is
+    //    needed on EVERY reindex (that is how a stale row gets dropped), and
+    //    the create path this rides on is the one #3843 is measuring. Both
+    //    sides are source-keyed index seeks and the second is almost always
+    //    empty, so folding them into the existing round-trip keeps the added
+    //    cost of the whole #4118 mechanism at zero statements for a block with
+    //    no link tokens.
+    let existing_rows = sqlx::query!(
+        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
+           FROM block_links WHERE source_id = ?1 \
+         UNION ALL \
+         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
+           FROM block_links_unresolved WHERE source_id = ?1",
+        block_id,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut old_targets: HashMap<String, String> = HashMap::new();
+    let mut had_unresolved_rows = false;
+    for row in existing_rows {
+        if row.unresolved == 0 {
+            old_targets.insert(row.target_id, row.kind);
+        } else {
+            had_unresolved_rows = true;
+        }
+    }
+
+    Ok((old_targets, had_unresolved_rows))
+}
+
+/// [`read_recorded_link_targets`] for the read/write-split variant, reading
+/// from `read_pool`. A second copy rather than one executor-generic helper:
+/// the two reindex variants are deliberately independent (Phase 1A), down to
+/// their commentary.
+async fn read_recorded_link_targets_split(
+    read_pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(HashMap<String, String>, bool), AppError> {
+    // 3. Get existing outbound links from read pool, and (#4118) the source's
+    //    currently-recorded unresolved tokens — one round-trip, exactly as in
+    //    the single-pool variant.
+    let existing_rows = sqlx::query!(
+        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
+           FROM block_links WHERE source_id = ?1 \
+         UNION ALL \
+         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
+           FROM block_links_unresolved WHERE source_id = ?1",
+        block_id,
+    )
+    .fetch_all(read_pool)
+    .await?;
+
+    let mut old_targets: HashMap<String, String> = HashMap::new();
+    let mut had_unresolved_rows = false;
+    for row in existing_rows {
+        if row.unresolved == 0 {
+            old_targets.insert(row.target_id, row.kind);
+        } else {
+            had_unresolved_rows = true;
+        }
+    }
+
+    Ok((old_targets, had_unresolved_rows))
+}
+
+/// The `block_links` DELETE/INSERT half of [`reindex_block_links_conn`]. The
+/// caller keeps the transaction and the commit; this only writes.
+async fn write_block_link_diff(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    to_delete: &[&String],
+    to_insert: &[(&String, &'static str)],
+    source_space: Option<String>,
+) -> Result<(), AppError> {
     if !to_delete.is_empty() {
         let delete_json = serde_json::to_string(&to_delete)?;
         sqlx::query(
@@ -711,125 +882,19 @@ pub async fn reindex_block_links_conn(
         .await?;
     }
 
-    // #4118: record whatever the INSERT above declined to link, so the edge is
-    // recoverable when the target becomes linkable. Same connection, so the
-    // unresolved index commits or rolls back atomically with the edges it
-    // describes — including on the in-tx create/edit hook, where "the edge and
-    // the note that it is owed" must not be able to disagree.
-    sync_unresolved_links(
-        &mut *conn,
-        block_id,
-        &new_targets,
-        had_unresolved_rows,
-        to_insert.is_empty(),
-    )
-    .await?;
-
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Read/write split variant (Phase 1A)
-// ---------------------------------------------------------------------------
-
-/// Read/write split variant of [`reindex_block_links`].
-///
-/// Reads block content and existing links from `read_pool`, computes a diff,
-/// and applies inserts/deletes on `write_pool`.
-/// Used by the materializer when a separate read pool is available.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn reindex_block_links_split(
-    write_pool: &SqlitePool,
-    read_pool: &SqlitePool,
+/// The `block_links` DELETE/INSERT half of [`reindex_block_links_split`], on
+/// the caller-owned write transaction — the caller still commits. A second
+/// copy for the same reason as [`read_recorded_link_targets_split`].
+async fn write_block_link_diff_split(
+    write_conn: &mut sqlx::SqliteConnection,
     block_id: &str,
+    to_delete: &[&String],
+    to_insert: &[(&String, &'static str)],
+    source_space: Option<String>,
 ) -> Result<(), AppError> {
-    // Read phase from read_pool
-
-    // 1. Get current content. Soft-deleted blocks do not contribute
-    // Outbound links to `block_links`.
-    let row = sqlx::query!(
-        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        block_id,
-    )
-    .fetch_optional(read_pool)
-    .await?;
-
-    let content = match row {
-        Some(r) => r.content.unwrap_or_default(),
-        // Block not found or deleted — remove all links
-        None => String::new(),
-    };
-
-    // 2. Parse [[ULID]] and ((ULID)) tokens, each classified by kind.
-    let new_targets: HashMap<String, &'static str> = super::ulid_link_re()
-        .captures_iter(&content)
-        .map(|cap| {
-            let target = cap[1].to_string();
-            let kind = classify_link_kind(&content, &target);
-            (target, kind)
-        })
-        .collect();
-
-    // 3. Get existing outbound links from read pool, and (#4118) the source's
-    //    currently-recorded unresolved tokens — one round-trip, exactly as in
-    //    the single-pool variant.
-    let existing_rows = sqlx::query!(
-        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
-           FROM block_links WHERE source_id = ?1 \
-         UNION ALL \
-         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
-           FROM block_links_unresolved WHERE source_id = ?1",
-        block_id,
-    )
-    .fetch_all(read_pool)
-    .await?;
-
-    let mut old_targets: HashMap<String, String> = HashMap::new();
-    let mut had_unresolved_rows = false;
-    for row in existing_rows {
-        if row.unresolved == 0 {
-            old_targets.insert(row.target_id, row.kind);
-        } else {
-            had_unresolved_rows = true;
-        }
-    }
-
-    // 4. Diff — see [`diff_link_targets`].
-    let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
-
-    // #375: resolve the source space so the INSERT below can exclude
-    // cross-space targets, identically to the single-pool `reindex_block_links`
-    // (Phase 3 / #345/#346). The split path reads from `read_pool`, so
-    // the resolution does too (consistent with the content/target reads above).
-    // Without this the production split path silently re-admits exactly the
-    // cross-space rows the canonical path is careful to exclude.
-    let source_space: Option<String> = if to_insert.is_empty() {
-        None
-    } else {
-        let source_block_id = agaric_core::ulid::BlockId::from_trusted(block_id);
-        crate::space::resolve_block_space(read_pool, &source_block_id)
-            .await?
-            .map(|s| s.as_str().to_owned())
-    };
-
-    // #4118: `had_unresolved_rows` joins the "nothing to write" test rather
-    // than the early return being dropped outright as in the single-pool
-    // variant — this one opens a WRITE transaction on the far side of it, so
-    // an unconditional fall-through would put a write tx on the split path's
-    // every no-op reindex. A source with no recorded unresolved tokens and an
-    // empty diff still writes nothing.
-    if to_delete.is_empty() && to_insert.is_empty() && !had_unresolved_rows {
-        // No changes — nothing to write.
-        return Ok(());
-    }
-
-    // Write phase on write pool
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "cache_block_links_reindex_write").await?;
-
-    // Batch DELETE/INSERT via `json_each` — one round-trip per side
-    // regardless of the number of changed targets, replacing the previous
-    // 2N round-trip per-target loops.
     if !to_delete.is_empty() {
         let delete_json = serde_json::to_string(&to_delete)?;
         sqlx::query(
@@ -839,7 +904,7 @@ pub async fn reindex_block_links_split(
         )
         .bind(block_id)
         .bind(&delete_json)
-        .execute(&mut *tx)
+        .execute(&mut *write_conn)
         .await?;
     }
 
@@ -878,22 +943,9 @@ pub async fn reindex_block_links_split(
         .bind(block_id)
         .bind(&insert_json)
         .bind(&source_space)
-        .execute(&mut *tx)
+        .execute(&mut *write_conn)
         .await?;
     }
 
-    // #4118: same unresolved-index maintenance as the single-pool variant, on
-    // the WRITE transaction — its read-back of `block_links` must observe the
-    // INSERT above, which the read pool cannot yet see.
-    sync_unresolved_links(
-        &mut tx,
-        block_id,
-        &new_targets,
-        had_unresolved_rows,
-        to_insert.is_empty(),
-    )
-    .await?;
-
-    tx.commit().await?;
     Ok(())
 }
