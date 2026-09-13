@@ -508,7 +508,6 @@ async fn process_foreground_segment(
 // label accessor and adding one is out of this change's scope) — the parent
 // `run_foreground` span plus this span's timing are the debugging hook.
 #[instrument(name = "materializer.process_fg_task", skip_all)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
@@ -595,88 +594,99 @@ pub(super) async fn process_single_foreground_task(
             );
         }
     } else {
-        metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
-        // C-2a: defense-in-depth observability for
-        // materializer divergence. `ApplyOp` / `BatchApplyOps` tasks
-        // that exhaust the foreground retry are otherwise dropped
-        // silently — `fg_errors` alone lumps every fg failure
-        // together, so a non-Apply error masks a real apply
-        // divergence. Bump a dedicated counter and emit a warn line
-        // carrying the op coordinates (kind, seq, device_id,
-        // op_type) so the drop is searchable in logs and surfaceable
-        // via `StatusInfo` in the status banner. Non-Apply foreground
-        // failures (Barrier and legacy non-Apply variants — none of
-        // which are routed through the foreground queue today, but
-        // the match arm is exhaustive for safety) keep their
-        // existing single-counter behavior.
-        //
-        // In addition to the warn + `fg_apply_dropped`
-        // bump, persist the failure to `materializer_retry_queue` via
-        // [`record_failure_with_retry`] so the boot-time / periodic
-        // sweeper re-enqueues it on the same minute-to-hour backoff
-        // schedule used for background tasks. `BatchApplyOps`
-        // failures fan out into one persisted row per record so a
-        // single bad op cannot poison sweep-time replay of the rest
-        // of the batch — each record gets its own retry row keyed by
-        // `(device_id, seq)`. `fg_apply_dropped_persisted` counts
-        // per successfully-persisted retry row.
-        let err_msg = outcome.last_error_msg.as_deref().unwrap_or("unknown error");
-        match &task {
-            // #2896: a boot-replay op that exhausts retries is handled exactly
-            // like a plain `ApplyOp` (it persists as one — see `retry_queue`).
-            MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
+        record_foreground_failure(pool, &task, outcome.last_error_msg.as_deref(), metrics).await;
+    }
+    metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Counts a foreground task that exhausted its retries and, for the apply
+/// variants, persists it to `materializer_retry_queue` for the sweeper.
+async fn record_foreground_failure(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    last_error: Option<&str>,
+    metrics: &Arc<QueueMetrics>,
+) {
+    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+    // C-2a: defense-in-depth observability for
+    // materializer divergence. `ApplyOp` / `BatchApplyOps` tasks
+    // that exhaust the foreground retry are otherwise dropped
+    // silently — `fg_errors` alone lumps every fg failure
+    // together, so a non-Apply error masks a real apply
+    // divergence. Bump a dedicated counter and emit a warn line
+    // carrying the op coordinates (kind, seq, device_id,
+    // op_type) so the drop is searchable in logs and surfaceable
+    // via `StatusInfo` in the status banner. Non-Apply foreground
+    // failures (Barrier and legacy non-Apply variants — none of
+    // which are routed through the foreground queue today, but
+    // the match arm is exhaustive for safety) keep their
+    // existing single-counter behavior.
+    //
+    // In addition to the warn + `fg_apply_dropped`
+    // bump, persist the failure to `materializer_retry_queue` via
+    // [`record_failure_with_retry`] so the boot-time / periodic
+    // sweeper re-enqueues it on the same minute-to-hour backoff
+    // schedule used for background tasks. `BatchApplyOps`
+    // failures fan out into one persisted row per record so a
+    // single bad op cannot poison sweep-time replay of the rest
+    // of the batch — each record gets its own retry row keyed by
+    // `(device_id, seq)`. `fg_apply_dropped_persisted` counts
+    // per successfully-persisted retry row.
+    let err_msg = last_error.unwrap_or("unknown error");
+    match task {
+        // #2896: a boot-replay op that exhausts retries is handled exactly
+        // like a plain `ApplyOp` (it persists as one — see `retry_queue`).
+        MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
+            tracing::warn!(
+                kind = "ApplyOp",
+                seq = record.seq,
+                device_id = %record.device_id,
+                op_type = %record.op_type,
+                error = %err_msg,
+                "foreground apply-op dropped after retry exhausted — materializer divergence"
+            );
+            if record_failure_with_retry(pool, task, err_msg, metrics).await {
+                metrics
+                    .fg_apply_dropped_persisted
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        MaterializeTask::BatchApplyOps(records) => {
+            if let Some(first) = records.first() {
                 tracing::warn!(
-                    kind = "ApplyOp",
-                    seq = record.seq,
-                    device_id = %record.device_id,
-                    op_type = %record.op_type,
+                    kind = "BatchApplyOps",
+                    seq = first.seq,
+                    device_id = %first.device_id,
+                    op_type = %first.op_type,
+                    batch_size = records.len(),
                     error = %err_msg,
-                    "foreground apply-op dropped after retry exhausted — materializer divergence"
+                    "foreground batch-apply-ops dropped after retry exhausted — materializer divergence (rest of batch implicitly dropped)"
                 );
-                if record_failure_with_retry(pool, &task, err_msg, metrics).await {
+            } else {
+                tracing::warn!(
+                    kind = "BatchApplyOps",
+                    batch_size = 0,
+                    error = %err_msg,
+                    "foreground batch-apply-ops dropped after retry exhausted — empty batch"
+                );
+            }
+            // Persist each record as an individual
+            // ApplyOp retry row. `record.clone()` is a cold-path
+            // deep clone of `OpRecord` (String fields) — acceptable
+            // since this only runs after retry exhaustion.
+            for record in records.iter() {
+                let single = MaterializeTask::ApplyOp(Arc::new(record.clone()));
+                if record_failure_with_retry(pool, &single, err_msg, metrics).await {
                     metrics
                         .fg_apply_dropped_persisted
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
             }
-            MaterializeTask::BatchApplyOps(records) => {
-                if let Some(first) = records.first() {
-                    tracing::warn!(
-                        kind = "BatchApplyOps",
-                        seq = first.seq,
-                        device_id = %first.device_id,
-                        op_type = %first.op_type,
-                        batch_size = records.len(),
-                        error = %err_msg,
-                        "foreground batch-apply-ops dropped after retry exhausted — materializer divergence (rest of batch implicitly dropped)"
-                    );
-                } else {
-                    tracing::warn!(
-                        kind = "BatchApplyOps",
-                        batch_size = 0,
-                        error = %err_msg,
-                        "foreground batch-apply-ops dropped after retry exhausted — empty batch"
-                    );
-                }
-                // Persist each record as an individual
-                // ApplyOp retry row. `record.clone()` is a cold-path
-                // deep clone of `OpRecord` (String fields) — acceptable
-                // since this only runs after retry exhaustion.
-                for record in records.iter() {
-                    let single = MaterializeTask::ApplyOp(Arc::new(record.clone()));
-                    if record_failure_with_retry(pool, &single, err_msg, metrics).await {
-                        metrics
-                            .fg_apply_dropped_persisted
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
+            metrics.fg_apply_dropped.fetch_add(1, Ordering::Relaxed);
         }
+        _ => {}
     }
-    metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
 }
 
 // #647: background consumer loop (cache fan-out, FTS). Same
@@ -686,7 +696,6 @@ pub(super) async fn process_single_foreground_task(
     skip_all,
     fields(queue = "background")
 )]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn run_background(
     pool: SqlitePool,
     mut rx: mpsc::Receiver<MaterializeTask>,
@@ -738,161 +747,7 @@ pub(super) async fn run_background(
                     metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
-                const MAX_RETRIES: u32 = 2;
-                // Increased from 50ms to reduce retry churn on transient WAL
-                // lock contention; background tasks tolerate longer delays.
-                // docs: docs/architecture/data-and-events.md § Retry semantics
-                // (Background backoff schedule: 150ms, 300ms).
-                //
-                // Cross-reference: this is the
-                // *in-memory* per-batch retry budget. Tasks that exhaust
-                // this loop and are idempotent per-block (UpdateFtsBlock,
-                // ReindexBlockLinks, ReindexBlockTagRefs) get persisted to
-                // `materializer_retry_queue` and re-scheduled on the
-                // separate, persistent minute-to-hour backoff defined in
-                // [`super::retry_queue::backoff_delay_for`]. The two
-                // schedules are independent — bumping `INITIAL_BACKOFF_MS`
-                // only changes how long the consumer thread spins on a
-                // failing task before persisting it.
-                const INITIAL_BACKOFF_MS: u64 = 150;
-                let outcome = {
-                    let pool = pool.clone();
-                    let rp = rp_ref.cloned();
-                    let app_data_dir = app_data_dir.clone();
-                    let task = task.clone();
-                    // #2831: hand the metered handler the queue metrics so the
-                    // durable `RefreshTagUsageCount` obligation seeded by the
-                    // `ReindexBlockTagRefs` arm keeps `pending_retry_rows`
-                    // accurate for `clear_on_success`'s fast-path.
-                    let metrics = metrics.clone();
-                    retry_with_backoff(
-                        "bg",
-                        MAX_RETRIES,
-                        |attempt| {
-                            let backoff_ms = INITIAL_BACKOFF_MS * (1 << (attempt - 1));
-                            std::time::Duration::from_millis(backoff_ms)
-                        },
-                        move || {
-                            let pool = pool.clone();
-                            let rp = rp.clone();
-                            let app_data_dir = app_data_dir.clone();
-                            let task = task.clone();
-                            let metrics = metrics.clone();
-                            async move {
-                                let dir = app_data_dir.get().map(PathBuf::as_path);
-                                handle_background_task_metered(
-                                    &pool,
-                                    &task,
-                                    rp.as_ref(),
-                                    dir,
-                                    &metrics,
-                                )
-                                .await
-                            }
-                        },
-                    )
-                    .await
-                };
-                let succeeded = outcome.succeeded;
-                let last_error_msg = outcome.last_error_msg;
-                // #3382: the panic arm folded into `bg_errors`, mirroring the
-                // foreground path — see `process_single_foreground_task`. A
-                // separate `bg_panics` counter was deleted because
-                // `panic = "abort"` makes it structurally incapable of moving
-                // in a release build.
-                if !succeeded {
-                    metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
-                }
-                // Issue #378: confirmed-durable-success clear. The
-                // sweeper no longer pre-clears a retry row on enqueue
-                // (it leases it) — so a row swept and re-run here must be
-                // removed *after* the work commits, exactly once, on the
-                // sole success path. `handle_background_task` returns
-                // `Ok(())` only after its write tx commits, so reaching
-                // this branch is durable success. `clear_on_success` is a
-                // no-op DELETE-by-PK for retryable tasks that never had a
-                // row (fresh first-run success) — cheap against the
-                // tiny, single-writer retry-queue table. Clearing here
-                // (never before durable success) avoids trading the old
-                // infinite-retry bug for a clear-before-commit data loss
-                // on crash. Non-retryable tasks short-circuit inside
-                // `clear_on_success` via `RetryKind::from_task`.
-                if succeeded
-                    && let Err(e) =
-                        super::retry_queue::clear_on_success(&pool, &task, &metrics).await
-                {
-                    tracing::warn!(
-                        error = %e,
-                        "issue #378: failed to clear retry-queue row after durable bg success; \
-                         row will be re-leased and re-cleared on the next sweep"
-                    );
-                }
-                // Persist exhausted failures for retryable
-                // tasks to `materializer_retry_queue` so the boot-time /
-                // periodic sweeper can re-enqueue them later. Both
-                // idempotent per-block tasks (UpdateFtsBlock,
-                // ReindexBlockLinks, ReindexBlockTagRefs) AND global cache
-                // rebuilds (RebuildTagsCache, RebuildPagesCache, …) are
-                // persisted. Global tasks use the `'__GLOBAL__'` sentinel
-                // For `block_id` (eliminates the silent-drop gap
-                // where a failed cache rebuild would leave caches stale
-                // until the next user mutation re-dispatched it).
-                //
-                // The remaining truly-non-retryable tasks
-                // (`Barrier`, `RebuildFtsIndex`, `FtsOptimize`,
-                // `CleanupOrphanedAttachments`, `ReindexFtsReferences`,
-                // `RemoveFtsBlock`) hit the `else` arm and are silently
-                // counted without persistence. (`ApplyOp` /
-                // `BatchApplyOps` would be persisted by `from_task` after
-                // But they are routed exclusively to the
-                // foreground queue and never reach this site.)
-                //
-                // #851: persistence itself can fail (transient
-                // WAL contention on the retry-queue write). Use
-                // `record_failure_with_retry` to retry a small bounded number
-                // of times with a short backoff (`PERSIST_RETRY_ATTEMPTS`)
-                // and bump `retry_queue_persist_errors` on every failed
-                // attempt. `bg_dropped` is bumped on the persist-failure
-                // branch too so the "tasks gone" total stays accurate
-                // even when the retry queue write itself is leaking.
-                if !succeeded {
-                    if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(&task) {
-                        let err_msg = last_error_msg.as_deref().unwrap_or("unknown error");
-                        let persisted =
-                            record_failure_with_retry(&pool, &task, err_msg, &metrics).await;
-                        // Bump bg_dropped on BOTH the success
-                        // and the persist-failure branches. Operators
-                        // reading `bg_dropped` get an accurate "left the
-                        // primary materialization path" count regardless
-                        // of whether the retry queue write itself
-                        // succeeded.
-                        metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                        // Surface global-cache drops separately
-                        // so operators can distinguish per-block reindex
-                        // backlog from global-cache freshness gaps. We
-                        // bump regardless of `persisted` so this
-                        // sub-counter stays a proper subset of
-                        // `bg_dropped` — persist-failure cases land in
-                        // both `bg_dropped` and `bg_dropped_global` for
-                        // global tasks, with `retry_queue_persist_errors`
-                        // capturing the persistence failure separately.
-                        if kind.is_global() {
-                            metrics.bg_dropped_global.fetch_add(1, Ordering::Relaxed);
-                        }
-                        // Suppress unused-variable warning when the
-                        // sub-counters are only consulted via
-                        // `kind.is_global()` above. `persisted` is the
-                        // structured signal but currently has no
-                        // additional consumer on the bg path; keeping
-                        // the variable bind documents the M1 retry
-                        // outcome at the call site for future readers.
-                        let _ = persisted;
-                    } else {
-                        // Truly non-retryable task: silent count, no persist.
-                        metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+                process_single_background_task(&pool, rp_ref, &app_data_dir, &task, &metrics).await;
             }
             for barrier in pending_barriers {
                 barrier.notify_one();
@@ -909,6 +764,183 @@ pub(super) async fn run_background(
         }
     }
     tracing::info!("background queue closed");
+}
+
+/// Runs one non-barrier background task: retry, durable-success clear, and
+/// failure recording.
+async fn process_single_background_task(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: &Arc<OnceLock<PathBuf>>,
+    task: &MaterializeTask,
+    metrics: &Arc<QueueMetrics>,
+) {
+    let outcome =
+        run_background_task_with_retry(pool, read_pool, app_data_dir, task, metrics).await;
+    let succeeded = outcome.succeeded;
+    let last_error_msg = outcome.last_error_msg;
+    // #3382: the panic arm folded into `bg_errors`, mirroring the
+    // foreground path — see `process_single_foreground_task`. A
+    // separate `bg_panics` counter was deleted because
+    // `panic = "abort"` makes it structurally incapable of moving
+    // in a release build.
+    if !succeeded {
+        metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
+    }
+    // Issue #378: confirmed-durable-success clear. The
+    // sweeper no longer pre-clears a retry row on enqueue
+    // (it leases it) — so a row swept and re-run here must be
+    // removed *after* the work commits, exactly once, on the
+    // sole success path. `handle_background_task` returns
+    // `Ok(())` only after its write tx commits, so reaching
+    // this branch is durable success. `clear_on_success` is a
+    // no-op DELETE-by-PK for retryable tasks that never had a
+    // row (fresh first-run success) — cheap against the
+    // tiny, single-writer retry-queue table. Clearing here
+    // (never before durable success) avoids trading the old
+    // infinite-retry bug for a clear-before-commit data loss
+    // on crash. Non-retryable tasks short-circuit inside
+    // `clear_on_success` via `RetryKind::from_task`.
+    if succeeded && let Err(e) = super::retry_queue::clear_on_success(pool, task, metrics).await {
+        tracing::warn!(
+            error = %e,
+            "issue #378: failed to clear retry-queue row after durable bg success; \
+             row will be re-leased and re-cleared on the next sweep"
+        );
+    }
+    if !succeeded {
+        record_background_failure(pool, task, last_error_msg.as_deref(), metrics).await;
+    }
+    metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Runs one background task through the background in-memory retry
+/// schedule (2 retries, exponential 150 ms / 300 ms).
+async fn run_background_task_with_retry(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: &Arc<OnceLock<PathBuf>>,
+    task: &MaterializeTask,
+    metrics: &Arc<QueueMetrics>,
+) -> RetryOutcome {
+    const MAX_RETRIES: u32 = 2;
+    // Increased from 50ms to reduce retry churn on transient WAL
+    // lock contention; background tasks tolerate longer delays.
+    // docs: docs/architecture/data-and-events.md § Retry semantics
+    // (Background backoff schedule: 150ms, 300ms).
+    //
+    // Cross-reference: this is the
+    // *in-memory* per-batch retry budget. Tasks that exhaust
+    // this loop and are idempotent per-block (UpdateFtsBlock,
+    // ReindexBlockLinks, ReindexBlockTagRefs) get persisted to
+    // `materializer_retry_queue` and re-scheduled on the
+    // separate, persistent minute-to-hour backoff defined in
+    // [`super::retry_queue::backoff_delay_for`]. The two
+    // schedules are independent — bumping `INITIAL_BACKOFF_MS`
+    // only changes how long the consumer thread spins on a
+    // failing task before persisting it.
+    const INITIAL_BACKOFF_MS: u64 = 150;
+    let pool = pool.clone();
+    let rp = read_pool.cloned();
+    let app_data_dir = app_data_dir.clone();
+    let task = task.clone();
+    // #2831: hand the metered handler the queue metrics so the
+    // durable `RefreshTagUsageCount` obligation seeded by the
+    // `ReindexBlockTagRefs` arm keeps `pending_retry_rows`
+    // accurate for `clear_on_success`'s fast-path.
+    let metrics = metrics.clone();
+    retry_with_backoff(
+        "bg",
+        MAX_RETRIES,
+        |attempt| {
+            let backoff_ms = INITIAL_BACKOFF_MS * (1 << (attempt - 1));
+            std::time::Duration::from_millis(backoff_ms)
+        },
+        move || {
+            let pool = pool.clone();
+            let rp = rp.clone();
+            let app_data_dir = app_data_dir.clone();
+            let task = task.clone();
+            let metrics = metrics.clone();
+            async move {
+                let dir = app_data_dir.get().map(PathBuf::as_path);
+                handle_background_task_metered(&pool, &task, rp.as_ref(), dir, &metrics).await
+            }
+        },
+    )
+    .await
+}
+
+/// Counts a background task that exhausted its retries and, when the task
+/// is retryable, persists it to `materializer_retry_queue` for the sweeper.
+async fn record_background_failure(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    last_error_msg: Option<&str>,
+    metrics: &Arc<QueueMetrics>,
+) {
+    // Persist exhausted failures for retryable
+    // tasks to `materializer_retry_queue` so the boot-time /
+    // periodic sweeper can re-enqueue them later. Both
+    // idempotent per-block tasks (UpdateFtsBlock,
+    // ReindexBlockLinks, ReindexBlockTagRefs) AND global cache
+    // rebuilds (RebuildTagsCache, RebuildPagesCache, …) are
+    // persisted. Global tasks use the `'__GLOBAL__'` sentinel
+    // For `block_id` (eliminates the silent-drop gap
+    // where a failed cache rebuild would leave caches stale
+    // until the next user mutation re-dispatched it).
+    //
+    // The remaining truly-non-retryable tasks
+    // (`Barrier`, `RebuildFtsIndex`, `FtsOptimize`,
+    // `CleanupOrphanedAttachments`, `ReindexFtsReferences`,
+    // `RemoveFtsBlock`) hit the `else` arm and are silently
+    // counted without persistence. (`ApplyOp` /
+    // `BatchApplyOps` would be persisted by `from_task` after
+    // But they are routed exclusively to the
+    // foreground queue and never reach this site.)
+    //
+    // #851: persistence itself can fail (transient
+    // WAL contention on the retry-queue write). Use
+    // `record_failure_with_retry` to retry a small bounded number
+    // of times with a short backoff (`PERSIST_RETRY_ATTEMPTS`)
+    // and bump `retry_queue_persist_errors` on every failed
+    // attempt. `bg_dropped` is bumped on the persist-failure
+    // branch too so the "tasks gone" total stays accurate
+    // even when the retry queue write itself is leaking.
+    if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(task) {
+        let err_msg = last_error_msg.unwrap_or("unknown error");
+        let persisted = record_failure_with_retry(pool, task, err_msg, metrics).await;
+        // Bump bg_dropped on BOTH the success
+        // and the persist-failure branches. Operators
+        // reading `bg_dropped` get an accurate "left the
+        // primary materialization path" count regardless
+        // of whether the retry queue write itself
+        // succeeded.
+        metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+        // Surface global-cache drops separately
+        // so operators can distinguish per-block reindex
+        // backlog from global-cache freshness gaps. We
+        // bump regardless of `persisted` so this
+        // sub-counter stays a proper subset of
+        // `bg_dropped` — persist-failure cases land in
+        // both `bg_dropped` and `bg_dropped_global` for
+        // global tasks, with `retry_queue_persist_errors`
+        // capturing the persistence failure separately.
+        if kind.is_global() {
+            metrics.bg_dropped_global.fetch_add(1, Ordering::Relaxed);
+        }
+        // Suppress unused-variable warning when the
+        // sub-counters are only consulted via
+        // `kind.is_global()` above. `persisted` is the
+        // structured signal but currently has no
+        // additional consumer on the bg path; keeping
+        // the variable bind documents the M1 retry
+        // outcome at the call site for future readers.
+        let _ = persisted;
+    } else {
+        // Truly non-retryable task: silent count, no persist.
+        metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]

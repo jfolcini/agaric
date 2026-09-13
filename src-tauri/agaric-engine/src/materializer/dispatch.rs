@@ -1387,7 +1387,6 @@ pub fn move_same_page_hint(
 /// captured here — it depends on `&Materializer` state and is driven
 /// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
 /// vec has been enqueued.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn invalidations_for_op(
     record: &OpRecord,
     block_type_hint: Option<&str>,
@@ -1408,623 +1407,20 @@ pub fn invalidations_for_op(
         return Ok(tasks);
     };
     match op_type {
-        OpType::CreateBlock => {
-            let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
-            match hint.block_type.as_str() {
-                "tag" => tasks.push(MaterializeTask::RebuildTagsCache),
-                "page" => tasks.push(MaterializeTask::RebuildPagesCache),
-                _ => {}
-            }
-            if hint.block_id.is_empty() {
-                // Defensive fallback: no block_id in payload → full rebuild.
-                tasks.push(MaterializeTask::RebuildPageIds);
-            } else {
-                let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
-                tasks.push(MaterializeTask::UpdateFtsBlock {
-                    block_id: Arc::clone(&block_id),
-                });
-                // Incremental page_id set for the new block (no descendants to walk).
-                // Skipped for page blocks: their page_id = id invariant is enforced
-                // by the page_id_self_for_pages CHECK constraint at INSERT time.
-                // Falls through to the unconditional RebuildPageIds only if block_id
-                // is empty (defensive).
-                //
-                // #3842: enqueued BEFORE `ReindexBlockLinks` below. The
-                // background queue is FIFO, and the roll-up key
-                // `ReindexBlockLinks` writes under is
-                // `COALESCE(blocks.page_id, parent_id, id)` — so running the
-                // page_id stamp first means the reindex sees the settled key
-                // instead of rolling this block's edges up under a
-                // content-block key. It also lets `reindex_block_links`' own
-                // same-space guard read a stamped `space_id`. This ordering is
-                // a narrowing, not the fix: a parent delivered in a LATER op
-                // batch moves the key after this whole fan-out has drained, so
-                // the `SetBlockPageId` handler ALSO re-runs the reindex
-                // whenever it actually changes `page_id` (see
-                // `task_handlers.rs`).
-                if hint.block_type != "page" {
-                    tasks.push(MaterializeTask::SetBlockPageId {
-                        block_id: Arc::clone(&block_id),
-                    });
-                }
-                // #3296: a freshly created block can already contain inline
-                // `[[ULID]]` / `((ULID))` LINK tokens for exactly the same
-                // reason it can contain tag refs (imports, paste, template
-                // insertion, `create_blocks_batch`, the MCP `append_block`
-                // tool, `quick_capture_block_inner`). The in-tx create hook
-                // (`crate::apply::pages_cache`, the `PreOpState::Create`
-                // arm) already writes `block_links` + the affected pages'
-                // `inbound_link_count` and its comment explicitly assumes "the
-                // later background reindex" will follow — but this arm never
-                // enqueued one, and `ReindexBlockLinks`' handler is the SOLE
-                // writer of the page-level `page_link_cache` rollup
-                // (`cache::reindex_page_link_cache_for_block`, see
-                // `task_handlers.rs`). Without it a create-with-content's edges
-                // reached `block_links` but never `page_link_cache`, so the
-                // Graph view and the page-links panel — which read
-                // `page_link_cache` exclusively — showed no edge until the block
-                // was later EDITED (the `EditBlock` arm below does enqueue it),
-                // a delete/restore/purge/cross-page-move fired the full
-                // `RebuildPageLinkCache`, or the read path's lazy rebuild fired
-                // — and that only self-heals when the cache is ENTIRELY empty
-                // (`commands/pages/links.rs`).
-                //
-                // Idempotent and retry-persistable: the in-tx
-                // `reindex_block_links_conn` already wrote the `block_links`
-                // half, so the handler's diff is empty and the only added work
-                // is the page-level rollup that was missing.
-                //
-                // Dedup is per-`block_id` (`materializer/dedup.rs`), so repeats
-                // on the SAME block collapse but an N-block
-                // `create_blocks_batch` / import enqueues N tasks that do NOT.
-                // That is ~one extra handler invocation per created block,
-                // bounded by `ensure_batch_within_cap`. Accepted for
-                // correctness: gating the push on "content actually has link
-                // tokens" would duplicate the token regex into this hot path,
-                // and the unconditional shape matches `ReindexBlockTagRefs`
-                // directly below, which is unconditional for the same reason.
-                tasks.push(MaterializeTask::ReindexBlockLinks {
-                    block_id: Arc::clone(&block_id),
-                });
-                // A freshly created block can already contain
-                // inline `#[ULID]` tag refs if the creator passed
-                // non-empty content (imports, paste, programmatic
-                // creates). Scan for them.
-                tasks.push(MaterializeTask::ReindexBlockTagRefs { block_id });
-            }
-            // #2200 (Tier-2, same safe class as #2186): the whole-vault
-            // `RebuildTagInheritanceCache` recompute is dropped from this arm.
-            // Block creation already populates the new block's inherited tags
-            // SYNCHRONOUSLY, in-transaction, via
-            // `tag_inheritance::inherit_parent_tags` (called from both the
-            // loro-apply and sql-only create handlers). A brand-new block has
-            // no children, so nothing else needs re-inheriting and the
-            // vault-wide rebuild was pure O(vault) waste.
-            // #2037: a freshly created block carries no properties (those arrive
-            // via later SetProperty ops), so it cannot yet have a `repeat`
-            // property and therefore cannot be a row in `projected_agenda_cache`
-            // (`cache/projected_agenda.rs` joins `key = 'repeat'`). The
-            // SetProperty('repeat', …) that later makes it repeating enqueues the
-            // projected rebuild itself, so enqueuing it here was pure O(vault)
-            // waste on every block creation.
-        }
-        OpType::EditBlock => {
-            // Use the cached `OpRecord::block_id` sidecar
-            // populated at append-time (or parsed once on the sync
-            // ingress in `From<OpTransfer> for OpRecord`) so this
-            // dispatch path no longer re-parses `record.payload`
-            // for the same value.
-            let block_id = record.block_id.as_deref().unwrap_or_default();
-            // Every per-block reindex below keys on it; skipping them would
-            // leave backlinks, inline tag refs, and FTS stale with no trace.
-            if block_id.is_empty() {
-                return Err(AppError::validation(
-                    "edit_block payload has empty block_id".into(),
-                ));
-            }
-            tasks.push(MaterializeTask::ReindexBlockLinks {
-                block_id: Arc::from(block_id),
-            });
-            // Reindex inline tag refs regardless of
-            // `block_type_hint` — every content edit may gain or
-            // lose `#[ULID]` tokens. Tag/page blocks typically
-            // don't contain inline refs themselves but the cost
-            // of scanning an empty diff is negligible vs. the
-            // correctness risk of skipping.
-            tasks.push(MaterializeTask::ReindexBlockTagRefs {
-                block_id: Arc::from(block_id),
-            });
-            match block_type_hint {
-                Some("tag") => {
-                    tasks.push(MaterializeTask::RebuildTagsCache);
-                    // #2658: `DESIRED_AGENDA_SQL`'s tag source projects agenda
-                    // dates straight from tag CONTENT (`SUBSTR(t.content, 6)` for
-                    // `date/YYYY-MM-DD` tags). Renaming a date-tag therefore
-                    // changes which agenda rows should exist, so the tag-block
-                    // edit must invalidate `agenda_cache`. Enqueued
-                    // UNCONDITIONALLY (not narrowed to date-shaped from/to text):
-                    // this arm reads only the cached `block_id` sidecar and never
-                    // parses the edit's from/to content, tag renames are rare, and
-                    // over-invalidation is a safe full rebuild while
-                    // under-invalidation is the bug. Matches the unconditional
-                    // `RebuildAgendaCache` in the no-hint fallback and the
-                    // AddTag/RemoveTag arms.
-                    tasks.push(MaterializeTask::RebuildAgendaCache);
-                    tasks.push(MaterializeTask::ReindexFtsReferences {
-                        block_id: Arc::from(block_id),
-                    });
-                }
-                Some("page") => {
-                    tasks.push(MaterializeTask::RebuildPagesCache);
-                    tasks.push(MaterializeTask::ReindexFtsReferences {
-                        block_id: Arc::from(block_id),
-                    });
-                }
-                Some("content") => {}
-                _ => {
-                    tasks.push(MaterializeTask::RebuildTagsCache);
-                    tasks.push(MaterializeTask::RebuildPagesCache);
-                    tasks.push(MaterializeTask::RebuildAgendaCache);
-                    // #3296: the no-hint fallback is documented (in this
-                    // function's rustdoc) as "the full conservative set", i.e. a
-                    // SUPERSET of `Some("tag")` ∪ `Some("page")`. It carried the
-                    // union of their GLOBAL rebuilds but silently dropped the
-                    // per-block `ReindexFtsReferences` that BOTH concrete arms
-                    // push — and that task is the only thing that re-resolves a
-                    // referencing block's inline `#[ULID]` / `[[ULID]]` tokens
-                    // to the renamed tag's / page's new human-readable text
-                    // (`agaric_store::fts::reindex_fts_references`).
-                    //
-                    // The no-hint path is not hypothetical: UNDO/REDO takes it.
-                    // All three revert sites in `commands/history.rs` enqueue
-                    // the reverse op through the unhinted
-                    // `CommandTx::enqueue_background`, which routes to
-                    // `Materializer::dispatch_background` →
-                    // `enqueue_background_tasks(record, None, None)`, while the
-                    // FORWARD rename goes through the hinted
-                    // `enqueue_edit_background(record, "tag"|"page")`. So
-                    // undoing a rename refreshed the renamed block's own FTS row
-                    // (the unconditional `UpdateFtsBlock` below) but left every
-                    // REFERENCING block's `fts_blocks.stripped` holding the
-                    // post-rename name — searching the restored name missed
-                    // them, searching the undone name still matched. Remote
-                    // replay / inbound sync take the same unhinted path.
-                    tasks.push(MaterializeTask::ReindexFtsReferences {
-                        block_id: Arc::from(block_id),
-                    });
-                }
-            }
-            tasks.push(MaterializeTask::UpdateFtsBlock {
-                block_id: Arc::from(block_id),
-            });
-            // FTS-optimize threshold (metric-driven) is enqueued
-            // separately by `Materializer::maybe_enqueue_fts_optimize`
-            // after the caller has drained this vec.
-        }
-        OpType::DeleteBlock => {
-            // Use the cached sidecar instead of re-parsing
-            // `record.payload`.  Same rationale as the `edit_block`
-            // arm above.
-            //
-            // #2037 pt2: narrow the rebuild fan-out for a CONTENT block —
-            // its lifecycle cannot change a `block_type = 'page'` row, so
-            // `lifecycle_rebuild_tasks` drops the page-row `RebuildPagesCache`
-            // when the dispatch site proves `block_type_hint == Some("content")`.
-            // `RebuildTagsCache` is KEPT (its `usage_count` aggregates
-            // content-block tag refs — #2172). `Some("page")`/`Some("tag")`/
-            // `None` keep the full set.
-            let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(
-                lifecycle_rebuild_tasks(&OpType::DeleteBlock, block_type_hint)
-                    .iter()
-                    .cloned(),
-            );
-            if !block_id.is_empty() {
-                tasks.push(MaterializeTask::RemoveFtsBlock {
-                    block_id: Arc::from(block_id),
-                });
-            }
-        }
+        OpType::CreateBlock => push_create_block_invalidations(record, &mut tasks)?,
+        OpType::EditBlock => push_edit_block_invalidations(record, block_type_hint, &mut tasks)?,
+        OpType::DeleteBlock => push_delete_block_invalidations(record, block_type_hint, &mut tasks),
         OpType::RestoreBlock => {
-            // Cached sidecar — no JSON re-parse.
-            // #2037 pt2: same content-block narrowing as `DeleteBlock`.
-            let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(
-                lifecycle_rebuild_tasks(&OpType::RestoreBlock, block_type_hint)
-                    .iter()
-                    .cloned(),
-            );
-            if !block_id.is_empty() {
-                // #4209: a RESTORE is the third way a block becomes LINKABLE,
-                // and it was the one #4118 did not observe.
-                //
-                // `reindex_block_links_conn`'s INSERT guard requires the target
-                // to exist AND be live (`… AND deleted_at IS NULL` — invariant
-                // #9), so a token naming a TOMBSTONED target is declined
-                // exactly like one naming a nonexistent block, and since #4118
-                // the declined token is recorded in `block_links_unresolved`.
-                // #4118 discharges that debt from the TARGET's
-                // `ReindexBlockLinks` (`resolve_referrers_of`, task_handlers.rs)
-                // and reaches it on the create / edit / `SetBlockPageId`
-                // space-stamp triggers. This arm reached it on none of them:
-                // the only link-shaped member of `lifecycle_rebuild_tasks` is
-                // the vault-wide `RebuildPageLinkCache`, which *folds*
-                // `block_links` into the page roll-up and so cannot invent a
-                // row that is not there. The unresolved row therefore survived
-                // with nothing left to trigger it, and the edge stayed missing
-                // until one of the two blocks was edited — #4118's permanent
-                // loss, on its uncovered transition.
-                //
-                // The per-block task also repairs the restored block's OWN
-                // outbound edges, which nothing else here re-derives either: a
-                // reindex that ran while the block was soft-deleted read its
-                // content as `WHERE … deleted_at IS NULL` → content-less, and
-                // diffed the whole edge set away (reachable through the
-                // retry-queue sweeper re-running an obligation shed before the
-                // delete, and through `resolve_referrers_of`, which reindexes a
-                // recorded referrer without checking its liveness). That half
-                // leaves NO `block_links_unresolved` row behind — only a live
-                // source owes a target (#4229) — so the target-side push can
-                // never reach it; only a reindex of the restored block can.
-                // `run_reindex_block_links` runs `reindex_one_block_links` for
-                // the restored block before `resolve_referrers_of`, so one task
-                // covers both directions.
-                //
-                // Cheap and idempotent, like the #3296 create-arm reindex: for
-                // a restored block with no link tokens and no waiting referrers
-                // it is two source-keyed index seeks and an empty diff. It is
-                // enqueued INLINE rather than routed through the lifecycle
-                // debounce (`is_global_lifecycle_rebuild` matches only the
-                // argument-less O(vault) rebuilds), and it runs BEFORE the
-                // debounced `RebuildPageLinkCache` — the right order, since
-                // that roll-up folds the rows this task writes.
-                //
-                // SCOPE, stated for the TARGET's delete→restore (the reported
-                // shape, where the SOURCE stays live throughout): an edge that
-                // existed before the target was tombstoned is not affected and
-                // needs nothing — soft-delete does not cascade `block_links`
-                // rows away and downstream consumers filter on liveness, so it
-                // survives the round trip untouched (pinned by
-                // `a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209`).
-                // Only edges attempted DURING the deleted window are at risk.
-                //
-                // That bound does NOT carry over to the SOURCE's own
-                // delete→restore: there a pre-delete edge survives only while
-                // nothing reindexes the tombstoned source, and the paragraph
-                // above names two things that do. Hence the outbound half —
-                // and hence the reindex, not just a target-side push.
-                //
-                // SCOPE (cohort): the task seeded HERE is for the SEED block
-                // only, and that is structural rather than a residual — a
-                // restore un-deletes a whole cohort (descendants + the #1884
-                // contiguous ancestor chain), but `invalidations_for_op` is a
-                // pure function of the `OpRecord`: the cohort is computed
-                // inside the apply tx (`ApplyEffects::restored_cohort`) and
-                // cannot be reached from here. #4285 closed the resulting gap
-                // where the cohort IS in hand — post-commit, at every restore
-                // fan-out site — via
-                // `handlers::apply::reindex_restored_cohort_links`, called
-                // from the remote/replay `apply_op` + `BatchApplyOps` arms AND
-                // from the LOCAL `commands::blocks::crud` sites
-                // (`restore_block_inner` plus the two batch-trash paths),
-                // which do their own fan-out and never route through
-                // `apply_op`. Both directions were affected for a non-seed
-                // member: a referrer waiting on a restored DESCENDANT, and
-                // that descendant's own outbound edges if a deleted-window
-                // reindex dropped them.
-                //
-                // SCOPE (path): this arm is the LOCAL command fan-out.
-                // `enqueue_background_tasks` is reached only from
-                // `CommandTx::commit_and_dispatch`; an inbound-sync import
-                // fans out through `enqueue_inbound_sync_rebuilds`, which
-                // enqueues the same per-changed-block `ReindexBlockLinks`
-                // (#4293). A RESTORE arriving from a peer is covered twice,
-                // because the apply handlers also repair the cohort directly
-                // (#4285).
-                tasks.push(MaterializeTask::ReindexBlockLinks {
-                    block_id: Arc::from(block_id),
-                });
-                tasks.push(MaterializeTask::UpdateFtsBlock {
-                    block_id: Arc::from(block_id),
-                });
-            }
+            push_restore_block_invalidations(record, block_type_hint, &mut tasks)
         }
-        OpType::PurgeBlock => {
-            // Cached sidecar — no JSON re-parse.
-            // #2037 pt2: same content-block narrowing as `DeleteBlock`.
-            let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(
-                lifecycle_rebuild_tasks(&OpType::PurgeBlock, block_type_hint)
-                    .iter()
-                    .cloned(),
-            );
-            if !block_id.is_empty() {
-                tasks.push(MaterializeTask::RemoveFtsBlock {
-                    block_id: Arc::from(block_id),
-                });
-            }
-        }
+        OpType::PurgeBlock => push_purge_block_invalidations(record, block_type_hint, &mut tasks),
         OpType::AddTag | OpType::RemoveTag => {
-            // #676: `add_tag` / `remove_tag` mutate exactly one
-            // `(block_id, tag_id)` edge, so the only `tags_cache` change
-            // they can cause is the affected tag's `usage_count`. Replace
-            // the former full O(vault) `RebuildTagsCache` (which streamed
-            // every tag block + the whole `block_tags`/`block_tag_refs`
-            // union to sort-merge-diff the entire cache, on every tag
-            // click) with a scoped `RefreshTagUsageCount { tag_id }` that
-            // recomputes just that one row — provably identical to the
-            // full rebuild's effect for this op (the tag's name and the
-            // set of cached tags are invariant under tag-edge mutations).
-            //
-            // The `tag_id` is read from the op payload. Both `add_tag` and
-            // `remove_tag` carry `{ block_id, tag_id }` (op.rs
-            // `AddTagPayload` / `RemoveTagPayload`). If the payload fails to
-            // parse (corrupt row) we fall back to the full `RebuildTagsCache`
-            // so the cache cannot silently go stale.
-            match serde_json::from_str::<TagOpHint>(&record.payload) {
-                Ok(hint) if !hint.tag_id.is_empty() => {
-                    tasks.push(MaterializeTask::RefreshTagUsageCount {
-                        tag_id: Arc::from(hint.tag_id.as_str()),
-                    });
-                }
-                _ => {
-                    tracing::warn!(
-                        op_type = %record.op_type,
-                        device_id = %record.device_id,
-                        seq = record.seq,
-                        "add_tag/remove_tag payload missing tag_id — falling back to full RebuildTagsCache"
-                    );
-                    tasks.push(MaterializeTask::RebuildTagsCache);
-                }
-            }
-            tasks.push(MaterializeTask::RebuildAgendaCache);
-            // #2186: deliberately NO RebuildProjectedAgendaCache here. The
-            // projected-agenda rebuild query (cache/projected_agenda.rs) reads
-            // only block core columns + `block_properties` (repeat*/template)
-            // and references no tag table, so a tag edge mutation
-            // (`block_tags`) can never change the projected agenda. Enqueueing
-            // it would be wasted work.
-            //
-            // #2669 (same safe class as #2200 / #2265): the apply path already
-            // maintained `block_tag_inherited` incrementally, in-tx, for the
-            // affected scope — `propagate_tag_to_descendants` on AddTag,
-            // `remove_inherited_tag` on RemoveTag (agaric-engine
-            // `apply/loro_apply.rs` + `apply/sql_only.rs`) — so the whole-vault
-            // `RebuildTagInheritanceCache` (a `DELETE FROM block_tag_inherited`
-            // + recursive-CTE recompute under `BEGIN IMMEDIATE`, run on EVERY
-            // tag click) is redundant work.
-            //
-            //   * RemoveTag: `remove_inherited_tag` reproduces the full
-            //     rebuild BYTE-FOR-BYTE, including nearest-ancestor
-            //     re-attribution (its step 2/3 climb to the closest remaining
-            //     tagger — proven equivalent by
-            //     `remove_tag_incremental_matches_full_rebuild_2669` in
-            //     agaric-store `tag_inheritance::tests`). Its redundant rebuild
-            //     is DROPPED below.
-            //
-            //     #3923 — that equivalence did NOT actually hold when this
-            //     drop landed: `remove_inherited_tag` carried a
-            //     `NOT IN block_tags` exclusion that dropped a descendant's
-            //     re-attributed row when the descendant ALSO held the tag
-            //     directly, and #2669's fixture had no such descendant, so the
-            //     property could not be falsified. Because this arm has no
-            //     rebuild backstop, the missing row was DURABLE. #3923 removed
-            //     the exclusion and extended the fixture (plus
-            //     `remove_tag_keeps_direct_holder_descendant_inheriting_3923`),
-            //     so the equivalence this drop rests on is now actually pinned.
-            //   * AddTag: `propagate_tag_to_descendants` is effective-tag
-            //     complete (every descendant of the newly-tagged block gets
-            //     the tag) but, being a plain `INSERT OR IGNORE`, does NOT
-            //     re-point an existing inherited row to a newly-added CLOSER
-            //     ancestor. In that nested-tagger case it diverges from the
-            //     full rebuild in the `inherited_from` PROVENANCE column
-            //     (effective membership is identical — see
-            //     `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
-            //     Because that is a genuine state difference vs the rebuild,
-            //     AddTag KEEPS the full rebuild; only RemoveTag drops it.
-            if matches!(op_type, OpType::AddTag) {
-                tasks.push(MaterializeTask::RebuildTagInheritanceCache);
-            }
-            // #1715: deliberately NO Update/RemoveFtsBlock here. A block's FTS
-            // row indexes only the inline `#[ULID]` TAG_REF tokens present in its
-            // content (see fts/strip.rs), which are added/removed by EditBlock and
-            // reindexed on that op. AddTag/RemoveTag mutate a structural
-            // `block_tags` edge, not the block's content, so the FTS row is
-            // unchanged — enqueueing an FTS task would be wasted work.
+            push_tag_op_invalidations(record, &op_type, &mut tasks)
         }
         OpType::SetProperty | OpType::DeleteProperty => {
-            // Narrow invalidation by design: only the agenda caches depend on
-            // property values. Property values live in
-            // `block_properties.value_text` / `value_ref` and are never scanned
-            // for link tokens, FTS text, or tag refs — that graph derives solely
-            // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
-            //
-            // #2037: narrow FURTHER by the property key/value so an ordinary
-            // property edit (status, colour, text, ref…) enqueues neither agenda
-            // rebuild. `agenda_cache` depends on date-VALUED properties + the
-            // `template`/`due`/`scheduled` keys; `projected_agenda_cache` depends
-            // on the recurrence keys + date columns + `template`. A
-            // `delete_property` payload carries no value, so its date-ness is
-            // unknown — keep its agenda rebuild (a deleted key may have held a
-            // date) and narrow only its projected rebuild by key. A corrupt
-            // payload falls back to both rebuilds.
-            let is_set = matches!(op_type, OpType::SetProperty);
-            match serde_json::from_str::<PropertyOpHint>(&record.payload) {
-                Ok(hint) => {
-                    let key = hint.key.as_str();
-                    let has_date_value = hint.value_date.is_some();
-                    let agenda_relevant = if is_set {
-                        has_date_value || AGENDA_PROPERTY_KEYS.contains(&key)
-                    } else {
-                        // delete_property: value unknown ⇒ conservative.
-                        true
-                    };
-                    let projected_relevant =
-                        has_date_value || PROJECTED_AGENDA_PROPERTY_KEYS.contains(&key);
-                    if agenda_relevant {
-                        tasks.push(MaterializeTask::RebuildAgendaCache);
-                    }
-                    if projected_relevant {
-                        tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        op_type = %record.op_type,
-                        device_id = %record.device_id,
-                        seq = record.seq,
-                        error = %e,
-                        "set/delete_property payload unparseable — enqueueing full agenda rebuilds"
-                    );
-                    tasks.push(MaterializeTask::RebuildAgendaCache);
-                    tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
-                }
-            }
+            push_property_op_invalidations(record, &op_type, &mut tasks)
         }
-        OpType::MoveBlock => {
-            // #2669 (same safe class as #2200 / #2265): the whole-vault
-            // `RebuildTagInheritanceCache` is dropped from this arm. A move
-            // already re-derives `block_tag_inherited` for the moved subtree
-            // SYNCHRONOUSLY, in-transaction, via
-            // `tag_inheritance::recompute_subtree_inheritance(block_id)` (run
-            // inside `apply_op_projected` — agaric-engine `apply/loro_apply.rs`
-            // `apply_move_block_via_loro` and the `apply/sql_only.rs`
-            // fallback). A move can only change the inherited tags of the moved
-            // subtree itself (no block outside it changes ancestry), and
-            // `recompute_subtree_inheritance` is a from-scratch DELETE +
-            // nearest-ancestor recompute of exactly that subtree — so it
-            // reproduces the full rebuild BYTE-FOR-BYTE for the affected scope
-            // (proven by `move_block_incremental_matches_full_rebuild_2669` in
-            // agaric-store `tag_inheritance::tests`; it is also the identical
-            // function the inbound-sync path relies on per #2265). The
-            // vault-wide rebuild was pure O(vault) waste.
-            // #2200 (Tier-2, same safe class as #2186): the whole-vault
-            // `RebuildPageIds` recompute is dropped from this arm. A move
-            // already re-derives `page_id` AND `space_id` for the moved root
-            // and its entire subtree — soft-deleted descendants included since
-            // #3919 — SYNCHRONOUSLY, in-transaction,
-            // via `agaric_store::block_descendants::rederive_page_and_space_ids`
-            // (called from `commands/blocks/move_ops.rs`, `history.rs`, and
-            // the undo path). No block outside the moved subtree can change
-            // `page_id` as a result of a move, so the vault-wide rebuild was
-            // pure O(vault) waste. `RebuildPagesCache` is KEPT and still runs
-            // after the in-tx rederive, observing the already-corrected
-            // membership.
-            //
-            // #2700: the three rebuilds gated by `!same_page` below
-            // (`RebuildPagesCache`, `RebuildPageLinkCache`,
-            // `RebuildProjectedAgendaCache`) ALL derive purely from `page_id`
-            // (page-row attribution, the source-page `block_links` roll-up, and
-            // the template-page projected-agenda carve-out respectively). A move
-            // the local command proved keeps EVERY moved block's `page_id`
-            // (`move_same_page == Some(true)`) makes all three pure waste, so
-            // they are skipped. That proof lives at the command site
-            // (`move_ops.rs`): the moved root's `page_id` is unchanged. Since a
-            // move only reparents the root and `rederive_page_and_space_ids`
-            // stops its `page_id` cascade at nested-page boundaries (#2906), an
-            // unchanged root `page_id` implies every descendant's `page_id` is
-            // unchanged too — a content block under a nested page keeps that
-            // nested page's `page_id` rather than being flattened onto the moved
-            // root's page — so the skip is safe even when the moved subtree
-            // drags a nested page along.
-            // `None` (remote replay / inbound-sync / boot — the hint is only
-            // threaded on the LOCAL move command) or `Some(false)` (a proven
-            // cross-page reparent) keeps the full conservative set. Note
-            // `RebuildAgendaCache` (#2657) below is deliberately NOT gated here.
-            let same_page = move_same_page == Some(true);
-            // #4200: `tags_cache.usage_count` counts only LIVE holders —
-            // `DESIRED_TAGS_SQL` joins `blocks blk … WHERE blk.deleted_at IS
-            // NULL` for the `block_tags` half AND the `block_tag_refs` half
-            // (`agaric-store/src/cache/tags.rs`). That is exactly why the
-            // `DeleteBlock` arm keeps `RebuildTagsCache` in its lifecycle set.
-            // Since #4112 a `MoveBlock` can tombstone blocks too:
-            // `sweep_move_under_tombstoned_ancestor` stamps the moved block and
-            // its whole subtree with the nearest tombstoned ancestor's
-            // `deleted_at` on the way out of the apply, in the same tx. Nothing
-            // else in this arm's fan-out repairs the count, and nothing outside
-            // it does either — `pages_cache` counts ARE maintained in that same
-            // tx AFTER the sweep (`maintain_pages_cache_counts_after_op`,
-            // agaric-engine `apply/kernel.rs`), the FTS read path filters
-            // `deleted_at` in its own SQL (`fts/toggle_filter.rs`), and
-            // `block_tag_inherited` is wiped in-tx by the sweep's own
-            // `remove_subtree_inherited` — so tags_cache is the ONE cache the
-            // move's narrower matrix misses, and the affected tags OVER-COUNT
-            // until an unrelated lifecycle/tag op or a full rebuild heals them.
-            //
-            // Gated on the same `same_page` hint rather than pushed
-            // unconditionally: this arm is the 200 ms interactive drag/reorder
-            // path and a sweep is almost never what a move does. The gate is
-            // sound because the hint's SOLE producer (`move_same_page_hint`)
-            // refuses `Some(true)` for a move that swept, so `Some(true)` means
-            // "page unchanged AND a real page AND nothing was tombstoned" —
-            // under which a move cannot change any tag's live-holder count.
-            // `Some(false)` (a proven cross-page reparent) and `None` (remote
-            // replay / inbound sync / boot / undo, which never carry the hint)
-            // both keep the rebuild. That is broader than "only when the sweep
-            // fired" — a cross-page move that swept nothing still pays — but
-            // narrowing it further would need a second hint channel threaded
-            // through every non-local dispatcher for no correctness gain.
-            if !same_page {
-                tasks.push(MaterializeTask::RebuildTagsCache);
-            }
-            if !same_page {
-                tasks.push(MaterializeTask::RebuildPagesCache);
-            }
-            // #627: a cross-page move reparents the block's `page_id`, which
-            // is the source-page attribution `page_link_cache` rolls up by
-            // (`COALESCE(page_id, …)`, `cache/page_links.rs`). Without this
-            // rebuild, the OLD page's link rows stay over-counted and the
-            // NEW page's rows stay missing until an unrelated
-            // delete/restore/purge/sync triggers FULL_CACHE_REBUILD_TASKS.
-            // A targeted `ReindexBlockLinks` is insufficient — it keys on the
-            // block's *current* source page, so the old page's stale rows
-            // would survive; the full page-link roll-up is the correct fix.
-            // #2700: skipped on a proven same-page move (page_id unchanged →
-            // source-page attribution unchanged).
-            // #3886: "page_id unchanged" is NOT on its own enough to prove the
-            // roll-up key is unchanged — the key is
-            // `COALESCE(page_id, parent_id, id)`, so a NULL `page_id` makes it
-            // fall back to `parent_id` and a reparent inside a PAGE-LESS
-            // subtree moves the key while keeping `page_id` NULL throughout.
-            // The hint therefore carries the stronger claim: `Some(true)`
-            // means "unchanged AND a real page". `move_same_page_hint` is the
-            // sole producer and enforces it; do not widen this gate without
-            // reading its doc.
-            if !same_page {
-                tasks.push(MaterializeTask::RebuildPageLinkCache);
-            }
-            // #2657: a move changes the block's `page_id`, and every arm of
-            // `DESIRED_AGENDA_SQL` EXCLUDES blocks whose owning page carries a
-            // `template` property. Moving a dated block INTO a template page
-            // must drop its agenda rows, and moving one OUT must (re)add them —
-            // so `agenda_cache` goes stale on a template-boundary move unless it
-            // is rebuilt here. Enqueue it unconditionally, mirroring the sibling
-            // `RebuildProjectedAgendaCache` push below (a move is exactly the
-            // event that can flip the owning page's template status; a
-            // correct-but-broader full rebuild is safer than a narrow
-            // "did template status change?" check).
-            tasks.push(MaterializeTask::RebuildAgendaCache);
-            // #2196: a reparent can flip the moved subtree's owning page
-            // between template and non-template. `projected_agenda_cache`
-            // deliberately EXCLUDES repeating blocks whose `page_id` owns a
-            // `template` property (`cache/projected_agenda.rs`, the
-            // `NOT EXISTS(… key='template' …)` guard). Moving a repeating
-            // block INTO a template page must drop its projections from the
-            // cache, and moving one OUT must (re)add them — otherwise the
-            // cache diverges from truth and only the read-path's mirror
-            // `NOT EXISTS(template)` subquery keeps the visible result
-            // correct. Enqueue the rebuild unconditionally on a structural
-            // move (mirroring the sibling agenda arms): a move is exactly the
-            // event that can change the owning page's template status, and a
-            // correct-but-slightly-broader rebuild is safer than a narrow
-            // "did template status change?" check.
-            // #2700: skipped on a proven same-page move — a move that keeps the
-            // block's `page_id` cannot change the owning page's template status
-            // for any block, so the projected-agenda carve-out is unaffected.
-            if !same_page {
-                tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
-            }
-        }
+        OpType::MoveBlock => push_move_block_invalidations(move_same_page, &mut tasks),
         // #1260: attachment ops fan out no cache invalidations. These are
         // explicit empty arms (not a catch-all) so the no-`#[non_exhaustive]`
         // OpType invariant holds: a future variant must be handled here or
@@ -2035,6 +1431,668 @@ pub fn invalidations_for_op(
         OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {}
     }
     Ok(tasks)
+}
+
+/// `CreateBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_create_block_invalidations(
+    record: &OpRecord,
+    tasks: &mut Vec<MaterializeTask>,
+) -> Result<(), AppError> {
+    let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
+    match hint.block_type.as_str() {
+        "tag" => tasks.push(MaterializeTask::RebuildTagsCache),
+        "page" => tasks.push(MaterializeTask::RebuildPagesCache),
+        _ => {}
+    }
+    if hint.block_id.is_empty() {
+        // Defensive fallback: no block_id in payload → full rebuild.
+        tasks.push(MaterializeTask::RebuildPageIds);
+    } else {
+        let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
+        tasks.push(MaterializeTask::UpdateFtsBlock {
+            block_id: Arc::clone(&block_id),
+        });
+        // Incremental page_id set for the new block (no descendants to walk).
+        // Skipped for page blocks: their page_id = id invariant is enforced
+        // by the page_id_self_for_pages CHECK constraint at INSERT time.
+        // Falls through to the unconditional RebuildPageIds only if block_id
+        // is empty (defensive).
+        //
+        // #3842: enqueued BEFORE `ReindexBlockLinks` below. The
+        // background queue is FIFO, and the roll-up key
+        // `ReindexBlockLinks` writes under is
+        // `COALESCE(blocks.page_id, parent_id, id)` — so running the
+        // page_id stamp first means the reindex sees the settled key
+        // instead of rolling this block's edges up under a
+        // content-block key. It also lets `reindex_block_links`' own
+        // same-space guard read a stamped `space_id`. This ordering is
+        // a narrowing, not the fix: a parent delivered in a LATER op
+        // batch moves the key after this whole fan-out has drained, so
+        // the `SetBlockPageId` handler ALSO re-runs the reindex
+        // whenever it actually changes `page_id` (see
+        // `task_handlers.rs`).
+        if hint.block_type != "page" {
+            tasks.push(MaterializeTask::SetBlockPageId {
+                block_id: Arc::clone(&block_id),
+            });
+        }
+        // #3296: a freshly created block can already contain inline
+        // `[[ULID]]` / `((ULID))` LINK tokens for exactly the same
+        // reason it can contain tag refs (imports, paste, template
+        // insertion, `create_blocks_batch`, the MCP `append_block`
+        // tool, `quick_capture_block_inner`). The in-tx create hook
+        // (`crate::apply::pages_cache`, the `PreOpState::Create`
+        // arm) already writes `block_links` + the affected pages'
+        // `inbound_link_count` and its comment explicitly assumes "the
+        // later background reindex" will follow — but this arm never
+        // enqueued one, and `ReindexBlockLinks`' handler is the SOLE
+        // writer of the page-level `page_link_cache` rollup
+        // (`cache::reindex_page_link_cache_for_block`, see
+        // `task_handlers.rs`). Without it a create-with-content's edges
+        // reached `block_links` but never `page_link_cache`, so the
+        // Graph view and the page-links panel — which read
+        // `page_link_cache` exclusively — showed no edge until the block
+        // was later EDITED (the `EditBlock` arm below does enqueue it),
+        // a delete/restore/purge/cross-page-move fired the full
+        // `RebuildPageLinkCache`, or the read path's lazy rebuild fired
+        // — and that only self-heals when the cache is ENTIRELY empty
+        // (`commands/pages/links.rs`).
+        //
+        // Idempotent and retry-persistable: the in-tx
+        // `reindex_block_links_conn` already wrote the `block_links`
+        // half, so the handler's diff is empty and the only added work
+        // is the page-level rollup that was missing.
+        //
+        // Dedup is per-`block_id` (`materializer/dedup.rs`), so repeats
+        // on the SAME block collapse but an N-block
+        // `create_blocks_batch` / import enqueues N tasks that do NOT.
+        // That is ~one extra handler invocation per created block,
+        // bounded by `ensure_batch_within_cap`. Accepted for
+        // correctness: gating the push on "content actually has link
+        // tokens" would duplicate the token regex into this hot path,
+        // and the unconditional shape matches `ReindexBlockTagRefs`
+        // directly below, which is unconditional for the same reason.
+        tasks.push(MaterializeTask::ReindexBlockLinks {
+            block_id: Arc::clone(&block_id),
+        });
+        // A freshly created block can already contain
+        // inline `#[ULID]` tag refs if the creator passed
+        // non-empty content (imports, paste, programmatic
+        // creates). Scan for them.
+        tasks.push(MaterializeTask::ReindexBlockTagRefs { block_id });
+    }
+    // #2200 (Tier-2, same safe class as #2186): the whole-vault
+    // `RebuildTagInheritanceCache` recompute is dropped from this arm.
+    // Block creation already populates the new block's inherited tags
+    // SYNCHRONOUSLY, in-transaction, via
+    // `tag_inheritance::inherit_parent_tags` (called from both the
+    // loro-apply and sql-only create handlers). A brand-new block has
+    // no children, so nothing else needs re-inheriting and the
+    // vault-wide rebuild was pure O(vault) waste.
+    // #2037: a freshly created block carries no properties (those arrive
+    // via later SetProperty ops), so it cannot yet have a `repeat`
+    // property and therefore cannot be a row in `projected_agenda_cache`
+    // (`cache/projected_agenda.rs` joins `key = 'repeat'`). The
+    // SetProperty('repeat', …) that later makes it repeating enqueues the
+    // projected rebuild itself, so enqueuing it here was pure O(vault)
+    // waste on every block creation.
+    Ok(())
+}
+
+/// `EditBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_edit_block_invalidations(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+    tasks: &mut Vec<MaterializeTask>,
+) -> Result<(), AppError> {
+    // Use the cached `OpRecord::block_id` sidecar
+    // populated at append-time (or parsed once on the sync
+    // ingress in `From<OpTransfer> for OpRecord`) so this
+    // dispatch path no longer re-parses `record.payload`
+    // for the same value.
+    let block_id = record.block_id.as_deref().unwrap_or_default();
+    // Every per-block reindex below keys on it; skipping them would
+    // leave backlinks, inline tag refs, and FTS stale with no trace.
+    if block_id.is_empty() {
+        return Err(AppError::validation(
+            "edit_block payload has empty block_id".into(),
+        ));
+    }
+    tasks.push(MaterializeTask::ReindexBlockLinks {
+        block_id: Arc::from(block_id),
+    });
+    // Reindex inline tag refs regardless of
+    // `block_type_hint` — every content edit may gain or
+    // lose `#[ULID]` tokens. Tag/page blocks typically
+    // don't contain inline refs themselves but the cost
+    // of scanning an empty diff is negligible vs. the
+    // correctness risk of skipping.
+    tasks.push(MaterializeTask::ReindexBlockTagRefs {
+        block_id: Arc::from(block_id),
+    });
+    match block_type_hint {
+        Some("tag") => {
+            tasks.push(MaterializeTask::RebuildTagsCache);
+            // #2658: `DESIRED_AGENDA_SQL`'s tag source projects agenda
+            // dates straight from tag CONTENT (`SUBSTR(t.content, 6)` for
+            // `date/YYYY-MM-DD` tags). Renaming a date-tag therefore
+            // changes which agenda rows should exist, so the tag-block
+            // edit must invalidate `agenda_cache`. Enqueued
+            // UNCONDITIONALLY (not narrowed to date-shaped from/to text):
+            // this arm reads only the cached `block_id` sidecar and never
+            // parses the edit's from/to content, tag renames are rare, and
+            // over-invalidation is a safe full rebuild while
+            // under-invalidation is the bug. Matches the unconditional
+            // `RebuildAgendaCache` in the no-hint fallback and the
+            // AddTag/RemoveTag arms.
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+            tasks.push(MaterializeTask::ReindexFtsReferences {
+                block_id: Arc::from(block_id),
+            });
+        }
+        Some("page") => {
+            tasks.push(MaterializeTask::RebuildPagesCache);
+            tasks.push(MaterializeTask::ReindexFtsReferences {
+                block_id: Arc::from(block_id),
+            });
+        }
+        Some("content") => {}
+        _ => {
+            tasks.push(MaterializeTask::RebuildTagsCache);
+            tasks.push(MaterializeTask::RebuildPagesCache);
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+            // #3296: the no-hint fallback is documented (in this
+            // function's rustdoc) as "the full conservative set", i.e. a
+            // SUPERSET of `Some("tag")` ∪ `Some("page")`. It carried the
+            // union of their GLOBAL rebuilds but silently dropped the
+            // per-block `ReindexFtsReferences` that BOTH concrete arms
+            // push — and that task is the only thing that re-resolves a
+            // referencing block's inline `#[ULID]` / `[[ULID]]` tokens
+            // to the renamed tag's / page's new human-readable text
+            // (`agaric_store::fts::reindex_fts_references`).
+            //
+            // The no-hint path is not hypothetical: UNDO/REDO takes it.
+            // All three revert sites in `commands/history.rs` enqueue
+            // the reverse op through the unhinted
+            // `CommandTx::enqueue_background`, which routes to
+            // `Materializer::dispatch_background` →
+            // `enqueue_background_tasks(record, None, None)`, while the
+            // FORWARD rename goes through the hinted
+            // `enqueue_edit_background(record, "tag"|"page")`. So
+            // undoing a rename refreshed the renamed block's own FTS row
+            // (the unconditional `UpdateFtsBlock` below) but left every
+            // REFERENCING block's `fts_blocks.stripped` holding the
+            // post-rename name — searching the restored name missed
+            // them, searching the undone name still matched. Remote
+            // replay / inbound sync take the same unhinted path.
+            tasks.push(MaterializeTask::ReindexFtsReferences {
+                block_id: Arc::from(block_id),
+            });
+        }
+    }
+    tasks.push(MaterializeTask::UpdateFtsBlock {
+        block_id: Arc::from(block_id),
+    });
+    // FTS-optimize threshold (metric-driven) is enqueued
+    // separately by `Materializer::maybe_enqueue_fts_optimize`
+    // after the caller has drained this vec.
+    Ok(())
+}
+
+/// `DeleteBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_delete_block_invalidations(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+    tasks: &mut Vec<MaterializeTask>,
+) {
+    // Use the cached sidecar instead of re-parsing
+    // `record.payload`.  Same rationale as the `edit_block`
+    // arm above.
+    //
+    // #2037 pt2: narrow the rebuild fan-out for a CONTENT block —
+    // its lifecycle cannot change a `block_type = 'page'` row, so
+    // `lifecycle_rebuild_tasks` drops the page-row `RebuildPagesCache`
+    // when the dispatch site proves `block_type_hint == Some("content")`.
+    // `RebuildTagsCache` is KEPT (its `usage_count` aggregates
+    // content-block tag refs — #2172). `Some("page")`/`Some("tag")`/
+    // `None` keep the full set.
+    let block_id = record.block_id.as_deref().unwrap_or_default();
+    tasks.extend(
+        lifecycle_rebuild_tasks(&OpType::DeleteBlock, block_type_hint)
+            .iter()
+            .cloned(),
+    );
+    if !block_id.is_empty() {
+        tasks.push(MaterializeTask::RemoveFtsBlock {
+            block_id: Arc::from(block_id),
+        });
+    }
+}
+
+/// `RestoreBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_restore_block_invalidations(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+    tasks: &mut Vec<MaterializeTask>,
+) {
+    // Cached sidecar — no JSON re-parse.
+    // #2037 pt2: same content-block narrowing as `DeleteBlock`.
+    let block_id = record.block_id.as_deref().unwrap_or_default();
+    tasks.extend(
+        lifecycle_rebuild_tasks(&OpType::RestoreBlock, block_type_hint)
+            .iter()
+            .cloned(),
+    );
+    if !block_id.is_empty() {
+        // #4209: a RESTORE is the third way a block becomes LINKABLE,
+        // and it was the one #4118 did not observe.
+        //
+        // `reindex_block_links_conn`'s INSERT guard requires the target
+        // to exist AND be live (`… AND deleted_at IS NULL` — invariant
+        // #9), so a token naming a TOMBSTONED target is declined
+        // exactly like one naming a nonexistent block, and since #4118
+        // the declined token is recorded in `block_links_unresolved`.
+        // #4118 discharges that debt from the TARGET's
+        // `ReindexBlockLinks` (`resolve_referrers_of`, task_handlers.rs)
+        // and reaches it on the create / edit / `SetBlockPageId`
+        // space-stamp triggers. This arm reached it on none of them:
+        // the only link-shaped member of `lifecycle_rebuild_tasks` is
+        // the vault-wide `RebuildPageLinkCache`, which *folds*
+        // `block_links` into the page roll-up and so cannot invent a
+        // row that is not there. The unresolved row therefore survived
+        // with nothing left to trigger it, and the edge stayed missing
+        // until one of the two blocks was edited — #4118's permanent
+        // loss, on its uncovered transition.
+        //
+        // The per-block task also repairs the restored block's OWN
+        // outbound edges, which nothing else here re-derives either: a
+        // reindex that ran while the block was soft-deleted read its
+        // content as `WHERE … deleted_at IS NULL` → content-less, and
+        // diffed the whole edge set away (reachable through the
+        // retry-queue sweeper re-running an obligation shed before the
+        // delete, and through `resolve_referrers_of`, which reindexes a
+        // recorded referrer without checking its liveness). That half
+        // leaves NO `block_links_unresolved` row behind — only a live
+        // source owes a target (#4229) — so the target-side push can
+        // never reach it; only a reindex of the restored block can.
+        // `run_reindex_block_links` runs `reindex_one_block_links` for
+        // the restored block before `resolve_referrers_of`, so one task
+        // covers both directions.
+        //
+        // Cheap and idempotent, like the #3296 create-arm reindex: for
+        // a restored block with no link tokens and no waiting referrers
+        // it is two source-keyed index seeks and an empty diff. It is
+        // enqueued INLINE rather than routed through the lifecycle
+        // debounce (`is_global_lifecycle_rebuild` matches only the
+        // argument-less O(vault) rebuilds), and it runs BEFORE the
+        // debounced `RebuildPageLinkCache` — the right order, since
+        // that roll-up folds the rows this task writes.
+        //
+        // SCOPE, stated for the TARGET's delete→restore (the reported
+        // shape, where the SOURCE stays live throughout): an edge that
+        // existed before the target was tombstoned is not affected and
+        // needs nothing — soft-delete does not cascade `block_links`
+        // rows away and downstream consumers filter on liveness, so it
+        // survives the round trip untouched (pinned by
+        // `a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209`).
+        // Only edges attempted DURING the deleted window are at risk.
+        //
+        // That bound does NOT carry over to the SOURCE's own
+        // delete→restore: there a pre-delete edge survives only while
+        // nothing reindexes the tombstoned source, and the paragraph
+        // above names two things that do. Hence the outbound half —
+        // and hence the reindex, not just a target-side push.
+        //
+        // SCOPE (cohort): the task seeded HERE is for the SEED block
+        // only, and that is structural rather than a residual — a
+        // restore un-deletes a whole cohort (descendants + the #1884
+        // contiguous ancestor chain), but `invalidations_for_op` is a
+        // pure function of the `OpRecord`: the cohort is computed
+        // inside the apply tx (`ApplyEffects::restored_cohort`) and
+        // cannot be reached from here. #4285 closed the resulting gap
+        // where the cohort IS in hand — post-commit, at every restore
+        // fan-out site — via
+        // `handlers::apply::reindex_restored_cohort_links`, called
+        // from the remote/replay `apply_op` + `BatchApplyOps` arms AND
+        // from the LOCAL `commands::blocks::crud` sites
+        // (`restore_block_inner` plus the two batch-trash paths),
+        // which do their own fan-out and never route through
+        // `apply_op`. Both directions were affected for a non-seed
+        // member: a referrer waiting on a restored DESCENDANT, and
+        // that descendant's own outbound edges if a deleted-window
+        // reindex dropped them.
+        //
+        // SCOPE (path): this arm is the LOCAL command fan-out.
+        // `enqueue_background_tasks` is reached only from
+        // `CommandTx::commit_and_dispatch`; an inbound-sync import
+        // fans out through `enqueue_inbound_sync_rebuilds`, which
+        // enqueues the same per-changed-block `ReindexBlockLinks`
+        // (#4293). A RESTORE arriving from a peer is covered twice,
+        // because the apply handlers also repair the cohort directly
+        // (#4285).
+        tasks.push(MaterializeTask::ReindexBlockLinks {
+            block_id: Arc::from(block_id),
+        });
+        tasks.push(MaterializeTask::UpdateFtsBlock {
+            block_id: Arc::from(block_id),
+        });
+    }
+}
+
+/// `PurgeBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_purge_block_invalidations(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+    tasks: &mut Vec<MaterializeTask>,
+) {
+    // Cached sidecar — no JSON re-parse.
+    // #2037 pt2: same content-block narrowing as `DeleteBlock`.
+    let block_id = record.block_id.as_deref().unwrap_or_default();
+    tasks.extend(
+        lifecycle_rebuild_tasks(&OpType::PurgeBlock, block_type_hint)
+            .iter()
+            .cloned(),
+    );
+    if !block_id.is_empty() {
+        tasks.push(MaterializeTask::RemoveFtsBlock {
+            block_id: Arc::from(block_id),
+        });
+    }
+}
+
+/// `AddTag | RemoveTag` invalidations, pushed onto `tasks` in enqueue order.
+fn push_tag_op_invalidations(
+    record: &OpRecord,
+    op_type: &OpType,
+    tasks: &mut Vec<MaterializeTask>,
+) {
+    // #676: `add_tag` / `remove_tag` mutate exactly one
+    // `(block_id, tag_id)` edge, so the only `tags_cache` change
+    // they can cause is the affected tag's `usage_count`. Replace
+    // the former full O(vault) `RebuildTagsCache` (which streamed
+    // every tag block + the whole `block_tags`/`block_tag_refs`
+    // union to sort-merge-diff the entire cache, on every tag
+    // click) with a scoped `RefreshTagUsageCount { tag_id }` that
+    // recomputes just that one row — provably identical to the
+    // full rebuild's effect for this op (the tag's name and the
+    // set of cached tags are invariant under tag-edge mutations).
+    //
+    // The `tag_id` is read from the op payload. Both `add_tag` and
+    // `remove_tag` carry `{ block_id, tag_id }` (op.rs
+    // `AddTagPayload` / `RemoveTagPayload`). If the payload fails to
+    // parse (corrupt row) we fall back to the full `RebuildTagsCache`
+    // so the cache cannot silently go stale.
+    match serde_json::from_str::<TagOpHint>(&record.payload) {
+        Ok(hint) if !hint.tag_id.is_empty() => {
+            tasks.push(MaterializeTask::RefreshTagUsageCount {
+                tag_id: Arc::from(hint.tag_id.as_str()),
+            });
+        }
+        _ => {
+            tracing::warn!(
+                op_type = %record.op_type,
+                device_id = %record.device_id,
+                seq = record.seq,
+                "add_tag/remove_tag payload missing tag_id — falling back to full RebuildTagsCache"
+            );
+            tasks.push(MaterializeTask::RebuildTagsCache);
+        }
+    }
+    tasks.push(MaterializeTask::RebuildAgendaCache);
+    // #2186: deliberately NO RebuildProjectedAgendaCache here. The
+    // projected-agenda rebuild query (cache/projected_agenda.rs) reads
+    // only block core columns + `block_properties` (repeat*/template)
+    // and references no tag table, so a tag edge mutation
+    // (`block_tags`) can never change the projected agenda. Enqueueing
+    // it would be wasted work.
+    //
+    // #2669 (same safe class as #2200 / #2265): the apply path already
+    // maintained `block_tag_inherited` incrementally, in-tx, for the
+    // affected scope — `propagate_tag_to_descendants` on AddTag,
+    // `remove_inherited_tag` on RemoveTag (agaric-engine
+    // `apply/loro_apply.rs` + `apply/sql_only.rs`) — so the whole-vault
+    // `RebuildTagInheritanceCache` (a `DELETE FROM block_tag_inherited`
+    // + recursive-CTE recompute under `BEGIN IMMEDIATE`, run on EVERY
+    // tag click) is redundant work.
+    //
+    //   * RemoveTag: `remove_inherited_tag` reproduces the full
+    //     rebuild BYTE-FOR-BYTE, including nearest-ancestor
+    //     re-attribution (its step 2/3 climb to the closest remaining
+    //     tagger — proven equivalent by
+    //     `remove_tag_incremental_matches_full_rebuild_2669` in
+    //     agaric-store `tag_inheritance::tests`). Its redundant rebuild
+    //     is DROPPED below.
+    //
+    //     #3923 — that equivalence did NOT actually hold when this
+    //     drop landed: `remove_inherited_tag` carried a
+    //     `NOT IN block_tags` exclusion that dropped a descendant's
+    //     re-attributed row when the descendant ALSO held the tag
+    //     directly, and #2669's fixture had no such descendant, so the
+    //     property could not be falsified. Because this arm has no
+    //     rebuild backstop, the missing row was DURABLE. #3923 removed
+    //     the exclusion and extended the fixture (plus
+    //     `remove_tag_keeps_direct_holder_descendant_inheriting_3923`),
+    //     so the equivalence this drop rests on is now actually pinned.
+    //   * AddTag: `propagate_tag_to_descendants` is effective-tag
+    //     complete (every descendant of the newly-tagged block gets
+    //     the tag) but, being a plain `INSERT OR IGNORE`, does NOT
+    //     re-point an existing inherited row to a newly-added CLOSER
+    //     ancestor. In that nested-tagger case it diverges from the
+    //     full rebuild in the `inherited_from` PROVENANCE column
+    //     (effective membership is identical — see
+    //     `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
+    //     Because that is a genuine state difference vs the rebuild,
+    //     AddTag KEEPS the full rebuild; only RemoveTag drops it.
+    if matches!(op_type, OpType::AddTag) {
+        tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+    }
+    // #1715: deliberately NO Update/RemoveFtsBlock here. A block's FTS
+    // row indexes only the inline `#[ULID]` TAG_REF tokens present in its
+    // content (see fts/strip.rs), which are added/removed by EditBlock and
+    // reindexed on that op. AddTag/RemoveTag mutate a structural
+    // `block_tags` edge, not the block's content, so the FTS row is
+    // unchanged — enqueueing an FTS task would be wasted work.
+}
+
+/// `SetProperty | DeleteProperty` invalidations, pushed onto `tasks` in enqueue order.
+fn push_property_op_invalidations(
+    record: &OpRecord,
+    op_type: &OpType,
+    tasks: &mut Vec<MaterializeTask>,
+) {
+    // Narrow invalidation by design: only the agenda caches depend on
+    // property values. Property values live in
+    // `block_properties.value_text` / `value_ref` and are never scanned
+    // for link tokens, FTS text, or tag refs — that graph derives solely
+    // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
+    //
+    // #2037: narrow FURTHER by the property key/value so an ordinary
+    // property edit (status, colour, text, ref…) enqueues neither agenda
+    // rebuild. `agenda_cache` depends on date-VALUED properties + the
+    // `template`/`due`/`scheduled` keys; `projected_agenda_cache` depends
+    // on the recurrence keys + date columns + `template`. A
+    // `delete_property` payload carries no value, so its date-ness is
+    // unknown — keep its agenda rebuild (a deleted key may have held a
+    // date) and narrow only its projected rebuild by key. A corrupt
+    // payload falls back to both rebuilds.
+    let is_set = matches!(op_type, OpType::SetProperty);
+    match serde_json::from_str::<PropertyOpHint>(&record.payload) {
+        Ok(hint) => {
+            let key = hint.key.as_str();
+            let has_date_value = hint.value_date.is_some();
+            let agenda_relevant = if is_set {
+                has_date_value || AGENDA_PROPERTY_KEYS.contains(&key)
+            } else {
+                // delete_property: value unknown ⇒ conservative.
+                true
+            };
+            let projected_relevant =
+                has_date_value || PROJECTED_AGENDA_PROPERTY_KEYS.contains(&key);
+            if agenda_relevant {
+                tasks.push(MaterializeTask::RebuildAgendaCache);
+            }
+            if projected_relevant {
+                tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                op_type = %record.op_type,
+                device_id = %record.device_id,
+                seq = record.seq,
+                error = %e,
+                "set/delete_property payload unparseable — enqueueing full agenda rebuilds"
+            );
+            tasks.push(MaterializeTask::RebuildAgendaCache);
+            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+        }
+    }
+}
+
+/// `MoveBlock` invalidations, pushed onto `tasks` in enqueue order.
+fn push_move_block_invalidations(move_same_page: Option<bool>, tasks: &mut Vec<MaterializeTask>) {
+    // #2669 (same safe class as #2200 / #2265): the whole-vault
+    // `RebuildTagInheritanceCache` is dropped from this arm. A move
+    // already re-derives `block_tag_inherited` for the moved subtree
+    // SYNCHRONOUSLY, in-transaction, via
+    // `tag_inheritance::recompute_subtree_inheritance(block_id)` (run
+    // inside `apply_op_projected` — agaric-engine `apply/loro_apply.rs`
+    // `apply_move_block_via_loro` and the `apply/sql_only.rs`
+    // fallback). A move can only change the inherited tags of the moved
+    // subtree itself (no block outside it changes ancestry), and
+    // `recompute_subtree_inheritance` is a from-scratch DELETE +
+    // nearest-ancestor recompute of exactly that subtree — so it
+    // reproduces the full rebuild BYTE-FOR-BYTE for the affected scope
+    // (proven by `move_block_incremental_matches_full_rebuild_2669` in
+    // agaric-store `tag_inheritance::tests`; it is also the identical
+    // function the inbound-sync path relies on per #2265). The
+    // vault-wide rebuild was pure O(vault) waste.
+    // #2200 (Tier-2, same safe class as #2186): the whole-vault
+    // `RebuildPageIds` recompute is dropped from this arm. A move
+    // already re-derives `page_id` AND `space_id` for the moved root
+    // and its entire subtree — soft-deleted descendants included since
+    // #3919 — SYNCHRONOUSLY, in-transaction,
+    // via `agaric_store::block_descendants::rederive_page_and_space_ids`
+    // (called from `commands/blocks/move_ops.rs`, `history.rs`, and
+    // the undo path). No block outside the moved subtree can change
+    // `page_id` as a result of a move, so the vault-wide rebuild was
+    // pure O(vault) waste. `RebuildPagesCache` is KEPT and still runs
+    // after the in-tx rederive, observing the already-corrected
+    // membership.
+    //
+    // #2700: the three rebuilds gated by `!same_page` below
+    // (`RebuildPagesCache`, `RebuildPageLinkCache`,
+    // `RebuildProjectedAgendaCache`) ALL derive purely from `page_id`
+    // (page-row attribution, the source-page `block_links` roll-up, and
+    // the template-page projected-agenda carve-out respectively). A move
+    // the local command proved keeps EVERY moved block's `page_id`
+    // (`move_same_page == Some(true)`) makes all three pure waste, so
+    // they are skipped. That proof lives at the command site
+    // (`move_ops.rs`): the moved root's `page_id` is unchanged. Since a
+    // move only reparents the root and `rederive_page_and_space_ids`
+    // stops its `page_id` cascade at nested-page boundaries (#2906), an
+    // unchanged root `page_id` implies every descendant's `page_id` is
+    // unchanged too — a content block under a nested page keeps that
+    // nested page's `page_id` rather than being flattened onto the moved
+    // root's page — so the skip is safe even when the moved subtree
+    // drags a nested page along.
+    // `None` (remote replay / inbound-sync / boot — the hint is only
+    // threaded on the LOCAL move command) or `Some(false)` (a proven
+    // cross-page reparent) keeps the full conservative set. Note
+    // `RebuildAgendaCache` (#2657) below is deliberately NOT gated here.
+    let same_page = move_same_page == Some(true);
+    // #4200: `tags_cache.usage_count` counts only LIVE holders —
+    // `DESIRED_TAGS_SQL` joins `blocks blk … WHERE blk.deleted_at IS
+    // NULL` for the `block_tags` half AND the `block_tag_refs` half
+    // (`agaric-store/src/cache/tags.rs`). That is exactly why the
+    // `DeleteBlock` arm keeps `RebuildTagsCache` in its lifecycle set.
+    // Since #4112 a `MoveBlock` can tombstone blocks too:
+    // `sweep_move_under_tombstoned_ancestor` stamps the moved block and
+    // its whole subtree with the nearest tombstoned ancestor's
+    // `deleted_at` on the way out of the apply, in the same tx. Nothing
+    // else in this arm's fan-out repairs the count, and nothing outside
+    // it does either — `pages_cache` counts ARE maintained in that same
+    // tx AFTER the sweep (`maintain_pages_cache_counts_after_op`,
+    // agaric-engine `apply/kernel.rs`), the FTS read path filters
+    // `deleted_at` in its own SQL (`fts/toggle_filter.rs`), and
+    // `block_tag_inherited` is wiped in-tx by the sweep's own
+    // `remove_subtree_inherited` — so tags_cache is the ONE cache the
+    // move's narrower matrix misses, and the affected tags OVER-COUNT
+    // until an unrelated lifecycle/tag op or a full rebuild heals them.
+    //
+    // Gated on the same `same_page` hint rather than pushed
+    // unconditionally: this arm is the 200 ms interactive drag/reorder
+    // path and a sweep is almost never what a move does. The gate is
+    // sound because the hint's SOLE producer (`move_same_page_hint`)
+    // refuses `Some(true)` for a move that swept, so `Some(true)` means
+    // "page unchanged AND a real page AND nothing was tombstoned" —
+    // under which a move cannot change any tag's live-holder count.
+    // `Some(false)` (a proven cross-page reparent) and `None` (remote
+    // replay / inbound sync / boot / undo, which never carry the hint)
+    // both keep the rebuild. That is broader than "only when the sweep
+    // fired" — a cross-page move that swept nothing still pays — but
+    // narrowing it further would need a second hint channel threaded
+    // through every non-local dispatcher for no correctness gain.
+    if !same_page {
+        tasks.push(MaterializeTask::RebuildTagsCache);
+    }
+    if !same_page {
+        tasks.push(MaterializeTask::RebuildPagesCache);
+    }
+    // #627: a cross-page move reparents the block's `page_id`, which
+    // is the source-page attribution `page_link_cache` rolls up by
+    // (`COALESCE(page_id, …)`, `cache/page_links.rs`). Without this
+    // rebuild, the OLD page's link rows stay over-counted and the
+    // NEW page's rows stay missing until an unrelated
+    // delete/restore/purge/sync triggers FULL_CACHE_REBUILD_TASKS.
+    // A targeted `ReindexBlockLinks` is insufficient — it keys on the
+    // block's *current* source page, so the old page's stale rows
+    // would survive; the full page-link roll-up is the correct fix.
+    // #2700: skipped on a proven same-page move (page_id unchanged →
+    // source-page attribution unchanged).
+    // #3886: "page_id unchanged" is NOT on its own enough to prove the
+    // roll-up key is unchanged — the key is
+    // `COALESCE(page_id, parent_id, id)`, so a NULL `page_id` makes it
+    // fall back to `parent_id` and a reparent inside a PAGE-LESS
+    // subtree moves the key while keeping `page_id` NULL throughout.
+    // The hint therefore carries the stronger claim: `Some(true)`
+    // means "unchanged AND a real page". `move_same_page_hint` is the
+    // sole producer and enforces it; do not widen this gate without
+    // reading its doc.
+    if !same_page {
+        tasks.push(MaterializeTask::RebuildPageLinkCache);
+    }
+    // #2657: a move changes the block's `page_id`, and every arm of
+    // `DESIRED_AGENDA_SQL` EXCLUDES blocks whose owning page carries a
+    // `template` property. Moving a dated block INTO a template page
+    // must drop its agenda rows, and moving one OUT must (re)add them —
+    // so `agenda_cache` goes stale on a template-boundary move unless it
+    // is rebuilt here. Enqueue it unconditionally, mirroring the sibling
+    // `RebuildProjectedAgendaCache` push below (a move is exactly the
+    // event that can flip the owning page's template status; a
+    // correct-but-broader full rebuild is safer than a narrow
+    // "did template status change?" check).
+    tasks.push(MaterializeTask::RebuildAgendaCache);
+    // #2196: a reparent can flip the moved subtree's owning page
+    // between template and non-template. `projected_agenda_cache`
+    // deliberately EXCLUDES repeating blocks whose `page_id` owns a
+    // `template` property (`cache/projected_agenda.rs`, the
+    // `NOT EXISTS(… key='template' …)` guard). Moving a repeating
+    // block INTO a template page must drop its projections from the
+    // cache, and moving one OUT must (re)add them — otherwise the
+    // cache diverges from truth and only the read-path's mirror
+    // `NOT EXISTS(template)` subquery keeps the visible result
+    // correct. Enqueue the rebuild unconditionally on a structural
+    // move (mirroring the sibling agenda arms): a move is exactly the
+    // event that can change the owning page's template status, and a
+    // correct-but-slightly-broader rebuild is safer than a narrow
+    // "did template status change?" check.
+    // #2700: skipped on a proven same-page move — a move that keeps the
+    // block's `page_id` cannot change the owning page's template status
+    // for any block, so the projected-agenda carve-out is unaffected.
+    if !same_page {
+        tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+    }
 }
 
 #[cfg(test)]
