@@ -73,7 +73,7 @@ function parsePropertyDefOptions(options: string): string[] {
   try {
     parsed = JSON.parse(options)
   } catch {
-    throw validationRejection('options must be a JSON array of strings')
+    parsed = undefined
   }
   if (!Array.isArray(parsed) || parsed.some((o) => typeof o !== 'string')) {
     throw validationRejection('options must be a JSON array of strings')

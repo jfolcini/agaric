@@ -312,7 +312,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
     'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
     'write; none does yet',
-  delete_property_def: 'property_definitions registry (app-layer), not projected block state',
+  delete_property_def:
+    "returns `Result<(), AppError>`; the command leg's `RETURN_SHAPE` assumes an id-bearing " +
+    'response on both stacks, so it needs a unit-return shape first (#3830)',
 
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
