@@ -473,3 +473,51 @@ being free. Two overstatements it caught are corrected in place above: the
 `SweptOpCoords` paragraph no longer claims the swap surface is gone, and the
 new purge test's comment no longer implies a bystander row where both seeded
 rows name the member.
+
+## Second review round
+
+One blocking finding, and it was a real flake rather than a style note: the new
+`sweep_leases_a_foreground_apply_op_row_on_the_failure_ladder_4208` races the
+consumer it deliberately makes fail.
+
+`sweep_apply_op_row` enqueues onto the foreground queue *before* it leases, so
+`Materializer::new`'s consumer is already applying the invalid `create_block`
+while the test is still inside `sweep_once`. That apply fails, and
+`record_failure` UPSERTs the same `("__APPLY_OP__", "ApplyOp:1:dev-4208")` row
+with `next_attempt_at = t_rf + 3_600_000`. The `attempts` assertion is immune to
+that — the doc comment reasoned about exactly that case — but the
+`next_attempt_at` window was bracketed by clock samples taken *around the
+sweep*, and the consumer's write anchors the same capped hour to a later clock.
+`t_rf > after` therefore reds the upper bound on an unrelated PR.
+
+Reproduced rather than assumed: forcing the interleaving with a
+`flush_foreground()` between the sweep and the read fails the original
+assertion by 103 ms.
+
+```
+next_attempt_at 1789285733375 is not in [1789285733270, 1789285733272]
+```
+
+Fixed by anchoring the window to the read instead of to the sweep — the upper
+sample now comes after the `SELECT`, so it bounds *whichever* of the two writers
+landed last. Both of them use the Failure ladder's capped hour, so the window
+stays as tight as it was against anything that is not that constant.
+
+Falsified in both directions, each against a copy restored with `cmp`:
+
+| tree | forced interleaving | result |
+|---|---|---|
+| sweep-anchored window (the defect) | consumer wins | FAIL, 103 ms over |
+| read-anchored window (the fix) | consumer wins | PASS |
+| read-anchored window, lease swapped to `Shed` | consumer wins | FAIL, `attempts 2 < 13` |
+| ditto, `attempts` assertion neutered | consumer wins | FAIL, 3_300_000 ms under the floor |
+
+The last row is the one that mattered: it shows the window still discriminates
+on its own after the change, so the fix bought determinism without spending the
+assertion it exists to make. (Review expected that row to pass, on the grounds
+that `record_failure` shares the Failure ladder. It does — but under `Shed` the
+lease restarts `attempts` to 1, so the consumer's UPSERT lands on rung 2, two
+minutes, not the cap.)
+
+Unforced, the restored test passes 20/20; `-E 'test(retry_queue)'` is 70/70. No
+SQL changed, so the four `.sqlx` caches are untouched.

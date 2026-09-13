@@ -3508,10 +3508,15 @@ mod tests {
     ///
     /// `attempts` is seeded past the cap on purpose. Both ladders' first rungs
     /// are 1 minute, so a low attempt count cannot tell them apart; at the cap
-    /// they are an hour and five minutes. It also makes the assertion immune
-    /// to the foreground consumer landing its own `record_failure` for the
-    /// (deliberately invalid) op between the sweep and the read: that would
-    /// bump `attempts` to 14, which is the same capped rung.
+    /// they are an hour and five minutes.
+    ///
+    /// Both assertions have to survive a second writer: `sweep_apply_op_row`
+    /// enqueues before it leases, so the foreground consumer can land its own
+    /// `record_failure` for the (deliberately invalid) op at any point up to
+    /// the read. That write only ever raises `attempts` (to 14, the same
+    /// capped rung), and it re-derives the same capped hour from its own
+    /// clock — so the `next_attempt_at` window is anchored to the read rather
+    /// than to the sweep, and holds whichever of the two writes lands last.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_leases_a_foreground_apply_op_row_on_the_failure_ladder_4208() {
         use crate::materializer::Materializer;
@@ -3552,7 +3557,6 @@ mod tests {
             1,
             "the ApplyOp row must be re-enqueued so the lease fires"
         );
-        let after = agaric_store::db::now_ms();
 
         let row = sqlx::query!(
             "SELECT attempts AS \"attempts!: i64\", \
@@ -3563,6 +3567,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
+        let read_at = agaric_store::db::now_ms();
 
         assert!(
             row.attempts >= attempts,
@@ -3578,13 +3583,13 @@ mod tests {
         );
         assert!(
             row.next_attempt_at >= before + failure_cap
-                && row.next_attempt_at <= after + failure_cap,
+                && row.next_attempt_at <= read_at + failure_cap,
             "the lease must defer by the Failure ladder's capped hour, not by \
              the Shed ladder's five minutes: next_attempt_at {} is not in \
              [{}, {}]",
             row.next_attempt_at,
             before + failure_cap,
-            after + failure_cap,
+            read_at + failure_cap,
         );
         mat.shutdown();
     }
