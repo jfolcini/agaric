@@ -178,16 +178,24 @@ fn validate(input: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// One piece of a brace pattern: verbatim text, or the alternatives of one
+/// `{a,b}` group.
+enum Segment {
+    Literal(String),
+    Alts(Vec<String>),
+}
+
 /// Cartesian brace expansion. Mirrors the frontend implementation.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     if !input.contains('{') {
         return Ok(vec![input.to_string()]);
     }
-    enum Segment {
-        Literal(String),
-        Alts(Vec<String>),
-    }
+    Ok(expand_segments_within_cap(parse_brace_segments(input)?))
+}
+
+/// Scan a pattern into segments, keeping the byte-offset cursor walk clear of
+/// the cap accounting in [`expand_segments_within_cap`].
+fn parse_brace_segments(input: &str) -> Result<Vec<Segment>, AppError> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut buf = String::new();
     // #624: drive the cursor with `char_indices` so non-ASCII literals stay
@@ -240,7 +248,11 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     if !buf.is_empty() {
         segments.push(Segment::Literal(buf));
     }
+    Ok(segments)
+}
 
+/// Cross the segments into concrete patterns, stopping at [`EXPANSION_CAP`].
+fn expand_segments_within_cap(segments: Vec<Segment>) -> Vec<String> {
     let mut results: Vec<String> = vec![String::new()];
     for seg in segments {
         let mut next: Vec<String> = Vec::new();
@@ -273,7 +285,7 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
             break;
         }
     }
-    Ok(results)
+    results
 }
 
 /// If the pattern has no glob metacharacters, wrap with `*…*` for a

@@ -10,7 +10,7 @@ use agaric_core::error::AppError;
 use super::super::metadata_filter::MetadataPredicates;
 use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
 use super::fetch::fts_fetch_rows;
-use super::row::fts_row_to_block_row;
+use super::row::{FtsSearchRow, fts_row_to_block_row};
 use super::sanitizer::sanitize_fts_query;
 
 /// Search blocks via FTS5 MATCH with cursor-based pagination.
@@ -46,7 +46,6 @@ use super::sanitizer::sanitize_fts_query;
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
 #[allow(clippy::too_many_arguments)] //  added include/exclude path glob params; refactor to a struct lives in .
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,
@@ -140,6 +139,15 @@ pub async fn search_fts(
     )
     .await?;
 
+    page_from_probe_window(rows, effective_limit)
+}
+
+/// Cut the `limit + 1` probe window down to one page: the extra row is the
+/// `has_more` signal, and the last RETURNED row seeds the next cursor.
+fn page_from_probe_window(
+    rows: Vec<FtsSearchRow>,
+    effective_limit: i64,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // effective_limit is a validated positive i64; safe to convert
     let limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
     // rows.len() and limit_usize are both usize; direct comparison avoids cast
