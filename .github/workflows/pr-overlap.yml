@@ -1175,9 +1175,31 @@ jobs:
             done <<< "$refetch_numbers"
           fi
 
+          # ── This PR's OWN state, read right after the board ───────────────
+          #
+          # WHY: this workflow fires on `ready_for_review`, and this project's
+          # automation undrafts and squash-merges back to back — so the `gh pr
+          # list --state open` above routinely runs AFTER this PR closed, and
+          # legitimately does not contain it. The guard's self-presence check
+          # (correct, and kept) cannot tell that from a stale or truncated
+          # read of the board and refuses both, which made this lane
+          # permanently red on merge: the unactionable red this file's own
+          # header argues turns a lane into something people learn to ignore.
+          # A point read of THIS PR's state is what tells the two apart, and
+          # only a NON-`open` answer suppresses anything — an open PR missing
+          # from the board still fails closed below, unchanged.
+          #
+          # Read here rather than in the interpreting step so it is as close
+          # in time to the board read as it can be, and so `GH_TOKEN` stays in
+          # this one step. A failed or empty read writes nothing, and the
+          # interpreting step then fails exactly as it does today.
+          gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.state' > self-pr-state.txt \
+            || echo "::warning::session-log-pr-collision: could not re-read PR #$PR_NUMBER's own state; a mid-run merge will read as unverifiable below"
+
       - name: Check for a session-log number that would be duplicated in the merge result
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          SELF_PR_STATE: self-pr-state.txt
           # Every path this step touches is an env var rather than a literal,
           # so the shell below can be run against fixtures unchanged (#4431).
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
@@ -1312,6 +1334,19 @@ jobs:
             echo "::error::session-log-pr-collision: a session-log number would be duplicated in the merge result — either two open PRs claim it, or one adds a number already on the base. See the log above for which, and for the next free number."
             exit 1
           else
+            # The one unverifiable case that is not a defect: this PR is no
+            # longer open, so the board it is missing from was RIGHT and there
+            # is nothing left for this run to gate. Gated on the point read of
+            # this PR's own state taken beside the board fetch, never on the
+            # board itself — an `open` PR missing from the list, an empty file,
+            # a failed re-read, and every other cause of a missing verdict all
+            # fall through to the failure below exactly as before.
+            self_state="$(tr -d '[:space:]' < "$SELF_PR_STATE" 2>/dev/null || true)"
+            if [ -n "$self_state" ] && [ "$self_state" != "open" ]; then
+              echo "::notice::session-log-pr-collision: SKIPPED — PR #$PR_NUMBER is $self_state, so the open-PR board it is absent from was a correct read of a board it had already left (this lane fires on ready_for_review and the PR merged seconds later). Nothing was verified and nothing needed to be."
+              echo "SESSION_LOG_PR_COLLISION_VERDICT=SKIPPED_PR_CLOSED"
+              exit 0
+            fi
             echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
             exit 1
           fi

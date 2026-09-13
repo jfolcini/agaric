@@ -108,7 +108,8 @@ pub async fn backfill_attachment_blobs(
             continue;
         };
 
-        let Some(on_disk_path) = canonical_path_for_hash(pool, &hash, canonical, &mut report).await
+        let Some(on_disk_path) =
+            ensure_blob_and_canonical_path(pool, &hash, canonical, &mut report).await
         else {
             continue;
         };
@@ -188,13 +189,13 @@ async fn hash_groups_canonical_first(
     Ok(by_hash)
 }
 
-/// The path the blob store holds for `hash` once this pass has (idempotently)
-/// created its row — which may pre-date this run and differ from `canonical`,
-/// so repointing must follow the STORED path rather than our pick.
+/// Create `hash`'s `attachment_blobs` row (idempotently) and return the path
+/// the blob store holds for it — which may pre-date this run and differ from
+/// `canonical`, so repointing must follow the STORED path rather than our pick.
 ///
 /// `None` when the blob row could not be written: the group is skipped rather
 /// than repointed at a blob that does not exist.
-async fn canonical_path_for_hash(
+async fn ensure_blob_and_canonical_path(
     pool: &SqlitePool,
     hash: &str,
     canonical: &Row,
@@ -228,22 +229,21 @@ async fn canonical_path_for_hash(
         }
     }
 
-    Some(
-        match sqlx::query_scalar!(
-            "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
-            hash
-        )
-        .fetch_optional(pool)
-        .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => canonical.fs_path.clone(),
-            Err(e) => {
-                tracing::warn!(content_hash = %hash, error = %e, "blob backfill: blob read-back failed");
-                canonical.fs_path.clone()
-            }
-        },
+    let stored = match sqlx::query_scalar!(
+        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+        hash
     )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(p)) => p,
+        Ok(None) => canonical.fs_path.clone(),
+        Err(e) => {
+            tracing::warn!(content_hash = %hash, error = %e, "blob backfill: blob read-back failed");
+            canonical.fs_path.clone()
+        }
+    };
+    Some(stored)
 }
 
 /// Repoint every row in the group whose `fs_path` still differs from the

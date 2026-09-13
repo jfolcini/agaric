@@ -569,7 +569,8 @@ pub async fn reindex_block_links_conn(
         })
         .collect();
 
-    let (old_targets, had_unresolved_rows) = read_recorded_link_targets(conn, block_id).await?;
+    let (old_targets, had_unresolved_rows) =
+        read_recorded_link_targets(&mut *conn, block_id).await?;
 
     // 4. Diff — see [`diff_link_targets`].
     let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
@@ -690,7 +691,7 @@ pub async fn reindex_block_links_split(
         .collect();
 
     let (old_targets, had_unresolved_rows) =
-        read_recorded_link_targets_split(read_pool, block_id).await?;
+        read_recorded_link_targets(read_pool, block_id).await?;
 
     // 4. Diff — see [`diff_link_targets`].
     let (to_delete, to_insert) = diff_link_targets(&old_targets, &new_targets);
@@ -728,7 +729,7 @@ pub async fn reindex_block_links_split(
     // Batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
     // 2N round-trip per-target loops.
-    write_block_link_diff_split(&mut tx, block_id, &to_delete, &to_insert, source_space).await?;
+    write_block_link_diff(&mut tx, block_id, &to_delete, &to_insert, source_space).await?;
 
     // #4118: same unresolved-index maintenance as the single-pool variant, on
     // the WRITE transaction — its read-back of `block_links` must observe the
@@ -747,11 +748,16 @@ pub async fn reindex_block_links_split(
 }
 
 /// The targets `block_links` already records for `block_id`, plus whether
-/// `block_links_unresolved` still holds a row for it. Read-only.
-async fn read_recorded_link_targets(
-    conn: &mut sqlx::SqliteConnection,
+/// `block_links_unresolved` still holds a row for it. Read-only, so it takes
+/// either reindex path's executor: the single-pool variant's transaction
+/// connection or the split variant's read pool.
+async fn read_recorded_link_targets<'e, E>(
+    executor: E,
     block_id: &str,
-) -> Result<(HashMap<String, String>, bool), AppError> {
+) -> Result<(HashMap<String, String>, bool), AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     // 3. Get existing outbound links (same tx — consistent snapshot), AND
     //    (#4118) the source's currently-recorded unresolved tokens.
     //
@@ -770,7 +776,7 @@ async fn read_recorded_link_targets(
            FROM block_links_unresolved WHERE source_id = ?1",
         block_id,
     )
-    .fetch_all(&mut *conn)
+    .fetch_all(executor)
     .await?;
 
     let mut old_targets: HashMap<String, String> = HashMap::new();
@@ -786,43 +792,10 @@ async fn read_recorded_link_targets(
     Ok((old_targets, had_unresolved_rows))
 }
 
-/// [`read_recorded_link_targets`] for the read/write-split variant, reading
-/// from `read_pool`. A second copy rather than one executor-generic helper:
-/// the two reindex variants are deliberately independent (Phase 1A), down to
-/// their commentary.
-async fn read_recorded_link_targets_split(
-    read_pool: &SqlitePool,
-    block_id: &str,
-) -> Result<(HashMap<String, String>, bool), AppError> {
-    // 3. Get existing outbound links from read pool, and (#4118) the source's
-    //    currently-recorded unresolved tokens — one round-trip, exactly as in
-    //    the single-pool variant.
-    let existing_rows = sqlx::query!(
-        "SELECT target_id, kind, CAST(0 AS INTEGER) AS unresolved \
-           FROM block_links WHERE source_id = ?1 \
-         UNION ALL \
-         SELECT target_id, 'page_link' AS kind, CAST(1 AS INTEGER) AS unresolved \
-           FROM block_links_unresolved WHERE source_id = ?1",
-        block_id,
-    )
-    .fetch_all(read_pool)
-    .await?;
-
-    let mut old_targets: HashMap<String, String> = HashMap::new();
-    let mut had_unresolved_rows = false;
-    for row in existing_rows {
-        if row.unresolved == 0 {
-            old_targets.insert(row.target_id, row.kind);
-        } else {
-            had_unresolved_rows = true;
-        }
-    }
-
-    Ok((old_targets, had_unresolved_rows))
-}
-
-/// The `block_links` DELETE/INSERT half of [`reindex_block_links_conn`]. The
-/// caller keeps the transaction and the commit; this only writes.
+/// The `block_links` DELETE/INSERT half of both reindex paths. The caller
+/// keeps the transaction and the commit; this only writes. The two reindex
+/// ROOTS stay deliberately independent (Phase 1A), but this half is handed a
+/// connection and cannot tell which of them handed it over.
 async fn write_block_link_diff(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -879,71 +852,6 @@ async fn write_block_link_diff(
         .bind(&insert_json)
         .bind(&source_space)
         .execute(&mut *conn)
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// The `block_links` DELETE/INSERT half of [`reindex_block_links_split`], on
-/// the caller-owned write transaction — the caller still commits. A second
-/// copy for the same reason as [`read_recorded_link_targets_split`].
-async fn write_block_link_diff_split(
-    write_conn: &mut sqlx::SqliteConnection,
-    block_id: &str,
-    to_delete: &[&String],
-    to_insert: &[(&String, &'static str)],
-    source_space: Option<String>,
-) -> Result<(), AppError> {
-    if !to_delete.is_empty() {
-        let delete_json = serde_json::to_string(&to_delete)?;
-        sqlx::query(
-            "DELETE FROM block_links \
-             WHERE source_id = ? \
-               AND target_id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(block_id)
-        .bind(&delete_json)
-        .execute(&mut *write_conn)
-        .await?;
-    }
-
-    if !to_insert.is_empty() {
-        // The upsert absorbs PK conflicts but does NOT suppress FK
-        // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
-        // targets out of the result set instead of relying on the FK.
-        // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
-        // so a link to a soft-deleted (tombstoned) target is never created
-        // — invariant #9 (tombstones must not participate in derived state).
-        //
-        // #375: the `(?3 IS NULL OR ?3 = (…))` clause is the pushed-down
-        // cross-space filter — a verbatim copy of the single-pool variant's
-        // SQL, which (as of #3903) really is `space::resolve_block_space`'s
-        // `COALESCE(own space_id, owning page's space_id)` with both
-        // soft-delete guards. Source has no space (`?3 IS NULL`) ⇒ every
-        // target passes; otherwise a target is kept only if its resolved
-        // space equals the source's (a still-NULL target space yields
-        // `NULL = ?3` → dropped). See the single-pool variant for why the
-        // owning-page fallback is load-bearing rather than cosmetic.
-        // `[target, kind]` pairs; the upsert is what lands a kind change on a
-        // pair that already exists (#4551).
-        let insert_json = serde_json::to_string(&to_insert)?;
-        sqlx::query(
-            "INSERT INTO block_links (source_id, target_id, kind) \
-             SELECT ?1, json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]') \
-             FROM json_each(?2) je \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = json_extract(je.value, '$[0]') AND deleted_at IS NULL) \
-               AND (?3 IS NULL OR ?3 = ( \
-                   SELECT COALESCE(tgt.space_id, tp.space_id) FROM blocks tgt \
-                   LEFT JOIN blocks tp ON tp.id = tgt.page_id AND tp.deleted_at IS NULL \
-                   WHERE tgt.id = json_extract(je.value, '$[0]') AND tgt.deleted_at IS NULL \
-                   LIMIT 1)) \
-             ON CONFLICT(source_id, target_id) DO UPDATE SET kind = excluded.kind",
-        )
-        .bind(block_id)
-        .bind(&insert_json)
-        .bind(&source_space)
-        .execute(&mut *write_conn)
         .await?;
     }
 

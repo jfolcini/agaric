@@ -279,4 +279,135 @@ mod tests {
             .expect("count blocks");
         assert_eq!(block_count, 2, "purge fn must not delete blocks rows");
     }
+
+    /// The FIRST half of the chain, in isolation: `block_tags`,
+    /// `block_tag_inherited`, both `block_properties` sweeps and `block_links`.
+    ///
+    /// Every one of those FKs is `REFERENCES blocks(id) ON DELETE CASCADE`
+    /// (migrations 0061/0062), so at the single production call site — where
+    /// the caller's own `blocks` DELETE follows immediately — the cascade
+    /// reaches the same rows and the sweep is invisible. It is kept explicit
+    /// for the reason #1583 records on the sibling purge chain in
+    /// `agaric-engine`'s `loro_apply`: the list is the canonical record of what
+    /// PURGE touches, and a future migration adding a block-referencing table
+    /// without CASCADE would silently leak. This test is what makes that
+    /// explicit sweep falsifiable — it never deletes a `blocks` row, so no
+    /// cascade can stand in for it.
+    #[tokio::test]
+    async fn purges_tag_property_and_link_rows_without_any_blocks_delete() {
+        let (pool, _tmp) = test_pool().await;
+        let mut conn = pool.acquire().await.expect("acquire");
+
+        // `victim` is the member set; every other block is a bystander whose
+        // rows must survive. `ref_holder` owns a property pointing INTO the
+        // member set, which is the one sweep keyed on something other than the
+        // member's own id.
+        for id in ["victim", "bystander", "tag", "ref_holder"] {
+            sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', '')")
+                .bind(id)
+                .execute(&mut *conn)
+                .await
+                .expect("seed block");
+        }
+
+        // One member row and one bystander row per swept predicate.
+        for (block_id, tag_id) in [("victim", "tag"), ("bystander", "tag")] {
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(block_id)
+                .bind(tag_id)
+                .execute(&mut *conn)
+                .await
+                .expect("seed block_tags");
+        }
+        // `inherited_from = 'victim'` on a row whose block_id is a bystander:
+        // the third predicate of the `block_tag_inherited` sweep, and the only
+        // one that fires for it.
+        for (block_id, inherited_from) in [("victim", "bystander"), ("bystander", "victim")] {
+            sqlx::query(
+                "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+                 VALUES (?, 'tag', ?)",
+            )
+            .bind(block_id)
+            .bind(inherited_from)
+            .execute(&mut *conn)
+            .await
+            .expect("seed block_tag_inherited");
+        }
+        for id in ["victim", "bystander"] {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'k', 'v')",
+            )
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .expect("seed block_properties");
+        }
+        // The `value_ref` sweep: owned by `ref_holder`, pointing at the member.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) \
+             VALUES ('ref_holder', 'ref', 'victim')",
+        )
+        .execute(&mut *conn)
+        .await
+        .expect("seed value_ref property");
+        for (source_id, target_id) in [("victim", "bystander"), ("bystander", "victim")] {
+            sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(source_id)
+                .bind(target_id)
+                .execute(&mut *conn)
+                .await
+                .expect("seed block_links");
+        }
+
+        purge_block_satellite_caches(
+            &mut conn,
+            "",
+            "SELECT id FROM blocks WHERE id = 'victim'",
+            None,
+        )
+        .await
+        .expect("purge");
+
+        let block_tags: Vec<String> =
+            sqlx::query_scalar::<_, String>("SELECT block_id FROM block_tags ORDER BY block_id")
+                .fetch_all(&mut *conn)
+                .await
+                .expect("read block_tags");
+        assert_eq!(block_tags, vec!["bystander".to_string()]);
+
+        // Both seeded rows name the member — one as `block_id`, one as
+        // `inherited_from` — so the sweep clears the table.
+        let inherited: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_inherited")
+            .fetch_one(&mut *conn)
+            .await
+            .expect("count block_tag_inherited");
+        assert_eq!(inherited, 0);
+
+        let props: Vec<String> = sqlx::query_scalar::<_, String>(
+            "SELECT block_id FROM block_properties ORDER BY block_id",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .expect("read block_properties");
+        assert_eq!(
+            props,
+            vec!["bystander".to_string()],
+            "`ref_holder`'s row points INTO the member set and goes with it"
+        );
+
+        let links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_links")
+            .fetch_one(&mut *conn)
+            .await
+            .expect("count block_links");
+        assert_eq!(links, 0, "either end in the member set is swept");
+
+        let block_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&mut *conn)
+            .await
+            .expect("count blocks");
+        assert_eq!(
+            block_count, 4,
+            "no blocks row is deleted here, so no ON DELETE CASCADE can have done this work"
+        );
+    }
 }

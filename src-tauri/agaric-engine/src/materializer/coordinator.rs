@@ -541,20 +541,6 @@ impl Materializer {
         });
     }
 
-    /// Senders live in `OnceLock`s instead of `Mutex<Option<…>>`
-    /// since they are written exactly once here and never replaced.
-    /// Reads stay lock-free on the hot path; post-shutdown gating is
-    /// handled by checking `shutdown_flag` inside `fg_sender` /
-    /// `bg_sender`.
-    fn sender_cell(
-        tx: mpsc::Sender<MaterializeTask>,
-    ) -> Arc<OnceLock<mpsc::Sender<MaterializeTask>>> {
-        let cell: Arc<OnceLock<mpsc::Sender<MaterializeTask>>> = Arc::new(OnceLock::new());
-        cell.set(tx)
-            .expect("freshly-constructed OnceLock cannot already be set");
-        cell
-    }
-
     /// Shared constructor that dispatches to the two public variants.
     ///
     /// - `write_pool`: pool used by the foreground consumer and by
@@ -583,8 +569,8 @@ impl Materializer {
         // no side effects, and the consumer spawns read their pools, flags and
         // hooks off `mat`.
         let mat = Self {
-            fg_tx: Self::sender_cell(fg_tx),
-            bg_tx: Self::sender_cell(bg_tx),
+            fg_tx: Arc::new(OnceLock::from(fg_tx)),
+            bg_tx: Arc::new(OnceLock::from(bg_tx)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             metrics: Arc::new(QueueMetrics::default()),
             reader_pool: reader_pool_for_caches,

@@ -302,6 +302,13 @@
 //   SESSION_LOG_PR_COLLISION_VERDICT=COLLISION
 //   SESSION_LOG_PR_COLLISION_VERDICT=UNVERIFIED
 //
+// Those three are the ones THIS script writes. `pr-overlap.yml`'s step adds
+// a fourth of its own, `SKIPPED_PR_CLOSED`, for the one thing this script
+// cannot see: its self-presence refusal below is correct on a board this PR
+// had already left by merging mid-run. It is written by the step, after this
+// script has exited, so a reader grepping the prefix finds a value that is
+// not in the list above.
+//
 // The caller must require the exit code and the verdict line to AGREE
 // before believing either (`pr-overlap.yml`'s step does). A crash produces
 // no verdict line at all, so it can never be mistaken for a finding even if

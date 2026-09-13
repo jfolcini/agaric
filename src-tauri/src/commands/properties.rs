@@ -799,10 +799,7 @@ pub async fn set_property_batch_inner(
 
     // Reserved-key option-list fallback validation for the two text keys,
     // mirroring `set_todo_state_batch_inner` / `set_priority_inner`. Read
-    // once for the whole batch (single SELECT, regardless of N). Branch into
-    // two compile-checked `query!` macros with literal keys (both already in
-    // the `.sqlx/` cache) rather than one runtime query on the dynamic `key`,
-    // so this stays schema-validated at build time with no new cache entry.
+    // once for the whole batch (single SELECT, regardless of N).
     if is_text_key && let Some(ref v) = value {
         validate_set_property_batch_text_key(&mut tx, &key, v).await?;
     }

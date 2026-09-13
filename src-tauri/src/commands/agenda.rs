@@ -126,8 +126,8 @@ fn parse_projected_agenda_query(
         }
         None => 200,
     };
-    // safe: validated above as [1, 500]
-    let cap = usize::try_from(limit_i64).unwrap_or(200);
+    let cap = usize::try_from(limit_i64)
+        .expect("limit is validated to [1, 500] above, so the conversion cannot fail");
 
     // Parse date range boundaries
     let range_start = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
@@ -150,20 +150,14 @@ fn parse_projected_agenda_query(
     })
 }
 
-/// The two ends of the `projected_agenda_cache` completeness guarantee, read
-/// from `projected_agenda_horizon` (#4639 split out of
-/// [`list_projected_agenda_inner_with_today`]).
-struct ProjectedAgendaHorizon {
-    cache_covers_range: bool,
-    rebuild_today: Option<chrono::NaiveDate>,
-}
-
 /// Read the horizon row and decide, from it alone, whether the cache can
-/// answer a query ending at `end_date` and when it was last rebuilt.
+/// answer a query ending at `end_date` (`cache_covers_range`) and when it was
+/// last rebuilt (`rebuild_today`) — the two ends of the
+/// `projected_agenda_cache` completeness guarantee.
 async fn read_projected_agenda_horizon(
     pool: &SqlitePool,
     end_date: &str,
-) -> Result<ProjectedAgendaHorizon, AppError> {
+) -> Result<(bool, Option<chrono::NaiveDate>), AppError> {
     // #2601 — bounded materialization horizon guard. `projected_agenda_cache`
     // holds only the next `HORIZON_OCCURRENCES` occurrences per repeating
     // block per source, so it is authoritative only up to the
@@ -226,10 +220,7 @@ async fn read_projected_agenda_horizon(
         .and_then(|(_, t)| t.as_deref())
         .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
 
-    Ok(ProjectedAgendaHorizon {
-        cache_covers_range,
-        rebuild_today,
-    })
+    Ok((cache_covers_range, rebuild_today))
 }
 
 /// The four SQL binds the cache query's keyset cursor needs (#4639 split out
@@ -489,10 +480,8 @@ pub async fn list_projected_agenda_inner_with_today(
         range_end,
     } = parse_projected_agenda_query(&start_date, &end_date, cursor.as_deref(), limit)?;
 
-    let ProjectedAgendaHorizon {
-        cache_covers_range,
-        rebuild_today,
-    } = read_projected_agenda_horizon(pool, &end_date).await?;
+    let (cache_covers_range, rebuild_today) =
+        read_projected_agenda_horizon(pool, &end_date).await?;
 
     // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
     // before the rebuild's reference date, so a range that starts before
