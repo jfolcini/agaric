@@ -41,8 +41,22 @@ use sqlx::SqliteConnection;
 /// membership shapes (single-root recursive CTE, multi-root `json_each` CTE,
 /// flat `deleted_at IS NOT NULL` set) — so a runtime `sqlx::query(...)` is
 /// required; the macro form cannot take a runtime-assembled query string.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn purge_block_satellite_caches(
+    conn: &mut SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<(), AppError> {
+    purge_tag_property_and_link_rows(conn, cte_prefix, member_subquery, bind).await?;
+    purge_cache_and_lookup_rows(conn, cte_prefix, member_subquery, bind).await?;
+    Ok(())
+}
+
+/// The first half of the chain: the rows that name a member block directly —
+/// `block_tags` → `block_tag_inherited` → the two `block_properties` sweeps →
+/// `block_links`. Several of these can reference a member from more than one
+/// column, which is why each carries its own predicate.
+async fn purge_tag_property_and_link_rows(
     conn: &mut SqliteConnection,
     cte_prefix: &str,
     member_subquery: &str,
@@ -112,6 +126,19 @@ pub async fn purge_block_satellite_caches(
     )
     .await?;
 
+    Ok(())
+}
+
+/// The second half of the chain: the derived caches and the id-keyed lookup
+/// satellites — `agenda_cache` → `tags_cache` → `pages_cache` → `fts_blocks`
+/// → `page_aliases` → `projected_agenda_cache`. Each is keyed on a single
+/// member id column.
+async fn purge_cache_and_lookup_rows(
+    conn: &mut SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<(), AppError> {
     // agenda_cache (keyed on block_id).
     exec(
         conn,

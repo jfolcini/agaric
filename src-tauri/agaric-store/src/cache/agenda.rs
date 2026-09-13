@@ -1,4 +1,5 @@
 use futures_util::TryStreamExt;
+use futures_util::stream::BoxStream;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
 
@@ -181,6 +182,14 @@ const CURRENT_AGENDA_SQL: &str =
 // Sort-merge rebuild core (M-19b)
 // ---------------------------------------------------------------------------
 
+/// The desired-agenda row stream — `(date, block_id, source, prio)` as
+/// [`DESIRED_AGENDA_SQL`] yields it.
+type DesiredAgendaStream<'a> = BoxStream<'a, Result<(String, String, String, i64), sqlx::Error>>;
+
+/// The current `agenda_cache` row stream — `(date, block_id, source)` as
+/// [`CURRENT_AGENDA_SQL`] yields it.
+type CurrentAgendaStream<'a> = BoxStream<'a, Result<(String, String, String), sqlx::Error>>;
+
 /// Stream-walk the desired and current agenda rows in lockstep and
 /// apply the diff via [`apply_agenda_diff`] in batches of
 /// [`STREAM_BATCH`] rows.
@@ -211,7 +220,6 @@ const CURRENT_AGENDA_SQL: &str =
 /// Returns the logical change count (deletes + inserts + source-update
 /// rows), preserving the externally-observable count from the pre-M-19b
 /// `to_delete.len() + to_insert.len() + to_update.len()` formula.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn apply_sort_merge_rebuild(
     desired_conn: &mut sqlx::SqliteConnection,
     current_conn: &mut sqlx::SqliteConnection,
@@ -224,6 +232,40 @@ async fn apply_sort_merge_rebuild(
 
     let mut deletes: Vec<(String, String)> = Vec::with_capacity(STREAM_BATCH);
     let mut inserts: Vec<((String, String), String)> = Vec::with_capacity(STREAM_BATCH);
+
+    let changed = merge_agenda_streams(
+        &mut desired_stream,
+        &mut current_stream,
+        write_conn,
+        &mut deletes,
+        &mut inserts,
+    )
+    .await?;
+
+    // Drop both readers before the final flush — defensive, since
+    // `write_conn` is independent of either stream's borrow but
+    // dropping early releases the two read connections sooner.
+    drop(desired_stream);
+    drop(current_stream);
+
+    if !deletes.is_empty() || !inserts.is_empty() {
+        flush_pending_agenda_diff(write_conn, &deletes, &inserts).await?;
+    }
+
+    Ok(changed)
+}
+
+/// The lockstep walk of [`apply_sort_merge_rebuild`]: consumes both streams,
+/// accumulating the diff into `deletes` / `inserts` and flushing whenever
+/// either buffer reaches [`STREAM_BATCH`]. Returns the logical change count;
+/// whatever is left in the buffers is the caller's final flush.
+async fn merge_agenda_streams(
+    desired_stream: &mut DesiredAgendaStream<'_>,
+    current_stream: &mut CurrentAgendaStream<'_>,
+    write_conn: &mut sqlx::SqliteConnection,
+    deletes: &mut Vec<(String, String)>,
+    inserts: &mut Vec<((String, String), String)>,
+) -> Result<u64, AppError> {
     let mut changed: u64 = 0;
 
     // Pull the next *distinct* desired row, skipping any adjacent
@@ -310,39 +352,32 @@ async fn apply_sort_merge_rebuild(
         // Flush whenever either buffer hits the threshold so peak
         // Rust-heap stays bounded at `O(STREAM_BATCH)`.
         if deletes.len() >= STREAM_BATCH || inserts.len() >= STREAM_BATCH {
-            let dels: Vec<(&str, &str)> = deletes
-                .iter()
-                .map(|(d, b)| (d.as_str(), b.as_str()))
-                .collect();
-            let ins: Vec<((&str, &str), &str)> = inserts
-                .iter()
-                .map(|((d, b), s)| ((d.as_str(), b.as_str()), s.as_str()))
-                .collect();
-            apply_agenda_diff(write_conn, &dels, &ins).await?;
+            flush_pending_agenda_diff(write_conn, deletes, inserts).await?;
             deletes.clear();
             inserts.clear();
         }
     }
 
-    // Drop both readers before the final flush — defensive, since
-    // `write_conn` is independent of either stream's borrow but
-    // dropping early releases the two read connections sooner.
-    drop(desired_stream);
-    drop(current_stream);
-
-    if !deletes.is_empty() || !inserts.is_empty() {
-        let dels: Vec<(&str, &str)> = deletes
-            .iter()
-            .map(|(d, b)| (d.as_str(), b.as_str()))
-            .collect();
-        let ins: Vec<((&str, &str), &str)> = inserts
-            .iter()
-            .map(|((d, b), s)| ((d.as_str(), b.as_str()), s.as_str()))
-            .collect();
-        apply_agenda_diff(write_conn, &dels, &ins).await?;
-    }
-
     Ok(changed)
+}
+
+/// Hand one accumulated slice of the sort-merge diff to
+/// [`apply_agenda_diff`], borrowing the owned keys as `&str` rows.
+async fn flush_pending_agenda_diff(
+    write_conn: &mut sqlx::SqliteConnection,
+    deletes: &[(String, String)],
+    inserts: &[((String, String), String)],
+) -> Result<(), AppError> {
+    let dels: Vec<(&str, &str)> = deletes
+        .iter()
+        .map(|(d, b)| (d.as_str(), b.as_str()))
+        .collect();
+    let ins: Vec<((&str, &str), &str)> = inserts
+        .iter()
+        .map(|((d, b), s)| ((d.as_str(), b.as_str()), s.as_str()))
+        .collect();
+    apply_agenda_diff(write_conn, &dels, &ins).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

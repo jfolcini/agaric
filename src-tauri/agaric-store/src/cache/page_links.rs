@@ -269,37 +269,11 @@ pub async fn reindex_page_link_cache_for_block(
 /// `block_links` and `blocks` — so running it for extra keys is idempotent and
 /// converges on exactly the rows [`rebuild_page_link_cache`] would produce for
 /// them.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn recompute_rows_for_rollup_key(
     conn: &mut sqlx::SqliteConnection,
     source_page: &str,
 ) -> Result<(), AppError> {
-    // Pairs touched: every target that currently appears in block_links
-    // under any block whose roll-up == source_page, UNION every target
-    // already in page_link_cache under source_page. This catches both
-    // additions (new target appears in block_links) and removals (target
-    // previously cached, now zero edges left). Soft-deleted source
-    // blocks contribute zero to the count — mirrors the legacy
-    // `JOIN blocks sb ON ... AND sb.deleted_at IS NULL` filter.
-    let touched_targets: Vec<String> = sqlx::query!(
-        "SELECT target_id AS \"target_id!\" FROM (
-             SELECT DISTINCT bl.target_id
-             FROM block_links bl
-             JOIN blocks sb ON sb.id = bl.source_id
-             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1
-               AND sb.deleted_at IS NULL
-             UNION
-             SELECT target_page_id AS target_id
-             FROM page_link_cache
-             WHERE source_page_id = ?1
-         )",
-        source_page,
-    )
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|row| row.target_id)
-    .collect();
+    let touched_targets = read_touched_targets_for_rollup_key(conn, source_page).await?;
 
     // B-C3 (issue #108): collapse the per-target COUNT + UPSERT/DELETE
     // loop into two statements regardless of K. The aggregate UPSERT
@@ -410,6 +384,42 @@ async fn recompute_rows_for_rollup_key(
     .await?;
 
     Ok(())
+}
+
+/// The targets whose `page_link_cache` rows [`recompute_rows_for_rollup_key`]
+/// has to revisit for `source_page`. Read-only.
+async fn read_touched_targets_for_rollup_key(
+    conn: &mut sqlx::SqliteConnection,
+    source_page: &str,
+) -> Result<Vec<String>, AppError> {
+    // Pairs touched: every target that currently appears in block_links
+    // under any block whose roll-up == source_page, UNION every target
+    // already in page_link_cache under source_page. This catches both
+    // additions (new target appears in block_links) and removals (target
+    // previously cached, now zero edges left). Soft-deleted source
+    // blocks contribute zero to the count — mirrors the legacy
+    // `JOIN blocks sb ON ... AND sb.deleted_at IS NULL` filter.
+    let touched_targets: Vec<String> = sqlx::query!(
+        "SELECT target_id AS \"target_id!\" FROM (
+             SELECT DISTINCT bl.target_id
+             FROM block_links bl
+             JOIN blocks sb ON sb.id = bl.source_id
+             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1
+               AND sb.deleted_at IS NULL
+             UNION
+             SELECT target_page_id AS target_id
+             FROM page_link_cache
+             WHERE source_page_id = ?1
+         )",
+        source_page,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| row.target_id)
+    .collect();
+
+    Ok(touched_targets)
 }
 
 // ---------------------------------------------------------------------------
