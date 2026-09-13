@@ -388,14 +388,9 @@ pub fn validate_repeat_rule_shape(rule: &str) -> Result<(), RepeatRuleProblem> {
 // --- Per-block occurrence projection (was recurrence/projection.rs) ---
 
 /// Advance `base` one `interval` step at a time until it is strictly after
-/// `today`.
-///
-/// `None` means no future date was reachable: either the 10 000-step budget
-/// ran out without passing `today` (`++1d` against an original decades back)
-/// or `shift_date_once` overflowed mid-walk. Both leave a stale PAST date
-/// behind. The string parser (`parser::shift_date`) rejects this same input
-/// class with `Err(AppError::Validation)`; this emit-driven projection has no
-/// error channel, so its equivalent of a loud failure is to produce nothing.
+/// `today`. `None` means no such date was reachable — the 10 000-step budget
+/// ran out (`++1d` against an original decades back), or `shift_date_once`
+/// overflowed mid-walk.
 fn catch_up_past_today(
     base: chrono::NaiveDate,
     interval: &str,
@@ -545,9 +540,11 @@ pub fn project_block_dates<F>(
         let mut current = match mode {
             REPEAT_MODE_DOT_PLUS => today,
             // The caught-up date is pre-emitted below, then the main loop
-            // continues from it. `None` means no future date was reachable,
-            // and emitting the stale past date it left behind would be a
-            // silent data bug — so skip the source entirely (#680).
+            // continues from it. `None` leaves a stale PAST date behind and
+            // emitting it would be a silent data bug, so skip the source
+            // entirely — the same input class the string parser rejects as
+            // `Err(AppError::Validation)`, which this emit-driven projection
+            // has no error channel to report (#680).
             REPEAT_MODE_PLUS_PLUS => match catch_up_past_today(base, interval, today) {
                 Some(c) => c,
                 None => continue,
