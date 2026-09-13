@@ -234,8 +234,7 @@ pub async fn reindex_block_tag_refs_split_in_tx(
         return Ok(Vec::new());
     }
 
-    write_block_tag_ref_diff_split(write_conn, block_id, &to_delete, &to_insert, source_space)
-        .await?;
+    write_block_tag_ref_diff(write_conn, block_id, &to_delete, &to_insert, source_space).await?;
 
     // #2659 / #2831: same as the single-pool variant — report changed tags so
     // the handler can refresh their `usage_count` and seed the durable refresh
@@ -247,9 +246,11 @@ pub async fn reindex_block_tag_refs_split_in_tx(
     Ok(changed_tags)
 }
 
-/// The `block_tag_refs` DELETE/INSERT half of
-/// [`reindex_block_tag_refs_in_tx`]. The caller keeps the transaction and the
-/// commit; this only writes.
+/// The `block_tag_refs` DELETE/INSERT half of both reindex paths. The caller
+/// keeps the transaction and the commit; this only writes. The two reindex
+/// ROOTS stay independent, but this half is handed a connection and cannot
+/// tell which of them handed it over — and #375 already required their SQL to
+/// be byte-identical.
 async fn write_block_tag_ref_diff(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -310,70 +311,6 @@ async fn write_block_tag_ref_diff(
             source_space,
         )
         .execute(&mut *conn)
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// The `block_tag_refs` DELETE/INSERT half of
-/// [`reindex_block_tag_refs_split_in_tx`]. Deliberately a second copy of
-/// [`write_block_tag_ref_diff`] rather than a shared helper: the two reindex
-/// variants are independent (#375 keeps their SQL identical on purpose, and
-/// each carries its own commentary on why).
-async fn write_block_tag_ref_diff_split(
-    write_conn: &mut sqlx::SqliteConnection,
-    block_id: &str,
-    to_delete: &[&String],
-    to_insert: &[&String],
-    source_space: Option<String>,
-) -> Result<(), AppError> {
-    // Write phase on the caller-owned write transaction (#2831).
-
-    // Batch DELETE/INSERT via `json_each` — one round-trip per
-    // side regardless of the number of changed targets, replacing the
-    // previous 2N round-trip per-target loops. Mirrors the
-    // `cache/block_links.rs` pattern.
-    if !to_delete.is_empty() {
-        let delete_json = serde_json::to_string(&to_delete)?;
-        sqlx::query!(
-            "DELETE FROM block_tag_refs \
-             WHERE source_id = ? \
-               AND tag_id IN (SELECT value FROM json_each(?))",
-            block_id,
-            delete_json,
-        )
-        .execute(&mut *write_conn)
-        .await?;
-    }
-
-    if !to_insert.is_empty() {
-        // INSERT ... SELECT ... WHERE EXISTS — only link to blocks that
-        // are actually tags. Non-tag candidates (stray IDs that happen to
-        // match the regex but point at content/page blocks) are silently
-        // dropped.
-        //
-        // #375: this SQL is now byte-identical to the single-pool
-        // `reindex_block_tag_refs` INSERT — it restores the `deleted_at IS NULL`
-        // guard on the tag-existence EXISTS (a soft-deleted tag must not
-        // produce a ref, invariant #9) and the `(?3 IS NULL OR …)` cross-space
-        // filter the split variant previously dropped. Keeping the string
-        // identical lets it reuse the single-pool query's `.sqlx` cache entry.
-        let insert_json = serde_json::to_string(&to_insert)?;
-        sqlx::query!(
-            "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
-             SELECT ?1, je.value FROM json_each(?2) je \
-             WHERE EXISTS \
-                 (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) \
-               AND (?3 IS NULL OR ?3 = ( \
-                   SELECT space_id FROM blocks \
-                   WHERE id = je.value AND deleted_at IS NULL \
-                   LIMIT 1))",
-            block_id,
-            insert_json,
-            source_space,
-        )
-        .execute(&mut *write_conn)
         .await?;
     }
 

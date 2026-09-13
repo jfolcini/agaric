@@ -1409,11 +1409,12 @@ pub fn invalidations_for_op(
     match op_type {
         OpType::CreateBlock => push_create_block_invalidations(record, &mut tasks)?,
         OpType::EditBlock => push_edit_block_invalidations(record, block_type_hint, &mut tasks)?,
-        OpType::DeleteBlock => push_delete_block_invalidations(record, block_type_hint, &mut tasks),
+        OpType::DeleteBlock | OpType::PurgeBlock => {
+            push_block_removal_invalidations(record, &op_type, block_type_hint, &mut tasks)
+        }
         OpType::RestoreBlock => {
             push_restore_block_invalidations(record, block_type_hint, &mut tasks)
         }
-        OpType::PurgeBlock => push_purge_block_invalidations(record, block_type_hint, &mut tasks),
         OpType::AddTag | OpType::RemoveTag => {
             push_tag_op_invalidations(record, &op_type, &mut tasks)
         }
@@ -1639,9 +1640,13 @@ fn push_edit_block_invalidations(
     Ok(())
 }
 
-/// `DeleteBlock` invalidations, pushed onto `tasks` in enqueue order.
-fn push_delete_block_invalidations(
+/// `DeleteBlock` / `PurgeBlock` invalidations, pushed onto `tasks` in enqueue
+/// order. Both take the block out of view, so both push the same rebuild set
+/// and the same `RemoveFtsBlock`; only the `op_type` handed to
+/// [`lifecycle_rebuild_tasks`] differs.
+fn push_block_removal_invalidations(
     record: &OpRecord,
+    op_type: &OpType,
     block_type_hint: Option<&str>,
     tasks: &mut Vec<MaterializeTask>,
 ) {
@@ -1658,7 +1663,7 @@ fn push_delete_block_invalidations(
     // `None` keep the full set.
     let block_id = record.block_id.as_deref().unwrap_or_default();
     tasks.extend(
-        lifecycle_rebuild_tasks(&OpType::DeleteBlock, block_type_hint)
+        lifecycle_rebuild_tasks(op_type, block_type_hint)
             .iter()
             .cloned(),
     );
@@ -1774,27 +1779,6 @@ fn push_restore_block_invalidations(
             block_id: Arc::from(block_id),
         });
         tasks.push(MaterializeTask::UpdateFtsBlock {
-            block_id: Arc::from(block_id),
-        });
-    }
-}
-
-/// `PurgeBlock` invalidations, pushed onto `tasks` in enqueue order.
-fn push_purge_block_invalidations(
-    record: &OpRecord,
-    block_type_hint: Option<&str>,
-    tasks: &mut Vec<MaterializeTask>,
-) {
-    // Cached sidecar — no JSON re-parse.
-    // #2037 pt2: same content-block narrowing as `DeleteBlock`.
-    let block_id = record.block_id.as_deref().unwrap_or_default();
-    tasks.extend(
-        lifecycle_rebuild_tasks(&OpType::PurgeBlock, block_type_hint)
-            .iter()
-            .cloned(),
-    );
-    if !block_id.is_empty() {
-        tasks.push(MaterializeTask::RemoveFtsBlock {
             block_id: Arc::from(block_id),
         });
     }

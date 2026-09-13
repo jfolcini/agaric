@@ -3496,6 +3496,104 @@ mod tests {
         mat.shutdown();
     }
 
+    /// #4208: the FOREGROUND ApplyOp lease is pinned to the Failure ladder.
+    ///
+    /// `sweep_apply_op_row` hardcodes `BackoffClass::Failure` where its
+    /// background sibling reads `BackoffClass::of(row.last_error)`. Nothing
+    /// pinned that constant: swapping it to `Shed` left every engine and app
+    /// test green, and because `lease_entry` RESTARTS `attempts` on `Shed` the
+    /// swap also silently reset a persisted row's attempt count. Every other
+    /// `next_attempt_at` assertion in this file pins `record_failure`, never
+    /// the sweep's own lease.
+    ///
+    /// `attempts` is seeded past the cap on purpose. Both ladders' first rungs
+    /// are 1 minute, so a low attempt count cannot tell them apart; at the cap
+    /// they are an hour and five minutes.
+    ///
+    /// Both assertions have to survive a second writer: `sweep_apply_op_row`
+    /// enqueues before it leases, so the foreground consumer can land its own
+    /// `record_failure` for the (deliberately invalid) op at any point up to
+    /// the read. That write only ever raises `attempts` (to 14, the same
+    /// capped rung), and it re-derives the same capped hour from its own
+    /// clock — so the `next_attempt_at` window is anchored to the read rather
+    /// than to the sweep, and holds whichever of the two writes lands last.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_leases_a_foreground_apply_op_row_on_the_failure_ladder_4208() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_sweep_op(
+            &pool,
+            "dev-4208",
+            1,
+            "create_block",
+            "{}", // invalid payload → the re-applied op fails, so the row is
+            // never cleared out from under the read below
+            "BLK4208LEASE",
+            agaric_store::db::now_ms(),
+        )
+        .await;
+
+        let attempts = MAX_ATTEMPTS + 3;
+        let past = agaric_store::db::now_ms() - 5 * 60_000;
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:1:dev-4208",
+            attempts,
+            past,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let before = agaric_store::db::now_ms();
+        assert_eq!(
+            sweep_once(&pool, &pool, &mat).await.unwrap(),
+            1,
+            "the ApplyOp row must be re-enqueued so the lease fires"
+        );
+
+        let row = sqlx::query!(
+            "SELECT attempts AS \"attempts!: i64\", \
+                    next_attempt_at AS \"next_attempt_at!: i64\" \
+             FROM materializer_retry_queue \
+             WHERE task_kind = 'ApplyOp:1:dev-4208'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let read_at = agaric_store::db::now_ms();
+
+        assert!(
+            row.attempts >= attempts,
+            "the lease must not restart attempts — that is the Shed ladder's \
+             behaviour, and it would reset this row's execution budget \
+             (attempts {} < {attempts})",
+            row.attempts,
+        );
+        let failure_cap = backoff_delay_for(attempts, BackoffClass::Failure).num_milliseconds();
+        assert_eq!(
+            failure_cap, 3_600_000,
+            "the Failure ladder caps at one hour"
+        );
+        assert!(
+            row.next_attempt_at >= before + failure_cap
+                && row.next_attempt_at <= read_at + failure_cap,
+            "the lease must defer by the Failure ladder's capped hour, not by \
+             the Shed ladder's five minutes: next_attempt_at {} is not in \
+             [{}, {}]",
+            row.next_attempt_at,
+            before + failure_cap,
+            read_at + failure_cap,
+        );
+        mat.shutdown();
+    }
+
     /// #621: an ApplyOp row whose op_log row no longer exists (compacted /
     /// corrupted) is permanent — the sweeper retires it instead of erroring
     /// on every sweep forever.
@@ -5833,16 +5931,6 @@ async fn edit_supersedes_op(
     Ok(false)
 }
 
-/// The swept op's strict-LWW coordinates as the slot gates bind them. A struct
-/// rather than three positional arguments: `created_at` and `seq` are both
-/// `i64`, and a swap would compile and silently change which ops count later.
-#[derive(Clone, Copy)]
-struct SweptOpCoords<'a> {
-    created_at: i64,
-    seq: i64,
-    dev: &'a str,
-}
-
 /// #3294: true when a LATER op already wrote the same logical slot this op
 /// writes, so re-applying it would regress a newer value.
 async fn slot_write_supersedes_op(
@@ -5860,42 +5948,30 @@ async fn slot_write_supersedes_op(
     // and `device_id` keeps it inside the macro, so the SQL is verified
     // against the schema at compile time and needs no
     // `dynamic-sql-baseline` slack.
-    let coords = SweptOpCoords {
-        created_at: record.created_at,
-        seq: record.seq,
-        dev: record.device_id.as_str(),
-    };
-    let superseded_by_slot_write: i64 = match slot {
+    match slot {
         WriteSlot::Property { key } => {
-            property_slot_superseded(read_pool, block_id, &coords, key.as_str()).await?
+            property_slot_superseded(read_pool, block_id, record, key.as_str()).await
         }
         WriteSlot::TagMembership { tag_id } => {
-            tag_slot_superseded(read_pool, block_id, &coords, tag_id.as_str()).await?
+            tag_slot_superseded(read_pool, block_id, record, tag_id.as_str()).await
         }
-        WriteSlot::TreePosition => {
-            tree_position_slot_superseded(read_pool, block_id, &coords).await?
-        }
-    };
-    Ok(superseded_by_slot_write != 0)
+        WriteSlot::TreePosition => tree_position_slot_superseded(read_pool, block_id, record).await,
+    }
 }
 
 /// #3294 slot gate for `set_property` / `delete_property`.
 async fn property_slot_superseded(
     read_pool: &SqlitePool,
     block_id: &str,
-    coords: &SweptOpCoords<'_>,
+    record: &agaric_store::op_log::OpRecord,
     key: &str,
-) -> Result<i64, AppError> {
+) -> Result<bool, AppError> {
     // The `json_extract(payload, '$.key')` expression and the
     // `op_type IN ('set_property','delete_property')` filter are
     // byte-identical to the partial expression index
     // `idx_op_log_block_key_created` (migration 0098), so this is an
     // equality seek on (block_id, key), not a scan.
-    let &SweptOpCoords {
-        created_at,
-        seq,
-        dev,
-    } = coords;
+    let (created_at, seq, dev) = (record.created_at, record.seq, record.device_id.as_str());
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(
                              SELECT 1 FROM op_log
@@ -5916,21 +5992,18 @@ async fn property_slot_superseded(
         dev,
     )
     .fetch_one(read_pool)
-    .await?)
+    .await?
+        != 0)
 }
 
 /// #3294 slot gate for `add_tag` / `remove_tag`.
 async fn tag_slot_superseded(
     read_pool: &SqlitePool,
     block_id: &str,
-    coords: &SweptOpCoords<'_>,
+    record: &agaric_store::op_log::OpRecord,
     tag_id: &str,
-) -> Result<i64, AppError> {
-    let &SweptOpCoords {
-        created_at,
-        seq,
-        dev,
-    } = coords;
+) -> Result<bool, AppError> {
+    let (created_at, seq, dev) = (record.created_at, record.seq, record.device_id.as_str());
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(
                              SELECT 1 FROM op_log
@@ -5951,20 +6024,17 @@ async fn tag_slot_superseded(
         dev,
     )
     .fetch_one(read_pool)
-    .await?)
+    .await?
+        != 0)
 }
 
 /// #3294 slot gate for `move_block`.
 async fn tree_position_slot_superseded(
     read_pool: &SqlitePool,
     block_id: &str,
-    coords: &SweptOpCoords<'_>,
-) -> Result<i64, AppError> {
-    let &SweptOpCoords {
-        created_at,
-        seq,
-        dev,
-    } = coords;
+    record: &agaric_store::op_log::OpRecord,
+) -> Result<bool, AppError> {
+    let (created_at, seq, dev) = (record.created_at, record.seq, record.device_id.as_str());
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS(
                          SELECT 1 FROM op_log
@@ -5983,7 +6053,8 @@ async fn tree_position_slot_superseded(
         dev,
     )
     .fetch_one(read_pool)
-    .await?)
+    .await?
+        != 0)
 }
 
 /// Per-sweep tallies. A struct rather than two `usize` locals threaded through

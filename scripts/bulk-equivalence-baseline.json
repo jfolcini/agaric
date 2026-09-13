@@ -13,6 +13,13 @@
     "reason": "ONE BODY: a single-expression delegate to import_payload_with_changed_purged_tagscope(ImportPayload::Batch(..)), the same body the single-blob path reaches with ImportPayload::Single. Everything after the doc.import* call — diff capture, no-op short-circuit, legacy-migration fallback, changed/purged/tag-scope resolution — is payload-agnostic and shared. The batch-vs-single difference lives inside loro's own import_batch (one detached append per blob, one re-attach), not in this crate"
   },
   {
+    "fn": "src-tauri/agaric-engine/src/materializer/handlers/task_handlers.rs::dispatch_committed_cohorts",
+    "kind": "read-only",
+    "status": "gap",
+    "reason": "Its last two statements ARE a bulk-vs-fold surface: the #4733 pass that collapses the loop's N per-record `reindex_fts_for_ids` calls into one union pass over the whole batch (one `remove_deleted_cohort_fts` over every record's deleted cohort, one `reindex_restored_cohort_fts` over every record's restored + restored-ancestor + move-FTS cohorts). The fold it replaces — reindexing each record's cohort in turn — is what the single-op `apply_op` path still does, and `reindex_fts_for_ids` re-derives membership per id, so the two agree only as long as the union is assembled from exactly the same three cohorts the per-record call would have used. Nothing pins that: no test drives a multi-record `BatchApplyOps` and compares the resulting `fts_blocks` rows against the same ops applied one at a time, so dropping `move_fts_cohort` from the chain, or the whole restored-ancestors arm, stays green. Recorded as owed work, not argued away: the oracle belongs beside the `replay_inbox_batch` gap above (#3346 follow-up), which needs the same thing — a harness that can drive a batch arm and its per-op sibling to the same observable end state",
+    "pin": "NOT bulk-named (no batch/bulk/by_ids segment), so the name heuristic cannot see it — the batch-vs-fold pass lives in its last two statements while the function is named for the cohort fan-out around them. Pinned by exact key, the same way `fetch_prior_text_fallback_only` above is, so deleting it fails the guard as a stale entry instead of vanishing silently. It became visible only when #4639 split it out of `handle_batch_apply_ops`'s un-inventoried match arm"
+  },
+  {
     "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::compute_reverse_batch",
     "kind": "read-only",
     "status": "covered",

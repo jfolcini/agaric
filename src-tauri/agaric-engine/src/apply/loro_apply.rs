@@ -1274,6 +1274,9 @@ async fn collect_purge_descendants(
 /// [`purge_block_sql_cascade`]'s block-to-block / block-to-tag relation rows:
 /// `block_tags`, `block_tag_inherited`, `block_properties` (owned by the
 /// subtree, then `value_ref` into it), `block_links`.
+///
+/// Precondition: `conn` is the connection [`collect_purge_descendants`] built
+/// the `_purge_descendants` TEMP table on — every statement below reads it.
 async fn delete_purge_relation_rows(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM block_tags \
@@ -1321,6 +1324,9 @@ async fn delete_purge_relation_rows(conn: &mut sqlx::SqliteConnection) -> Result
 /// [`purge_block_sql_cascade`]'s per-block derived rows: `agenda_cache`,
 /// `tags_cache`, `pages_cache`, `attachments`, `block_drafts`, `fts_blocks`,
 /// `page_aliases`, `projected_agenda_cache`.
+///
+/// Precondition: `conn` is the connection [`collect_purge_descendants`] built
+/// the `_purge_descendants` TEMP table on — every statement below reads it.
 async fn delete_purge_derived_rows(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM agenda_cache \
@@ -1385,6 +1391,9 @@ async fn delete_purge_derived_rows(conn: &mut sqlx::SqliteConnection) -> Result<
 /// migration alters the FK or adds a block-referencing cache without
 /// CASCADE. Delete rows referencing the purged subtree on EITHER FK
 /// column.
+///
+/// Precondition: `conn` is the connection [`collect_purge_descendants`] built
+/// the `_purge_descendants` TEMP table on — every statement below reads it.
 async fn delete_purge_link_refs_and_doc_state(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<(), AppError> {

@@ -885,61 +885,41 @@ impl SyncOrchestrator {
         purged_blocks: &[agaric_core::ulid::BlockId],
         changed_page_ids: Vec<String>,
     ) {
-        // #1071: accumulate the resolved page ids
-        // (deduped) across this session's inbound
-        // LoroSync messages so the terminal
-        // `SyncEvent::Complete` carries the full
-        // targeted-invalidation set. A space with
-        // many touched pages, or a multi-space
+        // #1071: accumulate the resolved page ids (deduped) across this session's inbound
+        // LoroSync messages so the terminal `SyncEvent::Complete` carries the full
+        // targeted-invalidation set. A space with many touched pages, or a multi-space
         // session, contributes them all here.
         for pid in changed_page_ids {
             if !self.session.changed_page_ids.contains(&pid) {
                 self.session.changed_page_ids.push(pid);
             }
         }
-        // #705: this counts inbound LoroSync
-        // *messages* (one per space, each a full
-        // CRDT snapshot/update), not individual
-        // CRDT operations. The UI surfaces it as
-        // "Ops Received"; see the i18n tooltip,
-        // which is worded as "sync messages" to
-        // match this semantics.
+        // #705: this counts inbound LoroSync *messages* (one per space, each a full CRDT
+        // snapshot/update), not individual CRDT operations. The UI surfaces it as "Ops
+        // Received"; see the i18n tooltip, which is worded as "sync messages" to match
+        // this semantics.
         self.session.ops_received = self.session.ops_received.saturating_add(1);
-        // #4305: and this is the honest count beside
-        // it — the blocks the import actually moved.
-        // `ops_received` is incremented once per
-        // inbound message even when that message's
-        // delta was empty, which is the steady state
-        // of a converged pair, so it can never answer
-        // "did anything change". Both id sets are
-        // already computed by `apply_remote` for the
-        // projection and the fan-out; they are
-        // disjoint (#2264 —
-        // `changed_blocks` enumerates live blocks
-        // only), so summing them double-counts
+        // #4305: and this is the honest count beside it — the blocks the import actually
+        // moved. `ops_received` is incremented once per inbound message even when that
+        // message's delta was empty, which is the steady state of a converged pair, so it
+        // can never answer "did anything change". Both id sets are already computed by
+        // `apply_remote` for the projection and the fan-out; they are disjoint (#2264 —
+        // `changed_blocks` enumerates live blocks only), so summing them double-counts
         // nothing.
         self.session.changed_blocks = self
             .session
             .changed_blocks
             .saturating_add(changed_blocks.len())
             .saturating_add(purged_blocks.len());
-        // #4: `apply_remote` wrote the
-        // per-block SQL projection (core columns,
-        // properties incl. reserved hot-path columns,
-        // direct tag edges) and refreshed
-        // `block_tag_inherited` (scoped, #2036/#2265),
-        // but NOT the read-path derived caches / FTS.
-        // Enqueue the rebuild fan-out via the
-        // materializer (background, deduped). #421:
-        // FTS is driven from `changed_blocks`
-        // (targeted per-block reindex) instead of a
-        // full O(vault) rebuild. #2264: the fan-out
-        // itself short-circuits when the import was a
-        // complete no-op (both sets empty) — see
-        // `enqueue_inbound_sync_rebuilds`.
-        // Non-fatal: a queue-closed error must not
-        // unwind the sync session — the projection
-        // already committed — so log + continue
+        // #4: `apply_remote` wrote the per-block SQL projection (core columns, properties
+        // incl. reserved hot-path columns, direct tag edges) and refreshed
+        // `block_tag_inherited` (scoped, #2036/#2265), but NOT the read-path derived
+        // caches / FTS. Enqueue the rebuild fan-out via the materializer (background,
+        // deduped). #421: FTS is driven from `changed_blocks` (targeted per-block
+        // reindex) instead of a full O(vault) rebuild. #2264: the fan-out itself
+        // short-circuits when the import was a complete no-op (both sets empty) — see
+        // `enqueue_inbound_sync_rebuilds`. Non-fatal: a queue-closed error must not
+        // unwind the sync session — the projection already committed — so log + continue
         // (mirrors `dispatch_background_or_warn`).
         if let Err(e) = self
             .host
@@ -1002,65 +982,52 @@ impl SyncOrchestrator {
         msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage,
         is_last: bool,
     ) -> Result<Option<SyncMessage>, AppError> {
-        {
-            use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
+        use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 
-            {
-                let loro_state = self.loro_state();
-                self.state = SyncState::ApplyingOps;
-                self.session.state = SyncState::ApplyingOps;
-                self.emit(crate::sync_events::SyncEvent::Progress {
-                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
-                    remote_device_id: self.session.remote_device_id.clone(),
-                    ops_received: self.session.ops_received,
-                    ops_sent: self.session.ops_sent,
-                });
-                // #705 / #2249: a LoroSync payload we cannot import
-                // (e.g. an undecodable snapshot) must FAIL the session
-                // and surface the error — never fake convergence by
-                // proceeding to `SyncComplete` / recording `synced_at`.
-                // The registry is always present now (#2249 removed the
-                // process-global-`None` defensive branch), so an
-                // unimportable/corrupt payload is the sole failure here.
-                let outcome = match loro_sync::apply_remote(
-                    &self.pool,
-                    &loro_state.registry,
-                    &self.device_id,
-                    msg,
-                )
+        let loro_state = self.loro_state();
+        self.state = SyncState::ApplyingOps;
+        self.session.state = SyncState::ApplyingOps;
+        self.emit(crate::sync_events::SyncEvent::Progress {
+            state: crate::sync_events::sync_state_label(&self.state).to_string(),
+            remote_device_id: self.session.remote_device_id.clone(),
+            ops_received: self.session.ops_received,
+            ops_sent: self.session.ops_sent,
+        });
+        // #705 / #2249: a LoroSync payload we cannot import
+        // (e.g. an undecodable snapshot) must FAIL the session
+        // and surface the error — never fake convergence by
+        // proceeding to `SyncComplete` / recording `synced_at`.
+        // The registry is always present now (#2249 removed the
+        // process-global-`None` defensive branch), so an
+        // unimportable/corrupt payload is the sole failure here.
+        let outcome =
+            match loro_sync::apply_remote(&self.pool, &loro_state.registry, &self.device_id, msg)
                 .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(e) => {
-                        self.state = SyncState::Failed(e.to_string());
-                        self.session.state = self.state.clone();
-                        return Err(e);
-                    }
-                };
-                match outcome {
-                    ApplyOutcome::Imported {
-                        changed_blocks,
-                        purged_blocks,
-                        changed_page_ids,
-                        ..
-                    } => {
-                        self.absorb_imported_loro(
-                            &changed_blocks,
-                            &purged_blocks,
-                            changed_page_ids,
-                        )
-                        .await;
-                    }
-                    ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
-                        return Ok(Some(self.request_snapshot_fallback(&space_id, &reason)));
-                    }
+            {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    self.state = SyncState::Failed(e.to_string());
+                    self.session.state = self.state.clone();
+                    return Err(e);
                 }
+            };
+        match outcome {
+            ApplyOutcome::Imported {
+                changed_blocks,
+                purged_blocks,
+                changed_page_ids,
+                ..
+            } => {
+                self.absorb_imported_loro(&changed_blocks, &purged_blocks, changed_page_ids)
+                    .await;
             }
-            // #2249: the old "shared state not initialised" failure
-            // arm is gone — engine state is a constructor-threaded
-            // `&LoroState` (always present), so an un-importable
-            // LoroSync payload is unrepresentable here.
+            ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+                return Ok(Some(self.request_snapshot_fallback(&space_id, &reason)));
+            }
         }
+        // #2249: the old "shared state not initialised" failure arm is gone —
+        // engine state is a constructor-threaded `&LoroState` (always present),
+        // so an un-importable LoroSync payload is unrepresentable here.
 
         if !is_last {
             // #2536: a streamer with multiple registered spaces ships

@@ -871,4 +871,140 @@ mod tests_h12 {
 
         mat.shutdown();
     }
+
+    // -- flush_all_drafts_inner's two skip branches ------------------------
+    //
+    // Both branches consume the draft row and append NO op, and both had no
+    // test: every other `flush_all_drafts_inner` test seeds live blocks and
+    // appends nothing after `save_draft`, so neither branch was ever entered.
+    // Each test below puts its skipped draft in a MULTI-draft batch, so the
+    // loop's `continue` is exercised rather than an early return, and the
+    // sibling draft proves the batch still flushes around it.
+
+    /// H-12a inside the batch: a draft whose target is soft-deleted is dropped
+    /// with no `edit_block` op, and the live drafts either side of it flush.
+    #[tokio::test]
+    async fn flush_all_drafts_drops_an_orphan_draft_mid_batch() {
+        let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        const FIRST: &str = "01HZ0000000000000ORPHAN001";
+        const SECOND: &str = "01HZ0000000000000ORPHAN003";
+        insert_live_block(&pool, FIRST).await;
+        insert_soft_deleted_block(&pool, DEAD_BLOCK).await;
+        insert_live_block(&pool, SECOND).await;
+
+        // `updated_at` ordering puts the orphan in the MIDDLE of the batch, so
+        // a `continue` that skipped the rest of the loop would show up as an
+        // unflushed third draft.
+        for (i, id) in [FIRST, DEAD_BLOCK, SECOND].iter().enumerate() {
+            draft::save_draft(&pool, DEVICE, id, "typed but never flushed")
+                .await
+                .unwrap();
+            let ts: i64 = 1_735_689_600_000 + i64::try_from(i).unwrap();
+            sqlx::query("UPDATE block_drafts SET updated_at = ? WHERE block_id = ?")
+                .bind(ts)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let result = flush_all_drafts_inner(&pool, DEVICE, &mat)
+            .await
+            .expect("an orphan draft must not fail the batch");
+
+        assert_eq!(result.flushed, 3, "the orphan counts as consumed");
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "every draft row is consumed");
+        assert_eq!(
+            count_edit_block_ops(&pool, DEAD_BLOCK).await,
+            0,
+            "no edit_block op may target a soft-deleted block",
+        );
+        for id in [FIRST, SECOND] {
+            assert_eq!(
+                count_edit_block_ops(&pool, id).await,
+                1,
+                "the live drafts around the orphan still flush",
+            );
+        }
+        mat.shutdown();
+    }
+
+    /// #2651 inside the batch: a draft whose block has a newer op past the
+    /// draft's anchor seq is dropped without regressing `blocks.content`, and
+    /// the live draft beside it flushes.
+    #[tokio::test]
+    async fn flush_all_drafts_drops_a_superseded_draft_mid_batch() {
+        let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        const STALE: &str = "01HZ000000000000SUPERSEDED";
+        const FRESH: &str = "01HZ0000000000000000FRESH0";
+        insert_live_block(&pool, STALE).await;
+        insert_live_block(&pool, FRESH).await;
+
+        // Anchors are captured at save time, so both drafts anchor at seq 0.
+        for (i, id) in [STALE, FRESH].iter().enumerate() {
+            draft::save_draft(&pool, DEVICE, id, "stale keystrokes")
+                .await
+                .unwrap();
+            let ts: i64 = 1_735_689_600_000 + i64::try_from(i).unwrap();
+            sqlx::query("UPDATE block_drafts SET updated_at = ? WHERE block_id = ?")
+                .bind(ts)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // The superseding op: same device, seq PAST the anchor, on STALE only.
+        // Seeded directly so the anchor ordering is exact — an `edit_block`
+        // through the command layer would also rewrite `blocks.content`, which
+        // is the very thing this test reads back as proof of no regression.
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, block_id, payload, created_at, origin) \
+             VALUES (?, 1, 'h-supersede', 'edit_block', ?, ?, 1735689600000, 'user')",
+        )
+        .bind(DEVICE)
+        .bind(STALE)
+        .bind(format!(r#"{{"block_id":"{STALE}","content":"newer than the draft"}}"#))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = flush_all_drafts_inner(&pool, DEVICE, &mat)
+            .await
+            .expect("a superseded draft must not fail the batch");
+
+        assert_eq!(result.flushed, 2, "the superseded draft counts as consumed");
+        assert!(
+            !draft_exists(&pool, STALE).await,
+            "the stale draft row must be dropped, not left to replay next boot",
+        );
+        assert_eq!(
+            count_edit_block_ops(&pool, STALE).await,
+            1,
+            "only the seeded superseding op — the flush appends none",
+        );
+        let stale_content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(STALE)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            stale_content, "initial",
+            "the stale draft must not regress the block's content",
+        );
+        assert_eq!(
+            count_edit_block_ops(&pool, FRESH).await,
+            1,
+            "the un-superseded draft beside it still flushes",
+        );
+        mat.shutdown();
+    }
 }

@@ -138,7 +138,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
         }
         match filter {
             BacklinkFilter::PropertyText { key, op, value } => {
-                resolve_property_text(pool, key, op, value).await
+                resolve_property_string(pool, "value_text", key, op, value).await
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {
@@ -146,7 +146,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::PropertyDate { key, op, value } => {
-                resolve_property_date(pool, key, op, value).await
+                resolve_property_string(pool, "value_date", key, op, value).await
             }
 
             BacklinkFilter::PropertyIsSet { key } => resolve_property_is_set(pool, key).await,
@@ -200,10 +200,12 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
     })
 }
 
-/// A `PropertyText` leaf: the operator is pushed into SQL so SQLite
-/// filters by it rather than materialising every row with this key.
-async fn resolve_property_text(
+/// A `PropertyText` or `PropertyDate` leaf, comparing the `value_text` or
+/// `value_date` column named by `column` — a literal at both call sites,
+/// never user input.
+async fn resolve_property_string(
     pool: &SqlitePool,
+    column: &str,
     key: &str,
     op: &CompareOp,
     value: &str,
@@ -217,6 +219,9 @@ async fn resolve_property_text(
     // user-supplied `value` is escaped via `escape_like` and
     // the SQL uses `ESCAPE '\'` so `%` / `_` / `\` in the user
     // input match literally.
+    //
+    // On `value_date`, SQLite's lexicographic string comparison on
+    // ISO-8601 dates (YYYY-MM-DD…) preserves chronological order.
     let (sql_op, needs_escape) = match op {
         CompareOp::Eq => ("=", false),
         CompareOp::Neq => ("<>", false),
@@ -236,8 +241,8 @@ async fn resolve_property_text(
         "SELECT bp.block_id \
          FROM block_properties bp \
          JOIN blocks b ON b.id = bp.block_id \
-         WHERE bp.key = ?1 AND bp.value_text IS NOT NULL \
-           AND bp.value_text {sql_op} ?2{escape_clause} \
+         WHERE bp.key = ?1 AND bp.{column} IS NOT NULL \
+           AND bp.{column} {sql_op} ?2{escape_clause} \
            AND b.deleted_at IS NULL"
     );
     let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
@@ -289,56 +294,6 @@ async fn resolve_property_num(
     let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(key)
         .bind(value)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows.into_iter().collect())
-}
-
-/// A `PropertyDate` leaf. SQLite's lexicographic compare on ISO-8601
-/// strings preserves chronological order.
-async fn resolve_property_date(
-    pool: &SqlitePool,
-    key: &str,
-    op: &CompareOp,
-    value: &str,
-) -> Result<FxHashSet<String>, AppError> {
-    // Push operator comparison into SQL so SQLite filters
-    // by operator rather than materialising every row with this
-    // key and filtering in Rust.  Mirrors the `PropertyText` arm
-    // above.
-    //
-    // SQLite string comparison is lexicographic, which on
-    // ISO-8601 date strings (YYYY-MM-DD…) preserves chronological
-    // order and matches the prior Rust `&str` compare semantics.
-    // `Contains` / `StartsWith` use the same `escape_like` +
-    // `ESCAPE '\\'` shape as `PropertyText` so `%` / `_` / `\`
-    // in user input match literally.
-    let (sql_op, needs_escape) = match op {
-        CompareOp::Eq => ("=", false),
-        CompareOp::Neq => ("<>", false),
-        CompareOp::Lt => ("<", false),
-        CompareOp::Gt => (">", false),
-        CompareOp::Lte => ("<=", false),
-        CompareOp::Gte => (">=", false),
-        CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
-    };
-    let bind_value: String = match op {
-        CompareOp::Contains => format!("%{}%", escape_like(value)),
-        CompareOp::StartsWith => format!("{}%", escape_like(value)),
-        _ => value.to_string(),
-    };
-    let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
-    let sql = format!(
-        "SELECT bp.block_id \
-         FROM block_properties bp \
-         JOIN blocks b ON b.id = bp.block_id \
-         WHERE bp.key = ?1 AND bp.value_date IS NOT NULL \
-           AND bp.value_date {sql_op} ?2{escape_clause} \
-           AND b.deleted_at IS NULL"
-    );
-    let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(key)
-        .bind(&bind_value)
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().collect())
@@ -1005,9 +960,11 @@ pub(crate) fn compile_backlink_filter<'a>(
             }
 
             // ── Boolean combinators ──
-            BacklinkFilter::And { filters } => compile_and(pool, filters, depth).await,
+            BacklinkFilter::And { filters } => {
+                compile_junction(pool, filters, depth, " AND ").await
+            }
 
-            BacklinkFilter::Or { filters } => compile_or(pool, filters, depth).await,
+            BacklinkFilter::Or { filters } => compile_junction(pool, filters, depth, " OR ").await,
 
             BacklinkFilter::Not { filter: inner } => {
                 // Three-valued-logic guard: the resolver's `Not` computes the
@@ -1130,14 +1087,16 @@ async fn compile_contains<'a>(
     membership_fragment(&ids)
 }
 
-/// An `And` node: the conjunct fragments, AND-joined.
-async fn compile_and<'a>(
+/// An `And` or `Or` node: the child fragments joined by `sep`.
+async fn compile_junction<'a>(
     pool: &'a SqlitePool,
     filters: &'a [BacklinkFilter],
     depth: u32,
+    sep: &str,
 ) -> Result<CompiledFilter, AppError> {
-    // Preserve the resolver's empty-And semantics: it returns the
-    // empty set (`1=0`), NOT the neutral "all" element.
+    // Both empty cases are the empty set (`1=0`), never the neutral element:
+    // the resolver's empty `And` returns the empty set rather than "all", and
+    // its empty `Or` folds from an empty accumulator and unions nothing.
     if filters.is_empty() {
         return Ok(CompiledFilter::never());
     }
@@ -1156,39 +1115,7 @@ async fn compile_and<'a>(
         })
         .collect();
     Ok(CompiledFilter {
-        sql: format!("({})", parts.join(" AND ")),
-        binds,
-    })
-}
-
-/// An `Or` node: the disjunct fragments, OR-joined.
-async fn compile_or<'a>(
-    pool: &'a SqlitePool,
-    filters: &'a [BacklinkFilter],
-    depth: u32,
-) -> Result<CompiledFilter, AppError> {
-    // Resolver's empty-Or returns the empty set (the fold starts
-    // from an empty accumulator and never unions anything), so an
-    // empty `Or` is `1=0`, NOT `1=1`.
-    if filters.is_empty() {
-        return Ok(CompiledFilter::never());
-    }
-    let compiled = try_join_all(
-        filters
-            .iter()
-            .map(|f| compile_backlink_filter(pool, f, depth + 1)),
-    )
-    .await?;
-    let mut binds = Vec::new();
-    let parts: Vec<String> = compiled
-        .into_iter()
-        .map(|c| {
-            binds.extend(c.binds);
-            c.sql
-        })
-        .collect();
-    Ok(CompiledFilter {
-        sql: format!("({})", parts.join(" OR ")),
+        sql: format!("({})", parts.join(sep)),
         binds,
     })
 }

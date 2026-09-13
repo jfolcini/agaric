@@ -1480,123 +1480,121 @@ fn read_projection_states(
         .iter()
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
+    let mut guard = registry.for_space(space_id, device_id)?;
+    let engine = guard.engine_mut();
+    // #1621: derive every block's `position` from a per-parent ordered-
+    // children index built ONCE (read_blocks_bulk), not a per-block O(K)
+    // `child_rank_position` sibling scan. For N changed blocks in a flat
+    // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
+    // snapshot (incl. `position`) is byte-identical to `read_block`'s.
+    let mut all_refs: Vec<&str> = changed_blocks
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    let changed_len = all_refs.len();
+    // #4083: the ancestors this import did NOT touch. `changed_blocks` is
+    // depth-sorted, so a changed PARENT is always projected before its
+    // changed child — but an untouched ancestor is merely ASSUMED to
+    // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
+    // Named here (one cheap parent-hop walk) so the SQL probe inside the
+    // projection tx can tell which of them are missing.
+    // `all_refs` is still exactly the changed set at this point — the
+    // candidates are appended below — so this is the whole slice, not a
+    // guard against anything.
+    let ancestor_candidates = engine.ancestors_outside(&all_refs);
+    // #4100: the candidates' state is read HERE, under the guard that is
+    // already held, not under a second acquisition gated on the probe
+    // result. #540's property is not merely "acquire once on the healthy
+    // path" — it is that a projection reads ONE atomic view of the engine.
+    // A second acquisition after the probe let the backfilled ancestors
+    // come from a later engine state than the changed blocks they are
+    // merged with.
+    //
+    // NOT a deadlock argument, and it must not be read as one. With the
+    // probe moved INSIDE the projection tx (#4099), a lazily-gated second
+    // acquisition would block on the engine mutex while this connection
+    // holds SQLite's `BEGIN IMMEDIATE` writer lock — but that is the
+    // ordering the LOCAL apply path already takes on every single op
+    // (`apply_*_via_loro` calls `for_space_recording` with the caller's
+    // write tx open), and the reverse edge cannot exist anywhere:
+    // `EngineGuard` is `!Send`, pinned by the compile-time tripwire in
+    // `loro::registry`, so no async code can hold the engine mutex across
+    // the `.await` that acquiring a SQLite lock requires. What the single
+    // acquisition buys here is LATENCY, not the absence of a cycle:
+    // waiting on the engine mutex while holding the writer lock stalls
+    // every other writer for the length of that wait.
+    //
+    // The cost is reading ancestor states that usually turn out to be
+    // present already, and it is a real cost — the one jfolcini flagged on
+    // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
+    // over `changed ++ candidates` (so the per-parent rank index is still
+    // built once for the whole projection) and the extra per-candidate
+    // work is the same three engine reads a changed block pays, but the
+    // candidate count is not a constant: it is the number of DISTINCT
+    // untouched ancestors of the changed set. For a sparse edit that is
+    // tree depth — a handful — while a long offline catch-up can push it
+    // into the hundreds (the same scenario #4099 cites), bounded above by
+    // the live vault. Judged worth it because the alternative keeps a
+    // split engine view on precisely the path that is already repairing
+    // damage. On the whole-tree changed set a snapshot import or the
+    // untrusted no-op fallback produces, every ancestor is IN the input,
+    // so `ancestors_outside` returns EMPTY and this costs exactly nothing.
+    all_refs.extend(
+        ancestor_candidates
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str),
+    );
+    let snapshots = engine.read_blocks_bulk(&all_refs)?;
+    let mut snapshots = snapshots.into_iter();
+    let mut states = Vec::with_capacity(changed_len);
+    for (block_id, snapshot) in changed_blocks
+        .iter()
+        .zip(snapshots.by_ref().take(changed_len))
     {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        // #1621: derive every block's `position` from a per-parent ordered-
-        // children index built ONCE (read_blocks_bulk), not a per-block O(K)
-        // `child_rank_position` sibling scan. For N changed blocks in a flat
-        // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
-        // snapshot (incl. `position`) is byte-identical to `read_block`'s.
-        let mut all_refs: Vec<&str> = changed_blocks
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        let changed_len = all_refs.len();
-        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
-        // depth-sorted, so a changed PARENT is always projected before its
-        // changed child — but an untouched ancestor is merely ASSUMED to
-        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
-        // Named here (one cheap parent-hop walk) so the SQL probe inside the
-        // projection tx can tell which of them are missing.
-        // `all_refs` is still exactly the changed set at this point — the
-        // candidates are appended below — so this is the whole slice, not a
-        // guard against anything.
-        let ancestor_candidates = engine.ancestors_outside(&all_refs);
-        // #4100: the candidates' state is read HERE, under the guard that is
-        // already held, not under a second acquisition gated on the probe
-        // result. #540's property is not merely "acquire once on the healthy
-        // path" — it is that a projection reads ONE atomic view of the engine.
-        // A second acquisition after the probe let the backfilled ancestors
-        // come from a later engine state than the changed blocks they are
-        // merged with.
-        //
-        // NOT a deadlock argument, and it must not be read as one. With the
-        // probe moved INSIDE the projection tx (#4099), a lazily-gated second
-        // acquisition would block on the engine mutex while this connection
-        // holds SQLite's `BEGIN IMMEDIATE` writer lock — but that is the
-        // ordering the LOCAL apply path already takes on every single op
-        // (`apply_*_via_loro` calls `for_space_recording` with the caller's
-        // write tx open), and the reverse edge cannot exist anywhere:
-        // `EngineGuard` is `!Send`, pinned by the compile-time tripwire in
-        // `loro::registry`, so no async code can hold the engine mutex across
-        // the `.await` that acquiring a SQLite lock requires. What the single
-        // acquisition buys here is LATENCY, not the absence of a cycle:
-        // waiting on the engine mutex while holding the writer lock stalls
-        // every other writer for the length of that wait.
-        //
-        // The cost is reading ancestor states that usually turn out to be
-        // present already, and it is a real cost — the one jfolcini flagged on
-        // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
-        // over `changed ++ candidates` (so the per-parent rank index is still
-        // built once for the whole projection) and the extra per-candidate
-        // work is the same three engine reads a changed block pays, but the
-        // candidate count is not a constant: it is the number of DISTINCT
-        // untouched ancestors of the changed set. For a sparse edit that is
-        // tree depth — a handful — while a long offline catch-up can push it
-        // into the hundreds (the same scenario #4099 cites), bounded above by
-        // the live vault. Judged worth it because the alternative keeps a
-        // split engine view on precisely the path that is already repairing
-        // damage. On the whole-tree changed set a snapshot import or the
-        // untrusted no-op fallback produces, every ancestor is IN the input,
-        // so `ancestors_outside` returns EMPTY and this costs exactly nothing.
-        all_refs.extend(
-            ancestor_candidates
-                .iter()
-                .map(agaric_core::ulid::BlockId::as_str),
-        );
-        let snapshots = engine.read_blocks_bulk(&all_refs)?;
-        let mut snapshots = snapshots.into_iter();
-        let mut states = Vec::with_capacity(changed_len);
-        for (block_id, snapshot) in changed_blocks
-            .iter()
-            .zip(snapshots.by_ref().take(changed_len))
-        {
-            // #3162: a rank-only sibling is in this set solely because a
-            // create / move / delete elsewhere in its sibling group shifted
-            // its dense `position` — which `snapshot` already carries. The
-            // import brought no property, tag, content or soft-delete change
-            // for it (the resolver excludes anything it saw through another
-            // channel), so skip the three per-block engine reads AND their
-            // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
-            // `reproject_block_deleted_at_from_engine` for exactly the blocks
-            // that provably cannot need it.
-            let full_state = if rank_only.contains(block_id.as_str()) {
-                None
-            } else {
-                Some((
-                    engine.read_all_properties_typed(block_id.as_str())?,
-                    engine.read_tags(block_id.as_str())?,
-                    engine.read_deleted_at(block_id.as_str())?,
-                ))
-            };
-            states.push((snapshot, full_state));
-        }
-        // The remainder of `snapshots` is the candidates', in `ancestor_candidates`
-        // order — index-aligned, so the probe below can filter both together.
-        // Always the FULL state: a row SQL never had needs all of it, not just
-        // the column the FK points at, so there is no `rank_only` analogue here.
-        //
-        // Widened failure surface, accepted knowingly: these reads now run for
-        // EVERY candidate, not only the ones SQL turns out to lack. A corrupt
-        // engine node that `ancestors_outside` could still name — its `block_id`
-        // was readable, so the #4111 truncation warn did not fire — but whose
-        // properties/tags are not, now fails the whole apply rather than only
-        // the healing path. That is the same hard failure a CHANGED block with
-        // the same corruption already causes, and it fails loudly into the #535
-        // inbox retry rather than silently; it is a consequence of the single
-        // acquisition, not an oversight in it.
-        let mut ancestor_states = Vec::with_capacity(ancestor_candidates.len());
-        for (block_id, snapshot) in all_refs[changed_len..].iter().zip(snapshots) {
-            let full_state = Some((
-                engine.read_all_properties_typed(block_id)?,
-                engine.read_tags(block_id)?,
-                engine.read_deleted_at(block_id)?,
-            ));
-            ancestor_states.push((snapshot, full_state));
-        }
-        Ok((states, ancestor_candidates, ancestor_states))
+        // #3162: a rank-only sibling is in this set solely because a
+        // create / move / delete elsewhere in its sibling group shifted
+        // its dense `position` — which `snapshot` already carries. The
+        // import brought no property, tag, content or soft-delete change
+        // for it (the resolver excludes anything it saw through another
+        // channel), so skip the three per-block engine reads AND their
+        // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
+        // `reproject_block_deleted_at_from_engine` for exactly the blocks
+        // that provably cannot need it.
+        let full_state = if rank_only.contains(block_id.as_str()) {
+            None
+        } else {
+            Some((
+                engine.read_all_properties_typed(block_id.as_str())?,
+                engine.read_tags(block_id.as_str())?,
+                engine.read_deleted_at(block_id.as_str())?,
+            ))
+        };
+        states.push((snapshot, full_state));
     }
+    // The remainder of `snapshots` is the candidates', in `ancestor_candidates`
+    // order — index-aligned, so the probe below can filter both together.
+    // Always the FULL state: a row SQL never had needs all of it, not just
+    // the column the FK points at, so there is no `rank_only` analogue here.
+    //
+    // Widened failure surface, accepted knowingly: these reads now run for
+    // EVERY candidate, not only the ones SQL turns out to lack. A corrupt
+    // engine node that `ancestors_outside` could still name — its `block_id`
+    // was readable, so the #4111 truncation warn did not fire — but whose
+    // properties/tags are not, now fails the whole apply rather than only
+    // the healing path. That is the same hard failure a CHANGED block with
+    // the same corruption already causes, and it fails loudly into the #535
+    // inbox retry rather than silently; it is a consequence of the single
+    // acquisition, not an oversight in it.
+    let mut ancestor_states = Vec::with_capacity(ancestor_candidates.len());
+    for (block_id, snapshot) in all_refs[changed_len..].iter().zip(snapshots) {
+        let full_state = Some((
+            engine.read_all_properties_typed(block_id)?,
+            engine.read_tags(block_id)?,
+            engine.read_deleted_at(block_id)?,
+        ));
+        ancestor_states.push((snapshot, full_state));
+    }
+    Ok((states, ancestor_candidates, ancestor_states))
 }
 
 /// The `(changed, rank_only, tag_scope)` triple the no-op branches resolve to.
@@ -1803,7 +1801,7 @@ fn clearable_slot_ids(
     space_id: &SpaceId,
     inbox_ids: &[i64],
     require_covered: &[(i64, Vec<(PeerID, Counter)>)],
-    pending_changes: &[(u64, i32, i32)],
+    pending_changes: &[(PeerID, Counter, Counter)],
 ) -> Result<Vec<i64>, AppError> {
     if !pending_changes.is_empty() {
         tracing::warn!(
@@ -2593,10 +2591,12 @@ async fn gate_replay_slots(
     registry: &LoroEngineRegistry,
     device_id: &str,
     space: &SpaceId,
-    space_id: &str,
     slots: Vec<InboxSlot>,
     out: &mut BatchReplayOutcome,
 ) -> Result<(Vec<InboxSlot>, Vec<(i64, Vec<(PeerID, Counter)>)>), AppError> {
+    // `space.as_str()` for the log field, like every sibling here: it is the
+    // uppercase spelling `SpaceId::from_trusted` normalises to (invariant #8),
+    // so two log lines for one space cannot differ in case.
     let gates = {
         let blob_refs: Vec<&[u8]> = slots.iter().map(|s| s.bytes.as_slice()).collect();
         let mut guard = registry.for_space(space, device_id)?;
@@ -2613,7 +2613,7 @@ async fn gate_replay_slots(
             }
             agaric_engine::loro::engine::ReplayBlobGate::Fork(reason) => {
                 tracing::warn!(
-                    space_id,
+                    space_id = space.as_str(),
                     inbox_id = slot.id,
                     reason = %reason,
                     "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
@@ -2630,7 +2630,7 @@ async fn gate_replay_slots(
             }
             agaric_engine::loro::engine::ReplayBlobGate::Unreachable(reason) => {
                 tracing::warn!(
-                    space_id,
+                    space_id = space.as_str(),
                     inbox_id = slot.id,
                     reason = %reason,
                     "loro_sync: boot-replay inbox slot's update base is unreachable from \
@@ -2713,7 +2713,7 @@ pub async fn replay_inbox_batch(
     let space = SpaceId::from_trusted(space_id);
 
     let (mut accepted, declared_end_vv) =
-        gate_replay_slots(pool, registry, device_id, &space, space_id, slots, &mut out).await?;
+        gate_replay_slots(pool, registry, device_id, &space, slots, &mut out).await?;
     if accepted.is_empty() {
         return Ok(out);
     }
