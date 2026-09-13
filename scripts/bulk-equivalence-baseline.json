@@ -284,7 +284,7 @@
     "fn": "src-tauri/src/commands/properties.rs::set_property_batch_inner",
     "kind": "mutating",
     "status": "exception",
-    "reason": "DELIBERATELY NOT EQUIVALENT to set_property_inner: the batch path enforces a restricted key allowlist the single path does not. The divergence is the product decision, so an equivalence oracle here would encode the WRONG invariant. Any test must assert the documented difference, not equality"
+    "reason": "DELIBERATELY NOT EQUIVALENT to set_property_inner: the batch path enforces a restricted key allowlist the single path does not. The divergence is the product decision, so an equivalence oracle here would encode the WRONG invariant. Any test must assert the documented difference, not equality. Since #4639 the pre-tx value-shape check lives in validate_set_property_batch_value_shape and the reserved-key option-list fallback in validate_set_property_batch_text_key, but the allowlist guard, the fork and its disposition are unchanged"
   },
   {
     "fn": "src-tauri/src/commands/properties.rs::set_todo_state_batch",
@@ -297,6 +297,18 @@
     "kind": "mutating",
     "status": "exception",
     "reason": "DELIBERATELY NOT EQUIVALENT to set_todo_state_inner: the batch path skips recurrence expansion and the created_at/completed_at transitions. As above, equality is the wrong invariant to encode"
+  },
+  {
+    "fn": "src-tauri/src/commands/properties.rs::validate_set_property_batch_text_key",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: one SELECT against property_definitions for the batch's SINGLE (key, value) pair, split out of set_property_batch_inner (#4639). It takes no N-key input — the block_ids never reach it — writes nothing, and the caller keeps the transaction and its commit. Deliberately private to the batch root rather than shared with set_todo_state_inner / set_priority_inner, whose own fallback reads carry their own key literals; folding them would erase the per-key wording the single paths depend on. Caught by the `batch` name segment, which names the command it belongs to, and recorded here rather than renamed — narrowing the name is how a real fan-out escapes the heuristic"
+  },
+  {
+    "fn": "src-tauri/src/commands/properties.rs::validate_set_property_batch_value_shape",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: a pure pre-transaction shape check on the batch's SINGLE (key, value) pair — 1-50 characters for the two text keys, YYYY-MM-DD for the two date keys — split out of set_property_batch_inner (#4639). No N-key input, no I/O, nothing written. Same reason as its sibling above for keeping the `batch` segment in the name and recording a disposition instead"
   },
   {
     "fn": "src-tauri/src/commands/properties.rs::warn_if_batch_skips_recurrence",
