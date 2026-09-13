@@ -243,7 +243,6 @@ pub async fn list_block_history(
 /// unbounded and harmless. Keep it that way: a new consumer of this list
 /// must address ops by `(device_id, seq)` — both are on `HistoryEntry` —
 /// and never by position.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,
@@ -251,41 +250,55 @@ pub async fn list_page_history(
     space_id: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    let fetch_limit = page.limit + 1;
+    if page_id == "__all__" {
+        list_global_history(pool, op_type_filter, space_id, page).await
+    } else {
+        list_single_page_history(pool, page_id, op_type_filter, page).await
+    }
+}
 
+/// The `__all__` sheet: every op in the vault, optionally narrowed to one
+/// space. No page-scoping CTE, and `space_id` is the only structural filter —
+/// which is why this branch and [`list_single_page_history`] share their
+/// cursor shape and nothing else.
+async fn list_global_history(
+    pool: &SqlitePool,
+    op_type_filter: Option<&str>,
+    space_id: Option<&str>,
+    page: &PageRequest,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let fetch_limit = page.limit + 1;
     let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id) =
         history_cursor_binds(page)?;
 
-    if page_id == "__all__" {
-        // Global history: query all ops without page-scoping CTE.
-        // Phase 8 — when `space_id` is `Some`, narrow to ops whose
-        // `payload.block_id` belongs to the requested space (matching the
-        // pattern used in `pagination/hierarchy.rs:113-134`).
-        //
-        // Compile-time SQL check via `query_as!` (AGENTS.md
-        // invariant #6). The previous dynamic `query_as::<_, _>` form
-        // bypassed `cargo sqlx prepare` validation; this branch is
-        // entirely static SQL with `?N IS NULL` short-circuits, so the
-        // macro form fits without losing any flexibility.
-        //
-        // IX2 (#349) — EQP-verified (5 000-row op_log seed, ANALYZE'd):
-        // a candidate composite `idx_op_log(created_at, seq)` was NOT
-        // added, and no migration ships in this group. The `ORDER BY
-        // ol.created_at DESC, ol.seq DESC, ol.device_id DESC` here plans
-        // as `SCAN ol` + `USE TEMP B-TREE FOR ORDER BY` today. With the
-        // candidate index it became `SCAN ol USING INDEX
-        // idx_op_log_created_seq` + `USE TEMP B-TREE FOR LAST TERM OF
-        // ORDER BY` — i.e. it is STILL a full scan (the keyset
-        // `created_at < ?3 OR (… seq < ?4) OR (…)` OR-chain is not a
-        // bounded range the planner can seek, and the no-cursor branch
-        // binds NULL sentinels) and STILL needs a temp B-tree (only the
-        // trailing `device_id` term is removed from it). The win is
-        // marginal — one fewer sort key on an already-small LIMIT 51
-        // page — while the index adds write amplification on the
-        // hot-path op_log insert. The existing single-column
-        // `idx_op_log_created` already covers the per-`created_at`
-        // lookups that matter. Conclusion: not worth it; left out.
-        let rows = sqlx::query_as!(
+    // Phase 8 — when `space_id` is `Some`, narrow to ops whose
+    // `payload.block_id` belongs to the requested space (matching the
+    // pattern used in `pagination/hierarchy.rs:113-134`).
+    //
+    // Compile-time SQL check via `query_as!` (AGENTS.md
+    // invariant #6). The previous dynamic `query_as::<_, _>` form
+    // bypassed `cargo sqlx prepare` validation; this branch is
+    // entirely static SQL with `?N IS NULL` short-circuits, so the
+    // macro form fits without losing any flexibility.
+    //
+    // IX2 (#349) — EQP-verified (5 000-row op_log seed, ANALYZE'd):
+    // a candidate composite `idx_op_log(created_at, seq)` was NOT
+    // added, and no migration ships in this group. The `ORDER BY
+    // ol.created_at DESC, ol.seq DESC, ol.device_id DESC` here plans
+    // as `SCAN ol` + `USE TEMP B-TREE FOR ORDER BY` today. With the
+    // candidate index it became `SCAN ol USING INDEX
+    // idx_op_log_created_seq` + `USE TEMP B-TREE FOR LAST TERM OF
+    // ORDER BY` — i.e. it is STILL a full scan (the keyset
+    // `created_at < ?3 OR (… seq < ?4) OR (…)` OR-chain is not a
+    // bounded range the planner can seek, and the no-cursor branch
+    // binds NULL sentinels) and STILL needs a temp B-tree (only the
+    // trailing `device_id` term is removed from it). The win is
+    // marginal — one fewer sort key on an already-small LIMIT 51
+    // page — while the index adds write amplification on the
+    // hot-path op_log insert. The existing single-column
+    // `idx_op_log_created` already covers the per-`created_at`
+    // lookups that matter. Conclusion: not worth it; left out.
+    let rows = sqlx::query_as!(
             HistoryEntry,
             "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
                     ol.is_replicated AS \"is_replicated!: bool\" \
@@ -330,8 +343,20 @@ pub async fn list_page_history(
         .fetch_all(pool)
         .await?;
 
-        return build_page_response(rows, page.limit, history_cursor);
-    }
+    build_page_response(rows, page.limit, history_cursor)
+}
+
+/// One page's sheet: the ops against the page's own block subtree, plus the
+/// attachment ops the two probes in the doc above attribute back to it.
+async fn list_single_page_history(
+    pool: &SqlitePool,
+    page_id: &str,
+    op_type_filter: Option<&str>,
+    page: &PageRequest,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let fetch_limit = page.limit + 1;
+    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id) =
+        history_cursor_binds(page)?;
 
     // IX3 (#4335 review item 2) — EQP-verified (sqlite3 3.50.6, real
     // migrations applied, `ANALYZE`'d, op_log seeded to 6 000 and 50 000

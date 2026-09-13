@@ -387,6 +387,30 @@ pub fn validate_repeat_rule_shape(rule: &str) -> Result<(), RepeatRuleProblem> {
 
 // --- Per-block occurrence projection (was recurrence/projection.rs) ---
 
+/// Advance `base` one `interval` step at a time until it is strictly after
+/// `today`.
+///
+/// `None` means no future date was reachable: either the 10 000-step budget
+/// ran out without passing `today` (`++1d` against an original decades back)
+/// or `shift_date_once` overflowed mid-walk. Both leave a stale PAST date
+/// behind. The string parser (`parser::shift_date`) rejects this same input
+/// class with `Err(AppError::Validation)`; this emit-driven projection has no
+/// error channel, so its equivalent of a loud failure is to produce nothing.
+fn catch_up_past_today(
+    base: chrono::NaiveDate,
+    interval: &str,
+    today: chrono::NaiveDate,
+) -> Option<chrono::NaiveDate> {
+    let mut c = base;
+    for _ in 0..10_000 {
+        c = shift_date_once(c, interval)?;
+        if c > today {
+            return Some(c);
+        }
+    }
+    None
+}
+
 /// Project one repeating block's occurrence dates within
 /// `[range_start, range_end]`.
 ///
@@ -476,7 +500,6 @@ pub fn validate_repeat_rule_shape(rule: &str) -> Result<(), RepeatRuleProblem> {
 // shape — both callsites pass every field. The shared-helper contract
 // is meant to be the loud signature, not a hidden struct.
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn project_block_dates<F>(
     due_date: Option<&str>,
     scheduled_date: Option<&str>,
@@ -521,51 +544,14 @@ pub fn project_block_dates<F>(
         // Determine the starting point based on mode.
         let mut current = match mode {
             REPEAT_MODE_DOT_PLUS => today,
-            REPEAT_MODE_PLUS_PLUS => {
-                // Advance from `base` one step at a time until strictly
-                // greater than today. The caught-up date is pre-emitted
-                // below, then the main loop continues from it.
-                //
-                // #680 / the catch-up can fail to reach a
-                // future date in two ways — the 10 000-step budget
-                // elapses without `c > today` (e.g. `++1d` against an
-                // `original` decades in the past), or `shift_date_once`
-                // returns `None` mid-loop (single-step `NaiveDate`
-                // arithmetic overflow). In either case `c` is left as a
-                // STALE PAST date. Pre-fix, the pre-emit block below and
-                // the main loop still ran against that stale date, so the
-                // projection silently emitted a past occurrence.
-                //
-                // The string parser (`parser::shift_date`) treats this
-                // SAME input class as a hard `Err(AppError::Validation)`
-                // ("cap exceeded" / "arithmetic overflow"). This
-                // emit-driven projection has no error channel, so the
-                // consistent "loud failure" here is to SKIP the source
-                // entirely: produce no occurrence rather than a stale one.
-                // We track whether we actually caught up and `continue`
-                // to the next source when we did not.
-                let mut c = base;
-                let mut caught_up = false;
-                for _ in 0..10_000 {
-                    c = match shift_date_once(c, interval) {
-                        Some(d) => d,
-                        // Single-step overflow: cannot reach a valid
-                        // future date, so abandon this source rather than
-                        // emitting the stale `c`.
-                        None => break,
-                    };
-                    if c > today {
-                        caught_up = true;
-                        break;
-                    }
-                }
-                if !caught_up {
-                    // Cap exhausted or overflow without `c > today`: skip
-                    // emission (mirrors the parser's `Err(Validation)`).
-                    continue;
-                }
-                c
-            }
+            // The caught-up date is pre-emitted below, then the main loop
+            // continues from it. `None` means no future date was reachable,
+            // and emitting the stale past date it left behind would be a
+            // silent data bug — so skip the source entirely (#680).
+            REPEAT_MODE_PLUS_PLUS => match catch_up_past_today(base, interval, today) {
+                Some(c) => c,
+                None => continue,
+            },
             _ => base,
         };
 
