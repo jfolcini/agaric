@@ -142,25 +142,25 @@ async fn prefix_leaves_escaped_inherited(
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query_scalar!(
         "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT bti.block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bti.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL",
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT bti.block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bti.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL",
         escaped
     )
     .fetch_all(pool)
@@ -172,18 +172,18 @@ async fn prefix_leaves_escaped_inherited(
 async fn prefix_leaves_escaped(pool: &SqlitePool, escaped: &str) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query_scalar!(
         "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 ESCAPE '\\' \
-               AND b.deleted_at IS NULL",
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL",
         escaped
     )
     .fetch_all(pool)
@@ -198,25 +198,25 @@ async fn prefix_leaves_plain_inherited(
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query_scalar!(
         "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT bti.block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bti.block_id \
-             WHERE tc.name LIKE ?1 \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 \
-               AND b.deleted_at IS NULL",
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT bti.block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bti.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL",
         pattern
     )
     .fetch_all(pool)
@@ -228,18 +228,18 @@ async fn prefix_leaves_plain_inherited(
 async fn prefix_leaves_plain(pool: &SqlitePool, pattern: &str) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query_scalar!(
         "SELECT DISTINCT bt.block_id \
-             FROM tags_cache tc \
-             JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = bt.block_id \
-             WHERE tc.name LIKE ?1 \
-               AND b.deleted_at IS NULL \
-             UNION \
-             SELECT DISTINCT btr.source_id AS block_id \
-             FROM tags_cache tc \
-             JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-             JOIN blocks b ON b.id = btr.source_id \
-             WHERE tc.name LIKE ?1 \
-               AND b.deleted_at IS NULL",
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL",
         pattern
     )
     .fetch_all(pool)

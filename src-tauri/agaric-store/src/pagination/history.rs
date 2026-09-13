@@ -299,49 +299,49 @@ async fn list_global_history(
     // `idx_op_log_created` already covers the per-`created_at`
     // lookups that matter. Conclusion: not worth it; left out.
     let rows = sqlx::query_as!(
-            HistoryEntry,
-            "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
-                    ol.is_replicated AS \"is_replicated!: bool\" \
-             FROM op_log ol \
-             WHERE (?1 IS NULL OR ol.op_type = ?1) \
-               AND (?2 IS NULL OR ( \
-                    ol.created_at < ?3 \
-                    OR (ol.created_at = ?3 AND ol.seq < ?4) \
-                    OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
-               AND (?7 IS NULL OR ( \
-                    ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
-                    OR ( \
-                        ol.op_type IN ('delete_attachment', 'rename_attachment') \
-                        AND ( \
-                            EXISTS ( \
-                                SELECT 1 FROM attachments a \
-                                WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
-                                AND a.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
-                            ) \
-                            OR ( \
-                                ol.op_type = 'delete_attachment' \
-                                AND EXISTS ( \
-                                    SELECT 1 FROM op_log src_add \
-                                    WHERE src_add.op_type = 'add_attachment' \
-                                    AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                                    AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
-                                ) \
+        HistoryEntry,
+        "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
+         FROM op_log ol \
+         WHERE (?1 IS NULL OR ol.op_type = ?1) \
+           AND (?2 IS NULL OR ( \
+                ol.created_at < ?3 \
+                OR (ol.created_at = ?3 AND ol.seq < ?4) \
+                OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
+           AND (?7 IS NULL OR ( \
+                ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                OR ( \
+                    ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                    AND ( \
+                        EXISTS ( \
+                            SELECT 1 FROM attachments a \
+                            WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                            AND a.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                        ) \
+                        OR ( \
+                            ol.op_type = 'delete_attachment' \
+                            AND EXISTS ( \
+                                SELECT 1 FROM op_log src_add \
+                                WHERE src_add.op_type = 'add_attachment' \
+                                AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                                AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
                             ) \
                         ) \
                     ) \
-                )) \
-             ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
-             LIMIT ?5",
-            op_type_filter,    // ?1
-            cursor_flag,       // ?2
-            cursor_created_at, // ?3
-            cursor_seq,        // ?4
-            fetch_limit,       // ?5
-            cursor_device_id,  // ?6
-            space_id,          // ?7
-        )
-        .fetch_all(pool)
-        .await?;
+                ) \
+            )) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+         LIMIT ?5",
+        op_type_filter,    // ?1
+        cursor_flag,       // ?2
+        cursor_created_at, // ?3
+        cursor_seq,        // ?4
+        fetch_limit,       // ?5
+        cursor_device_id,  // ?6
+        space_id,          // ?7
+    )
+    .fetch_all(pool)
+    .await?;
 
     build_page_response(rows, page.limit, history_cursor)
 }

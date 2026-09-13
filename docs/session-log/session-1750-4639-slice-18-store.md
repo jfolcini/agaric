@@ -41,12 +41,33 @@ the split just gives each step the name it already had in a comment:
   "what page does the root belong to now, and is it itself a page" — as
   `root_page_context`.
 
-The SQL string literals were moved with their **bytes unchanged**, including
-the now-ragged continuation indent inside the extracted `query_scalar!` calls.
-That is deliberate: sqlx's prepare cache is keyed on the query text, so
-re-indenting a string inside `query!`/`query_as!`/`query_scalar!` invalidates
-the four `.sqlx/` caches and stops the change being a pure move. Ugly beats a
-cache regeneration nobody asked for.
+The extracted SQL literals were re-indented to their new nesting depth, and no
+`.sqlx/` cache moved.
+
+I had this backwards first time and shipped the wrong reason in the first push:
+I assumed sqlx's prepare cache is keyed on the literal's source text, so I left
+every continuation line at its old column to avoid a cache regeneration. It is
+not. Rust's `\`-newline escape strips the newline **and** the leading
+whitespace of the next line, so source indentation never reaches the string:
+
+```rust
+let a = "SELECT x \
+         FROM t";
+let b = "SELECT x \
+     FROM t";
+assert_eq!(a, b);   // both are "SELECT x FROM t"
+```
+
+The cache agrees — `query-cb4b829b…json` stores that query single-spaced. And
+the first push was its own counter-example: it moved all four literals to a
+different relative indent and the drift guard passed, which I read as "I
+preserved the bytes" when it actually meant "the bytes never depended on the
+indent". A guard passing is evidence about the guard's subject, not about
+whichever theory you happened to be holding.
+
+`rustfmt` does not reformat inside a macro invocation it cannot parse, which is
+why the moved `query_as!` body kept its old column and had to be shifted by
+hand; a `query!` body will never re-indent itself after a move.
 
 ## The one change that is not a pure move
 
