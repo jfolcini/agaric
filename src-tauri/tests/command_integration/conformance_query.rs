@@ -219,7 +219,7 @@ const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 /// `created_at` is a wall clock and stays off the token; `value_type` and
 /// `options` are the whole of what the declaration says. MUST match
 /// `PROPERTY_DEF_TOKEN` in the TS twin.
-const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options"];
+pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options"];
 
 /// An `AttachmentRow` (#3830), whose token head is the attachment id and whose
 /// attributes are every other column. `created_at` rides along VERBATIM,

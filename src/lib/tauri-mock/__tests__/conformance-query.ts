@@ -336,10 +336,11 @@ const HISTORY_TOKEN = { kind: 'id', idKey: 'op_type', attrKeys: ['is_replicated'
 /** A `PropertyDefinition` (#3830): the registry `key` plus what the
  *  declaration says. `created_at` is a wall clock and stays off the token.
  *  MUST match `PROPERTY_DEF_ATTRS` in the Rust twin. */
+export const PROPERTY_DEF_ATTRS = ['value_type', 'options'] as const
 const PROPERTY_DEF_TOKEN = {
   kind: 'id',
   idKey: 'key',
-  attrKeys: ['value_type', 'options'],
+  attrKeys: PROPERTY_DEF_ATTRS,
 } as const
 /** An `AttachmentRow` (#3830): the attachment id plus every other column.
  *  `created_at` is fixture-authored epoch-ms on a seeded row, not a clock, and

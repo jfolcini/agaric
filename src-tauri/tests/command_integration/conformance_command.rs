@@ -31,7 +31,7 @@
 
 use super::common::*;
 use super::conformance::resolve_op_arg_id;
-use super::conformance_query::{PROJECTING_STEP, relabel_token, row_token};
+use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
 use agaric_core::ulid::BlockId;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -48,6 +48,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["affected_page_ids"],
     ),
     ("purge_block", "block_id", &["purged_count"], &[]),
+    // #3830 — both `property_definitions` writers answer with the row, so
+    // their shape is `PROPERTY_DEF_ATTRS` read off a response instead of a
+    // SELECT. `created_at` stays off it for the reason the token gives.
+    ("create_property_def", "key", PROPERTY_DEF_ATTRS, &[]),
+    (
+        "update_property_def_options",
+        "key",
+        PROPERTY_DEF_ATTRS,
+        &[],
+    ),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -72,10 +82,28 @@ pub(super) async fn apply_op_via_command(
             .map(|l| resolve_op_arg_id(l, created_ids))
     };
     let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
+    // String args take no label expansion: a `property_definitions` key is
+    // the user's own text, not a seed id.
+    let opt_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
+    let req_str = |k: &str| {
+        opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+    };
 
     match command {
         "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
         "purge_block" => to_json(purge_block_inner(pool, DEV, mat, block_id()).await),
+        "create_property_def" => to_json(
+            create_property_def_inner(
+                pool,
+                req_str("key"),
+                req_str("valueType"),
+                opt_str("options"),
+            )
+            .await,
+        ),
+        "update_property_def_options" => to_json(
+            update_property_def_options_inner(pool, req_str("key"), req_str("options")).await,
+        ),
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }

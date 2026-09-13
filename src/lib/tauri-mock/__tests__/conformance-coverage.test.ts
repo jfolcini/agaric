@@ -312,10 +312,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
     'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
     'write; none does yet',
-  create_property_def: 'property_definitions registry (app-layer), not projected block state',
   delete_property_def: 'property_definitions registry (app-layer), not projected block state',
-  update_property_def_options:
-    'property_definitions registry (app-layer), not projected block state',
 
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
@@ -674,7 +671,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'confirm_pairing',
   'create_blocks_batch',
   'create_page_in_space',
-  'create_property_def',
   'create_space',
   'delete_attachment',
   'delete_blocks_by_ids',
@@ -706,7 +702,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'undo_page_group',
   'undo_page_op',
   'update_peer_name',
-  'update_property_def_options',
 ]
 
 const NOT_YET_PINNED_READ: readonly string[] = [

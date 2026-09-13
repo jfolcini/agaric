@@ -15,7 +15,7 @@
  * as `WIRE` in `conformance-query.ts` mirrors `run_step`.
  */
 
-import { idToken } from '@/lib/tauri-mock/__tests__/conformance-query'
+import { PROPERTY_DEF_ATTRS, idToken } from '@/lib/tauri-mock/__tests__/conformance-query'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 
 export interface CommandOpStep {
@@ -53,6 +53,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: ['affected_page_ids'],
   },
   purge_block: { idKey: 'block_id', attrs: ['purged_count'], lists: [] },
+  // #3830 — the two `property_definitions` writers answer with the row, so
+  // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
+  create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  update_property_def_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
