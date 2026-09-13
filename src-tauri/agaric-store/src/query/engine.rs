@@ -563,7 +563,6 @@ fn map_fts_error(e: sqlx::Error) -> AppError {
 
 /// Compile and run an advanced query.
 #[tracing::instrument(skip_all, err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compile_and_run(
     pool: &SqlitePool,
     request: AdvancedQueryRequest,
@@ -574,18 +573,85 @@ pub async fn compile_and_run(
     // 2. Leaf gate — reject unsupported keys and malformed values before compiling.
     gate_leaves(&request.filter)?;
 
-    // Validate limit (mirror PageRequest::new's policy).
-    let limit = match request.limit {
-        Some(l) if (1..=MAX_LIMIT).contains(&l) => l,
-        Some(l) => {
-            return Err(AppError::validation(format!(
-                "advanced query limit must be in [1, {MAX_LIMIT}]; got {l}"
-            )));
-        }
-        None => DEFAULT_LIMIT,
-    };
+    let limit = validate_limit(request.limit)?;
 
-    // 3. Compile the boolean tree to one WhereClause.
+    // 3 + 4. One compiled predicate, and the bind numbering that goes with it.
+    let ctx = compile_query_ctx(&request)?;
+
+    // 4b. GROUPED dispatch. When the request carries a `group_by`, the engine
+    //     buckets the matched rows by the spec's dimension and returns the
+    //     grouped page (group-level keyset pagination + a bounded per-group
+    //     member preview); `rows` stays empty. It runs against the same `ctx`
+    //     the flat path uses, which is what makes "grouping composes with both
+    //     structural filters and full-text" a property of the code rather than
+    //     a promise in a comment. The flat path below is UNCHANGED (full
+    //     backward compat) when `group_by` is `None`.
+    if let Some(spec) = request.group_by.as_ref() {
+        return run_grouped(pool, spec, &request, &ctx, limit).await;
+    }
+
+    // Decode the cursor (if any) and resolve the sort terms. (Flat path only;
+    // the grouped path above decodes its own group-level cursor.)
+    let cursor = match request.cursor.as_deref() {
+        Some(s) => Some(QueryCursor::decode(s)?),
+        None => None,
+    };
+    let (terms, sort_joins) = resolve_sort(&request.sort, ctx.has_fulltext())?;
+    if let Some(c) = cursor.as_ref()
+        && c.values.len() != terms.len()
+    {
+        return Err(AppError::validation(
+            "cursor: sort-key count does not match this request's sort".to_string(),
+        ));
+    }
+
+    let (total_count, aggregates) =
+        first_page_scalars(pool, &ctx, &request.aggregates, cursor.as_ref()).await?;
+    let rows = fetch_flat_page(pool, &ctx, &terms, &sort_joins, cursor.as_ref(), limit).await?;
+    flat_page_response(rows, &terms, limit, total_count, aggregates)
+}
+
+/// Validate the requested page size, mirroring `PageRequest::new`'s policy:
+/// out of range is rejected, never clamped (invariant 10).
+fn validate_limit(limit: Option<i64>) -> Result<i64, AppError> {
+    match limit {
+        Some(l) if (1..=MAX_LIMIT).contains(&l) => Ok(l),
+        Some(l) => Err(AppError::validation(format!(
+            "advanced query limit must be in [1, {MAX_LIMIT}]; got {l}"
+        ))),
+        None => Ok(DEFAULT_LIMIT),
+    }
+}
+
+/// Sanitise the full-text query into the FTS5 `MATCH` expression, or `None`
+/// when the request carries no full-text term.
+///
+/// An empty result after trigram/operator filtering (e.g. a query of only
+/// sub-trigram tokens) is REJECTED rather than dropped, because dropping it
+/// would silently widen the query to the whole structural set.
+fn sanitize_fulltext(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let sanitized = sanitize_fts_query(raw);
+    if sanitized.is_empty() {
+        return Err(AppError::validation(
+            "Invalid search query: no searchable terms (each term must be \
+             at least 3 characters)"
+                .to_string(),
+        ));
+    }
+    Ok(Some(sanitized))
+}
+
+/// Compile the boolean filter tree into the one predicate every statement in
+/// this query runs against, and number its binds.
+///
+/// Bind numbering, which the rest of the engine depends on: with full-text
+/// `?1` is the MATCH expression and `?2` the space id, so the filter's binds
+/// start at `?3`; without it `?1` is the space id and the filter binds start
+/// at `?2`. The compiled fragment is composed via a structured [`SqlFragment`]
+/// (#2255) whose placeholders are numbered in a single arithmetic pass, and a
+/// `?`/bind-count drift is a release-active hard error.
+fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppError> {
     let where_clause = QueryProjection.compile_expr(&request.filter);
     if where_clause.is_unsupported() {
         // Defence in depth — the gate already rejected unsupported keys.
@@ -595,51 +661,21 @@ pub async fn compile_and_run(
         ));
     }
 
-    // 3b. Full-text composition. When `fulltext` is `Some`, the query
-    //     INTERSECTS an FTS5 `MATCH` with the structural predicate: the base
-    //     FROM becomes `fts_blocks fts JOIN blocks b ON b.id = fts.block_id`
-    //     and `fts_blocks MATCH ?1` is AND-composed in front of the
-    //     structural WHERE. The MATCH bind is the SANITISED query (an FTS5
-    //     parse error surfaces as `AppError::Validation`). The `bm25` rank
-    //     (`fts.rank`) becomes the per-row `score` and the relevance sort
-    //     source.
-    let match_sanitized: Option<String> = match request.fulltext.as_deref() {
-        Some(raw) => {
-            let sanitized = sanitize_fts_query(raw);
-            if sanitized.is_empty() {
-                // After trigram/operator filtering nothing remains to match
-                // (e.g. a query of only sub-trigram tokens). Reject rather
-                // than silently returning the whole structural set.
-                return Err(AppError::validation(
-                    "Invalid search query: no searchable terms (each term must be \
-                     at least 3 characters)"
-                        .to_string(),
-                ));
-            }
-            Some(sanitized)
-        }
-        None => None,
-    };
+    // Full-text composition. When `fulltext` is `Some`, the query INTERSECTS
+    // an FTS5 `MATCH` with the structural predicate: the base FROM becomes
+    // `fts_blocks fts JOIN blocks b ON b.id = fts.block_id` and
+    // `fts_blocks MATCH ?1` is AND-composed in front of the structural WHERE.
+    // The `bm25` rank (`fts.rank`) becomes the per-row `score` and the
+    // relevance sort source.
+    let match_sanitized = sanitize_fulltext(request.fulltext.as_deref())?;
     let has_fulltext = match_sanitized.is_some();
 
-    // 4. Renumber the compiled `?` placeholders to explicit `?N`. With
-    //    full-text, `?1` is the MATCH expr and `?2` is the space_id, so the
-    //    filter's binds start at `?3`; without it `?1` is the space_id and
-    //    the filter binds start at `?2`. The compiled fragment is composed via
-    //    a structured [`SqlFragment`] (#2255): its placeholders are numbered in
-    //    a single arithmetic pass and a `?`/bind-count drift is a release-active
-    //    hard error, replacing the former char-by-char `?`→`?N` scan.
     let space_pos = if has_fulltext { 2 } else { 1 };
     let mut next_pos = space_pos + 1; // first free slot after the space bind
     let filter_fragment = SqlFragment::from_where_clause(where_clause);
     let filter_sql = filter_fragment.render(&mut next_pos);
     let filter_binds = filter_fragment.into_binds();
 
-    // FROM clause + structural predicate. On the full-text path the FROM
-    // joins `fts_blocks` and the predicate is prefixed with the MATCH;
-    // otherwise it is the plain `blocks b` scan. The `?N` of the space bind
-    // tracks `space_pos`. The same predicate + binds drive BOTH the flat and
-    // the grouped paths.
     let from_clause = if has_fulltext {
         "fts_blocks fts JOIN blocks b ON b.id = fts.block_id"
     } else {
@@ -650,173 +686,101 @@ pub async fn compile_and_run(
     } else {
         ""
     };
-    let predicate = format!(
-        "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL AND ({filter_sql})"
+
+    Ok(QueryCtx {
+        from_clause,
+        predicate: format!(
+            "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL AND ({filter_sql})"
+        ),
+        space_id: request.space_id.clone(),
+        space_pos,
+        next_pos,
+        match_sanitized,
+        filter_binds,
+    })
+}
+
+/// FIRST page only (no cursor): the `total_count` and the GLOBAL aggregates
+/// are two INDEPENDENT read-only scalar queries over the SAME bound predicate
+/// (each un-limited, no keyset / ORDER BY / LIMIT). Aggregates over the full
+/// match set are invariant across cursor pages, so both sit behind the same
+/// first-page guard. They share no mutable state — each clones the binds it
+/// needs onto its own statement — so they run CONCURRENTLY on two separate
+/// read-pool connections via `tokio::try_join!` instead of two serial awaits.
+///
+/// POOL BUDGET (weighed per #2282 carve-out): the read pool is
+/// `max_connections(4)` (`db/pool.rs::init_pools`) and is SHARED with the
+/// search palette, backlinks, and the page browser — its own docs flag
+/// saturation at 4 connections under bursty typing
+/// (`SLOW_SEARCH_ACQUIRE_WARN_MS`). Four is not comfortably larger than the
+/// small-pool threshold, so we parallelise ONLY the two cheap scalar reads
+/// (count + aggregate) and keep the heavier row fetch serial. This caps a
+/// single advanced query's first page at 2 concurrent read connections,
+/// leaving 2 for the other surfaces sharing the pool.
+async fn first_page_scalars(
+    pool: &SqlitePool,
+    ctx: &QueryCtx,
+    specs: &[AggregateSpec],
+    cursor: Option<&QueryCursor>,
+) -> Result<(Option<i64>, Vec<AggregateResult>), AppError> {
+    if cursor.is_some() {
+        return Ok((None, Vec::new()));
+    }
+    let (count, aggregates) = tokio::try_join!(
+        match_set_count(pool, ctx),
+        global_aggregates(pool, ctx, specs)
+    )?;
+    Ok((Some(count), aggregates))
+}
+
+/// `COUNT(*)` over the same predicate + binds as the fetch.
+async fn match_set_count(pool: &SqlitePool, ctx: &QueryCtx) -> Result<i64, AppError> {
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM {} WHERE {}",
+        ctx.from_clause, ctx.predicate
     );
-
-    // 4b. GROUPED dispatch. When the request carries a `group_by`, the engine
-    //     buckets the matched rows by the spec's dimension and returns the
-    //     grouped page (group-level keyset pagination + a bounded per-group
-    //     member preview); `rows` stays empty. The grouped path reuses the
-    //     SAME predicate / binds / FROM / FTS MATCH, so grouping composes with
-    //     both structural filters and full-text. The flat path below is
-    //     UNCHANGED (full backward compat) when `group_by` is `None`.
-    if let Some(spec) = request.group_by.as_ref() {
-        let ctx = GroupCtx {
-            from_clause,
-            predicate: &predicate,
-            space_id: &request.space_id,
-            space_pos,
-            next_pos,
-            match_sanitized: match_sanitized.as_deref(),
-            has_fulltext,
-            filter_binds: &filter_binds,
-        };
-        return run_grouped(pool, spec, &request, ctx, limit).await;
+    // dynamic-sql: WHERE is the runtime-compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
+    if let Some(m) = ctx.match_sanitized.as_ref() {
+        q = q.bind(m.clone()); // ?1 = MATCH
     }
-
-    // Decode the cursor (if any) and resolve the sort terms. (Flat path only;
-    // the grouped path above decodes its own group-level cursor.)
-    let cursor = match request.cursor.as_deref() {
-        Some(s) => Some(QueryCursor::decode(s)?),
-        None => None,
-    };
-    let (terms, sort_joins) = resolve_sort(&request.sort, has_fulltext)?;
-    if let Some(c) = cursor.as_ref()
-        && c.values.len() != terms.len()
-    {
-        return Err(AppError::validation(
-            "cursor: sort-key count does not match this request's sort".to_string(),
-        ));
+    q = q.bind(&ctx.space_id); // ?space_pos
+    for b in &ctx.filter_binds {
+        q = bind_scalar(q, b);
     }
-
-    // 5 + 5b. FIRST page only (no cursor): the `total_count` and the GLOBAL
-    //     aggregates are two INDEPENDENT read-only scalar queries over the SAME
-    //     bound predicate (each un-limited, no keyset / ORDER BY / LIMIT).
-    //     Aggregates over the full match set are invariant across cursor pages,
-    //     so both reuse the same first-page (`cursor.is_none()`) guard. They
-    //     share no mutable state — each clones the binds it needs onto its own
-    //     statement — so they run CONCURRENTLY on two separate read-pool
-    //     connections via `tokio::try_join!` instead of two serial awaits.
-    //
-    //     POOL BUDGET (weighed per #2282 carve-out): the read pool is
-    //     `max_connections(4)` (`db/pool.rs::init_pools`) and is SHARED with the
-    //     search palette, backlinks, and the page browser — its own docs flag
-    //     saturation at 4 connections under bursty typing
-    //     (`SLOW_SEARCH_ACQUIRE_WARN_MS`). Four is not comfortably larger than
-    //     the small-pool threshold, so we parallelise ONLY the two cheap scalar
-    //     reads (count + aggregate) and keep the heavier row fetch below SERIAL.
-    //     This caps a single advanced query's first page at 2 concurrent read
-    //     connections, leaving 2 for the other surfaces sharing the pool.
-    //
-    //     The aggregate query is a SEPARATE statement with its OWN bind
-    //     numbering, so its property-key binds start in the slot right after the
-    //     space + filter binds; it resolves them against a LOCAL position
-    //     counter (a copy of `next_pos`), so the flat fetch's keyset numbering
-    //     (which mutates `next_pos` below) is untouched.
-    let (total_count, aggregates): (Option<i64>, Vec<AggregateResult>) = if cursor.is_none() {
-        // COUNT(*) over the same predicate + binds as the fetch.
-        let count_fut = async {
-            let count_sql = format!("SELECT COUNT(*) FROM {from_clause} WHERE {predicate}");
-            // dynamic-sql: WHERE is the runtime-compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
-            let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
-            if let Some(m) = match_sanitized.as_ref() {
-                q = q.bind(m.clone()); // ?1 = MATCH
-            }
-            q = q.bind(&request.space_id); // ?space_pos
-            for b in &filter_binds {
-                q = bind_scalar(q, b);
-            }
-            // On the full-text path an FTS5 MATCH-syntax error must surface as
-            // Validation, not Database.
-            let count = if has_fulltext {
-                q.fetch_one(pool).await.map_err(map_fts_error)?
-            } else {
-                q.fetch_one(pool).await?
-            };
-            Ok::<Option<i64>, AppError>(Some(count))
-        };
-
-        // GLOBAL aggregates over the same predicate + binds, un-limited.
-        let agg_fut = async {
-            if request.aggregates.is_empty() {
-                Ok::<Vec<AggregateResult>, AppError>(Vec::new())
-            } else {
-                let mut agg_pos = next_pos;
-                let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
-                run_aggregate_query(
-                    pool,
-                    from_clause,
-                    &predicate,
-                    &request.space_id,
-                    match_sanitized.as_deref(),
-                    has_fulltext,
-                    &filter_binds,
-                    &agg_terms,
-                    &agg_binds,
-                )
-                .await
-            }
-        };
-
-        tokio::try_join!(count_fut, agg_fut)?
+    // On the full-text path an FTS5 MATCH-syntax error must surface as
+    // Validation, not Database.
+    if ctx.has_fulltext() {
+        q.fetch_one(pool).await.map_err(map_fts_error)
     } else {
-        (None, Vec::new())
-    };
-
-    // 6. Keyset predicate (if resuming) + ORDER BY + LIMIT.
-    let keyset_sql;
-    let keyset_binds: Vec<Bind>;
-    if let Some(c) = cursor.as_ref() {
-        let (sql, binds) = keyset_predicate(&terms, c, &mut next_pos);
-        keyset_sql = format!(" AND {sql}");
-        keyset_binds = binds;
-    } else {
-        keyset_sql = String::new();
-        keyset_binds = Vec::new();
+        Ok(q.fetch_one(pool).await?)
     }
+}
 
-    // `NULLS LAST` in both directions so the ORDER BY matches the keyset
-    // predicate's NULL handling (SQLite's default is NULLS FIRST for ASC,
-    // which would disagree with `strict_clause`).
-    let order_by = terms
-        .iter()
-        .map(|t| {
-            format!(
-                "{} {} NULLS LAST",
-                t.expr,
-                if t.desc { "DESC" } else { "ASC" }
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
+/// One page of rows: the keyset resume predicate (when resuming), the
+/// `ORDER BY`, and the `LIMIT`, bound and fetched.
+async fn fetch_flat_page(
+    pool: &SqlitePool,
+    ctx: &QueryCtx,
+    terms: &[SortTerm],
+    sort_joins: &SortJoins,
+    cursor: Option<&QueryCursor>,
+    limit: i64,
+) -> Result<Vec<EngineRow>, AppError> {
+    // The keyset binds and the LIMIT bind share ONE counter, and the order is
+    // load-bearing: `limit_pos` is whatever slot is free AFTER
+    // `keyset_predicate` has claimed its own. Read it before that call and
+    // every cursor page binds its limit into the first keyset slot instead.
+    let mut next_pos = ctx.next_pos;
+    let (keyset_sql, keyset_binds) = match cursor {
+        Some(c) => {
+            let (sql, binds) = keyset_predicate(terms, c, &mut next_pos);
+            (format!(" AND {sql}"), binds)
+        }
+        None => (String::new(), Vec::new()),
+    };
     let limit_pos = next_pos; // LIMIT ?N
-    let limit_plus_one = limit + 1; // probe-for-more
-
-    // `__rank` carries `fts.rank` (bm25) on the full-text path and `NULL` on
-    // the structural path — selected unconditionally so `EngineRow` has a
-    // stable column count. `CAST(NULL AS REAL)` keeps the column's declared
-    // type REAL so sqlx decodes it as `Option<f64>` either way.
-    let rank_select = if has_fulltext {
-        "fts.rank"
-    } else {
-        "CAST(NULL AS REAL)"
-    };
-
-    // `last_edited` is always the correlated per-candidate seek on
-    // `op_log(block_id, created_at)` — the SAME expression the `LastEdited`
-    // sort emits in ORDER BY and the keyset WHERE (see `SortJoins`). The
-    // pre-aggregated derived-table join was removed (#2304): it MATERIALIZEd
-    // the whole op_log per statement regardless of candidate selectivity.
-    let last_edited_select =
-        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)";
-    let title_select = if sort_joins.title {
-        "pc.title"
-    } else {
-        "(SELECT title FROM pages_cache WHERE page_id = b.id)"
-    };
-    let fetch_from = format!("{from_clause}{}", sort_joins.sql());
+    let fetch_from = format!("{}{}", ctx.from_clause, sort_joins.sql());
 
     let fetch_sql = format!(
         "SELECT {cols}, \
@@ -828,33 +792,81 @@ pub async fn compile_and_run(
          ORDER BY {order_by} \
          LIMIT ?{limit_pos}",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
+        // `last_edited` is always the correlated per-candidate seek on
+        // `op_log(block_id, created_at)` — the SAME expression the `LastEdited`
+        // sort emits in ORDER BY and the keyset WHERE (see `SortJoins`). The
+        // pre-aggregated derived-table join was removed (#2304): it MATERIALIZEd
+        // the whole op_log per statement regardless of candidate selectivity.
+        last_edited_select =
+            "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)",
+        title_select = if sort_joins.title {
+            "pc.title"
+        } else {
+            "(SELECT title FROM pages_cache WHERE page_id = b.id)"
+        },
+        // `__rank` carries `fts.rank` (bm25) on the full-text path and `NULL`
+        // on the structural path — selected unconditionally so `EngineRow` has
+        // a stable column count. `CAST(NULL AS REAL)` keeps the column's
+        // declared type REAL so sqlx decodes it as `Option<f64>` either way.
+        rank_select = if ctx.has_fulltext() {
+            "fts.rank"
+        } else {
+            "CAST(NULL AS REAL)"
+        },
+        predicate = ctx.predicate,
+        order_by = order_by_clause(terms),
     );
 
     // dynamic-sql: keyset body varies with the runtime sort mode + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query_as::<_, EngineRow>(sqlx::AssertSqlSafe(fetch_sql.as_str()));
-    if let Some(m) = match_sanitized.as_ref() {
+    if let Some(m) = ctx.match_sanitized.as_ref() {
         q = q.bind(m.clone()); // ?1 = MATCH
     }
-    q = q.bind(&request.space_id); // ?space_pos
-    for b in &filter_binds {
+    q = q.bind(&ctx.space_id); // ?space_pos
+    for b in &ctx.filter_binds {
         q = bind_as(q, b);
     }
     for b in &keyset_binds {
         q = bind_as(q, b);
     }
-    q = q.bind(limit_plus_one);
+    q = q.bind(limit + 1); // probe-for-more
 
     // On the full-text path an FTS5 MATCH-syntax error must surface as
     // Validation, not Database. (On the first page the COUNT above already
     // catches it, but cursor pages skip the COUNT, so map here too.)
-    let mut rows: Vec<EngineRow> = if has_fulltext {
-        q.fetch_all(pool).await.map_err(map_fts_error)?
+    if ctx.has_fulltext() {
+        q.fetch_all(pool).await.map_err(map_fts_error)
     } else {
-        q.fetch_all(pool).await?
-    };
+        Ok(q.fetch_all(pool).await?)
+    }
+}
 
-    // Probe-for-more: trim the extra row, build the next cursor from the
-    // last kept row's sort tuple.
+/// `NULLS LAST` in both directions so the ORDER BY matches the keyset
+/// predicate's NULL handling (SQLite's default is NULLS FIRST for ASC, which
+/// would disagree with `strict_clause`).
+fn order_by_clause(terms: &[SortTerm]) -> String {
+    terms
+        .iter()
+        .map(|t| {
+            format!(
+                "{} {} NULLS LAST",
+                t.expr,
+                if t.desc { "DESC" } else { "ASC" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Trim the probe-for-more row, build the next cursor from the last kept
+/// row's sort tuple, and fold the rest into the response.
+fn flat_page_response(
+    mut rows: Vec<EngineRow>,
+    terms: &[SortTerm],
+    limit: i64,
+    total_count: Option<i64>,
+    aggregates: Vec<AggregateResult>,
+) -> Result<AdvancedQueryResponse, AppError> {
     let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
     let has_more = rows.len() > limit_usize;
     if has_more {
@@ -874,16 +886,14 @@ pub async fn compile_and_run(
         None
     };
 
-    let result_rows = rows
-        .into_iter()
-        .map(|r| QueryResultRow {
-            score: r.rank, // bm25 on the full-text path; `None` structurally.
-            block: r.block,
-        })
-        .collect();
-
     Ok(AdvancedQueryResponse {
-        rows: result_rows,
+        rows: rows
+            .into_iter()
+            .map(|r| QueryResultRow {
+                score: r.rank, // bm25 on the full-text path; `None` structurally.
+                block: r.block,
+            })
+            .collect(),
         groups: Vec::new(), // flat mode — no group buckets.
         next_cursor,
         has_more,
@@ -1131,29 +1141,36 @@ fn decode_aggregates(terms: &[AggTerm], cells: &[Option<f64>]) -> Vec<AggregateR
 // Grouped path (#1280 grouping fast-follow)
 // ───────────────────────────────────────────────────────────────────────────
 
-/// The shared predicate/bind context threaded from [`compile_and_run`] into
-/// the grouped path so grouping reuses the EXACT same structural + FTS
-/// predicate as the flat path.
-struct GroupCtx<'a> {
+/// The compiled predicate every statement in one query runs against, and the
+/// bind numbering they share. Built once by [`compile_query_ctx`] and used by
+/// BOTH the flat and the grouped path, so the two cannot drift apart.
+struct QueryCtx {
     /// `blocks b` or the `fts_blocks fts JOIN blocks b …` full-text FROM.
-    from_clause: &'a str,
+    from_clause: &'static str,
     /// The assembled `… WHERE` predicate (`?N` numbered, sans the group key
     /// bind / keyset / LIMIT).
-    predicate: &'a str,
+    predicate: String,
     /// The space id (bound at `?space_pos`).
-    space_id: &'a str,
+    space_id: String,
     /// The `?N` slot the space id occupies.
     space_pos: usize,
     /// The first FREE `?N` slot after the space + filter binds — where the
     /// group-key bind (property key) and the keyset/LIMIT binds begin.
     next_pos: usize,
     /// The sanitised FTS `MATCH` query (bound at `?1`) on the full-text path.
-    match_sanitized: Option<&'a str>,
-    /// Whether the full-text path is active (drives the `?1` MATCH bind + the
-    /// FTS5 error mapping).
-    has_fulltext: bool,
+    match_sanitized: Option<String>,
     /// The compiled filter binds (bound in order after the space bind).
-    filter_binds: &'a [Bind],
+    filter_binds: Vec<Bind>,
+}
+
+impl QueryCtx {
+    /// Whether the full-text path is active — it drives the `?1` MATCH bind,
+    /// the `fts.rank` select, and the FTS5 error mapping. DERIVED rather than
+    /// stored beside `match_sanitized`: two fields that must agree are two
+    /// fields that can disagree.
+    fn has_fulltext(&self) -> bool {
+        self.match_sanitized.is_some()
+    }
 }
 
 /// The literal `strftime` format for a [`DateBucketUnit`]. A closed mapping
@@ -1344,7 +1361,7 @@ async fn run_grouped(
     pool: &SqlitePool,
     spec: &GroupSpec,
     request: &AdvancedQueryRequest,
-    ctx: GroupCtx<'_>,
+    ctx: &QueryCtx,
     limit: i64,
 ) -> Result<AdvancedQueryResponse, AppError> {
     // The group-key property bind (if any) occupies the first free slot after
@@ -1370,21 +1387,22 @@ async fn run_grouped(
 
     // FIRST page only: the bucket count is invariant across cursor pages.
     let total_count: Option<i64> = if group_cursor.is_none() {
-        Some(grouped_total_count(pool, &ctx, &key_sql).await?)
+        Some(grouped_total_count(pool, ctx, &key_sql).await?)
     } else {
         None
     };
 
-    // FIRST page only, like `total_count`.
-    let global_aggregates: Vec<AggregateResult> = if group_cursor.is_none() {
-        grouped_global_aggregates(pool, &ctx, &request.aggregates).await?
+    // FIRST page only, like `total_count`. The same helper the flat path uses:
+    // these aggregates are over the UN-grouped match set either way.
+    let aggregates: Vec<AggregateResult> = if group_cursor.is_none() {
+        global_aggregates(pool, ctx, &request.aggregates).await?
     } else {
         Vec::new()
     };
 
     let mut buckets = fetch_group_buckets(
         pool,
-        &ctx,
+        ctx,
         &key_sql,
         &request.aggregates,
         group_cursor.as_ref(),
@@ -1406,21 +1424,21 @@ async fn run_grouped(
             next_cursor: None,
             has_more: false,
             total_count,
-            aggregates: global_aggregates,
+            aggregates,
         });
     }
 
     let page_keys: Vec<String> = buckets.iter().map(|b| b.gkey.clone()).collect();
-    let by_key = fetch_member_preview(pool, &ctx, &key_sql, &page_keys).await?;
+    let by_key = fetch_member_preview(pool, ctx, &key_sql, &page_keys).await?;
 
-    grouped_page_response(&buckets, by_key, has_more, total_count, global_aggregates)
+    grouped_page_response(&buckets, by_key, has_more, total_count, aggregates)
 }
 
 /// How many buckets the match set has in total — the grouped page's
 /// `total_count`.
 async fn grouped_total_count(
     pool: &SqlitePool,
-    ctx: &GroupCtx<'_>,
+    ctx: &QueryCtx,
     key: &GroupKeySql<'_>,
 ) -> Result<i64, AppError> {
     let count_sql = format!(
@@ -1429,21 +1447,21 @@ async fn grouped_total_count(
         gkey = key.expr,
         from = ctx.from_clause,
         join = key.join,
-        pred = ctx.predicate,
+        pred = &ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
-    if let Some(m) = ctx.match_sanitized {
+    if let Some(m) = ctx.match_sanitized.as_ref() {
         q = q.bind(m.to_string()); // ?1 = MATCH
     }
     q = q.bind(ctx.space_id.to_string()); // ?space_pos
-    for b in ctx.filter_binds {
+    for b in &ctx.filter_binds {
         q = bind_scalar(q, b);
     }
     if let Some(b) = key.bind {
         q = bind_scalar(q, b);
     }
-    if ctx.has_fulltext {
+    if ctx.has_fulltext() {
         q.fetch_one(pool).await.map_err(map_fts_error)
     } else {
         Ok(q.fetch_one(pool).await?)
@@ -1456,9 +1474,9 @@ async fn grouped_total_count(
 /// predicate / FROM, with NO group-key join, so a multi-valued tag key does not
 /// double-count. A separate statement with its OWN bind numbering (a local
 /// position counter), so the group-page numbering is untouched.
-async fn grouped_global_aggregates(
+async fn global_aggregates(
     pool: &SqlitePool,
-    ctx: &GroupCtx<'_>,
+    ctx: &QueryCtx,
     specs: &[AggregateSpec],
 ) -> Result<Vec<AggregateResult>, AppError> {
     if specs.is_empty() {
@@ -1469,11 +1487,11 @@ async fn grouped_global_aggregates(
     run_aggregate_query(
         pool,
         ctx.from_clause,
-        ctx.predicate,
-        ctx.space_id,
-        ctx.match_sanitized,
-        ctx.has_fulltext,
-        ctx.filter_binds,
+        &ctx.predicate,
+        &ctx.space_id,
+        ctx.match_sanitized.as_deref(),
+        ctx.has_fulltext(),
+        &ctx.filter_binds,
         &terms,
         &binds,
     )
@@ -1488,7 +1506,7 @@ async fn grouped_global_aggregates(
 /// so NULL never occurs.
 async fn fetch_group_buckets(
     pool: &SqlitePool,
-    ctx: &GroupCtx<'_>,
+    ctx: &QueryCtx,
     key: &GroupKeySql<'_>,
     specs: &[AggregateSpec],
     cursor: Option<&GroupCursor>,
@@ -1526,15 +1544,15 @@ async fn fetch_group_buckets(
          WHERE {pred} GROUP BY gkey{having} \
          ORDER BY gcount DESC, gkey ASC LIMIT ?{limit_pos}",
         from = ctx.from_clause,
-        pred = ctx.predicate,
+        pred = &ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + per-group aggregate SELECT + WHERE + keyset HAVING are the runtime GroupKey + AggregateSpec set + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query(sqlx::AssertSqlSafe(group_sql.as_str()));
-    if let Some(m) = ctx.match_sanitized {
+    if let Some(m) = ctx.match_sanitized.as_ref() {
         q = q.bind(m.to_string()); // ?1 = MATCH
     }
     q = q.bind(ctx.space_id.to_string()); // ?space_pos
-    for b in ctx.filter_binds {
+    for b in &ctx.filter_binds {
         q = bind_raw(q, b);
     }
     if let Some(b) = key_bind {
@@ -1549,7 +1567,7 @@ async fn fetch_group_buckets(
         q = q.bind(c.count).bind(c.count).bind(c.key.clone());
     }
     q = q.bind(limit_plus_one);
-    let bucket_rows: Vec<sqlx::sqlite::SqliteRow> = if ctx.has_fulltext {
+    let bucket_rows: Vec<sqlx::sqlite::SqliteRow> = if ctx.has_fulltext() {
         q.fetch_all(pool).await.map_err(map_fts_error)?
     } else {
         q.fetch_all(pool).await?
@@ -1602,12 +1620,12 @@ fn preview_order_clause(has_fulltext: bool) -> Result<String, AppError> {
 /// `ROW_NUMBER()` window so a huge bucket cannot blow the payload.
 async fn fetch_member_preview(
     pool: &SqlitePool,
-    ctx: &GroupCtx<'_>,
+    ctx: &QueryCtx,
     key: &GroupKeySql<'_>,
     page_keys: &[String],
 ) -> Result<rustc_hash::FxHashMap<String, Vec<QueryResultRow>>, AppError> {
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
-    let preview_order = preview_order_clause(ctx.has_fulltext)?;
+    let preview_order = preview_order_clause(ctx.has_fulltext())?;
 
     // `IN (?,?,…)` over the page's group keys; binds follow the per-statement
     // prefix (+ key bind).
@@ -1618,7 +1636,7 @@ async fn fetch_member_preview(
         .join(", ");
     let rn_pos = in_start + page_keys.len();
 
-    let rank_select = if ctx.has_fulltext {
+    let rank_select = if ctx.has_fulltext() {
         "fts.rank"
     } else {
         "CAST(NULL AS REAL)"
@@ -1634,15 +1652,15 @@ async fn fetch_member_preview(
          ) WHERE __rn <= ?{rn_pos}",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
         from = ctx.from_clause,
-        pred = ctx.predicate,
+        pred = &ctx.predicate,
     );
     // dynamic-sql: windowed member preview over the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut mq = sqlx::query_as::<_, GroupMemberRow>(sqlx::AssertSqlSafe(member_sql.as_str()));
-    if let Some(m) = ctx.match_sanitized {
+    if let Some(m) = ctx.match_sanitized.as_ref() {
         mq = mq.bind(m.to_string()); // ?1 = MATCH
     }
     mq = mq.bind(ctx.space_id.to_string()); // ?space_pos
-    for b in ctx.filter_binds {
+    for b in &ctx.filter_binds {
         mq = bind_as(mq, b);
     }
     if let Some(b) = key_bind {
@@ -1652,7 +1670,7 @@ async fn fetch_member_preview(
         mq = mq.bind(k.clone());
     }
     mq = mq.bind(GROUP_MEMBER_PREVIEW);
-    let member_rows: Vec<GroupMemberRow> = if ctx.has_fulltext {
+    let member_rows: Vec<GroupMemberRow> = if ctx.has_fulltext() {
         mq.fetch_all(pool).await.map_err(map_fts_error)?
     } else {
         mq.fetch_all(pool).await?
@@ -1682,7 +1700,7 @@ fn grouped_page_response(
     mut by_key: rustc_hash::FxHashMap<String, Vec<QueryResultRow>>,
     has_more: bool,
     total_count: Option<i64>,
-    global_aggregates: Vec<AggregateResult>,
+    aggregates: Vec<AggregateResult>,
 ) -> Result<AdvancedQueryResponse, AppError> {
     let groups: Vec<QueryGroup> = buckets
         .iter()
@@ -1714,6 +1732,6 @@ fn grouped_page_response(
         next_cursor,
         has_more,
         total_count,
-        aggregates: global_aggregates,
+        aggregates,
     })
 }
