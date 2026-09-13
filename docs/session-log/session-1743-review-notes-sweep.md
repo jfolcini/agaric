@@ -37,8 +37,15 @@ Everything else fails closed exactly as before:
 
 - a self PR that IS still `open` but missing from the board — the genuine stale
   read — reads `open` and falls through to the same `::error::` and `exit 1`;
-- an absent or empty `self-pr-state.txt` (the `gh api` call failed) falls
-  through too, so a broken re-read can never buy a pass;
+- anything that is not exactly `closed` falls through too — an absent, empty
+  or malformed `self-pr-state.txt`, a `null` from a body without `.state`, a
+  differently-cased `OPEN` — so a broken re-read can never buy a pass. The test
+  is an allowlist (`= "closed"`), not a denylist of `open`: review caught the
+  first draft accepting any non-empty string that merely differed from `open`,
+  which would have suppressed a genuine stale read the moment `gh api` returned
+  200 with an unexpected body shape. `GET /repos/{o}/{r}/pulls/{n}` returns only
+  `open` or `closed` (a merged PR reads `closed`), so the allowlist loses
+  nothing;
 - `(20, COLLISION)` still fails even when the PR has closed. The skip is scoped
   to the unverifiable branch, not to the job.
 
@@ -114,9 +121,12 @@ change.
    it.
 7. **`SweptOpCoords` deleted** (`materializer/retry_queue.rs`). The three slot
    helpers take `record: &OpRecord` — which `slot_write_supersedes_op` already
-   held — and read `record.created_at` / `.seq` / `.device_id` themselves. With
-   `record` passed there is no same-typed-swap surface left for the struct to
-   guard. The three helpers now return `bool` instead of an `i64` compared
+   held — and read `record.created_at` / `.seq` / `.device_id` themselves. The
+   destructure that replaces it is still two `i64` in a row, so the swap the
+   struct guarded is not impossible — it is just no longer worth a struct: the
+   binding sits three lines above the binds it feeds, inside one function, with
+   no call boundary in between, which is where a positional mistake is visible
+   rather than silent. The three helpers now return `bool` instead of an `i64` compared
    `!= 0` at the one call site, and `slot_write_supersedes_op` is a bare `match`
    returning it. The SQL and its bind order are untouched, so no `.sqlx` entry
    moves.
@@ -391,7 +401,75 @@ online audit collection 401'd against github.com, so `impostor-commit`,
 `known-vulnerable-actions`, `ref-confusion` and `stale-action-refs` were NOT
 checked locally — CI runs them.
 
-No `.sqlx` cache entry changed: every deleted query was a byte-identical
+No `.sqlx` cache entry was *removed*: every deleted query was a byte-identical
 duplicate of a surviving one, item 7 moved binds without touching SQL text, and
 item 2's merged resolver is a runtime `AssertSqlSafe` query that was never in
 the cache.
+
+One entry was **added**, and an earlier draft of this paragraph missed it by
+reasoning only about deleted queries. The new retry-queue lease test embeds a
+fresh literal (`task_kind = 'ApplyOp:1:dev-4208'`), which needs its own cache
+file in the workspace-root and `agaric-engine` caches. Review caught it: the
+`agaric-engine` lane failed `prepare --check` with `.sqlx is missing one or
+more queries` while the other three passed. `just gen-sqlx` produced exactly
+that one file in exactly those two caches and nothing else — which is itself
+the evidence for the sentence above, since a regeneration that also pruned
+would have proved a deleted query was not a duplicate after all. All four
+lanes pass (invariant 6).
+
+## Review round
+
+A container restart killed this session's builder mid-verification, taking its
+`cargo nextest run --workspace` with it and leaving a half-finished
+`cargo sqlx prepare` that had deleted ~100 cache files without rewriting them.
+Restoring `src-tauri/.sqlx/` from HEAD recovered the casualties and discarded
+the one genuinely new entry along with them — the failure is recorded above,
+under the `.sqlx` paragraph, because it is the reason that paragraph was wrong
+in its first draft.
+
+Review then ran the suite the restart ate, and found two things:
+
+- **Blocking: the `agaric-engine` `.sqlx` lane was red**, `prepare --check`
+  reporting `.sqlx is missing one or more queries` while the other three
+  passed. Fixed with `just gen-sqlx`, which wrote exactly one file into the
+  workspace-root and `agaric-engine` caches and touched nothing else. All four
+  lanes pass. That "nothing else" is load-bearing: a regeneration that had also
+  pruned would have disproved the claim that every deleted query was a
+  duplicate.
+- **The closed-PR test was a denylist.** `[ -n "$state" ] && [ "$state" != "open" ]`
+  treats `null`, `garbage` and `OPEN` as "closed", so a body without `.state`
+  would have suppressed exactly the stale read this lane exists to catch.
+  Narrowed to `[ "$state" = "closed" ]`.
+
+Re-verified after both fixes, with the interpreting step re-extracted from the
+edited workflow rather than patched in place:
+
+| board / state | exit | verdict |
+|---|---|---|
+| self-PR absent, `closed` | 0 | SKIPPED_PR_CLOSED |
+| self-PR absent, `open` | 1 | UNVERIFIED |
+| self-PR absent, `null` | 1 | UNVERIFIED |
+| self-PR absent, `garbage` | 1 | UNVERIFIED |
+| self-PR absent, `OPEN` | 1 | UNVERIFIED |
+| self-PR absent, file empty | 1 | UNVERIFIED |
+| self-PR absent, file missing | 1 | UNVERIFIED |
+| genuine collision, `closed` | 1 | COLLISION |
+
+The first fixture run of that matrix was wrong and said so: it listed the
+self-PR on the board it was meant to be absent from, so all seven rows returned
+`CLEAN` without reaching the branch under test. The numbers above are the rerun.
+
+Full suite, run by review on the pre-fix tree: `6322 tests run: 6322 passed,
+13 skipped`; `cargo test --doc --workspace` clean. Since then the only Rust
+change is a comment inside a `#[cfg(test)]` function;
+`cargo nextest run -p agaric-store -E 'test(purge)'` passes 3/3. vitest is not
+needed — nothing under `src/` or `e2e*/` is touched, and `vitest.config.ts`
+includes only those roots.
+
+Review also re-derived, rather than accepted, the claims this log makes about
+the twins being byte-identical, the `dynamic-sql-baseline.txt` re-anchor being
+mandatory (restoring the old baseline reds the guard), and session number 1743
+being free. Two overstatements it caught are corrected in place above: the
+`SweptOpCoords` paragraph no longer claims the swap surface is gone, and the
+new purge test's comment no longer implies a bystander row where both seeded
+rows name the member.

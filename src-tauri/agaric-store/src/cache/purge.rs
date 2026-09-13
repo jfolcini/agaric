@@ -310,7 +310,10 @@ mod tests {
                 .expect("seed block");
         }
 
-        // One member row and one bystander row per swept predicate.
+        // One member row and one bystander row per swept predicate, except
+        // block_tag_inherited, where both rows name the member: this assertion
+        // is COUNT(*) == 0, so over-deletion there is caught by the conformance
+        // oracle, not here.
         for (block_id, tag_id) in [("victim", "tag"), ("bystander", "tag")] {
             sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
                 .bind(block_id)

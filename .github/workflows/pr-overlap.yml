@@ -1342,7 +1342,7 @@ jobs:
             # a failed re-read, and every other cause of a missing verdict all
             # fall through to the failure below exactly as before.
             self_state="$(tr -d '[:space:]' < "$SELF_PR_STATE" 2>/dev/null || true)"
-            if [ -n "$self_state" ] && [ "$self_state" != "open" ]; then
+            if [ "$self_state" = "closed" ]; then
               echo "::notice::session-log-pr-collision: SKIPPED — PR #$PR_NUMBER is $self_state, so the open-PR board it is absent from was a correct read of a board it had already left (this lane fires on ready_for_review and the PR merged seconds later). Nothing was verified and nothing needed to be."
               echo "SESSION_LOG_PR_COLLISION_VERDICT=SKIPPED_PR_CLOSED"
               exit 0
