@@ -2078,10 +2078,13 @@ async fn group_by_property_with_aggregates_binds_key_before_aggregates() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;
     seed_estimates(&pool).await;
-    // status: B1/B2 open, B3 closed. estimate: B1=3, B2=5, B3=8, B4="big".
+    // estimate: B1=3, B2=5, B3=8, B4="big". Group B1+B3 as `open` and B2 as
+    // `closed` so the two sums (11 and 5) DIFFER: with B1+B2 vs B3 both fold to
+    // 8, only the counts would tell the buckets apart, and a defect attributing
+    // the right values to the wrong bucket would pass.
     set_property(&pool, "01B1000000000000000000000", "status", "open").await;
-    set_property(&pool, "01B2000000000000000000000", "status", "open").await;
-    set_property(&pool, "01B3000000000000000000000", "status", "closed").await;
+    set_property(&pool, "01B3000000000000000000000", "status", "open").await;
+    set_property(&pool, "01B2000000000000000000000", "status", "closed").await;
 
     let mut request = group_req(
         default_filter(),
@@ -2099,13 +2102,13 @@ async fn group_by_property_with_aggregates_binds_key_before_aggregates() {
     let open = find_group(&resp, "open");
     let closed = find_group(&resp, "closed");
     assert!(
-        approx(open.aggregates[0].value.unwrap(), 8.0),
-        "open = B1(3) + B2(5): {:?}",
+        approx(open.aggregates[0].value.unwrap(), 11.0),
+        "open = B1(3) + B3(8): {:?}",
         open.aggregates
     );
     assert!(
-        approx(closed.aggregates[0].value.unwrap(), 8.0),
-        "closed = B3(8): {:?}",
+        approx(closed.aggregates[0].value.unwrap(), 5.0),
+        "closed = B2(5): {:?}",
         closed.aggregates
     );
 }

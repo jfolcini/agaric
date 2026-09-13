@@ -1166,14 +1166,16 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
     }
 }
 
-/// The per-group aggregate SQL the group-page statement needs: the resolved
-/// terms, their property-key binds, and the rendered `, CAST(…) AS aN` select
-/// list. One value because the three are produced together and consumed
-/// together.
+/// The resolved per-group aggregates, as `fetch_group_buckets` needs them.
+///
+/// Unlike [`GroupKeySql`] this carries no all-statements-agree property — one
+/// statement consumes it. It is a bundle because passing `terms` and `binds`
+/// separately puts `fetch_group_buckets` over the `too_many_arguments`
+/// threshold, and they are always produced by the same `resolve_aggregates`
+/// call.
 struct GroupAggSql<'a> {
     terms: &'a [AggTerm],
     binds: &'a [Bind],
-    select: &'a str,
 }
 
 /// The group key as SQL. Every grouped statement reuses the SAME rendered
@@ -1385,17 +1387,9 @@ async fn run_grouped(
     // numbered past them. The aggregate exprs are added to the GROUP BY
     // SELECT (computed PER bucket) aliased `a0…aN`. Empty → no extra columns.
     let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut next_pos);
-    // `CAST(… AS REAL)` so each per-group aggregate column decodes uniformly as
-    // a nullable f64 (see the global query for the COUNT-is-INTEGER rationale).
-    let agg_select: String = agg_terms
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!(", CAST({} AS REAL) AS {}", t.expr, agg_alias(i)))
-        .collect();
     let aggs = GroupAggSql {
         terms: &agg_terms,
         binds: &agg_binds,
-        select: &agg_select,
     };
 
     // FIRST page only: the bucket count is invariant across cursor pages.
@@ -1528,7 +1522,14 @@ async fn fetch_group_buckets(
     // Named locals so the statement below reads as the one `run_grouped` used
     // to inline, and so `format!`'s inline captures still resolve.
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
-    let (agg_terms, agg_binds, agg_select) = (aggs.terms, aggs.binds, aggs.select);
+    let (agg_terms, agg_binds) = (aggs.terms, aggs.binds);
+    // `, CAST(<expr>) AS aN` per aggregate — each decodes uniformly as a
+    // nullable f64 (see the global query for the COUNT-is-INTEGER rationale).
+    let agg_select: String = agg_terms
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!(", CAST({} AS REAL) AS {}", t.expr, agg_alias(i)))
+        .collect();
     let having = if cursor.is_some() {
         let p_count = next_pos;
         let p_count2 = next_pos + 1;
