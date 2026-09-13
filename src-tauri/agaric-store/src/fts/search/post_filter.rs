@@ -10,10 +10,10 @@ use crate::search_types::SearchBlockRow;
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
-use super::constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
+use super::constants::MAX_SEARCH_RESULTS;
 use super::fetch::{PreparedFtsFetch, build_fts_fetch, execute_fts_fetch};
 use super::row::fts_row_to_block_row;
-use super::sanitizer::sanitize_fts_query;
+use super::sanitizer::prepare_match_expression;
 
 /// Window size (candidate FTS rows fetched per loop iteration) for the
 /// post-filter cursor pagination in [`fts_fetch_post_filtered_page`].
@@ -101,31 +101,14 @@ pub(in crate::fts) async fn fts_fetch_post_filtered_page<F>(
 where
     F: FnMut(&mut SearchBlockRow) -> bool,
 {
-    // Mirror `search_fts`'s up-front guards so this path observes the
-    // exact same empty / over-long / empty-after-sanitise semantics.
-    if query.trim().is_empty() {
+    let Some(sanitized) = prepare_match_expression(query)? else {
         return Ok(PageResponse {
             items: vec![],
             next_cursor: None,
             has_more: false,
             total_count: None,
         });
-    }
-    if query.len() > MAX_QUERY_LEN {
-        return Err(AppError::validation(format!(
-            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
-            query.len()
-        )));
-    }
-    let sanitized = sanitize_fts_query(query);
-    if sanitized.is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
-    }
+    };
 
     let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);
     let limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
