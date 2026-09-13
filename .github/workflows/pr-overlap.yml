@@ -967,10 +967,12 @@ jobs:
       # than 100 open PRs right now.
       PR_LIST_LIMIT: "100"
 
-      # Written by the board-fetch step and read by the interpreting step, so
-      # it lives here for the same reason `PR_LIST_LIMIT` does: two steps that
+      # Written by earlier steps and read by the interpreting step, so they
+      # live here for the same reason `PR_LIST_LIMIT` does: two steps that
       # must name the same path can never drift apart if only one name exists.
       SELF_PR_STATE: self-pr-state.txt
+      PRS_JSON: prs.json
+      MERGED_PATHS: merged-paths.txt
     steps:
       - name: Checkout the merge target (trusted; never this PR's own commits)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1033,8 +1035,8 @@ jobs:
           # outright, which is the same structural fix this file's header
           # already recommends for the bypass gap.
           git -c core.quotePath=false ls-tree -r --name-only HEAD -- docs/session-log \
-            > merged-paths.txt
-          echo "session-log files on $(git rev-parse HEAD): $(wc -l < merged-paths.txt)"
+            > "$MERGED_PATHS"
+          echo "session-log files on $(git rev-parse HEAD): $(wc -l < "$MERGED_PATHS")"
 
       - name: List every open PR's changed files
         env:
@@ -1091,7 +1093,7 @@ jobs:
           # regardless of its current base, because every open PR is a
           # candidate to eventually land on `main`.
           if ! gh pr list --repo "$REPO" --state open --limit "$((PR_LIST_LIMIT + 1))" \
-              --json number,files,changedFiles > prs.json; then
+              --json number,files,changedFiles > "$PRS_JSON"; then
             echo "::error::session-log-pr-collision: gh pr list failed — cannot verify session-log collisions (fail-closed, see #3933)"
             exit 1
           fi
@@ -1163,7 +1165,7 @@ jobs:
           # entry keeps its `gh pr list` shape, `previousPath` is absent, and
           # the guard behaves exactly as it did before — a false stale claim,
           # never a false pass.
-          truncated_numbers="$(jq -r '.[] | select(.changedFiles > (.files | length)) | .number' prs.json)"
+          truncated_numbers="$(jq -r '.[] | select(.changedFiles > (.files | length)) | .number' "$PRS_JSON")"
           refetch_numbers="$(printf '%s\n%s\n' "$truncated_numbers" "$PR_NUMBER" \
             | grep -E '^[0-9]+$' | sort -n -u || true)"
           if [ -n "$refetch_numbers" ]; then
@@ -1175,7 +1177,7 @@ jobs:
                   && echo "$full" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
                 jq --argjson n "$n" --argjson files "$full" \
                     '[.[] | if .number == $n then .files = $files else . end]' \
-                    prs.json > prs.json.tmp && mv prs.json.tmp prs.json
+                    "$PRS_JSON" > "$PRS_JSON.tmp" && mv "$PRS_JSON.tmp" "$PRS_JSON"
               fi
             done <<< "$refetch_numbers"
           fi
@@ -1206,9 +1208,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Every path this step touches is an env var rather than a literal,
           # so the shell below can be run against fixtures unchanged (#4431).
+          # The ones a previous step also writes live in the job env above.
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
-          PRS_JSON: prs.json
-          MERGED_PATHS: merged-paths.txt
         run: |
           set -uo pipefail
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
