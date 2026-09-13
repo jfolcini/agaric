@@ -1038,225 +1038,37 @@ struct SweepCounts {
 /// writes) to match the "background tasks use split read/write pools"
 /// pattern documented in AGENTS.md. Tests pass the same pool for both
 /// arguments.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn sweep_once_counted(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<SweepCounts, AppError> {
     let due = fetch_due(read_pool, i64::from(SWEEP_BATCH_LIMIT)).await?;
-    let mut re_enqueued = 0usize;
     // Counted rather than `advanced` directly: the three arms that leave a
     // row on its original `next_attempt_at` are enumerable, the arms that
     // move it are not (every retirement reason is its own branch).
-    let mut stalled = 0usize;
+    let mut tally = SweepTally::default();
     for row in &due {
         let apply_op_kind = match RetryKind::from_str(&row.task_kind) {
             Some(RetryKind::ApplyOp { device_id, seq }) => Some((device_id, seq)),
             _ => None,
         };
 
-        // Issue #157 sub-item D — give-up before any further work.
-        //
-        // #621: ApplyOp rows are exempt. A persisted ApplyOp is a
-        // CORRECTNESS hole — the apply cursor's MAX-semantics advance has
-        // already leapt past the dropped op's seq, so the boot replay
-        // (`seq > cursor`) can never re-cover it; this retry row is the ONLY
-        // remaining record that the op was never materialized. Auto-retiring
-        // it (10 attempts / 7 days) would leave the op permanently
-        // unmaterialized with no recovery net. The row stays on the capped
-        // 1-hour backoff schedule until durable success (`clear_on_success`)
-        // or an explicit retirement below (op row compacted away /
-        // superseded by a later purge). The threshold crossing is still
-        // logged so a permanently-failing apply stays operator-visible.
-        if let Some(reason) = give_up_reason(row) {
-            if apply_op_kind.is_none() {
-                tracing::warn!(
-                    block_id = %row.block_id,
-                    task_kind = %row.task_kind,
-                    attempts = row.attempts,
-                    created_at = %row.created_at,
-                    give_up_reason = reason,
-                    "retry queue give-up — task permanently dropped"
-                );
-                materializer
-                    .metrics()
-                    .retry_queue_giveup_total
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                clear_entry(
-                    write_pool,
-                    &row.block_id,
-                    &row.task_kind,
-                    materializer.metrics(),
-                )
-                .await?;
-                continue;
-            }
-            tracing::warn!(
-                block_id = %row.block_id,
-                task_kind = %row.task_kind,
-                attempts = row.attempts,
-                created_at = %row.created_at,
-                give_up_reason = reason,
-                "persisted ApplyOp exceeds the give-up thresholds but is kept — \
-                 apply ops are correctness, not cache freshness (#621); it stays \
-                 on the capped backoff until it applies durably"
-            );
+        if retire_expired_row(write_pool, materializer, row, apply_op_kind.is_some()).await? {
+            continue;
         }
 
-        // ApplyOp rows are dispatched to the foreground
-        // queue (matching the original task's routing). They need a
-        // separate path because (a) `task_from_row` cannot reconstruct
-        // them from the row alone — the `OpRecord` must be re-loaded
-        // from `op_log` — and (b) `try_enqueue_background` would route
-        // to the wrong consumer.
         if let Some((device_id, seq)) = apply_op_kind {
-            match try_reenqueue_apply_op(read_pool, materializer, &device_id, seq).await {
-                Ok(ApplyOpSweepDisposition::Enqueued) => {
-                    // Issue #378: lease (do NOT clear) on successful
-                    // enqueue. The row stays so a subsequent failure's
-                    // `record_failure` UPSERT finds it and increments
-                    // `attempts` (preserving `created_at`); the consumer
-                    // clears it via `clear_on_success` only on durable
-                    // success. The lease prevents the same in-flight op
-                    // being swept twice before it resolves.
-                    // Foreground-routed rows are never shed, so this
-                    // lease is always on the failure ladder.
-                    lease_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        row.attempts,
-                        BackoffClass::Failure,
-                    )
-                    .await?;
-                    re_enqueued += 1;
-                }
-                Ok(ApplyOpSweepDisposition::OpRowMissing) => {
-                    // #621: permanent — the op_log row is gone (compacted
-                    // away or corrupted), so there is nothing left to apply.
-                    // Retire the row instead of erroring every sweep forever.
-                    tracing::error!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        "retiring persisted ApplyOp row: its op_log row no longer \
-                         exists (compacted or corrupted) — the op is permanently \
-                         unmaterialized (#621)"
-                    );
-                    materializer
-                        .metrics()
-                        .retry_queue_giveup_total
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    clear_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        materializer.metrics(),
-                    )
-                    .await?;
-                }
-                Ok(ApplyOpSweepDisposition::SupersededByPurge) => {
-                    // #621: a later purge_block targets the same block. The
-                    // sweep runs minutes-to-hours after the original failure,
-                    // so re-applying now (projections are INSERT OR IGNORE
-                    // with no tombstone check, and the engine recreates the
-                    // node) would RESURRECT user-destroyed data. The purge
-                    // makes this op's effect moot — retire the row.
-                    tracing::info!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        "retiring persisted ApplyOp row: a later purge_block \
-                         supersedes it — re-applying would resurrect a purged \
-                         block (#621)"
-                    );
-                    clear_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        materializer.metrics(),
-                    )
-                    .await?;
-                }
-                Ok(ApplyOpSweepDisposition::SupersededByAncestorPurge) => {
-                    // #2212: a later purge_block targeted an ANCESTOR of this
-                    // block. The purge cascade physically deleted this block's
-                    // subtree with no per-descendant op_log row, so the
-                    // same-block purge gate could not see it. Re-applying this
-                    // persisted create/edit would resurrect an orphan under a
-                    // user-destroyed subtree (or fail the parent_id FK on every
-                    // sweep forever). The purge makes this op's effect moot —
-                    // retire the row.
-                    tracing::info!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        "retiring persisted ApplyOp row: a later purge_block on \
-                         an ANCESTOR supersedes it — re-applying would resurrect \
-                         an orphan under a purged subtree (#2212)"
-                    );
-                    clear_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        materializer.metrics(),
-                    )
-                    .await?;
-                }
-                Ok(ApplyOpSweepDisposition::SupersededByEdit) => {
-                    // #850: a later edit_block on the same block already won
-                    // under strict LWW. Re-applying this stale edit now
-                    // (`apply_edit_block_via_loro` splices `to_text` and
-                    // projects the snapshot) would regress the newer content
-                    // in both engine and SQL. The newer edit makes this op's
-                    // effect moot — retire the row.
-                    tracing::info!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        "retiring persisted ApplyOp row: a later edit_block \
-                         supersedes it — re-applying would regress newer \
-                         content (#850)"
-                    );
-                    clear_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        materializer.metrics(),
-                    )
-                    .await?;
-                }
-                Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot }) => {
-                    // #3294: a later op on the same block already wrote the
-                    // same logical slot (property key / tag membership / tree
-                    // position) under strict LWW. The projections for those op
-                    // types are unguarded writes with no `created_at`
-                    // comparison, so re-applying this stale op hours later
-                    // would flip the user's value back in BOTH the engine and
-                    // SQL and export the regression over sync. The newer op
-                    // makes this op's effect moot — retire the row.
-                    tracing::info!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        slot,
-                        "retiring persisted ApplyOp row: a later op wrote the same \
-                         logical slot — re-applying would regress a newer value (#3294)"
-                    );
-                    clear_entry(
-                        write_pool,
-                        &row.block_id,
-                        &row.task_kind,
-                        materializer.metrics(),
-                    )
-                    .await?;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        block_id = %row.block_id,
-                        task_kind = %row.task_kind,
-                        error = %e,
-                        "failed to re-enqueue  ApplyOp row — will try again next sweep"
-                    );
-                    stalled += 1;
-                }
-            }
+            sweep_apply_op_row(
+                read_pool,
+                write_pool,
+                materializer,
+                row,
+                &device_id,
+                seq,
+                &mut tally,
+            )
+            .await?;
             continue;
         }
 
@@ -1277,63 +1089,11 @@ async fn sweep_once_counted(
             .await?;
             continue;
         };
-        match materializer.try_enqueue_background(task) {
-            Ok(crate::materializer::BackgroundEnqueueOutcome::Enqueued) => {
-                // Issue #378: lease (do NOT clear) the row on successful
-                // enqueue. Pre-clearing here meant a task that then
-                // FAILED on its re-run hit `record_failure`'s INSERT
-                // branch every cycle — `attempts` never accumulated and
-                // `created_at` never aged, so `give_up_reason` could
-                // NEVER fire and a permanently-failing task looped
-                // forever (issue #157 / #378). Keeping the row present
-                // means a subsequent failure UPSERTs it (attempts += 1,
-                // created_at preserved); the consumer clears it via
-                // `clear_on_success` only after the re-run succeeds
-                // durably. The lease bumps `next_attempt_at` forward so
-                // the same in-flight task is not swept twice before it
-                // resolves.
-                lease_entry(
-                    write_pool,
-                    &row.block_id,
-                    &row.task_kind,
-                    row.attempts,
-                    BackoffClass::of(row.last_error.as_deref()),
-                )
-                .await?;
-                re_enqueued += 1;
-            }
-            Ok(crate::materializer::BackgroundEnqueueOutcome::Shed) => {
-                // #2541: the queue was full — the task never dispatched, so
-                // this is NOT a re-enqueue: do not count it and, crucially,
-                // do NOT `lease_entry`. The shed path has already spawned a
-                // `record_failure` UPSERT that reschedules the row with the
-                // escalated backoff (and the `SHED_LAST_ERROR` marker);
-                // leasing here with this sweep's STALE `row.attempts`
-                // snapshot raced that UPSERT and could REWIND
-                // `next_attempt_at` below the escalated value, re-sweeping
-                // the row into the still-saturated queue early.
-                tracing::debug!(
-                    block_id = %row.block_id,
-                    task_kind = %row.task_kind,
-                    "retry row shed at re-enqueue (background queue full) — \
-                     rescheduled by the shed path's record_failure (#2541)"
-                );
-                stalled += 1;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    block_id = %row.block_id,
-                    task_kind = %row.task_kind,
-                    error = %e,
-                    "failed to re-enqueue retry row — will try again next sweep"
-                );
-                stalled += 1;
-            }
-        }
+        sweep_background_row(write_pool, materializer, row, task, &mut tally).await?;
     }
     Ok(SweepCounts {
-        re_enqueued,
-        advanced: due.len() - stalled,
+        re_enqueued: tally.re_enqueued,
+        advanced: due.len() - tally.stalled,
     })
 }
 
@@ -1570,7 +1330,6 @@ fn payload_string_field(payload: &str, field: &str) -> Option<String> {
 /// deterministic chain root among rows that are supposed to be a unique
 /// `create_block`, not resolving a last-writer-wins conflict — so it is
 /// left alone here and is out of scope for this rewrite.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn try_reenqueue_apply_op(
     read_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
@@ -1600,163 +1359,15 @@ async fn try_reenqueue_apply_op(
     // gating itself only by the strict "later than" comparison: a purge is
     // never superseded by itself.)
     if let Some(block_id) = record.block_id.as_deref() {
-        // #621/#850: runtime query() (not the macro) keeps this purge gate
-        // adjacent to the edit-gate twin below; both share the LWW predicate.
-        // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
-        let superseded: i64 = sqlx::query_scalar(
-            "SELECT EXISTS( \
-                 SELECT 1 FROM op_log p \
-                 WHERE p.op_type = 'purge_block' \
-                   AND p.block_id = ?1 \
-                   AND (p.created_at > ?2 \
-                        OR (p.created_at = ?2 \
-                            AND (p.seq > ?3 \
-                                 OR (p.seq = ?3 AND p.device_id > ?4)))) \
-             )",
-        )
-        .bind(block_id)
-        .bind(record.created_at)
-        .bind(record.seq)
-        .bind(&record.device_id)
-        .fetch_one(read_pool)
-        .await?;
-        if superseded != 0 {
+        if purge_supersedes_op(read_pool, block_id, &record).await? {
             return Ok(ApplyOpSweepDisposition::SupersededByPurge);
         }
-
-        // #2212: ancestor-purge cascade gate. `purge_block` writes a SINGLE
-        // op_log row targeting the subtree ROOT; descendant removal is a SQL
-        // cascade with NO per-descendant op_log rows. So the same-block purge
-        // gate above (`p.block_id = record.block_id`) MISSES the case where an
-        // ANCESTOR of this block was purged — this block was physically deleted
-        // by that cascade with no op targeting it directly. Re-applying a
-        // persisted create/edit for such a child would resurrect an orphan
-        // under a user-destroyed subtree (`INSERT OR IGNORE`, no purge check),
-        // or fail the `parent_id` FK on every sweep forever.
-        //
-        // The ancestor chain is ALREADY gone from `blocks` at sweep time (that
-        // is the whole point of a purge), so we cannot walk the live `blocks`
-        // parent_id chain. Instead we reconstruct the lineage from the
-        // append-only op_log. A block's EFFECTIVE parent is NOT necessarily its
-        // create-op `parent_id`: a later `move_block` reparents it (payload
-        // `new_parent_id`), so a create-only walk would (a) MISS the real
-        // ancestor chain of a block moved INTO a later-purged subtree
-        // (wrong re-apply → orphan resurrection) and — worse — (b) wrongly
-        // retire the record for a block moved OUT of a later-purged subtree
-        // (its create parent was purged but the block lives elsewhere and the
-        // op SHOULD re-apply). Per hop the effective parent is therefore:
-        // the `new_parent_id` of the LATEST `move_block` op for that block
-        // (strict LWW order `created_at, seq, device_id` — same total order as
-        // the purge predicate below), else the create op's `parent_id`. The
-        // CASE/EXISTS split (not COALESCE) is load-bearing: a move to ROOT
-        // carries `new_parent_id = null`, which must TERMINATE the chain, not
-        // fall back to the stale create parent. We retire the record iff a
-        // LATER `purge_block` (the SAME strict LWW predicate as the same-block
-        // gate) targets ANY enumerated ancestor.
-        //
-        // Why this cannot retire a record that should legitimately re-apply:
-        // the ancestor set is derived ONLY from THIS block's own effective
-        // (move-aware) lineage, so an UNRELATED later purge of a different
-        // subtree is never matched (its target is not in the set), and a
-        // create whose parent still exists (no ancestor purged) yields an
-        // empty EXISTS. The `depth < 100` bound (AGENTS.md invariant #9) +
-        // `UNION` dedup guard a corrupted / cyclic parent_id chain (each
-        // recursive step emits exactly one row, so the walk is <= 101 rows).
-        // If this block's create op was compacted away (and it has no move
-        // op), the seed's effective parent is NULL and we conservatively do
-        // NOT retire.
-        // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-        // dynamic-sql: recursive ancestry CTE + parameterized EXISTS; all values bound, no interpolation.
-        let superseded_by_ancestor_purge: i64 = sqlx::query_scalar(
-            "WITH RECURSIVE ancestors(id, depth) AS ( \
-                 SELECT CASE WHEN EXISTS( \
-                             SELECT 1 FROM op_log m \
-                              WHERE m.op_type = 'move_block' AND m.block_id = ?1) \
-                        THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
-                                FROM op_log m \
-                               WHERE m.op_type = 'move_block' AND m.block_id = ?1 \
-                               ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
-                               LIMIT 1) \
-                        ELSE (SELECT json_extract(c.payload, '$.parent_id') \
-                                FROM op_log c \
-                               WHERE c.op_type = 'create_block' AND c.block_id = ?1 \
-                               LIMIT 1) \
-                        END, 0 \
-                 UNION \
-                 SELECT CASE WHEN EXISTS( \
-                             SELECT 1 FROM op_log m \
-                              WHERE m.op_type = 'move_block' AND m.block_id = a.id) \
-                        THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
-                                FROM op_log m \
-                               WHERE m.op_type = 'move_block' AND m.block_id = a.id \
-                               ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
-                               LIMIT 1) \
-                        ELSE (SELECT json_extract(c.payload, '$.parent_id') \
-                                FROM op_log c \
-                               WHERE c.op_type = 'create_block' AND c.block_id = a.id \
-                               LIMIT 1) \
-                        END, a.depth + 1 \
-                   FROM ancestors a \
-                  WHERE a.id IS NOT NULL AND a.depth < 100 \
-             ) \
-             SELECT EXISTS( \
-                 SELECT 1 FROM op_log p \
-                 JOIN ancestors anc ON p.block_id = anc.id \
-                 WHERE p.op_type = 'purge_block' \
-                   AND (p.created_at > ?2 \
-                        OR (p.created_at = ?2 \
-                            AND (p.seq > ?3 \
-                                 OR (p.seq = ?3 AND p.device_id > ?4)))) \
-             )",
-        )
-        .bind(block_id)
-        .bind(record.created_at)
-        .bind(record.seq)
-        .bind(&record.device_id)
-        .fetch_one(read_pool)
-        .await?;
-        if superseded_by_ancestor_purge != 0 {
+        if ancestor_purge_supersedes_op(read_pool, block_id, &record).await? {
             return Ok(ApplyOpSweepDisposition::SupersededByAncestorPurge);
         }
-
-        // #850: the second half of #621's own fix suggestion (the purge half
-        // shipped first). When the op being swept is itself an `edit_block`,
-        // a LATER `edit_block` on the same block (same strict LWW order:
-        // `created_at, seq, device_id`) already won — its content is what the
-        // user observed. `apply_edit_block_via_loro` splices `to_text` and
-        // projects the snapshot, so re-applying this stale edit now would
-        // regress the newer content in both engine and SQL. Drop it. The
-        // strict "later than" comparison excludes the op from gating itself
-        // (an edit is never superseded by itself), exactly as the purge gate
-        // does. Scoped to `op_type = 'edit_block'` on BOTH sides: only a
-        // stale edit can be content-regressed by a newer edit, and only a
-        // newer edit (not e.g. a delete/restore — whose soft-delete interplay
-        // was deliberately deferred from #621) supersedes here.
-        if record.op_type == "edit_block" {
-            // #850: mirrors the purge gate above.
-            // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
-            let superseded_by_edit: i64 = sqlx::query_scalar(
-                "SELECT EXISTS( \
-                     SELECT 1 FROM op_log e \
-                     WHERE e.op_type = 'edit_block' \
-                       AND e.block_id = ?1 \
-                       AND (e.created_at > ?2 \
-                            OR (e.created_at = ?2 \
-                                AND (e.seq > ?3 \
-                                     OR (e.seq = ?3 AND e.device_id > ?4)))) \
-                 )",
-            )
-            .bind(block_id)
-            .bind(record.created_at)
-            .bind(record.seq)
-            .bind(&record.device_id)
-            .fetch_one(read_pool)
-            .await?;
-            if superseded_by_edit != 0 {
-                return Ok(ApplyOpSweepDisposition::SupersededByEdit);
-            }
+        if edit_supersedes_op(read_pool, block_id, &record).await? {
+            return Ok(ApplyOpSweepDisposition::SupersededByEdit);
         }
-
         // #3294: the SLOT gate — the generalisation of the #850 twin above to
         // every op type whose re-apply is an unguarded overwrite of a value a
         // later op already wrote. `set_property`, `delete_property`,
@@ -1780,98 +1391,10 @@ async fn try_reenqueue_apply_op(
         // projections in lockstep: the op is never applied at all, so the
         // engine and SQL both simply do not see it. This gate can therefore
         // not introduce engine/SQL divergence, only prevent it.
-        if let Some(slot) = WriteSlot::of(&record) {
-            // One compile-checked `query_scalar!` per slot family rather than a
-            // runtime `query()` over a match-selected string. The three sibling
-            // gates above are runtime queries because their predicates reuse
-            // NUMBERED parameters (`?1`…`?4`, and `?1` six times in the #2212
-            // ancestry CTE), which the macro form cannot express; this gate has
-            // no such need — repeating the bind for each reuse of `created_at`
-            // and `device_id` keeps it inside the macro, so the SQL is verified
-            // against the schema at compile time and needs no
-            // `dynamic-sql-baseline` slack.
-            let created_at = record.created_at;
-            let dev = record.device_id.as_str();
-            let seq = record.seq;
-            let superseded_by_slot_write: i64 = match &slot {
-                // The `json_extract(payload, '$.key')` expression and the
-                // `op_type IN ('set_property','delete_property')` filter are
-                // byte-identical to the partial expression index
-                // `idx_op_log_block_key_created` (migration 0098), so this is an
-                // equality seek on (block_id, key), not a scan.
-                WriteSlot::Property { key } => {
-                    let key = key.as_str();
-                    sqlx::query_scalar!(
-                        r#"SELECT EXISTS(
-                             SELECT 1 FROM op_log
-                             WHERE op_type IN ('set_property', 'delete_property')
-                               AND block_id = ?
-                               AND json_extract(payload, '$.key') = ?
-                               AND (created_at > ?
-                                    OR (created_at = ?
-                                        AND (seq > ?
-                                             OR (seq = ? AND device_id > ?))))
-                           ) AS "e!: i64""#,
-                        block_id,
-                        key,
-                        created_at,
-                        created_at,
-                        seq,
-                        seq,
-                        dev,
-                    )
-                    .fetch_one(read_pool)
-                    .await?
-                }
-                WriteSlot::TagMembership { tag_id } => {
-                    let tag_id = tag_id.as_str();
-                    sqlx::query_scalar!(
-                        r#"SELECT EXISTS(
-                             SELECT 1 FROM op_log
-                             WHERE op_type IN ('add_tag', 'remove_tag')
-                               AND block_id = ?
-                               AND json_extract(payload, '$.tag_id') = ?
-                               AND (created_at > ?
-                                    OR (created_at = ?
-                                        AND (seq > ?
-                                             OR (seq = ? AND device_id > ?))))
-                           ) AS "e!: i64""#,
-                        block_id,
-                        tag_id,
-                        created_at,
-                        created_at,
-                        seq,
-                        seq,
-                        dev,
-                    )
-                    .fetch_one(read_pool)
-                    .await?
-                }
-                WriteSlot::TreePosition => {
-                    sqlx::query_scalar!(
-                        r#"SELECT EXISTS(
-                         SELECT 1 FROM op_log
-                         WHERE op_type = 'move_block'
-                           AND block_id = ?
-                           AND (created_at > ?
-                                OR (created_at = ?
-                                    AND (seq > ?
-                                         OR (seq = ? AND device_id > ?))))
-                       ) AS "e!: i64""#,
-                        block_id,
-                        created_at,
-                        created_at,
-                        seq,
-                        seq,
-                        dev,
-                    )
-                    .fetch_one(read_pool)
-                    .await?
-                }
-            };
-            if superseded_by_slot_write != 0 {
-                return Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot: slot.name() });
-            }
+        if let Some(slot) = WriteSlot::of(&record)
+            && slot_write_supersedes_op(read_pool, block_id, &record, &slot).await?
+        {
+            return Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot: slot.name() });
         }
     }
 
@@ -6132,4 +5655,682 @@ mod tests {
              idx_materializer_retry_queue_due; got plan:\n{plan_text}"
         );
     }
+}
+
+/// #621: true when a LATER `purge_block` targets this op's own block under
+/// the strict LWW order.
+async fn purge_supersedes_op(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    record: &agaric_store::op_log::OpRecord,
+) -> Result<bool, AppError> {
+    // #621/#850: runtime query() (not the macro) keeps this purge gate
+    // adjacent to the edit-gate twin below; both share the LWW predicate.
+    // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
+    let superseded: i64 = sqlx::query_scalar(
+        "SELECT EXISTS( \
+             SELECT 1 FROM op_log p \
+             WHERE p.op_type = 'purge_block' \
+               AND p.block_id = ?1 \
+               AND (p.created_at > ?2 \
+                    OR (p.created_at = ?2 \
+                        AND (p.seq > ?3 \
+                             OR (p.seq = ?3 AND p.device_id > ?4)))) \
+         )",
+    )
+    .bind(block_id)
+    .bind(record.created_at)
+    .bind(record.seq)
+    .bind(&record.device_id)
+    .fetch_one(read_pool)
+    .await?;
+    Ok(superseded != 0)
+}
+
+/// #2212: true when a LATER `purge_block` targeted an ANCESTOR of this op's
+/// block, whose cascade removed it with no op_log row of its own.
+async fn ancestor_purge_supersedes_op(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    record: &agaric_store::op_log::OpRecord,
+) -> Result<bool, AppError> {
+    // #2212: ancestor-purge cascade gate. `purge_block` writes a SINGLE
+    // op_log row targeting the subtree ROOT; descendant removal is a SQL
+    // cascade with NO per-descendant op_log rows. So the same-block purge
+    // gate above (`p.block_id = record.block_id`) MISSES the case where an
+    // ANCESTOR of this block was purged — this block was physically deleted
+    // by that cascade with no op targeting it directly. Re-applying a
+    // persisted create/edit for such a child would resurrect an orphan
+    // under a user-destroyed subtree (`INSERT OR IGNORE`, no purge check),
+    // or fail the `parent_id` FK on every sweep forever.
+    //
+    // The ancestor chain is ALREADY gone from `blocks` at sweep time (that
+    // is the whole point of a purge), so we cannot walk the live `blocks`
+    // parent_id chain. Instead we reconstruct the lineage from the
+    // append-only op_log. A block's EFFECTIVE parent is NOT necessarily its
+    // create-op `parent_id`: a later `move_block` reparents it (payload
+    // `new_parent_id`), so a create-only walk would (a) MISS the real
+    // ancestor chain of a block moved INTO a later-purged subtree
+    // (wrong re-apply → orphan resurrection) and — worse — (b) wrongly
+    // retire the record for a block moved OUT of a later-purged subtree
+    // (its create parent was purged but the block lives elsewhere and the
+    // op SHOULD re-apply). Per hop the effective parent is therefore:
+    // the `new_parent_id` of the LATEST `move_block` op for that block
+    // (strict LWW order `created_at, seq, device_id` — same total order as
+    // the purge predicate below), else the create op's `parent_id`. The
+    // CASE/EXISTS split (not COALESCE) is load-bearing: a move to ROOT
+    // carries `new_parent_id = null`, which must TERMINATE the chain, not
+    // fall back to the stale create parent. We retire the record iff a
+    // LATER `purge_block` (the SAME strict LWW predicate as the same-block
+    // gate) targets ANY enumerated ancestor.
+    //
+    // Why this cannot retire a record that should legitimately re-apply:
+    // the ancestor set is derived ONLY from THIS block's own effective
+    // (move-aware) lineage, so an UNRELATED later purge of a different
+    // subtree is never matched (its target is not in the set), and a
+    // create whose parent still exists (no ancestor purged) yields an
+    // empty EXISTS. The `depth < 100` bound (AGENTS.md invariant #9) +
+    // `UNION` dedup guard a corrupted / cyclic parent_id chain (each
+    // recursive step emits exactly one row, so the walk is <= 101 rows).
+    // If this block's create op was compacted away (and it has no move
+    // op), the seed's effective parent is NULL and we conservatively do
+    // NOT retire.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    // dynamic-sql: recursive ancestry CTE + parameterized EXISTS; all values bound, no interpolation.
+    let superseded_by_ancestor_purge: i64 = sqlx::query_scalar(
+        "WITH RECURSIVE ancestors(id, depth) AS ( \
+             SELECT CASE WHEN EXISTS( \
+                         SELECT 1 FROM op_log m \
+                          WHERE m.op_type = 'move_block' AND m.block_id = ?1) \
+                    THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
+                            FROM op_log m \
+                           WHERE m.op_type = 'move_block' AND m.block_id = ?1 \
+                           ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
+                           LIMIT 1) \
+                    ELSE (SELECT json_extract(c.payload, '$.parent_id') \
+                            FROM op_log c \
+                           WHERE c.op_type = 'create_block' AND c.block_id = ?1 \
+                           LIMIT 1) \
+                    END, 0 \
+             UNION \
+             SELECT CASE WHEN EXISTS( \
+                         SELECT 1 FROM op_log m \
+                          WHERE m.op_type = 'move_block' AND m.block_id = a.id) \
+                    THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
+                            FROM op_log m \
+                           WHERE m.op_type = 'move_block' AND m.block_id = a.id \
+                           ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
+                           LIMIT 1) \
+                    ELSE (SELECT json_extract(c.payload, '$.parent_id') \
+                            FROM op_log c \
+                           WHERE c.op_type = 'create_block' AND c.block_id = a.id \
+                           LIMIT 1) \
+                    END, a.depth + 1 \
+               FROM ancestors a \
+              WHERE a.id IS NOT NULL AND a.depth < 100 \
+         ) \
+         SELECT EXISTS( \
+             SELECT 1 FROM op_log p \
+             JOIN ancestors anc ON p.block_id = anc.id \
+             WHERE p.op_type = 'purge_block' \
+               AND (p.created_at > ?2 \
+                    OR (p.created_at = ?2 \
+                        AND (p.seq > ?3 \
+                             OR (p.seq = ?3 AND p.device_id > ?4)))) \
+         )",
+    )
+    .bind(block_id)
+    .bind(record.created_at)
+    .bind(record.seq)
+    .bind(&record.device_id)
+    .fetch_one(read_pool)
+    .await?;
+    Ok(superseded_by_ancestor_purge != 0)
+}
+
+/// #850: true when this op is an `edit_block` that a LATER `edit_block` on the
+/// same block already superseded.
+async fn edit_supersedes_op(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    record: &agaric_store::op_log::OpRecord,
+) -> Result<bool, AppError> {
+    // #850: the second half of #621's own fix suggestion (the purge half
+    // shipped first). When the op being swept is itself an `edit_block`,
+    // a LATER `edit_block` on the same block (same strict LWW order:
+    // `created_at, seq, device_id`) already won — its content is what the
+    // user observed. `apply_edit_block_via_loro` splices `to_text` and
+    // projects the snapshot, so re-applying this stale edit now would
+    // regress the newer content in both engine and SQL. Drop it. The
+    // strict "later than" comparison excludes the op from gating itself
+    // (an edit is never superseded by itself), exactly as the purge gate
+    // does. Scoped to `op_type = 'edit_block'` on BOTH sides: only a
+    // stale edit can be content-regressed by a newer edit, and only a
+    // newer edit (not e.g. a delete/restore — whose soft-delete interplay
+    // was deliberately deferred from #621) supersedes here.
+    if record.op_type == "edit_block" {
+        // #850: mirrors the purge gate above.
+        // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
+        let superseded_by_edit: i64 = sqlx::query_scalar(
+            "SELECT EXISTS( \
+                 SELECT 1 FROM op_log e \
+                 WHERE e.op_type = 'edit_block' \
+                   AND e.block_id = ?1 \
+                   AND (e.created_at > ?2 \
+                        OR (e.created_at = ?2 \
+                            AND (e.seq > ?3 \
+                                 OR (e.seq = ?3 AND e.device_id > ?4)))) \
+             )",
+        )
+        .bind(block_id)
+        .bind(record.created_at)
+        .bind(record.seq)
+        .bind(&record.device_id)
+        .fetch_one(read_pool)
+        .await?;
+        return Ok(superseded_by_edit != 0);
+    }
+    Ok(false)
+}
+
+/// The swept op's strict-LWW coordinates as the slot gates bind them. A struct
+/// rather than three positional arguments: `created_at` and `seq` are both
+/// `i64`, and a swap would compile and silently change which ops count later.
+#[derive(Clone, Copy)]
+struct SweptOpCoords<'a> {
+    created_at: i64,
+    seq: i64,
+    dev: &'a str,
+}
+
+/// #3294: true when a LATER op already wrote the same logical slot this op
+/// writes, so re-applying it would regress a newer value.
+async fn slot_write_supersedes_op(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    record: &agaric_store::op_log::OpRecord,
+    slot: &WriteSlot,
+) -> Result<bool, AppError> {
+    // One compile-checked `query_scalar!` per slot family rather than a
+    // runtime `query()` over a match-selected string. The three sibling
+    // gates above are runtime queries because their predicates reuse
+    // NUMBERED parameters (`?1`…`?4`, and `?1` six times in the #2212
+    // ancestry CTE), which the macro form cannot express; this gate has
+    // no such need — repeating the bind for each reuse of `created_at`
+    // and `device_id` keeps it inside the macro, so the SQL is verified
+    // against the schema at compile time and needs no
+    // `dynamic-sql-baseline` slack.
+    let coords = SweptOpCoords {
+        created_at: record.created_at,
+        seq: record.seq,
+        dev: record.device_id.as_str(),
+    };
+    let superseded_by_slot_write: i64 = match slot {
+        WriteSlot::Property { key } => {
+            property_slot_superseded(read_pool, block_id, &coords, key.as_str()).await?
+        }
+        WriteSlot::TagMembership { tag_id } => {
+            tag_slot_superseded(read_pool, block_id, &coords, tag_id.as_str()).await?
+        }
+        WriteSlot::TreePosition => {
+            tree_position_slot_superseded(read_pool, block_id, &coords).await?
+        }
+    };
+    Ok(superseded_by_slot_write != 0)
+}
+
+/// #3294 slot gate for `set_property` / `delete_property`.
+async fn property_slot_superseded(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    coords: &SweptOpCoords<'_>,
+    key: &str,
+) -> Result<i64, AppError> {
+    // The `json_extract(payload, '$.key')` expression and the
+    // `op_type IN ('set_property','delete_property')` filter are
+    // byte-identical to the partial expression index
+    // `idx_op_log_block_key_created` (migration 0098), so this is an
+    // equality seek on (block_id, key), not a scan.
+    let &SweptOpCoords {
+        created_at,
+        seq,
+        dev,
+    } = coords;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                             SELECT 1 FROM op_log
+                             WHERE op_type IN ('set_property', 'delete_property')
+                               AND block_id = ?
+                               AND json_extract(payload, '$.key') = ?
+                               AND (created_at > ?
+                                    OR (created_at = ?
+                                        AND (seq > ?
+                                             OR (seq = ? AND device_id > ?))))
+                           ) AS "e!: i64""#,
+        block_id,
+        key,
+        created_at,
+        created_at,
+        seq,
+        seq,
+        dev,
+    )
+    .fetch_one(read_pool)
+    .await?)
+}
+
+/// #3294 slot gate for `add_tag` / `remove_tag`.
+async fn tag_slot_superseded(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    coords: &SweptOpCoords<'_>,
+    tag_id: &str,
+) -> Result<i64, AppError> {
+    let &SweptOpCoords {
+        created_at,
+        seq,
+        dev,
+    } = coords;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                             SELECT 1 FROM op_log
+                             WHERE op_type IN ('add_tag', 'remove_tag')
+                               AND block_id = ?
+                               AND json_extract(payload, '$.tag_id') = ?
+                               AND (created_at > ?
+                                    OR (created_at = ?
+                                        AND (seq > ?
+                                             OR (seq = ? AND device_id > ?))))
+                           ) AS "e!: i64""#,
+        block_id,
+        tag_id,
+        created_at,
+        created_at,
+        seq,
+        seq,
+        dev,
+    )
+    .fetch_one(read_pool)
+    .await?)
+}
+
+/// #3294 slot gate for `move_block`.
+async fn tree_position_slot_superseded(
+    read_pool: &SqlitePool,
+    block_id: &str,
+    coords: &SweptOpCoords<'_>,
+) -> Result<i64, AppError> {
+    let &SweptOpCoords {
+        created_at,
+        seq,
+        dev,
+    } = coords;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+                         SELECT 1 FROM op_log
+                         WHERE op_type = 'move_block'
+                           AND block_id = ?
+                           AND (created_at > ?
+                                OR (created_at = ?
+                                    AND (seq > ?
+                                         OR (seq = ? AND device_id > ?))))
+                       ) AS "e!: i64""#,
+        block_id,
+        created_at,
+        created_at,
+        seq,
+        seq,
+        dev,
+    )
+    .fetch_one(read_pool)
+    .await?)
+}
+
+/// Per-sweep tallies. A struct rather than two `usize` locals threaded through
+/// the row handlers, where a positional swap would compile and silently invert
+/// what the sweep reports.
+#[derive(Default)]
+struct SweepTally {
+    re_enqueued: usize,
+    stalled: usize,
+}
+
+/// Retires a row that crossed the give-up thresholds. Returns `true` when the
+/// row was cleared and the sweep must move on to the next one. Persisted
+/// `ApplyOp` rows are exempt (#621): the crossing is warned about, not acted on.
+async fn retire_expired_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+    is_apply_op: bool,
+) -> Result<bool, AppError> {
+    // Issue #157 sub-item D — give-up before any further work.
+    //
+    // #621: ApplyOp rows are exempt. A persisted ApplyOp is a
+    // CORRECTNESS hole — the apply cursor's MAX-semantics advance has
+    // already leapt past the dropped op's seq, so the boot replay
+    // (`seq > cursor`) can never re-cover it; this retry row is the ONLY
+    // remaining record that the op was never materialized. Auto-retiring
+    // it (10 attempts / 7 days) would leave the op permanently
+    // unmaterialized with no recovery net. The row stays on the capped
+    // 1-hour backoff schedule until durable success (`clear_on_success`)
+    // or an explicit retirement below (op row compacted away /
+    // superseded by a later purge). The threshold crossing is still
+    // logged so a permanently-failing apply stays operator-visible.
+    if let Some(reason) = give_up_reason(row) {
+        if !is_apply_op {
+            tracing::warn!(
+                block_id = %row.block_id,
+                task_kind = %row.task_kind,
+                attempts = row.attempts,
+                created_at = %row.created_at,
+                give_up_reason = reason,
+                "retry queue give-up — task permanently dropped"
+            );
+            materializer
+                .metrics()
+                .retry_queue_giveup_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            clear_entry(
+                write_pool,
+                &row.block_id,
+                &row.task_kind,
+                materializer.metrics(),
+            )
+            .await?;
+            return Ok(true);
+        }
+        tracing::warn!(
+            block_id = %row.block_id,
+            task_kind = %row.task_kind,
+            attempts = row.attempts,
+            created_at = %row.created_at,
+            give_up_reason = reason,
+            "persisted ApplyOp exceeds the give-up thresholds but is kept — \
+             apply ops are correctness, not cache freshness (#621); it stays \
+             on the capped backoff until it applies durably"
+        );
+    }
+    Ok(false)
+}
+
+/// Re-enqueues one persisted `ApplyOp` retry row onto the FOREGROUND queue, or
+/// retires it when a later op has made it moot (#621).
+async fn sweep_apply_op_row(
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+    device_id: &str,
+    seq: i64,
+    tally: &mut SweepTally,
+) -> Result<(), AppError> {
+    // ApplyOp rows are dispatched to the foreground
+    // queue (matching the original task's routing). They need a
+    // separate path because (a) `task_from_row` cannot reconstruct
+    // them from the row alone — the `OpRecord` must be re-loaded
+    // from `op_log` — and (b) `try_enqueue_background` would route
+    // to the wrong consumer.
+    match try_reenqueue_apply_op(read_pool, materializer, device_id, seq).await {
+        Ok(ApplyOpSweepDisposition::Enqueued) => {
+            // Issue #378: lease (do NOT clear) on successful
+            // enqueue. The row stays so a subsequent failure's
+            // `record_failure` UPSERT finds it and increments
+            // `attempts` (preserving `created_at`); the consumer
+            // clears it via `clear_on_success` only on durable
+            // success. The lease prevents the same in-flight op
+            // being swept twice before it resolves.
+            // Foreground-routed rows are never shed, so this
+            // lease is always on the failure ladder.
+            lease_entry(
+                write_pool,
+                &row.block_id,
+                &row.task_kind,
+                row.attempts,
+                BackoffClass::Failure,
+            )
+            .await?;
+            tally.re_enqueued += 1;
+        }
+        Ok(ApplyOpSweepDisposition::OpRowMissing) => {
+            retire_missing_op_row(write_pool, materializer, row).await?
+        }
+        Ok(ApplyOpSweepDisposition::SupersededByPurge) => {
+            retire_purge_superseded_row(write_pool, materializer, row).await?
+        }
+        Ok(ApplyOpSweepDisposition::SupersededByAncestorPurge) => {
+            retire_ancestor_purge_superseded_row(write_pool, materializer, row).await?
+        }
+        Ok(ApplyOpSweepDisposition::SupersededByEdit) => {
+            retire_edit_superseded_row(write_pool, materializer, row).await?
+        }
+        Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot }) => {
+            retire_slot_superseded_row(write_pool, materializer, row, slot).await?
+        }
+        Err(e) => {
+            tracing::warn!(
+                block_id = %row.block_id,
+                task_kind = %row.task_kind,
+                error = %e,
+                "failed to re-enqueue  ApplyOp row — will try again next sweep"
+            );
+            tally.stalled += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Re-enqueues one non-`ApplyOp` retry row onto the background queue.
+async fn sweep_background_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+    task: MaterializeTask,
+    tally: &mut SweepTally,
+) -> Result<(), AppError> {
+    match materializer.try_enqueue_background(task) {
+        Ok(crate::materializer::BackgroundEnqueueOutcome::Enqueued) => {
+            // Issue #378: lease (do NOT clear) the row on successful
+            // enqueue. Pre-clearing here meant a task that then
+            // FAILED on its re-run hit `record_failure`'s INSERT
+            // branch every cycle — `attempts` never accumulated and
+            // `created_at` never aged, so `give_up_reason` could
+            // NEVER fire and a permanently-failing task looped
+            // forever (issue #157 / #378). Keeping the row present
+            // means a subsequent failure UPSERTs it (attempts += 1,
+            // created_at preserved); the consumer clears it via
+            // `clear_on_success` only after the re-run succeeds
+            // durably. The lease bumps `next_attempt_at` forward so
+            // the same in-flight task is not swept twice before it
+            // resolves.
+            lease_entry(
+                write_pool,
+                &row.block_id,
+                &row.task_kind,
+                row.attempts,
+                BackoffClass::of(row.last_error.as_deref()),
+            )
+            .await?;
+            tally.re_enqueued += 1;
+        }
+        Ok(crate::materializer::BackgroundEnqueueOutcome::Shed) => {
+            // #2541: the queue was full — the task never dispatched, so
+            // this is NOT a re-enqueue: do not count it and, crucially,
+            // do NOT `lease_entry`. The shed path has already spawned a
+            // `record_failure` UPSERT that reschedules the row with the
+            // escalated backoff (and the `SHED_LAST_ERROR` marker);
+            // leasing here with this sweep's STALE `row.attempts`
+            // snapshot raced that UPSERT and could REWIND
+            // `next_attempt_at` below the escalated value, re-sweeping
+            // the row into the still-saturated queue early.
+            tracing::debug!(
+                block_id = %row.block_id,
+                task_kind = %row.task_kind,
+                "retry row shed at re-enqueue (background queue full) — \
+                 rescheduled by the shed path's record_failure (#2541)"
+            );
+            tally.stalled += 1;
+        }
+        Err(e) => {
+            tracing::warn!(
+                block_id = %row.block_id,
+                task_kind = %row.task_kind,
+                error = %e,
+                "failed to re-enqueue retry row — will try again next sweep"
+            );
+            tally.stalled += 1;
+        }
+    }
+    Ok(())
+}
+
+/// #621: the op_log row is gone, so the persisted ApplyOp can never apply.
+async fn retire_missing_op_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+) -> Result<(), AppError> {
+    // #621: permanent — the op_log row is gone (compacted
+    // away or corrupted), so there is nothing left to apply.
+    // Retire the row instead of erroring every sweep forever.
+    tracing::error!(
+        block_id = %row.block_id,
+        task_kind = %row.task_kind,
+        "retiring persisted ApplyOp row: its op_log row no longer \
+         exists (compacted or corrupted) — the op is permanently \
+         unmaterialized (#621)"
+    );
+    materializer
+        .metrics()
+        .retry_queue_giveup_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    clear_entry(
+        write_pool,
+        &row.block_id,
+        &row.task_kind,
+        materializer.metrics(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// #621: a later `purge_block` on the same block makes this op moot.
+async fn retire_purge_superseded_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+) -> Result<(), AppError> {
+    // #621: a later purge_block targets the same block. The
+    // sweep runs minutes-to-hours after the original failure,
+    // so re-applying now (projections are INSERT OR IGNORE
+    // with no tombstone check, and the engine recreates the
+    // node) would RESURRECT user-destroyed data. The purge
+    // makes this op's effect moot — retire the row.
+    tracing::info!(
+        block_id = %row.block_id,
+        task_kind = %row.task_kind,
+        "retiring persisted ApplyOp row: a later purge_block \
+         supersedes it — re-applying would resurrect a purged \
+         block (#621)"
+    );
+    clear_entry(
+        write_pool,
+        &row.block_id,
+        &row.task_kind,
+        materializer.metrics(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// #2212: a later `purge_block` on an ANCESTOR makes this op moot.
+async fn retire_ancestor_purge_superseded_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+) -> Result<(), AppError> {
+    // #2212: a later purge_block targeted an ANCESTOR of this
+    // block. The purge cascade physically deleted this block's
+    // subtree with no per-descendant op_log row, so the
+    // same-block purge gate could not see it. Re-applying this
+    // persisted create/edit would resurrect an orphan under a
+    // user-destroyed subtree (or fail the parent_id FK on every
+    // sweep forever). The purge makes this op's effect moot —
+    // retire the row.
+    tracing::info!(
+        block_id = %row.block_id,
+        task_kind = %row.task_kind,
+        "retiring persisted ApplyOp row: a later purge_block on \
+         an ANCESTOR supersedes it — re-applying would resurrect \
+         an orphan under a purged subtree (#2212)"
+    );
+    clear_entry(
+        write_pool,
+        &row.block_id,
+        &row.task_kind,
+        materializer.metrics(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// #850: a later `edit_block` on the same block makes this op moot.
+async fn retire_edit_superseded_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+) -> Result<(), AppError> {
+    // #850: a later edit_block on the same block already won
+    // under strict LWW. Re-applying this stale edit now
+    // (`apply_edit_block_via_loro` splices `to_text` and
+    // projects the snapshot) would regress the newer content
+    // in both engine and SQL. The newer edit makes this op's
+    // effect moot — retire the row.
+    tracing::info!(
+        block_id = %row.block_id,
+        task_kind = %row.task_kind,
+        "retiring persisted ApplyOp row: a later edit_block \
+         supersedes it — re-applying would regress newer \
+         content (#850)"
+    );
+    clear_entry(
+        write_pool,
+        &row.block_id,
+        &row.task_kind,
+        materializer.metrics(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// #3294: a later op wrote the same logical slot, so this one is moot.
+async fn retire_slot_superseded_row(
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    row: &DueRow,
+    slot: &'static str,
+) -> Result<(), AppError> {
+    // #3294: a later op on the same block already wrote the
+    // same logical slot (property key / tag membership / tree
+    // position) under strict LWW. The projections for those op
+    // types are unguarded writes with no `created_at`
+    // comparison, so re-applying this stale op hours later
+    // would flip the user's value back in BOTH the engine and
+    // SQL and export the regression over sync. The newer op
+    // makes this op's effect moot — retire the row.
+    tracing::info!(
+        block_id = %row.block_id,
+        task_kind = %row.task_kind,
+        slot,
+        "retiring persisted ApplyOp row: a later op wrote the same \
+         logical slot — re-applying would regress a newer value (#3294)"
+    );
+    clear_entry(
+        write_pool,
+        &row.block_id,
+        &row.task_kind,
+        materializer.metrics(),
+    )
+    .await?;
+    Ok(())
 }

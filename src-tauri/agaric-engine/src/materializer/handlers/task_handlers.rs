@@ -9,7 +9,6 @@ use super::*;
 // the handler's `Result` and bumps the appropriate counter; the handler
 // itself never needed access. Reintroduce the parameter only when a
 // future code path needs metric mutation from inside the handler.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -76,180 +75,8 @@ pub async fn handle_foreground_task(
                         .into(),
                 ));
             }
-            // SQL-review route through `begin_immediate_logged`
-            // so sync-burst contention surfaces as upfront serialised
-            // wait (with a `warn!` if slow) instead of mid-tx
-            // `busy_timeout` stalls under SQLite's default DEFERRED
-            // isolation.
-            let mut tx =
-                agaric_store::db::begin_immediate_logged(pool, "materializer_apply_batch").await?;
-            // C-2b: track the highest seq across the batch so we can
-            // advance the apply cursor exactly once before commit. An
-            // empty batch leaves `max_seq` at None so the cursor is not
-            // touched (the MAX query is skipped entirely).
-            let mut max_seq: Option<i64> = None;
-            // Buffer the per-record `ApplyEffects` so the post-commit
-            // dispatch fanout has the RestoreBlock descendant cohorts
-            // available. Indexed by record position to mirror the
-            // `records.iter()` order; an empty effects struct is the
-            // default for non-RestoreBlock ops so the post-commit walk
-            // just no-ops on those slots.
-            let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
-            // #2200 Tier-2 import scaling: a `BatchApplyOps` IS the chunk. The
-            // accumulator collects (a) the latest sibling ordering per touched
-            // parent group and (b) the distinct affected page ids across the
-            // whole batch, so the two derived maintenance passes
-            // (`reproject_dense_positions`, `recompute_pages_cache_counts_for_pages`)
-            // run ONCE per parent/page at end-of-chunk instead of once per block
-            // — collapsing the import's per-block O(N) passes into a per-chunk
-            // O(N) pass. Threaded as `Some(&mut chunk)` into every `apply_op_tx`
-            // and flushed below (inside the same tx, before commit) so the
-            // deferred writes stay atomic with the block mutations.
-            //
-            // CORRECTNESS GATE — the dense-position reprojection deferral is
-            // ONLY safe when the ENTIRE chunk is `CreateBlock` ops. The
-            // accumulator snapshots each touched parent's sibling order at
-            // create-time and replays it once at flush; Move/Restore/Delete
-            // still reproject INLINE (loro_apply.rs), so a later same-parent
-            // op in a mixed batch would be clobbered by the stale snapshot
-            // replay (e.g. Create(a→P),Create(b→P) snapshots [a,b], then
-            // Move(b before a) reprojects inline to b=1,a=2, but the flush
-            // replays stale [a,b] → a=1,b=2 — WRONG). So we defer ONLY for an
-            // all-create batch; a mixed batch passes `None` to every op so ALL
-            // ops — creates included — reproject inline exactly as before this
-            // optimization (the known-correct path). The common import path is
-            // all-`CreateBlock`, so it keeps the perf win. (The accumulator's
-            // reproject key is additionally space-qualified so an all-create
-            // batch spanning spaces cannot collide on the top-level `None`
-            // key — see `ChunkAccumulator`.)
-            let all_create = records
-                .iter()
-                .all(|r| r.op_type == OpType::CreateBlock.as_str());
-            let mut chunk = if all_create {
-                Some(ChunkAccumulator::default())
-            } else {
-                None
-            };
-            // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
-            // through `Arc -> Vec` to yield `&OpRecord` without copying.
-            for record in records.iter() {
-                let effects = match apply_op_tx(&mut tx, record, chunk.as_mut(), state).await {
-                    Ok(eff) => eff,
-                    Err(e) => {
-                        tracing::warn!(
-                            op_type = %record.op_type,
-                            device_id = %record.device_id,
-                            seq = record.seq,
-                            error = %e,
-                            "failed to apply remote op in batch — rolling back"
-                        );
-                        // tx is dropped here, which rolls back automatically
-                        return Err(e);
-                    }
-                };
-                per_record_effects.push(effects);
-                max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
-            }
-            // #2200: end-of-chunk flush — reproject every touched sibling group
-            // ONCE and recompute every distinct affected page's counts ONCE,
-            // INSIDE this tx so the deferred writes commit atomically with the
-            // block mutations (and roll back together with them on the error
-            // paths above, which return before reaching here). A `?` here rolls
-            // the whole batch back, same as an in-loop failure. `None` on the
-            // mixed-batch path (deferral gated off) — nothing was accumulated,
-            // every op already reprojected/recomputed inline, so skip the flush.
-            if let Some(chunk) = chunk {
-                chunk.flush(&mut tx).await?;
-            }
-            // C-2b: advance the cursor to the highest seq in the batch
-            // inside the same tx so `apply + cursor` are atomic. Empty
-            // batches skip the update entirely (no seq to record).
-            //
-            // #382: `seq` here is the max of a PER-DEVICE counter and the
-            // cursor is a single global scalar — correct only under the
-            // single-device-batch assumption documented (and
-            // enforced) at the top of this arm. A multi-device
-            // batch would need this advancement partitioned per device_id.
-            if let Some(seq) = max_seq {
-                advance_apply_cursor(&mut tx, seq).await?;
-            }
-            tx.commit().await?;
-
-            // Post-commit cohort fan-out for the batch. Runs AFTER
-            // `tx.commit` so any record whose sibling rolled the tx
-            // back is not visible here (an Err inside the loop above
-            // returns early before we reach this point). Each op was
-            // already engine-applied INSIDE the tx (`apply_op_tx` →
-            // `apply_*_via_loro`) — there is deliberately NO per-op
-            // re-dispatch here (#603: a second engine apply routed
-            // new-scheme create/move ops through the legacy position
-            // path, converging sibling order toward ULID order). Only
-            // the Restore/Delete descendant cohorts fan out, so the
-            // engine's per-block-id mutation matches the SQL cascade.
-            for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-                dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
-                // #2017: symmetric UPWARD fan-out for the restored ancestor
-                // chain (see `apply_op` for the divergence rationale). Mirrors
-                // the descendant fan-out on the batch path too.
-                dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
-                dispatch_delete_descendants(
-                    record,
-                    &effects.deleted_cohort,
-                    effects.delete_space_id.as_ref(),
-                    state,
-                )
-                .await;
-                // #4390: the un-sweep's engine mirror, on the batch path too.
-                // A `MoveBlock` whose subject arrives already tombstoned by a
-                // concurrent cascade is exactly the shape a REMOTE batch
-                // delivers, so leaving this off the batch arm would leave the
-                // fix on the single-op path only.
-                super::apply::dispatch_unswept_cohort(
-                    record,
-                    &effects.unswept_cohort,
-                    effects.unswept_space_id.as_ref(),
-                    state,
-                )
-                .await;
-                // #4285: repair the LINK edges of everything this record's
-                // restore un-deleted — the whole cohort, not just the seed.
-                // Mirrors `apply_op`'s single-op call; a batch of remote ops
-                // is exactly where a restore arrives without ever passing
-                // through `invalidations_for_op`.
-                super::apply::reindex_restored_cohort_links(
-                    pool,
-                    &effects.restored_cohort,
-                    &effects.restored_ancestors,
-                )
-                .await;
-            }
-
-            // #4733: the FTS half of the same cohorts, ONCE over the batch.
-            // `reindex_fts_for_ids` loads the tag and page reference maps per
-            // CALL — a full scan of both — so a batch carrying N restore ops
-            // would pay N of them inside the loop above. The removal is a
-            // single batched DELETE for the same reason.
-            let batch_deleted: Vec<&str> = per_record_effects
-                .iter()
-                .flat_map(|e| e.deleted_cohort.iter())
-                .map(String::as_str)
-                .collect();
-            let batch_restored: Vec<&str> = per_record_effects
-                .iter()
-                .flat_map(|e| {
-                    e.restored_cohort
-                        .iter()
-                        .chain(e.restored_ancestors.iter())
-                        // #4733: the `MoveBlock` tail's cohort rides the same
-                        // pass — `reindex_fts_for_ids` re-derives membership
-                        // per id, so a swept id loses its row and an un-swept
-                        // one gains a fresh one, from one list.
-                        .chain(e.move_fts_cohort.iter())
-                })
-                .map(String::as_str)
-                .collect();
-            super::apply::remove_deleted_cohort_fts(pool, &batch_deleted).await;
-            super::apply::reindex_restored_cohort_fts(pool, &batch_restored).await;
+            let per_record_effects = apply_records_in_one_tx(pool, records, state).await?;
+            dispatch_committed_cohorts(pool, records, &per_record_effects, state).await;
 
             Ok(())
         }
@@ -278,6 +105,198 @@ pub async fn handle_foreground_task(
             )))
         }
     }
+}
+
+/// Applies one `BatchApplyOps` batch inside a single transaction, advancing
+/// the apply cursor and committing. Returns the per-record effects the
+/// post-commit fan-out needs.
+async fn apply_records_in_one_tx(
+    pool: &SqlitePool,
+    records: &[OpRecord],
+    state: &crate::loro::shared::LoroState,
+) -> Result<Vec<ApplyEffects>, AppError> {
+    // SQL-review route through `begin_immediate_logged`
+    // so sync-burst contention surfaces as upfront serialised
+    // wait (with a `warn!` if slow) instead of mid-tx
+    // `busy_timeout` stalls under SQLite's default DEFERRED
+    // isolation.
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "materializer_apply_batch").await?;
+    // C-2b: track the highest seq across the batch so we can
+    // advance the apply cursor exactly once before commit. An
+    // empty batch leaves `max_seq` at None so the cursor is not
+    // touched (the MAX query is skipped entirely).
+    let mut max_seq: Option<i64> = None;
+    // Buffer the per-record `ApplyEffects` so the post-commit
+    // dispatch fanout has the RestoreBlock descendant cohorts
+    // available. Indexed by record position to mirror the
+    // `records.iter()` order; an empty effects struct is the
+    // default for non-RestoreBlock ops so the post-commit walk
+    // just no-ops on those slots.
+    let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
+    // #2200 Tier-2 import scaling: a `BatchApplyOps` IS the chunk. The
+    // accumulator collects (a) the latest sibling ordering per touched
+    // parent group and (b) the distinct affected page ids across the
+    // whole batch, so the two derived maintenance passes
+    // (`reproject_dense_positions`, `recompute_pages_cache_counts_for_pages`)
+    // run ONCE per parent/page at end-of-chunk instead of once per block
+    // — collapsing the import's per-block O(N) passes into a per-chunk
+    // O(N) pass. Threaded as `Some(&mut chunk)` into every `apply_op_tx`
+    // and flushed below (inside the same tx, before commit) so the
+    // deferred writes stay atomic with the block mutations.
+    //
+    // CORRECTNESS GATE — the dense-position reprojection deferral is
+    // ONLY safe when the ENTIRE chunk is `CreateBlock` ops. The
+    // accumulator snapshots each touched parent's sibling order at
+    // create-time and replays it once at flush; Move/Restore/Delete
+    // still reproject INLINE (loro_apply.rs), so a later same-parent
+    // op in a mixed batch would be clobbered by the stale snapshot
+    // replay (e.g. Create(a→P),Create(b→P) snapshots [a,b], then
+    // Move(b before a) reprojects inline to b=1,a=2, but the flush
+    // replays stale [a,b] → a=1,b=2 — WRONG). So we defer ONLY for an
+    // all-create batch; a mixed batch passes `None` to every op so ALL
+    // ops — creates included — reproject inline exactly as before this
+    // optimization (the known-correct path). The common import path is
+    // all-`CreateBlock`, so it keeps the perf win. (The accumulator's
+    // reproject key is additionally space-qualified so an all-create
+    // batch spanning spaces cannot collide on the top-level `None`
+    // key — see `ChunkAccumulator`.)
+    let all_create = records
+        .iter()
+        .all(|r| r.op_type == OpType::CreateBlock.as_str());
+    let mut chunk = if all_create {
+        Some(ChunkAccumulator::default())
+    } else {
+        None
+    };
+    // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
+    // through `Arc -> Vec` to yield `&OpRecord` without copying.
+    for record in records.iter() {
+        let effects = match apply_op_tx(&mut tx, record, chunk.as_mut(), state).await {
+            Ok(eff) => eff,
+            Err(e) => {
+                tracing::warn!(
+                    op_type = %record.op_type,
+                    device_id = %record.device_id,
+                    seq = record.seq,
+                    error = %e,
+                    "failed to apply remote op in batch — rolling back"
+                );
+                // tx is dropped here, which rolls back automatically
+                return Err(e);
+            }
+        };
+        per_record_effects.push(effects);
+        max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
+    }
+    // #2200: end-of-chunk flush — reproject every touched sibling group
+    // ONCE and recompute every distinct affected page's counts ONCE,
+    // INSIDE this tx so the deferred writes commit atomically with the
+    // block mutations (and roll back together with them on the error
+    // paths above, which return before reaching here). A `?` here rolls
+    // the whole batch back, same as an in-loop failure. `None` on the
+    // mixed-batch path (deferral gated off) — nothing was accumulated,
+    // every op already reprojected/recomputed inline, so skip the flush.
+    if let Some(chunk) = chunk {
+        chunk.flush(&mut tx).await?;
+    }
+    // C-2b: advance the cursor to the highest seq in the batch
+    // inside the same tx so `apply + cursor` are atomic. Empty
+    // batches skip the update entirely (no seq to record).
+    //
+    // #382: `seq` here is the max of a PER-DEVICE counter and the
+    // cursor is a single global scalar — correct only under the
+    // single-device-batch assumption documented (and
+    // enforced) at the top of this arm. A multi-device
+    // batch would need this advancement partitioned per device_id.
+    if let Some(seq) = max_seq {
+        advance_apply_cursor(&mut tx, seq).await?;
+    }
+    tx.commit().await?;
+    Ok(per_record_effects)
+}
+
+/// Post-commit cohort fan-out for an applied `BatchApplyOps` batch.
+async fn dispatch_committed_cohorts(
+    pool: &SqlitePool,
+    records: &[OpRecord],
+    per_record_effects: &[ApplyEffects],
+    state: &crate::loro::shared::LoroState,
+) {
+    // Post-commit cohort fan-out for the batch. Runs AFTER
+    // `tx.commit` so any record whose sibling rolled the tx
+    // back is not visible here (an Err inside the loop above
+    // returns early before we reach this point). Each op was
+    // already engine-applied INSIDE the tx (`apply_op_tx` →
+    // `apply_*_via_loro`) — there is deliberately NO per-op
+    // re-dispatch here (#603: a second engine apply routed
+    // new-scheme create/move ops through the legacy position
+    // path, converging sibling order toward ULID order). Only
+    // the Restore/Delete descendant cohorts fan out, so the
+    // engine's per-block-id mutation matches the SQL cascade.
+    for (record, effects) in records.iter().zip(per_record_effects.iter()) {
+        dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
+        // #2017: symmetric UPWARD fan-out for the restored ancestor
+        // chain (see `apply_op` for the divergence rationale). Mirrors
+        // the descendant fan-out on the batch path too.
+        dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
+        dispatch_delete_descendants(
+            record,
+            &effects.deleted_cohort,
+            effects.delete_space_id.as_ref(),
+            state,
+        )
+        .await;
+        // #4390: the un-sweep's engine mirror, on the batch path too.
+        // A `MoveBlock` whose subject arrives already tombstoned by a
+        // concurrent cascade is exactly the shape a REMOTE batch
+        // delivers, so leaving this off the batch arm would leave the
+        // fix on the single-op path only.
+        super::apply::dispatch_unswept_cohort(
+            record,
+            &effects.unswept_cohort,
+            effects.unswept_space_id.as_ref(),
+            state,
+        )
+        .await;
+        // #4285: repair the LINK edges of everything this record's
+        // restore un-deleted — the whole cohort, not just the seed.
+        // Mirrors `apply_op`'s single-op call; a batch of remote ops
+        // is exactly where a restore arrives without ever passing
+        // through `invalidations_for_op`.
+        super::apply::reindex_restored_cohort_links(
+            pool,
+            &effects.restored_cohort,
+            &effects.restored_ancestors,
+        )
+        .await;
+    }
+
+    // #4733: the FTS half of the same cohorts, ONCE over the batch.
+    // `reindex_fts_for_ids` loads the tag and page reference maps per
+    // CALL — a full scan of both — so a batch carrying N restore ops
+    // would pay N of them inside the loop above. The removal is a
+    // single batched DELETE for the same reason.
+    let batch_deleted: Vec<&str> = per_record_effects
+        .iter()
+        .flat_map(|e| e.deleted_cohort.iter())
+        .map(String::as_str)
+        .collect();
+    let batch_restored: Vec<&str> = per_record_effects
+        .iter()
+        .flat_map(|e| {
+            e.restored_cohort
+                .iter()
+                .chain(e.restored_ancestors.iter())
+                // #4733: the `MoveBlock` tail's cohort rides the same
+                // pass — `reindex_fts_for_ids` re-derives membership
+                // per id, so a swept id loses its row and an un-swept
+                // one gains a fresh one, from one list.
+                .chain(e.move_fts_cohort.iter())
+        })
+        .map(String::as_str)
+        .collect();
+    super::apply::remove_deleted_cohort_fts(pool, &batch_deleted).await;
+    super::apply::reindex_restored_cohort_fts(pool, &batch_restored).await;
 }
 
 /// Dispatch a background task to either the read/write split implementation
