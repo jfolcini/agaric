@@ -12,6 +12,25 @@ use agaric_engine::draft;
 
 use super::*;
 
+/// Reject a draft whose stored content exceeds `MAX_CONTENT_LENGTH`.
+///
+/// Split out of [`flush_draft_inner`] (#4639), and private to it: this is the
+/// SINGLE-draft contract, where an oversized draft is a caller-visible
+/// [`AppError::Validation`] and the tx rolls back with the row intact.
+/// [`flush_all_drafts_inner`] deliberately does the opposite — it `warn!`s and
+/// skips the offender so the rest of the batch still flushes (#3262) — so it
+/// must not route through this guard.
+fn ensure_draft_within_max_content_length(content: &str) -> Result<(), AppError> {
+    if content.len() > super::MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "draft content {} exceeds maximum {}",
+            content.len(),
+            super::MAX_CONTENT_LENGTH,
+        )));
+    }
+    Ok(())
+}
+
 /// Flush a draft: look up the stored draft content, validate it, compute
 /// `prev_edit`, write an `edit_block` op, and delete the draft row — all
 /// inside a single `BEGIN IMMEDIATE` transaction.
@@ -30,7 +49,6 @@ use super::*;
 /// - **Happy path** — appends one `edit_block` op and deletes the draft row
 ///   atomically.
 #[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -132,13 +150,7 @@ pub async fn flush_draft_inner(
     //    Last of the three guards, matching `flush_all_drafts_inner`: an
     //    oversized draft whose block is gone or superseded is reaped above
     //    rather than erroring forever on a row nothing can flush.
-    if content.len() > super::MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "draft content {} exceeds maximum {}",
-            content.len(),
-            super::MAX_CONTENT_LENGTH,
-        )));
-    }
+    ensure_draft_within_max_content_length(&content)?;
 
     // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
     // Delegates to the shared helper in
@@ -168,6 +180,83 @@ pub async fn flush_draft_inner(
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(())
+}
+
+/// H-12a guard for one [`flush_all_drafts_inner`] iteration: resolve the
+/// draft's target block, or drop the draft as an orphan.
+///
+/// Returns `Some(block_type)` when the target is live — the caller needs it for
+/// the block-type-aware post-commit dispatch. Returns `None` after DELETING the
+/// orphan `block_drafts` row on the caller's tx and logging it, in which case
+/// the caller counts the row as consumed and moves on. The caller still owns
+/// the single commit.
+///
+/// Split out of the loop body (#4639) and private to it: [`flush_draft_inner`]
+/// commits and returns on the same condition, and logs under its own
+/// `flush_draft:` prefix.
+async fn resolve_or_drop_orphan_draft_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    block_id: &str,
+) -> Result<Option<String>, AppError> {
+    let target = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(target) = target else {
+        draft::delete_draft_in_tx(&mut *tx, block_id).await?;
+        tracing::warn!(
+            block_id = %block_id,
+            "flush_all_drafts: target block missing or soft-deleted; dropped orphan draft"
+        );
+        return Ok(None);
+    };
+    Ok(Some(target.block_type))
+}
+
+/// #2651 supersession guard for one [`flush_all_drafts_inner`] iteration: if a
+/// newer block-scoped op exists past this draft's monotonic anchor seq, delete
+/// the stale `block_drafts` row on the caller's tx and report it dropped.
+///
+/// Returns `true` when the row was deleted — the caller counts it as consumed
+/// and moves to the next draft. Writes only through the passed-in transaction;
+/// the caller still owns the single commit.
+///
+/// Split out of the loop body (#4639) and private to it. The single-draft
+/// [`flush_draft_inner`] runs the same probe against its own tx but then
+/// commits and returns, and logs under its own `flush_draft:` prefix, so the
+/// two stay separate rather than sharing one parameterised guard.
+async fn drop_superseded_draft_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    block_id: &str,
+    draft_anchor_device: Option<&str>,
+    draft_anchor_seq: i64,
+) -> Result<bool, AppError> {
+    let anchor_device = draft_anchor_device.unwrap_or(device_id);
+    let bid_upper = block_id.to_ascii_uppercase();
+    let superseding: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+             WHERE block_id = ?1 \
+             AND op_type IN ('edit_block', 'create_block') \
+             AND device_id = ?2 \
+             AND seq > ?3",
+        bid_upper,
+        anchor_device,
+        draft_anchor_seq
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    if superseding > 0 {
+        draft::delete_draft_in_tx(&mut *tx, block_id).await?;
+        tracing::info!(
+            block_id = %block_id,
+            "flush_all_drafts: draft superseded by a newer edit; dropped stale draft"
+        );
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Result of [`flush_all_drafts_inner`]: how many drafts were processed
@@ -226,7 +315,6 @@ pub struct FlushAllDraftsResult {
 /// orphan (H-12a) or dropped as stale. A skipped oversized row is not
 /// consumed and does not count.
 #[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn flush_all_drafts_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -287,48 +375,25 @@ pub async fn flush_all_drafts_inner(
         // the op append — same shape as `flush_draft_inner` modulo the
         // shared tx. Also read `block_type` for the block-type-aware
         // post-commit dispatch below.
-        let target = sqlx::query!(
-            "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-            block_id,
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-        let Some(target) = target else {
-            draft::delete_draft_in_tx(&mut tx, &block_id).await?;
-            tracing::warn!(
-                block_id = %block_id,
-                "flush_all_drafts: target block missing or soft-deleted; dropped orphan draft"
-            );
+        let Some(block_type) = resolve_or_drop_orphan_draft_in_tx(&mut tx, &block_id).await? else {
             flushed += 1;
             continue;
         };
-        let block_type = target.block_type;
 
         // #2651 — SUPERSESSION GUARD (mirrors `flush_draft_inner` step 3b /
         // `recovery::draft_recovery::recover_single_draft`). If a newer
         // block-scoped op exists past this draft's monotonic anchor seq, the
         // stored draft is stale — drop the row and append/apply nothing so it
         // can't regress content on the next boot replay.
-        let anchor_device = draft_anchor_device.as_deref().unwrap_or(device_id);
-        let bid_upper = block_id.to_ascii_uppercase();
-        let superseding: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM op_log \
-             WHERE block_id = ?1 \
-             AND op_type IN ('edit_block', 'create_block') \
-             AND device_id = ?2 \
-             AND seq > ?3",
-            bid_upper,
-            anchor_device,
-            draft_anchor_seq
+        if drop_superseded_draft_in_tx(
+            &mut tx,
+            device_id,
+            &block_id,
+            draft_anchor_device.as_deref(),
+            draft_anchor_seq,
         )
-        .fetch_one(&mut **tx)
-        .await?;
-        if superseding > 0 {
-            draft::delete_draft_in_tx(&mut tx, &block_id).await?;
-            tracing::info!(
-                block_id = %block_id,
-                "flush_all_drafts: draft superseded by a newer edit; dropped stale draft"
-            );
+        .await?
+        {
             flushed += 1;
             continue;
         }

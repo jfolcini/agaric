@@ -73,6 +73,346 @@ pub async fn count_agenda_batch_by_source_inner(
     Ok(result)
 }
 
+/// The validated, decoded inputs of one page request to
+/// [`list_projected_agenda_inner_with_today`].
+///
+/// A struct rather than a 5-tuple: `range_start` / `range_end` are both
+/// `NaiveDate` and `limit_i64` / `cap` are both integers, so a positional
+/// return here would invite a silent swap between two fields the query
+/// treats very differently.
+struct ProjectedAgendaQuery {
+    after: Option<Cursor>,
+    limit_i64: i64,
+    cap: usize,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+}
+
+/// Validate and decode the arguments of one
+/// [`list_projected_agenda_inner_with_today`] page request (#4639 split).
+///
+/// AGENTS.md invariant #10: the per-page limit is REJECTED when out of range,
+/// never clamped.
+fn parse_projected_agenda_query(
+    start_date: &str,
+    end_date: &str,
+    cursor: Option<&str>,
+    limit: Option<i64>,
+) -> Result<ProjectedAgendaQuery, AppError> {
+    validate_date_format(start_date)?;
+    validate_date_format(end_date)?;
+
+    // Decode the optional cursor. We bypass `pagination::PageRequest::new`
+    // because that helper clamps to MAX_PAGE_SIZE=200 and this command
+    // historically clamps to 500 (kept as the per-page cap — callers now
+    // page past the cap via the cursor instead of being silently
+    // Truncated;).
+    let after = match cursor {
+        Some(s) => Some(Cursor::decode(s)?),
+        None => None,
+    };
+
+    // Per-page limit must be in `[1, 500]` (limit-clamp-followup Phase 1:
+    // silent clamp converted to a loud `AppError::Validation` so a caller
+    // asking for >500 fails synchronously instead of silently truncating
+    // to 500).  `None` falls through to the historical default of 200.
+    let limit_i64 = match limit {
+        Some(l) if (1..=500).contains(&l) => l,
+        Some(l) => {
+            return Err(AppError::validation(format!(
+                "list_projected_agenda limit must be in [1, 500]; got {l}. \
+                 For larger result sets, use cursor pagination."
+            )));
+        }
+        None => 200,
+    };
+    // safe: validated above as [1, 500]
+    let cap = usize::try_from(limit_i64).unwrap_or(200);
+
+    // Parse date range boundaries
+    let range_start = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
+        .map_err(|_| AppError::validation("invalid start_date".into()))?;
+    let range_end = chrono::NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
+        .map_err(|_| AppError::validation("invalid end_date".into()))?;
+
+    if range_start > range_end {
+        return Err(AppError::validation(
+            "start_date must be <= end_date".into(),
+        ));
+    }
+
+    Ok(ProjectedAgendaQuery {
+        after,
+        limit_i64,
+        cap,
+        range_start,
+        range_end,
+    })
+}
+
+/// The two ends of the `projected_agenda_cache` completeness guarantee, read
+/// from `projected_agenda_horizon` (#4639 split out of
+/// [`list_projected_agenda_inner_with_today`]).
+struct ProjectedAgendaHorizon {
+    cache_covers_range: bool,
+    rebuild_today: Option<chrono::NaiveDate>,
+}
+
+/// Read the horizon row and decide, from it alone, whether the cache can
+/// answer a query ending at `end_date` and when it was last rebuilt.
+async fn read_projected_agenda_horizon(
+    pool: &SqlitePool,
+    end_date: &str,
+) -> Result<ProjectedAgendaHorizon, AppError> {
+    // #2601 — bounded materialization horizon guard. `projected_agenda_cache`
+    // holds only the next `HORIZON_OCCURRENCES` occurrences per repeating
+    // block per source, so it is authoritative only up to the
+    // guaranteed-complete `horizon_date` advertised (in the same transaction
+    // as the rows) by the last rebuild. A query whose `end_date` reaches past
+    // that horizon could be missing far occurrences of a dense (e.g. daily)
+    // recurrence, so it is answered by the on-the-fly projector — correct for
+    // any range — rather than the cache. An absent horizon row (cache never
+    // built, or a device still on the cold-cache path) also routes here,
+    // matching the empty-cache fallback below. The on-the-fly path honours
+    // the cursor, so mid-pagination is consistent: `end_date` is fixed across
+    // a query's pages, so every page of one query takes the same branch.
+    //
+    // `horizon_date` and `end_date` are both zero-padded `YYYY-MM-DD`, so the
+    // lexical string comparison is a valid calendar-date comparison.
+    // dynamic-sql: reads projected_agenda_horizon (table added this PR, migration 0102; rebuild_today column added by migration 0105), dynamic so the crate builds without it in the .sqlx cache
+    let horizon_row: Option<(String, Option<String>)> =
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT horizon_date, rebuild_today FROM projected_agenda_horizon WHERE id = 0",
+        )
+        .fetch_optional(pool)
+        .await?;
+    let horizon_date = horizon_row.as_ref().map(|(h, _)| h.clone());
+    let cache_covers_range = horizon_date.as_deref().is_some_and(|h| end_date <= h);
+
+    // #3160 — the *lower* end of the same guarantee, plus its freshness.
+    //
+    // Lower end: the rebuild projects with `range_start = today`
+    // (`cache::projected_agenda::project_block_into`), so occurrences BEFORE
+    // the rebuild's reference date are never materialized. The
+    // guaranteed-complete span is the closed interval
+    // `[rebuild_today, horizon_date]`, and `rebuild_today` is read straight
+    // off the row the rebuild wrote (migration 0105) — NOT derived as
+    // `horizon_date - HORIZON_DAYS`, which would decode stale rows to the
+    // wrong date the moment that constant is retuned, with nothing
+    // invalidating the row on upgrade.
+    //
+    // Freshness: `rebuild_today` must still BE today. Default-mode rules
+    // (`daily` / `+1w` / `monthly` / …) project from the block's own base
+    // date and so do not move as the day advances, but `.+` rules are
+    // anchored to the reference date by definition — a cache rebuilt
+    // yesterday holds a `.+1w` occurrence at `yesterday + 7`, where the
+    // projector run today would place it at `today + 7`. Trusting a
+    // stale-by-a-day cache to prove "this window is genuinely empty" would
+    // therefore hide such a task on the day it is actually due. A rebuild is
+    // enqueued at boot, on every date/repeat/todo property mutation, and by
+    // the `projected_agenda_midnight` maintenance job, so this holds for the
+    // ordinary read; when it does not, the empty-window read falls through to
+    // the projector exactly as it did before this change. (That job fires on
+    // the UTC day boundary while the rebuild anchors on the LOCAL date, so
+    // west-of-UTC installs left running overnight sit on a stale reference
+    // date — and therefore on the pre-#3160 cost — until the next UTC
+    // rollover. Aligning the job to the local day is tracked separately; it
+    // is a latency question, not a correctness one, because of this check.)
+    //
+    // A row written by a pre-0105 binary has `rebuild_today = NULL` and is
+    // likewise treated as unproven until the next rebuild fills it in.
+    let rebuild_today = horizon_row
+        .as_ref()
+        .and_then(|(_, t)| t.as_deref())
+        .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
+
+    Ok(ProjectedAgendaHorizon {
+        cache_covers_range,
+        rebuild_today,
+    })
+}
+
+/// The four SQL binds the cache query's keyset cursor needs (#4639 split out
+/// of [`list_projected_agenda_inner_with_today`]).
+///
+/// A struct rather than a 4-tuple: `date` and `id` are both `&str`, and the
+/// query treats them as different terms of the keyset, so a positional
+/// return invites a silent swap.
+struct ProjectedAgendaCursorBinds<'a> {
+    flag: Option<i64>,
+    date: &'a str,
+    id: &'a str,
+    source: Option<&'a str>,
+}
+
+fn projected_agenda_cursor_binds(after: Option<&Cursor>) -> ProjectedAgendaCursorBinds<'_> {
+    // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
+    //
+    // #3206 — three parts, not two. `(projected_date, block_id)` is not a
+    // unique key over `projected_agenda_cache` (its PK is
+    // `(block_id, projected_date, source)`), so a strictly-greater keyset on
+    // that pair skips the second of any two rows a page boundary lands
+    // between — silently, because the page still comes back full. `source`
+    // completes the key; `Cursor::projected_agenda_key` unpacks it.
+    //
+    // `cursor_source` is `None` for a cursor minted before #3206, which binds
+    // SQL NULL and disarms the third disjunct below — that page behaves
+    // exactly as it did before this change instead of erroring out an
+    // in-flight cursor, and the cursor it emits carries the full triple.
+    match after {
+        Some(c) => {
+            let (block_id, source) = c.projected_agenda_key();
+            ProjectedAgendaCursorBinds {
+                flag: Some(1),
+                date: c.deleted_at.as_deref().unwrap_or(""),
+                id: block_id,
+                source,
+            }
+        }
+        None => ProjectedAgendaCursorBinds {
+            flag: None,
+            date: "",
+            id: "",
+            source: None,
+        },
+    }
+}
+
+/// One `projected_agenda_cache` x `blocks` join row as
+/// [`fetch_cached_projected_agenda`] decodes it — positional, no `FromRow`
+/// struct. Named so the query helper and its caller share one spelling
+/// (#4639).
+#[allow(clippy::type_complexity)]
+type CachedProjectedAgendaRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// Run the `projected_agenda_cache` keyset page query (#4639 split out of
+/// [`list_projected_agenda_inner_with_today`]).
+async fn fetch_cached_projected_agenda(
+    pool: &SqlitePool,
+    start_date: &str,
+    end_date: &str,
+    cursor: &ProjectedAgendaCursorBinds<'_>,
+    fetch_limit: i64,
+    space_id: Option<&str>,
+) -> Result<Vec<CachedProjectedAgendaRow>, AppError> {
+    // dynamic-sql: 14-column projected-agenda cache join decoded into a positional tuple (no FromRow struct)
+    let cached: Vec<CachedProjectedAgendaRow> = sqlx::query_as(
+        // ?7 (space_id) drives the shared space-filter clause.
+        // Mirrors `agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
+        // query uses dynamic-typed `query_as`. Filters on the first-class
+        // `b.space_id` column (#533, migration 0086).
+        "SELECT pac.block_id, pac.projected_date, pac.source,
+                b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id
+         FROM projected_agenda_cache pac
+         JOIN blocks b ON b.id = pac.block_id
+         WHERE pac.projected_date >= ?1
+           AND pac.projected_date <= ?2
+           AND b.deleted_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )
+           AND (?3 IS NULL OR (pac.projected_date > ?4
+               OR (pac.projected_date = ?4 AND pac.block_id > ?5)
+               OR (pac.projected_date = ?4 AND pac.block_id = ?5
+                   AND ?8 IS NOT NULL AND pac.source > ?8)))
+           AND (?7 IS NULL OR b.space_id = ?7)
+         ORDER BY pac.projected_date ASC, pac.block_id ASC, pac.source ASC
+         LIMIT ?6",
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .bind(cursor.flag)
+    .bind(cursor.date)
+    .bind(cursor.id)
+    .bind(fetch_limit)
+    .bind(space_id)
+    .bind(cursor.source)
+    .fetch_all(pool)
+    .await?;
+    Ok(cached)
+}
+
+/// Decode the cache page's positional rows into the [`PageResponse`] the
+/// command returns — the entries, the `has_more` probe against the
+/// `limit + 1` fetch, and the keyset cursor for the next page (#4639 split
+/// out of [`list_projected_agenda_inner_with_today`]).
+///
+/// Keyed to the cache path by its input type: the projector path builds its
+/// page out of a `BTreeMap` it filled itself.
+fn cached_rows_to_projected_page(
+    cached: Vec<CachedProjectedAgendaRow>,
+    cap: usize,
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
+    // Boundary cast: the cache query above joins
+    // `blocks` filtered to live, non-conflict rows, so every surviving
+    // block id is active. `from_trusted_active` records the claim in
+    // the type system without re-running the predicate.
+    let mut entries: Vec<ActiveProjectedAgendaEntry> = cached
+        .into_iter()
+        .map(|row| ActiveProjectedAgendaEntry {
+            block: ActiveBlockRow {
+                id: agaric_core::ulid::ActiveBlockId::from_trusted_active(&row.3),
+                block_type: row.4,
+                content: row.5,
+                parent_id: row.6.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
+                position: row.7,
+                deleted_at: row.8,
+                todo_state: row.9,
+                priority: row.10,
+                due_date: row.11,
+                scheduled_date: row.12,
+                page_id: row.13.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
+            },
+            projected_date: row.1,
+            source: row.2,
+        })
+        .collect();
+
+    let has_more = entries.len() > cap;
+    if has_more {
+        entries.truncate(cap);
+    }
+    let next_cursor = if has_more {
+        let last = entries.last().expect("has_more implies non-empty");
+        Some(
+            Cursor::for_projected_agenda(
+                last.block.id.as_str(),
+                last.projected_date.clone(),
+                &last.source,
+            )
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(PageResponse {
+        items: entries,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
 /// Compute projected future agenda entries for repeating tasks.
 ///
 /// First tries the `projected_agenda_cache` table (populated by the background
@@ -132,7 +472,6 @@ pub async fn list_projected_agenda_inner(
 /// `today` so fixtures with future-dated (`.+` / `++` today-anchored) repeat
 /// rules — and the #2601 horizon fallback, which threads `today` into
 /// [`list_projected_agenda_on_the_fly`] — stay stable across the wall clock.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn list_projected_agenda_inner_with_today(
     pool: &SqlitePool,
     start_date: String,
@@ -142,111 +481,18 @@ pub async fn list_projected_agenda_inner_with_today(
     scope: &SpaceScope,
     today: chrono::NaiveDate,
 ) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
-    validate_date_format(&start_date)?;
-    validate_date_format(&end_date)?;
+    let ProjectedAgendaQuery {
+        after,
+        limit_i64,
+        cap,
+        range_start,
+        range_end,
+    } = parse_projected_agenda_query(&start_date, &end_date, cursor.as_deref(), limit)?;
 
-    // Decode the optional cursor. We bypass `pagination::PageRequest::new`
-    // because that helper clamps to MAX_PAGE_SIZE=200 and this command
-    // historically clamps to 500 (kept as the per-page cap — callers now
-    // page past the cap via the cursor instead of being silently
-    // Truncated;).
-    let after = match cursor.as_deref() {
-        Some(s) => Some(Cursor::decode(s)?),
-        None => None,
-    };
-
-    // Per-page limit must be in `[1, 500]` (limit-clamp-followup Phase 1:
-    // silent clamp converted to a loud `AppError::Validation` so a caller
-    // asking for >500 fails synchronously instead of silently truncating
-    // to 500).  `None` falls through to the historical default of 200.
-    let limit_i64 = match limit {
-        Some(l) if (1..=500).contains(&l) => l,
-        Some(l) => {
-            return Err(AppError::validation(format!(
-                "list_projected_agenda limit must be in [1, 500]; got {l}. \
-                 For larger result sets, use cursor pagination."
-            )));
-        }
-        None => 200,
-    };
-    // safe: validated above as [1, 500]
-    let cap = usize::try_from(limit_i64).unwrap_or(200);
-
-    // Parse date range boundaries
-    let range_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
-        .map_err(|_| AppError::validation("invalid start_date".into()))?;
-    let range_end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
-        .map_err(|_| AppError::validation("invalid end_date".into()))?;
-
-    if range_start > range_end {
-        return Err(AppError::validation(
-            "start_date must be <= end_date".into(),
-        ));
-    }
-
-    // #2601 — bounded materialization horizon guard. `projected_agenda_cache`
-    // holds only the next `HORIZON_OCCURRENCES` occurrences per repeating
-    // block per source, so it is authoritative only up to the
-    // guaranteed-complete `horizon_date` advertised (in the same transaction
-    // as the rows) by the last rebuild. A query whose `end_date` reaches past
-    // that horizon could be missing far occurrences of a dense (e.g. daily)
-    // recurrence, so it is answered by the on-the-fly projector — correct for
-    // any range — rather than the cache. An absent horizon row (cache never
-    // built, or a device still on the cold-cache path) also routes here,
-    // matching the empty-cache fallback below. The on-the-fly path honours
-    // the cursor, so mid-pagination is consistent: `end_date` is fixed across
-    // a query's pages, so every page of one query takes the same branch.
-    //
-    // `horizon_date` and `end_date` are both zero-padded `YYYY-MM-DD`, so the
-    // lexical string comparison is a valid calendar-date comparison.
-    // dynamic-sql: reads projected_agenda_horizon (table added this PR, migration 0102; rebuild_today column added by migration 0105), dynamic so the crate builds without it in the .sqlx cache
-    let horizon_row: Option<(String, Option<String>)> =
-        sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT horizon_date, rebuild_today FROM projected_agenda_horizon WHERE id = 0",
-        )
-        .fetch_optional(pool)
-        .await?;
-    let horizon_date = horizon_row.as_ref().map(|(h, _)| h.clone());
-    let cache_covers_range = horizon_date
-        .as_deref()
-        .is_some_and(|h| end_date.as_str() <= h);
-
-    // #3160 — the *lower* end of the same guarantee, plus its freshness.
-    //
-    // Lower end: the rebuild projects with `range_start = today`
-    // (`cache::projected_agenda::project_block_into`), so occurrences BEFORE
-    // the rebuild's reference date are never materialized. The
-    // guaranteed-complete span is the closed interval
-    // `[rebuild_today, horizon_date]`, and `rebuild_today` is read straight
-    // off the row the rebuild wrote (migration 0105) — NOT derived as
-    // `horizon_date - HORIZON_DAYS`, which would decode stale rows to the
-    // wrong date the moment that constant is retuned, with nothing
-    // invalidating the row on upgrade.
-    //
-    // Freshness: `rebuild_today` must still BE today. Default-mode rules
-    // (`daily` / `+1w` / `monthly` / …) project from the block's own base
-    // date and so do not move as the day advances, but `.+` rules are
-    // anchored to the reference date by definition — a cache rebuilt
-    // yesterday holds a `.+1w` occurrence at `yesterday + 7`, where the
-    // projector run today would place it at `today + 7`. Trusting a
-    // stale-by-a-day cache to prove "this window is genuinely empty" would
-    // therefore hide such a task on the day it is actually due. A rebuild is
-    // enqueued at boot, on every date/repeat/todo property mutation, and by
-    // the `projected_agenda_midnight` maintenance job, so this holds for the
-    // ordinary read; when it does not, the empty-window read falls through to
-    // the projector exactly as it did before this change. (That job fires on
-    // the UTC day boundary while the rebuild anchors on the LOCAL date, so
-    // west-of-UTC installs left running overnight sit on a stale reference
-    // date — and therefore on the pre-#3160 cost — until the next UTC
-    // rollover. Aligning the job to the local day is tracked separately; it
-    // is a latency question, not a correctness one, because of this check.)
-    //
-    // A row written by a pre-0105 binary has `rebuild_today = NULL` and is
-    // likewise treated as unproven until the next rebuild fills it in.
-    let rebuild_today = horizon_row
-        .as_ref()
-        .and_then(|(_, t)| t.as_deref())
-        .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
+    let ProjectedAgendaHorizon {
+        cache_covers_range,
+        rebuild_today,
+    } = read_projected_agenda_horizon(pool, &end_date).await?;
 
     // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
     // before the rebuild's reference date, so a range that starts before
@@ -270,94 +516,20 @@ pub async fn list_projected_agenda_inner_with_today(
     // thing left to prove about the cache is that today's rebuild wrote it.
     let cache_is_fresh = rebuild_today == Some(today);
 
-    // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
-    //
-    // #3206 — three parts, not two. `(projected_date, block_id)` is not a
-    // unique key over `projected_agenda_cache` (its PK is
-    // `(block_id, projected_date, source)`), so a strictly-greater keyset on
-    // that pair skips the second of any two rows a page boundary lands
-    // between — silently, because the page still comes back full. `source`
-    // completes the key; `Cursor::projected_agenda_key` unpacks it.
-    //
-    // `cursor_source` is `None` for a cursor minted before #3206, which binds
-    // SQL NULL and disarms the third disjunct below — that page behaves
-    // exactly as it did before this change instead of erroring out an
-    // in-flight cursor, and the cursor it emits carries the full triple.
-    let (cursor_flag, cursor_date, cursor_id, cursor_source): (
-        Option<i64>,
-        &str,
-        &str,
-        Option<&str>,
-    ) = match after.as_ref() {
-        Some(c) => {
-            let (block_id, source) = c.projected_agenda_key();
-            (
-                Some(1),
-                c.deleted_at.as_deref().unwrap_or(""),
-                block_id,
-                source,
-            )
-        }
-        None => (None, "", "", None),
-    };
+    let cursor_binds = projected_agenda_cursor_binds(after.as_ref());
 
     // Fetch limit + 1 to detect `has_more`.
     let fetch_limit: i64 = limit_i64 + 1;
 
     // Try cache first — a single query replaces the O(n*m) projection loop.
-    #[allow(clippy::type_complexity)]
-    let cached: Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        // dynamic-sql: 14-column projected-agenda cache join decoded into a positional tuple (no FromRow struct)
-    )> = sqlx::query_as(
-        // ?7 (space_id) drives the shared space-filter clause.
-        // Mirrors `agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
-        // query uses dynamic-typed `query_as`. Filters on the first-class
-        // `b.space_id` column (#533, migration 0086).
-        "SELECT pac.block_id, pac.projected_date, pac.source,
-                b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at,
-                b.todo_state, b.priority, b.due_date, b.scheduled_date,
-                b.page_id
-         FROM projected_agenda_cache pac
-         JOIN blocks b ON b.id = pac.block_id
-         WHERE pac.projected_date >= ?1
-           AND pac.projected_date <= ?2
-           AND b.deleted_at IS NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM block_properties tp
-               WHERE tp.block_id = b.page_id AND tp.key = 'template'
-           )
-           AND (?3 IS NULL OR (pac.projected_date > ?4
-               OR (pac.projected_date = ?4 AND pac.block_id > ?5)
-               OR (pac.projected_date = ?4 AND pac.block_id = ?5
-                   AND ?8 IS NOT NULL AND pac.source > ?8)))
-           AND (?7 IS NULL OR b.space_id = ?7)
-         ORDER BY pac.projected_date ASC, pac.block_id ASC, pac.source ASC
-         LIMIT ?6",
+    let cached = fetch_cached_projected_agenda(
+        pool,
+        &start_date,
+        &end_date,
+        &cursor_binds,
+        fetch_limit,
+        scope.as_filter_param(),
     )
-    .bind(&start_date)
-    .bind(&end_date)
-    .bind(cursor_flag)
-    .bind(cursor_date)
-    .bind(cursor_id)
-    .bind(fetch_limit)
-    .bind(scope.as_filter_param())
-    .bind(cursor_source)
-    .fetch_all(pool)
     .await?;
 
     // Fall back to on-the-fly only on a fresh first page (no cursor).
@@ -410,98 +582,16 @@ pub async fn list_projected_agenda_inner_with_today(
         .await;
     }
 
-    // Boundary cast: the cache query above joins
-    // `blocks` filtered to live, non-conflict rows, so every surviving
-    // block id is active. `from_trusted_active` records the claim in
-    // the type system without re-running the predicate.
-    let mut entries: Vec<ActiveProjectedAgendaEntry> = cached
-        .into_iter()
-        .map(|row| ActiveProjectedAgendaEntry {
-            block: ActiveBlockRow {
-                id: agaric_core::ulid::ActiveBlockId::from_trusted_active(&row.3),
-                block_type: row.4,
-                content: row.5,
-                parent_id: row.6.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
-                position: row.7,
-                deleted_at: row.8,
-                todo_state: row.9,
-                priority: row.10,
-                due_date: row.11,
-                scheduled_date: row.12,
-                page_id: row.13.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
-            },
-            projected_date: row.1,
-            source: row.2,
-        })
-        .collect();
-
-    let has_more = entries.len() > cap;
-    if has_more {
-        entries.truncate(cap);
-    }
-    let next_cursor = if has_more {
-        let last = entries.last().expect("has_more implies non-empty");
-        Some(
-            Cursor::for_projected_agenda(
-                last.block.id.as_str(),
-                last.projected_date.clone(),
-                &last.source,
-            )
-            .encode()?,
-        )
-    } else {
-        None
-    };
-
-    Ok(PageResponse {
-        items: entries,
-        next_cursor,
-        has_more,
-        total_count: None,
-    })
+    cached_rows_to_projected_page(cached, cap)
 }
 
-/// On-the-fly projection of repeating tasks (original algorithm).
-///
-/// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
-/// before the materializer has populated the cache) OR when the query reaches
-/// past the bounded materialization horizon (#2601) — see the horizon guard
-/// in [`list_projected_agenda_inner`]. This path applies no occurrence-count
-/// cap, so it is exhaustive within `[range_start, range_end]` for any range.
-///
-/// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
-/// projections; it is threaded in from
-/// [`list_projected_agenda_inner`] instead of being
-/// read from `chrono::Local::now()` so tests can pin a fixed today.
-///
-/// `after` is the optional decoded cursor. When supplied, entries
-/// whose `(projected_date, block_id, source)` are `<= cursor` are filtered
-/// out before the page is built. The same `(date, id, source)` keyset that
-/// the cache path uses is honoured here so the two branches stay swappable
-/// mid-pagination if the materializer populates the cache between calls
-/// (#3206 — `(date, id)` alone is not unique, see
-/// [`list_projected_agenda_inner`]).
-///
-/// `pub` so the regression test in
-/// `src-tauri/tests/commands/agenda_cmd_tests.rs` can call this path directly,
-/// bypassing the cache-or-fallback branch in
-/// [`list_projected_agenda_inner`]. The cache rebuild itself
-/// (`cache::projected_agenda::rebuild_projected_agenda_cache_impl`) also
-/// reads `chrono::Local::now()`, so any `set_property` op in a test
-/// indirectly populates the cache with today-anchored rows that vary as
-/// the system clock advances. Calling on-the-fly directly sidesteps that
-/// drift; threading `today` through the cache rebuild itself is a larger
-/// Follow-up that leaves open.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub async fn list_projected_agenda_on_the_fly(
+/// The repeating-block prefilter the on-the-fly projector expands (#4639
+/// split out of [`list_projected_agenda_on_the_fly`]).
+async fn fetch_repeating_blocks(
     pool: &SqlitePool,
-    range_start: chrono::NaiveDate,
     range_end: chrono::NaiveDate,
-    limit: i64,
-    today: chrono::NaiveDate,
-    after: Option<&Cursor>,
     space_id: Option<&str>,
-) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
+) -> Result<Vec<RepeatingBlockRow>, AppError> {
     // The compute below has no in-loop cap (with cursor pagination we need
     // every entry within the date range, regardless of page size). The
     // outer 10_000-step safety per (block × source) still bounds runaway
@@ -605,6 +695,259 @@ pub async fn list_projected_agenda_on_the_fly(
     )
     .fetch_all(pool)
     .await?;
+    Ok(rows)
+}
+
+/// The cursor predicate and the generation cap that every
+/// [`try_insert_projected_entry`] call in one page build shares.
+///
+/// A struct rather than two positional arguments threaded through the
+/// projection loop: `cursor_key`'s own two `&str` terms are already
+/// swappable, and pairing them with the cap keeps the page's bounds in one
+/// place.
+struct ProjectedPageBounds<'a> {
+    cursor_key: Option<(&'a str, &'a str, Option<&'a str>)>,
+    max_entries: usize,
+}
+
+// Insert an entry into the sorted map, honouring the
+// cursor predicate and the `max_entries` size cap. Returns `true` if
+// the entry was accepted (so the caller can update `projected_count`).
+//
+// #2040: the cursor/cap decision depends ONLY on the cheap key
+// `(projected_date, block_id, source)` — never on the full block row.
+// So the key is taken eagerly while the heavy `ActiveProjectedAgendaEntry`
+// (which clones the block row's content `String`) is produced via the
+// `build` closure ONLY when the entry is actually accepted into the page.
+// The previous shape cloned the block row for every one of up to ~10k
+// projected occurrences before the cap discarded most of them; now the
+// clone happens at most `max_entries` times per page. Behaviour is
+// identical: the same key drives the same accept/reject/evict decisions,
+// and the built entry carries the same `projected_date` / `source` the
+// key was derived from.
+fn try_insert_projected_entry(
+    entries_map: &mut BTreeMap<(String, String, String), ActiveProjectedAgendaEntry>,
+    bounds: &ProjectedPageBounds<'_>,
+    projected_date: String,
+    block_id: &str,
+    source: &str,
+    build: &dyn Fn() -> ActiveProjectedAgendaEntry,
+) -> bool {
+    // Cursor predicate: keep only entries strictly AFTER the
+    // cursor's `(date, id, source)`. Mirrors the cache path's
+    // three-disjunct keyset `WHERE`, including its NULL-`source`
+    // (pre-#3206 cursor) degradation to the two-term test.
+    if let Some((cd, ci, cs)) = bounds.cursor_key {
+        let at_or_before = match cs {
+            Some(cs) => (projected_date.as_str(), block_id, source) <= (cd, ci, cs),
+            None => (projected_date.as_str(), block_id) <= (cd, ci),
+        };
+        if at_or_before {
+            return false;
+        }
+    }
+    let key = (projected_date, block_id.to_string(), source.to_string());
+    // Size-cap: if we're at capacity, only accept the new entry
+    // when it would land strictly before the current largest
+    // (i.e. it's a smaller (date, id, source) tuple). This keeps
+    // the map bounded at `max_entries` and matches the
+    // sort-then-truncate semantics of the previous code.
+    if entries_map.len() >= bounds.max_entries {
+        let largest_key = entries_map
+            .keys()
+            .next_back()
+            .expect("len >= 1 implies a last key");
+        if &key >= largest_key {
+            return false;
+        }
+        let largest_key = largest_key.clone();
+        entries_map.remove(&largest_key);
+    }
+    // Accepted — only now pay for the block-row clone + entry build.
+    entries_map.insert(key, build());
+    true
+}
+
+/// Validate one date column before handing it to the shared projector,
+/// warning on a value write-time validation should have made impossible
+/// (#4639 split out of [`list_projected_agenda_on_the_fly`]).
+fn validate_projection_source(
+    block_id: &str,
+    date: Option<&str>,
+    source: &'static str,
+) -> Option<String> {
+    let s = date?;
+    if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
+        Some(s.to_string())
+    } else {
+        tracing::warn!(
+            block_id = %block_id,
+            source,
+            date_str = s,
+            "agenda projection: skipping block with malformed date"
+        );
+        None
+    }
+}
+
+/// The date window one on-the-fly projection pass runs over.
+///
+/// A struct rather than three positional `NaiveDate`s: `today`,
+/// `range_start` and `range_end` are the same type and a swap between them
+/// silently changes which occurrences a page holds.
+struct ProjectionWindow {
+    today: chrono::NaiveDate,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+}
+
+/// Expand one repeating block's occurrences into the page's sorted map
+/// (#4639 split out of [`list_projected_agenda_on_the_fly`]'s loop body).
+fn project_repeating_block_into_map(
+    block: &RepeatingBlockRow,
+    window: &ProjectionWindow,
+    bounds: &ProjectedPageBounds<'_>,
+    entries_map: &mut BTreeMap<(String, String, String), ActiveProjectedAgendaEntry>,
+) {
+    // Get the repeat rule (pre-fetched via JOIN). Empty / missing
+    // rules are skipped here; the shared projector also no-ops on
+    // empty rules but we elide the call entirely for clarity.
+    let rule = match block.repeat_rule.as_deref() {
+        Some(r) if !r.is_empty() => r,
+        _ => return,
+    };
+
+    // Surface DB-level corruption: write-time validation
+    // (`set_property_in_tx`'s `is_valid_iso_date`) should make this
+    // unreachable. A miss means either the DB was hand-edited or a
+    // sync-protocol bug let through a bad value; either way we warn
+    // before falling through, so the silent skip is observable.
+    let until_date = match block.repeat_until.as_deref() {
+        Some(d) => {
+            if let Ok(parsed) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                Some(parsed)
+            } else {
+                tracing::warn!(
+                    block_id = %block.id,
+                    source = "repeat-until",
+                    date_str = d,
+                    "agenda projection: skipping block with malformed date"
+                );
+                return;
+            }
+        }
+        None => None,
+    };
+
+    // f64 → usize has no `TryFrom` in std; the cast is safe because
+    // repeat_count and repeat_seq are non-negative f64 (whole numbers)
+    // from SQLite.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let remaining = match (block.repeat_count, block.repeat_seq) {
+        (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
+        (Some(count), None) => Some(count as usize),
+        (Some(_), Some(_)) => Some(0usize), // already exhausted
+        _ => None,                          // no limit
+    };
+
+    // Recurrence math lives in the shared
+    // `recurrence::project_block_dates` helper so the cache rebuild
+    // and the on-the-fly path cannot drift. The closure below is
+    // the on-the-fly-specific concern: cursor predicate + size-cap
+    // + BTreeMap insert via `try_insert_projected_entry`. The helper handles
+    // mode/interval parsing, `plus_plus` catch-up + pre-emit,
+    // `until_date` / `remaining` end conditions, the 10 000-iter
+    // safety bound, and `[range_start, range_end]` clipping.
+    //
+    // Emit the malformed-date warn at the callsite
+    // before handing the validated source strings to the helper.
+    // The helper itself silently skips on parse failure; doing the
+    // validation here preserves the original ops-log signal
+    // (the cache-rebuild path never had this warn — it stays silent
+    // There, matching pre-existing behaviour).
+    let due_date_valid =
+        validate_projection_source(&block.id, block.due_date.as_deref(), "due_date");
+    let scheduled_date_valid =
+        validate_projection_source(&block.id, block.scheduled_date.as_deref(), "scheduled_date");
+    let block_row = block.to_active_block_row();
+    crate::recurrence::project_block_dates(
+        due_date_valid.as_deref(),
+        scheduled_date_valid.as_deref(),
+        rule,
+        until_date,
+        remaining,
+        window.today,
+        window.range_start,
+        window.range_end,
+        // On-the-fly clips strictly by the caller's query range — no
+        // occurrence-count horizon (that bound belongs to the cache
+        // rebuild, #2601). `None` keeps this path exhaustive within
+        // `[range_start, range_end]` so cursor pagination sees every
+        // occurrence.
+        None,
+        |projected, source_name| {
+            // #2040: format the date (cheap) for the cursor/cap key, but
+            // defer the block-row clone (heavy: clones `content`) to the
+            // `build` closure, which `try_insert_projected_entry` calls only on
+            // acceptance.
+            let projected_date = projected.format("%Y-%m-%d").to_string();
+            try_insert_projected_entry(
+                entries_map,
+                bounds,
+                projected_date.clone(),
+                block_row.id.as_str(),
+                source_name,
+                &|| ActiveProjectedAgendaEntry {
+                    block: block_row.clone(),
+                    projected_date: projected_date.clone(),
+                    source: source_name.to_string(),
+                },
+            );
+        },
+    );
+}
+
+/// On-the-fly projection of repeating tasks (original algorithm).
+///
+/// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
+/// before the materializer has populated the cache) OR when the query reaches
+/// past the bounded materialization horizon (#2601) — see the horizon guard
+/// in [`list_projected_agenda_inner`]. This path applies no occurrence-count
+/// cap, so it is exhaustive within `[range_start, range_end]` for any range.
+///
+/// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
+/// projections; it is threaded in from
+/// [`list_projected_agenda_inner`] instead of being
+/// read from `chrono::Local::now()` so tests can pin a fixed today.
+///
+/// `after` is the optional decoded cursor. When supplied, entries
+/// whose `(projected_date, block_id, source)` are `<= cursor` are filtered
+/// out before the page is built. The same `(date, id, source)` keyset that
+/// the cache path uses is honoured here so the two branches stay swappable
+/// mid-pagination if the materializer populates the cache between calls
+/// (#3206 — `(date, id)` alone is not unique, see
+/// [`list_projected_agenda_inner`]).
+///
+/// `pub` so the regression test in
+/// `src-tauri/tests/commands/agenda_cmd_tests.rs` can call this path directly,
+/// bypassing the cache-or-fallback branch in
+/// [`list_projected_agenda_inner`]. The cache rebuild itself
+/// (`cache::projected_agenda::rebuild_projected_agenda_cache_impl`) also
+/// reads `chrono::Local::now()`, so any `set_property` op in a test
+/// indirectly populates the cache with today-anchored rows that vary as
+/// the system clock advances. Calling on-the-fly directly sidesteps that
+/// drift; threading `today` through the cache rebuild itself is a larger
+/// Follow-up that leaves open.
+pub async fn list_projected_agenda_on_the_fly(
+    pool: &SqlitePool,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+    limit: i64,
+    today: chrono::NaiveDate,
+    after: Option<&Cursor>,
+    space_id: Option<&str>,
+) -> Result<PageResponse<ActiveProjectedAgendaEntry>, AppError> {
+    let rows = fetch_repeating_blocks(pool, range_end, space_id).await?;
 
     // M1 (Batch 2): build the projected-entry set in a `BTreeMap` keyed by
     // `(projected_date, block_id, source)` so the container itself enforces
@@ -661,176 +1004,23 @@ pub async fn list_projected_agenda_on_the_fly(
     let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
         BTreeMap::new();
 
-    // Inline helper: insert an entry into the sorted map, honouring the
-    // cursor predicate and the `max_entries` size cap. Returns `true` if
-    // the entry was accepted (so the caller can update `projected_count`).
-    //
-    // #2040: the cursor/cap decision depends ONLY on the cheap key
-    // `(projected_date, block_id, source)` — never on the full block row.
-    // So the key is taken eagerly while the heavy `ActiveProjectedAgendaEntry`
-    // (which clones the block row's content `String`) is produced via the
-    // `build` closure ONLY when the entry is actually accepted into the page.
-    // The previous shape cloned the block row for every one of up to ~10k
-    // projected occurrences before the cap discarded most of them; now the
-    // clone happens at most `max_entries` times per page. Behaviour is
-    // identical: the same key drives the same accept/reject/evict decisions,
-    // and the built entry carries the same `projected_date` / `source` the
-    // key was derived from.
-    let try_insert =
-        |entries_map: &mut BTreeMap<(String, String, String), ActiveProjectedAgendaEntry>,
-         projected_date: String,
-         block_id: &str,
-         source: &str,
-         build: &dyn Fn() -> ActiveProjectedAgendaEntry|
-         -> bool {
-            // Cursor predicate: keep only entries strictly AFTER the
-            // cursor's `(date, id, source)`. Mirrors the cache path's
-            // three-disjunct keyset `WHERE`, including its NULL-`source`
-            // (pre-#3206 cursor) degradation to the two-term test.
-            if let Some((cd, ci, cs)) = cursor_key {
-                let at_or_before = match cs {
-                    Some(cs) => (projected_date.as_str(), block_id, source) <= (cd, ci, cs),
-                    None => (projected_date.as_str(), block_id) <= (cd, ci),
-                };
-                if at_or_before {
-                    return false;
-                }
-            }
-            let key = (projected_date, block_id.to_string(), source.to_string());
-            // Size-cap: if we're at capacity, only accept the new entry
-            // when it would land strictly before the current largest
-            // (i.e. it's a smaller (date, id, source) tuple). This keeps
-            // the map bounded at `max_entries` and matches the
-            // sort-then-truncate semantics of the previous code.
-            if entries_map.len() >= max_entries {
-                let largest_key = entries_map
-                    .keys()
-                    .next_back()
-                    .expect("len >= 1 implies a last key");
-                if &key >= largest_key {
-                    return false;
-                }
-                let largest_key = largest_key.clone();
-                entries_map.remove(&largest_key);
-            }
-            // Accepted — only now pay for the block-row clone + entry build.
-            entries_map.insert(key, build());
-            true
-        };
+    let bounds = ProjectedPageBounds {
+        cursor_key,
+        max_entries,
+    };
+    let window = ProjectionWindow {
+        today,
+        range_start,
+        range_end,
+    };
 
     for block in &rows {
-        // Get the repeat rule (pre-fetched via JOIN). Empty / missing
-        // rules are skipped here; the shared projector also no-ops on
-        // empty rules but we elide the call entirely for clarity.
-        let rule = match block.repeat_rule.as_deref() {
-            Some(r) if !r.is_empty() => r,
-            _ => continue,
-        };
-
-        // Surface DB-level corruption: write-time validation
-        // (`set_property_in_tx`'s `is_valid_iso_date`) should make this
-        // unreachable. A miss means either the DB was hand-edited or a
-        // sync-protocol bug let through a bad value; either way we warn
-        // before falling through, so the silent skip is observable.
-        let until_date = match block.repeat_until.as_deref() {
-            Some(d) => {
-                if let Ok(parsed) = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-                    Some(parsed)
-                } else {
-                    tracing::warn!(
-                        block_id = %block.id,
-                        source = "repeat-until",
-                        date_str = d,
-                        "agenda projection: skipping block with malformed date"
-                    );
-                    continue;
-                }
-            }
-            None => None,
-        };
-
-        // f64 → usize has no `TryFrom` in std; the cast is safe because
-        // repeat_count and repeat_seq are non-negative f64 (whole numbers)
-        // from SQLite.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let remaining = match (block.repeat_count, block.repeat_seq) {
-            (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
-            (Some(count), None) => Some(count as usize),
-            (Some(_), Some(_)) => Some(0usize), // already exhausted
-            _ => None,                          // no limit
-        };
-
-        // Recurrence math lives in the shared
-        // `recurrence::project_block_dates` helper so the cache rebuild
-        // and the on-the-fly path cannot drift. The closure below is
-        // the on-the-fly-specific concern: cursor predicate + size-cap
-        // + BTreeMap insert via `try_insert`. The helper handles
-        // mode/interval parsing, `plus_plus` catch-up + pre-emit,
-        // `until_date` / `remaining` end conditions, the 10 000-iter
-        // safety bound, and `[range_start, range_end]` clipping.
-        //
-        // Emit the malformed-date warn at the callsite
-        // before handing the validated source strings to the helper.
-        // The helper itself silently skips on parse failure; doing the
-        // validation here preserves the original ops-log signal
-        // (the cache-rebuild path never had this warn — it stays silent
-        // There, matching pre-existing behaviour).
-        let validate_source = |date: Option<&str>, source: &'static str| -> Option<String> {
-            let s = date?;
-            if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
-                Some(s.to_string())
-            } else {
-                tracing::warn!(
-                    block_id = %block.id,
-                    source,
-                    date_str = s,
-                    "agenda projection: skipping block with malformed date"
-                );
-                None
-            }
-        };
-        let due_date_valid = validate_source(block.due_date.as_deref(), "due_date");
-        let scheduled_date_valid =
-            validate_source(block.scheduled_date.as_deref(), "scheduled_date");
-        let block_row = block.to_active_block_row();
-        crate::recurrence::project_block_dates(
-            due_date_valid.as_deref(),
-            scheduled_date_valid.as_deref(),
-            rule,
-            until_date,
-            remaining,
-            today,
-            range_start,
-            range_end,
-            // On-the-fly clips strictly by the caller's query range — no
-            // occurrence-count horizon (that bound belongs to the cache
-            // rebuild, #2601). `None` keeps this path exhaustive within
-            // `[range_start, range_end]` so cursor pagination sees every
-            // occurrence.
-            None,
-            |projected, source_name| {
-                // #2040: format the date (cheap) for the cursor/cap key, but
-                // defer the block-row clone (heavy: clones `content`) to the
-                // `build` closure, which `try_insert` calls only on acceptance.
-                let projected_date = projected.format("%Y-%m-%d").to_string();
-                try_insert(
-                    &mut entries_map,
-                    projected_date.clone(),
-                    block_row.id.as_str(),
-                    source_name,
-                    &|| ActiveProjectedAgendaEntry {
-                        block: block_row.clone(),
-                        projected_date: projected_date.clone(),
-                        source: source_name.to_string(),
-                    },
-                );
-            },
-        );
+        project_repeating_block_into_map(block, &window, &bounds, &mut entries_map);
     }
 
     // BTreeMap iteration order is the (date, id, source) lex order — the
     // same comparator the old `entries.sort_by(...)` enforced post-hoc.
-    // The cursor filter is already baked into `try_insert`; the size cap
+    // The cursor filter is already baked into `try_insert_projected_entry`; the size cap
     // (`max_entries = limit + 1`) means the map holds at most one entry
     // past the page boundary, which we use below for the `has_more`
     // detection.

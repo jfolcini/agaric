@@ -221,6 +221,99 @@ pub async fn set_property_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
+/// Write the `created_at` / `completed_at` rows implied by a
+/// `todo_state` transition, on the caller's already-open transaction.
+///
+/// SINGLE-ROW PATH ONLY — extracted from [`set_todo_state_inner`] (#4639).
+/// [`set_todo_state_batch_inner`] and [`set_property_batch_inner`]
+/// deliberately skip these transitions; that divergence is the recorded
+/// product decision (`scripts/bulk-equivalence-baseline.json`) and
+/// [`warn_if_batch_skips_recurrence`] is what tells the user about it. Calling
+/// this from a batch path would silently undo the decision, so it stays
+/// private to the single-row root.
+///
+/// The caller owns the transaction and its commit; this helper only appends
+/// writes to it.
+async fn write_todo_timestamp_transitions_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &str,
+    prev_state: Option<&str>,
+    new_state: Option<&str>,
+) -> Result<(), AppError> {
+    // Auto-populate timestamps based on state transitions
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    match (prev_state, new_state) {
+        // null → TODO/DOING: set created_at
+        (None, Some("TODO" | "DOING")) => {
+            let (_, op) = set_property_in_tx(
+                &mut *tx,
+                state,
+                device_id,
+                block_id.to_owned(),
+                "created_at",
+                None,
+                None,
+                Some(today),
+                None,
+                None,
+            )
+            .await?;
+            tx.enqueue_background(op);
+        }
+        // DONE → TODO/DOING: set created_at, clear completed_at
+        (Some("DONE"), Some("TODO" | "DOING")) => {
+            let (_, op) = set_property_in_tx(
+                &mut *tx,
+                state,
+                device_id,
+                block_id.to_owned(),
+                "created_at",
+                None,
+                None,
+                Some(today),
+                None,
+                None,
+            )
+            .await?;
+            tx.enqueue_background(op);
+            let op =
+                delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
+            tx.enqueue_background(op);
+        }
+        // TODO/DOING → DONE: set completed_at
+        (Some("TODO" | "DOING"), Some("DONE")) => {
+            let (_, op) = set_property_in_tx(
+                &mut *tx,
+                state,
+                device_id,
+                block_id.to_owned(),
+                "completed_at",
+                None,
+                None,
+                Some(today),
+                None,
+                None,
+            )
+            .await?;
+            tx.enqueue_background(op);
+        }
+        // Any → null (un-tasking): clear both
+        (Some(_), None) => {
+            let op =
+                delete_property_in_tx(&mut *tx, state, device_id, block_id, "created_at").await?;
+            tx.enqueue_background(op);
+            let op =
+                delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
+            tx.enqueue_background(op);
+        }
+        _ => {} // Same state or other transitions — no timestamp changes
+    }
+    Ok(())
+}
+
 /// Set the todo state on a block (TODO / DOING / DONE or clear).
 ///
 /// Validates the value and delegates to [`set_property_in_tx`] with the
@@ -241,7 +334,6 @@ pub async fn set_property_inner(
 /// next-occurrence sibling. Either every step commits, or every step
 /// rolls back.
 #[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -320,93 +412,15 @@ pub async fn set_todo_state_inner(
     .await?;
     tx.enqueue_background(todo_op);
 
-    // Auto-populate timestamps based on state transitions
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-
-    match (prev_state.as_deref(), new_state.as_deref()) {
-        // null → TODO/DOING: set created_at
-        (None, Some("TODO" | "DOING")) => {
-            let (_, op) = set_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                block_id_owned.clone(),
-                "created_at",
-                None,
-                None,
-                Some(today),
-                None,
-                None,
-            )
-            .await?;
-            tx.enqueue_background(op);
-        }
-        // DONE → TODO/DOING: set created_at, clear completed_at
-        (Some("DONE"), Some("TODO" | "DOING")) => {
-            let (_, op) = set_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                block_id_owned.clone(),
-                "created_at",
-                None,
-                None,
-                Some(today),
-                None,
-                None,
-            )
-            .await?;
-            tx.enqueue_background(op);
-            let op = delete_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                &block_id_owned,
-                "completed_at",
-            )
-            .await?;
-            tx.enqueue_background(op);
-        }
-        // TODO/DOING → DONE: set completed_at
-        (Some("TODO" | "DOING"), Some("DONE")) => {
-            let (_, op) = set_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                block_id_owned.clone(),
-                "completed_at",
-                None,
-                None,
-                Some(today),
-                None,
-                None,
-            )
-            .await?;
-            tx.enqueue_background(op);
-        }
-        // Any → null (un-tasking): clear both
-        (Some(_), None) => {
-            let op = delete_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                &block_id_owned,
-                "created_at",
-            )
-            .await?;
-            tx.enqueue_background(op);
-            let op = delete_property_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                &block_id_owned,
-                "completed_at",
-            )
-            .await?;
-            tx.enqueue_background(op);
-        }
-        _ => {} // Same state or other transitions — no timestamp changes
-    }
+    write_todo_timestamp_transitions_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &block_id_owned,
+        prev_state.as_deref(),
+        new_state.as_deref(),
+    )
+    .await?;
 
     // Recurrence: when transitioning to DONE, delegate to recurrence
     // module — using the in-tx form so the sibling creation rolls back
@@ -627,6 +641,74 @@ pub async fn set_todo_state_batch_inner(
     Ok(updated)
 }
 
+/// Pre-transaction value-shape check for [`set_property_batch_inner`]: the
+/// 1-50 character bound on the two text keys, the ISO `YYYY-MM-DD` bound on
+/// the two date keys.
+///
+/// Split out of that command (#4639). Private to the BATCH root on purpose:
+/// the single-row inners (`set_todo_state_inner`, `set_priority_inner`,
+/// `set_due_date_inner`, `set_scheduled_date_inner`) each carry their own
+/// wording for their own key, and routing them through one shared check
+/// would flatten four messages into one and quietly extend the batch
+/// allowlist's shape to a path that has none.
+fn validate_set_property_batch_value_shape(key: &str, value: Option<&str>) -> Result<(), AppError> {
+    match key {
+        "todo_state" | "priority" => {
+            if let Some(v) = value
+                && (v.is_empty() || v.len() > 50)
+            {
+                return Err(AppError::validation(format!(
+                    "{key} must be 1-50 characters"
+                )));
+            }
+        }
+        "due_date" | "scheduled_date" => {
+            if let Some(d) = value
+                && !is_valid_iso_date(d)
+            {
+                return Err(AppError::validation(format!(
+                    "{key} must be YYYY-MM-DD format, got '{d}'"
+                )));
+            }
+        }
+        // Unreachable: the allowlist guard above already rejected any other
+        // key. Kept as a defensive no-op rather than `unreachable!` so a
+        // future allowlist edit that forgets the routing branch degrades to
+        // a clean write attempt (still bounded by `set_property_in_tx`
+        // validation) instead of a panic under the writer lock.
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Reserved-key option-list fallback validation for [`set_property_batch_inner`]'s
+/// two text keys, run on the caller's already-open transaction (one SELECT for
+/// the whole batch, regardless of N).
+///
+/// Split out of that command (#4639); it reads, it never writes, and the
+/// caller keeps the transaction and its commit. Branch into two
+/// compile-checked `query!` macros with literal keys (both already in the
+/// `.sqlx/` cache) rather than one runtime query on the dynamic `key`, so this
+/// stays schema-validated at build time with no new cache entry.
+async fn validate_set_property_batch_text_key(
+    conn: &mut sqlx::SqliteConnection,
+    key: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    let (def_exists, defaults): (bool, &[&str]) = if key == "todo_state" {
+        let row = sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
+            .fetch_optional(&mut *conn)
+            .await?;
+        (row.is_some(), TODO_STATE_FALLBACK_DEFAULTS)
+    } else {
+        let row = sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
+            .fetch_optional(&mut *conn)
+            .await?;
+        (row.is_some(), PRIORITY_FALLBACK_DEFAULTS)
+    };
+    validate_reserved_property_value(def_exists, key, value, defaults)
+}
+
 /// The set of property keys `set_property_batch` is allowed to write.
 ///
 /// This is a **security boundary**: the batch command routes an untrusted
@@ -666,7 +748,6 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// IMMEDIATE tx, so a Pages-browser multi-select over `repeat`-carrying pages
 /// leaves a diagnostic in the daily log instead of nothing.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -696,32 +777,7 @@ pub async fn set_property_batch_inner(
     // (`set_todo_state_inner` / `set_priority_inner` length check;
     // `set_due_date_inner` / `set_scheduled_date_inner` ISO-date check).
     let is_text_key = matches!(key.as_str(), "todo_state" | "priority");
-    match key.as_str() {
-        "todo_state" | "priority" => {
-            if let Some(ref v) = value
-                && (v.is_empty() || v.len() > 50)
-            {
-                return Err(AppError::validation(format!(
-                    "{key} must be 1-50 characters"
-                )));
-            }
-        }
-        "due_date" | "scheduled_date" => {
-            if let Some(ref d) = value
-                && !is_valid_iso_date(d)
-            {
-                return Err(AppError::validation(format!(
-                    "{key} must be YYYY-MM-DD format, got '{d}'"
-                )));
-            }
-        }
-        // Unreachable: the allowlist guard above already rejected any other
-        // key. Kept as a defensive no-op rather than `unreachable!` so a
-        // future allowlist edit that forgets the routing branch degrades to
-        // a clean write attempt (still bounded by `set_property_in_tx`
-        // validation) instead of a panic under the writer lock.
-        _ => {}
-    }
+    validate_set_property_batch_value_shape(&key, value.as_deref())?;
 
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every property change commits or none of them.
@@ -748,20 +804,7 @@ pub async fn set_property_batch_inner(
     // the `.sqlx/` cache) rather than one runtime query on the dynamic `key`,
     // so this stays schema-validated at build time with no new cache entry.
     if is_text_key && let Some(ref v) = value {
-        let (def_exists, defaults): (bool, &[&str]) = if key == "todo_state" {
-            let row =
-                sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-                    .fetch_optional(&mut **tx)
-                    .await?;
-            (row.is_some(), TODO_STATE_FALLBACK_DEFAULTS)
-        } else {
-            let row =
-                sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
-                    .fetch_optional(&mut **tx)
-                    .await?;
-            (row.is_some(), PRIORITY_FALLBACK_DEFAULTS)
-        };
-        validate_reserved_property_value(def_exists, &key, v, defaults)?;
+        validate_set_property_batch_text_key(&mut tx, &key, v).await?;
     }
 
     // Route the single value to the correct typed column: text keys →
