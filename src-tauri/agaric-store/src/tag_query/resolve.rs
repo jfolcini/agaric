@@ -108,7 +108,6 @@ fn prefix_has_like_metachars(prefix: &str) -> bool {
 /// (`b.id = bt.block_id`), NOT on the *tag* block (`tc.tag_id`). The
 /// cache-rebuild contract in `crate::cache::rebuild_tags_cache`
 /// owns the upstream filter set; this query trusts it.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn resolve_tag_prefix_leaves(
     pool: &SqlitePool,
     prefix: &str,
@@ -122,104 +121,130 @@ pub async fn resolve_tag_prefix_leaves(
     if prefix_has_like_metachars(prefix) {
         let escaped = format!("{}%", escape_like(prefix));
         if include_inherited {
-            let rows = sqlx::query_scalar!(
-                "SELECT DISTINCT bt.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bt.block_id \
-                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT bti.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bti.block_id \
-                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT btr.source_id AS block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = btr.source_id \
-                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                   AND b.deleted_at IS NULL",
-                escaped
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
+            prefix_leaves_escaped_inherited(pool, &escaped).await
         } else {
-            let rows = sqlx::query_scalar!(
-                "SELECT DISTINCT bt.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bt.block_id \
-                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT btr.source_id AS block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = btr.source_id \
-                 WHERE tc.name LIKE ?1 ESCAPE '\\' \
-                   AND b.deleted_at IS NULL",
-                escaped
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
+            prefix_leaves_escaped(pool, &escaped).await
         }
     } else {
         let pattern = format!("{prefix}%");
         if include_inherited {
-            let rows = sqlx::query_scalar!(
-                "SELECT DISTINCT bt.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bt.block_id \
-                 WHERE tc.name LIKE ?1 \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT bti.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bti.block_id \
-                 WHERE tc.name LIKE ?1 \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT btr.source_id AS block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = btr.source_id \
-                 WHERE tc.name LIKE ?1 \
-                   AND b.deleted_at IS NULL",
-                pattern
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
+            prefix_leaves_plain_inherited(pool, &pattern).await
         } else {
-            let rows = sqlx::query_scalar!(
-                "SELECT DISTINCT bt.block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = bt.block_id \
-                 WHERE tc.name LIKE ?1 \
-                   AND b.deleted_at IS NULL \
-                 UNION \
-                 SELECT DISTINCT btr.source_id AS block_id \
-                 FROM tags_cache tc \
-                 JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                 JOIN blocks b ON b.id = btr.source_id \
-                 WHERE tc.name LIKE ?1 \
-                   AND b.deleted_at IS NULL",
-                pattern
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
+            prefix_leaves_plain(pool, &pattern).await
         }
     }
+}
+
+/// `LIKE ?1 ESCAPE` prefix leaves, with the inherited arm.
+async fn prefix_leaves_escaped_inherited(
+    pool: &SqlitePool,
+    escaped: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT bti.block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bti.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL",
+        escaped
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// `LIKE ?1 ESCAPE` prefix leaves, without the inherited arm.
+async fn prefix_leaves_escaped(pool: &SqlitePool, escaped: &str) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 ESCAPE '\\' \
+           AND b.deleted_at IS NULL",
+        escaped
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// `LIKE ?1` prefix leaves, with the inherited arm.
+async fn prefix_leaves_plain_inherited(
+    pool: &SqlitePool,
+    pattern: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT bti.block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bti.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL",
+        pattern
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// `LIKE ?1` prefix leaves, without the inherited arm.
+async fn prefix_leaves_plain(pool: &SqlitePool, pattern: &str) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT bt.block_id \
+         FROM tags_cache tc \
+         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = bt.block_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL \
+         UNION \
+         SELECT DISTINCT btr.source_id AS block_id \
+         FROM tags_cache tc \
+         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+         JOIN blocks b ON b.id = btr.source_id \
+         WHERE tc.name LIKE ?1 \
+           AND b.deleted_at IS NULL",
+        pattern
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 /// #1622 — bare id-set subquery (no `b.id IN (...)` wrapper) for a single

@@ -691,6 +691,37 @@ pub async fn restore_deleted_ancestor_chain(
     Ok(RestoredAncestorChain { topmost, chain })
 }
 
+/// Where the root lands after the move: the `page_id` its new parent implies
+/// (`None` when it has no parent, or the parent is itself page-less), and
+/// whether the root is a page — a page keeps its own id as `page_id`, so the
+/// two answers are read together and consumed together by the steps below.
+async fn root_page_context(
+    conn: &mut sqlx::SqliteConnection,
+    root: &str,
+) -> Result<(Option<String>, bool), agaric_core::error::AppError> {
+    let parent_id: Option<String> =
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", root)
+            .fetch_one(&mut *conn)
+            .await?;
+    let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
+        sqlx::query_scalar!(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+             FROM blocks WHERE id = ?",
+            pid,
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+    let is_page: bool = sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root)
+        .fetch_one(&mut *conn)
+        .await?
+        == "page";
+    Ok((new_page_id, is_page))
+}
+
 /// Re-derive `page_id` + `space_id` for a moved/restored subtree root and its
 /// non-page active descendants, synchronously and in the caller's IMMEDIATE tx
 /// (#533/#664). The `page_id` + `space_id` rederive CTE previously appeared
@@ -767,32 +798,12 @@ pub async fn restore_deleted_ancestor_chain(
 /// `&mut **tx` from their existing `CommandTx` / `Transaction`). Opens no
 /// transaction of its own — it runs inside the caller's IMMEDIATE tx,
 /// preserving the #110 raw-write-tx convention.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn rederive_page_and_space_ids(
     conn: &mut sqlx::SqliteConnection,
     root: &str,
 ) -> Result<(), agaric_core::error::AppError> {
     // 1. New page_id from the (possibly NULL) parent.
-    let parent_id: Option<String> =
-        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", root)
-            .fetch_one(&mut *conn)
-            .await?;
-    let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-        sqlx::query_scalar!(
-            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
-             FROM blocks WHERE id = ?",
-            pid,
-        )
-        .fetch_optional(&mut *conn)
-        .await?
-        .flatten()
-    } else {
-        None
-    };
-    let is_page: bool = sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root)
-        .fetch_one(&mut *conn)
-        .await?
-        == "page";
+    let (new_page_id, is_page) = root_page_context(conn, root).await?;
 
     // 2. The root itself (pages keep their own id as page_id).
     if !is_page {

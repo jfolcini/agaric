@@ -161,7 +161,6 @@ pub async fn propagate_tag_to_descendants(
 /// restores and no non-content deletes, could carry a dropped row
 /// indefinitely — but per the above that row is inert, not a migration
 /// candidate.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -174,8 +173,19 @@ pub async fn remove_inherited_tag(
         .execute(&mut *conn)
         .await?;
 
-    // Step 2 (#675): Re-seed inheritance from direct taggers INSIDE the subtree.
-    //
+    reseed_from_subtree_taggers(conn, block_id, tag_id).await?;
+    reseed_descendants_from_outer_ancestors(conn, block_id, tag_id).await?;
+    reseed_block_itself(conn, block_id, tag_id).await?;
+
+    Ok(())
+}
+
+/// Step 2 (#675): re-seed inheritance from direct taggers INSIDE the subtree.
+async fn reseed_from_subtree_taggers(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    tag_id: &str,
+) -> Result<(), AppError> {
     // For every active descendant D of block_id that no longer has an inherited
     // row and is not itself a direct tagger, find the NEAREST ancestor C that
     // (a) sits at or below the level of block_id's children (i.e. C is in the
@@ -269,14 +279,19 @@ pub async fn remove_inherited_tag(
     .execute(&mut *conn)
     .await?;
 
-    // Step 3: For descendants of block_id, check if any OTHER ancestor still
-    // has this tag. If so, re-insert with the closest such ancestor.
-    // We find all descendants of block_id, then for each, walk UP ancestors
-    // (starting from block_id's parent) to find the nearest ancestor with the tag.
-    //
-    // Use a single SQL statement: for each descendant of block_id that doesn't
-    // already have an entry in block_tag_inherited for this tag, find the
-    // nearest ancestor with the tag via a lateral ancestor walk.
+    Ok(())
+}
+
+/// Step 3: give each descendant that lost its row the nearest ancestor ABOVE
+/// `block_id` that still holds the tag.
+async fn reseed_descendants_from_outer_ancestors(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    tag_id: &str,
+) -> Result<(), AppError> {
+    // One SQL statement: for each descendant without an entry in
+    // block_tag_inherited for this tag, the ancestor walk is lateral, seeded
+    // from block_id's parent.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_descendants_active!(),
@@ -310,8 +325,16 @@ pub async fn remove_inherited_tag(
     .execute(&mut *conn)
     .await?;
 
-    // Also re-insert for block_id itself if it's a descendant of the ancestor
-    // (block_id no longer has the tag directly, but might inherit from above)
+    Ok(())
+}
+
+/// Step 4: `block_id` no longer holds the tag directly, so it may now inherit
+/// it from above like any other descendant.
+async fn reseed_block_itself(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    tag_id: &str,
+) -> Result<(), AppError> {
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(1),
