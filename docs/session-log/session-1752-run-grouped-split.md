@@ -17,13 +17,17 @@ stacked in one body. Each is named now:
 | `grouped_page_response` | 30 | fold buckets + members into the response |
 | `preview_order_clause` | <20 | the window's `ORDER BY` |
 
-Two bundles carry what every statement shares: `GroupKeySql` (rendered key
-expression, its join, its one bind) and `GroupAggSql` (aggregate terms, binds,
-select list). They earn their place because *all four statements agreeing on
-the same key* is the property that keeps grouping correct — and `GroupCtx`
-already set the precedent in this file. Each extracted body rebinds those
-fields to the original local names, so the moved statements are verbatim and
-their SQL bytes are unchanged (the sqlx drift guard agrees).
+`GroupKeySql` carries what every statement shares — the rendered key
+expression, its join, its one bind — because *all three statements agreeing on
+the same key* is the property that keeps grouping correct, and `GroupCtx`
+already set that precedent in this file. Each extracted body rebinds those
+fields to the original local names, so the moved statements are verbatim.
+
+A second bundle, `GroupAggSql`, did not survive review and should not have been
+written: one consumer, destructured on its first line, existing only to keep
+`fetch_group_buckets` under the argument threshold. `fetch_group_buckets` takes
+`&[AggregateSpec]` and calls `resolve_aggregates` itself instead — same
+parameter count, same `?N` numbering, one fewer type.
 
 `fetch_member_preview` first landed at **68/70**. Two lines of headroom is the
 exact position this sweep exists to get functions *out* of — it is what
@@ -77,7 +81,16 @@ coverage that already exists.
 - `cargo clippy -p agaric-store --all-targets`: clean, and the `#[expect]` on
   `run_grouped` reported itself unfulfilled — which is how the attribute is
   supposed to announce that the split worked
-- sqlx drift guard: clean, so no query text moved
+
+These statements are `sqlx::query(AssertSqlSafe(..))` runtime queries, so the
+`.sqlx/` drift guard says **nothing** about them — it only records `query!`
+macro queries and would stay green over an arbitrary rewrite of these strings.
+An earlier draft of this log and of #5021's description cited it as evidence
+that the SQL was unchanged. It is not evidence; the claim rests on reading the
+diff. Twice today I have cited a passing guard for a property the guard does
+not test (the other was `.sqlx/` and literal indentation, session 1750) — the
+check being green is a fact about the check's own subject, never about whatever
+I happened to be claiming.
 
 ## Left for the next slices
 

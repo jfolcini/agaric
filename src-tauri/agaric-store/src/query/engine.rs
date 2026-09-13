@@ -1166,18 +1166,6 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
     }
 }
 
-/// The resolved per-group aggregates, as `fetch_group_buckets` needs them.
-///
-/// Unlike [`GroupKeySql`] this carries no all-statements-agree property — one
-/// statement consumes it. It is a bundle because passing `terms` and `binds`
-/// separately puts `fetch_group_buckets` over the `too_many_arguments`
-/// threshold, and they are always produced by the same `resolve_aggregates`
-/// call.
-struct GroupAggSql<'a> {
-    terms: &'a [AggTerm],
-    binds: &'a [Bind],
-}
-
 /// The group key as SQL. Every grouped statement reuses the SAME rendered
 /// expression, join and bind — passing them as one value is what keeps the
 /// four of them agreeing on the key they group, partition and filter by.
@@ -1363,7 +1351,7 @@ async fn run_grouped(
     // the space + filter binds; every subsequent bind follows it.
     let key_pos = ctx.next_pos;
     let (raw_key_expr, join, key_bind) = group_key_expr(&spec.key, key_pos);
-    let mut next_pos = key_pos + usize::from(key_bind.is_some());
+    let next_pos = key_pos + usize::from(key_bind.is_some());
     // The rendered key: NULL/absent → the `"none"` bucket. Reused verbatim in
     // SELECT / GROUP BY / HAVING / PARTITION BY / IN so a single key bind (if
     // any) feeds every occurrence.
@@ -1379,18 +1367,6 @@ async fn run_grouped(
         None => None,
     };
     let _ = ctx.space_pos; // documented in `predicate`; bound positionally.
-
-    // ── per-group aggregate exprs ─────────────────────────────────────────
-    // Resolved against the group-page query's bind numbering: their
-    // property-key binds occupy the slots RIGHT AFTER the group-key bind
-    // (advancing `next_pos`), so the HAVING / LIMIT slots that follow are
-    // numbered past them. The aggregate exprs are added to the GROUP BY
-    // SELECT (computed PER bucket) aliased `a0…aN`. Empty → no extra columns.
-    let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut next_pos);
-    let aggs = GroupAggSql {
-        terms: &agg_terms,
-        binds: &agg_binds,
-    };
 
     // FIRST page only: the bucket count is invariant across cursor pages.
     let total_count: Option<i64> = if group_cursor.is_none() {
@@ -1410,7 +1386,7 @@ async fn run_grouped(
         pool,
         &ctx,
         &key_sql,
-        &aggs,
+        &request.aggregates,
         group_cursor.as_ref(),
         next_pos,
         limit,
@@ -1514,7 +1490,7 @@ async fn fetch_group_buckets(
     pool: &SqlitePool,
     ctx: &GroupCtx<'_>,
     key: &GroupKeySql<'_>,
-    aggs: &GroupAggSql<'_>,
+    specs: &[AggregateSpec],
     cursor: Option<&GroupCursor>,
     mut next_pos: usize,
     limit: i64,
@@ -1522,7 +1498,10 @@ async fn fetch_group_buckets(
     // Named locals so the statement below reads as the one `run_grouped` used
     // to inline, and so `format!`'s inline captures still resolve.
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
-    let (agg_terms, agg_binds) = (aggs.terms, aggs.binds);
+    // The aggregates' property-key binds occupy the slots RIGHT AFTER the
+    // group-key bind, advancing `next_pos`, so the HAVING / LIMIT slots below
+    // are numbered past them. Empty specs → no extra columns and no binds.
+    let (agg_terms, agg_binds) = resolve_aggregates(specs, &mut next_pos);
     // `, CAST(<expr>) AS aN` per aggregate — each decodes uniformly as a
     // nullable f64 (see the global query for the COUNT-is-INTEGER rationale).
     let agg_select: String = agg_terms
@@ -1563,7 +1542,7 @@ async fn fetch_group_buckets(
     }
     // Per-group aggregate property-key binds follow the group-key bind, in the
     // slots `resolve_aggregates` numbered (before the HAVING / LIMIT binds).
-    for b in agg_binds {
+    for b in &agg_binds {
         q = bind_raw(q, b);
     }
     if let Some(c) = cursor {
@@ -1589,7 +1568,7 @@ async fn fetch_group_buckets(
         buckets.push(GroupBucketRow {
             gkey,
             gcount,
-            aggregates: decode_aggregates(agg_terms, &cells),
+            aggregates: decode_aggregates(&agg_terms, &cells),
         });
     }
     Ok(buckets)
