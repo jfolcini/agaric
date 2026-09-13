@@ -1185,6 +1185,29 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
 /// — never interpolated as an identifier — so grouping cannot inject SQL.
 /// `pos` is that `?N` slot; the bind appears once (in the JOIN) and is
 /// positional, so its number is independent of textual placement.
+/// The per-group aggregate SQL the group-page statement needs: the resolved
+/// terms, their property-key binds, and the rendered `, CAST(…) AS aN` select
+/// list. One value because the three are produced together and consumed
+/// together.
+struct GroupAggSql<'a> {
+    terms: &'a [AggTerm],
+    binds: &'a [Bind],
+    select: &'a str,
+}
+
+/// The group key as SQL. Every grouped statement reuses the SAME rendered
+/// expression, join and bind — passing them as one value is what keeps the
+/// four of them agreeing on the key they group, partition and filter by.
+struct GroupKeySql<'a> {
+    /// The rendered `COALESCE(<key>, 'none')`, reused verbatim in SELECT /
+    /// GROUP BY / HAVING / PARTITION BY / IN.
+    expr: &'a str,
+    /// The join the key needs (`" JOIN block_tags …"`), or empty.
+    join: &'a str,
+    /// The key's single property bind, when the key has one.
+    bind: Option<&'a Bind>,
+}
+
 fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) {
     match key {
         GroupKey::Tag => (
@@ -1327,7 +1350,6 @@ struct GroupMemberRow {
 /// Run the grouped path: bucket the matched rows by `spec`'s dimension,
 /// paginate over GROUPS (keyset on `gcount DESC, gkey ASC`), and attach a
 /// bounded per-group member preview.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn run_grouped(
     pool: &SqlitePool,
     spec: &GroupSpec,
@@ -1344,6 +1366,11 @@ async fn run_grouped(
     // SELECT / GROUP BY / HAVING / PARTITION BY / IN so a single key bind (if
     // any) feeds every occurrence.
     let gkey_expr = format!("COALESCE({raw_key_expr}, 'none')");
+    let key_sql = GroupKeySql {
+        expr: &gkey_expr,
+        join: &join,
+        bind: key_bind.as_ref(),
+    };
 
     let group_cursor = match request.cursor.as_deref() {
         Some(s) => Some(GroupCursor::decode(s)?),
@@ -1365,69 +1392,145 @@ async fn run_grouped(
         .enumerate()
         .map(|(i, t)| format!(", CAST({} AS REAL) AS {}", t.expr, agg_alias(i)))
         .collect();
+    let aggs = GroupAggSql {
+        terms: &agg_terms,
+        binds: &agg_binds,
+        select: &agg_select,
+    };
 
-    // ── total_count = total #groups, FIRST page only ──────────────────────
+    // FIRST page only: the bucket count is invariant across cursor pages.
     let total_count: Option<i64> = if group_cursor.is_none() {
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM (SELECT {gkey_expr} AS gkey FROM {from}{join} \
-             WHERE {pred} GROUP BY gkey)",
-            from = ctx.from_clause,
-            pred = ctx.predicate,
-        );
-        // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
-        let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
-        if let Some(m) = ctx.match_sanitized {
-            q = q.bind(m.to_string()); // ?1 = MATCH
-        }
-        q = q.bind(ctx.space_id.to_string()); // ?space_pos
-        for b in ctx.filter_binds {
-            q = bind_scalar(q, b);
-        }
-        if let Some(b) = key_bind.as_ref() {
-            q = bind_scalar(q, b);
-        }
-        let c = if ctx.has_fulltext {
-            q.fetch_one(pool).await.map_err(map_fts_error)?
-        } else {
-            q.fetch_one(pool).await?
-        };
-        Some(c)
+        Some(grouped_total_count(pool, &ctx, &key_sql).await?)
     } else {
         None
     };
 
-    // ── GLOBAL aggregates (grouped mode), FIRST page only ─────────────────
-    // Computed over the SAME match set as the flat path — the un-grouped
-    // predicate / FROM (NO group-key join), so a multi-valued tag key does not
-    // double-count the global fold. A SEPARATE statement with its OWN bind
-    // numbering, so the property-key binds start right after the space +
-    // filter binds (a LOCAL position counter; the group-page numbering above
-    // is untouched).
-    let global_aggregates: Vec<AggregateResult> =
-        if group_cursor.is_none() && !request.aggregates.is_empty() {
-            let mut agg_pos = ctx.next_pos;
-            let (gterms, gbinds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
-            run_aggregate_query(
-                pool,
-                ctx.from_clause,
-                ctx.predicate,
-                ctx.space_id,
-                ctx.match_sanitized,
-                ctx.has_fulltext,
-                ctx.filter_binds,
-                &gterms,
-                &gbinds,
-            )
-            .await?
-        } else {
-            Vec::new()
-        };
+    // FIRST page only, like `total_count`.
+    let global_aggregates: Vec<AggregateResult> = if group_cursor.is_none() {
+        grouped_global_aggregates(pool, &ctx, &request.aggregates).await?
+    } else {
+        Vec::new()
+    };
 
-    // ── group page: keyset over `gcount DESC, gkey ASC` ───────────────────
-    // Resume predicate (HAVING, since it filters the GROUPED rows): a group is
-    // strictly AFTER the cursor iff its count is smaller, or equal-count with a
-    // strictly-greater key. NULL never occurs (gkey is COALESCE'd).
-    let having = if group_cursor.is_some() {
+    let mut buckets = fetch_group_buckets(
+        pool,
+        &ctx,
+        &key_sql,
+        &aggs,
+        group_cursor.as_ref(),
+        next_pos,
+        limit,
+    )
+    .await?;
+
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = buckets.len() > limit_usize;
+    if has_more {
+        buckets.truncate(limit_usize);
+    }
+
+    if buckets.is_empty() {
+        return Ok(AdvancedQueryResponse {
+            rows: Vec::new(),
+            groups: Vec::new(),
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            aggregates: global_aggregates,
+        });
+    }
+
+    let page_keys: Vec<String> = buckets.iter().map(|b| b.gkey.clone()).collect();
+    let by_key = fetch_member_preview(pool, &ctx, &key_sql, &page_keys).await?;
+
+    grouped_page_response(&buckets, by_key, has_more, total_count, global_aggregates)
+}
+
+/// How many buckets the match set has in total — the grouped page's
+/// `total_count`.
+async fn grouped_total_count(
+    pool: &SqlitePool,
+    ctx: &GroupCtx<'_>,
+    key: &GroupKeySql<'_>,
+) -> Result<i64, AppError> {
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM (SELECT {gkey} AS gkey FROM {from}{join} \
+         WHERE {pred} GROUP BY gkey)",
+        gkey = key.expr,
+        from = ctx.from_clause,
+        join = key.join,
+        pred = ctx.predicate,
+    );
+    // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
+    if let Some(m) = ctx.match_sanitized {
+        q = q.bind(m.to_string()); // ?1 = MATCH
+    }
+    q = q.bind(ctx.space_id.to_string()); // ?space_pos
+    for b in ctx.filter_binds {
+        q = bind_scalar(q, b);
+    }
+    if let Some(b) = key.bind {
+        q = bind_scalar(q, b);
+    }
+    if ctx.has_fulltext {
+        q.fetch_one(pool).await.map_err(map_fts_error)
+    } else {
+        Ok(q.fetch_one(pool).await?)
+    }
+}
+
+/// The GLOBAL aggregate fold for a grouped request.
+///
+/// Computed over the SAME match set as the flat path — the un-grouped
+/// predicate / FROM, with NO group-key join, so a multi-valued tag key does not
+/// double-count. A separate statement with its OWN bind numbering (a local
+/// position counter), so the group-page numbering is untouched.
+async fn grouped_global_aggregates(
+    pool: &SqlitePool,
+    ctx: &GroupCtx<'_>,
+    specs: &[AggregateSpec],
+) -> Result<Vec<AggregateResult>, AppError> {
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut agg_pos = ctx.next_pos;
+    let (terms, binds) = resolve_aggregates(specs, &mut agg_pos);
+    run_aggregate_query(
+        pool,
+        ctx.from_clause,
+        ctx.predicate,
+        ctx.space_id,
+        ctx.match_sanitized,
+        ctx.has_fulltext,
+        ctx.filter_binds,
+        &terms,
+        &binds,
+    )
+    .await
+}
+
+/// One page of buckets, keyset-ordered by `gcount DESC, gkey ASC`.
+///
+/// The resume predicate is a `HAVING` rather than a `WHERE` because it filters
+/// the GROUPED rows: a bucket is strictly after the cursor iff its count is
+/// smaller, or equal-count with a strictly-greater key. `gkey` is COALESCE'd,
+/// so NULL never occurs.
+async fn fetch_group_buckets(
+    pool: &SqlitePool,
+    ctx: &GroupCtx<'_>,
+    key: &GroupKeySql<'_>,
+    aggs: &GroupAggSql<'_>,
+    cursor: Option<&GroupCursor>,
+    next_pos: usize,
+    limit: i64,
+) -> Result<Vec<GroupBucketRow>, AppError> {
+    // Named locals so the statement below reads as the one `run_grouped` used
+    // to inline, and so `format!`'s inline captures still resolve.
+    let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
+    let (agg_terms, agg_binds, agg_select) = (aggs.terms, aggs.binds, aggs.select);
+    let mut next_pos = next_pos;
+    let having = if cursor.is_some() {
         let p_count = next_pos;
         let p_count2 = next_pos + 1;
         let p_key = next_pos + 2;
@@ -1455,15 +1558,15 @@ async fn run_grouped(
     for b in ctx.filter_binds {
         q = bind_raw(q, b);
     }
-    if let Some(b) = key_bind.as_ref() {
+    if let Some(b) = key_bind {
         q = bind_raw(q, b);
     }
     // Per-group aggregate property-key binds follow the group-key bind, in the
     // slots `resolve_aggregates` numbered (before the HAVING / LIMIT binds).
-    for b in &agg_binds {
+    for b in agg_binds {
         q = bind_raw(q, b);
     }
-    if let Some(c) = group_cursor.as_ref() {
+    if let Some(c) = cursor {
         q = q.bind(c.count).bind(c.count).bind(c.key.clone());
     }
     q = q.bind(limit_plus_one);
@@ -1486,38 +1589,21 @@ async fn run_grouped(
         buckets.push(GroupBucketRow {
             gkey,
             gcount,
-            aggregates: decode_aggregates(&agg_terms, &cells),
+            aggregates: decode_aggregates(agg_terms, &cells),
         });
     }
+    Ok(buckets)
+}
 
-    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
-    let has_more = buckets.len() > limit_usize;
-    if has_more {
-        buckets.truncate(limit_usize);
-    }
-
-    if buckets.is_empty() {
-        return Ok(AdvancedQueryResponse {
-            rows: Vec::new(),
-            groups: Vec::new(),
-            next_cursor: None,
-            has_more: false,
-            total_count,
-            aggregates: global_aggregates,
-        });
-    }
-
-    // ── bounded member preview: the first N members per bucket on this page ─
-    // ONE windowed query scoped to the page's group keys, capped per group by
-    // a `ROW_NUMBER()` window so a huge bucket cannot blow the payload.
-    let page_keys: Vec<String> = buckets.iter().map(|b| b.gkey.clone()).collect();
-    // Default sort for the preview: relevance-first on the full-text path,
-    // else the recency keyset (`b.id DESC`). The window orders members by it.
-    // Empty sort → no correlated-key LEFT JOINs are ever required here, so the
-    // returned `SortJoins` is discarded (the grouped preview never orders by
-    // Title/LastEdited).
-    let (preview_terms, _preview_joins) = resolve_sort(&[], ctx.has_fulltext)?;
-    let preview_order = preview_terms
+/// The `ORDER BY` the preview window ranks each bucket's members by:
+/// relevance-first on the full-text path, else the recency keyset (`b.id DESC`).
+///
+/// The empty sort means no correlated-key LEFT JOIN is ever required, so
+/// `resolve_sort`'s `SortJoins` is discarded — the grouped preview never orders
+/// by Title or LastEdited.
+fn preview_order_clause(has_fulltext: bool) -> Result<String, AppError> {
+    let (terms, _joins) = resolve_sort(&[], has_fulltext)?;
+    Ok(terms
         .iter()
         .map(|t| {
             format!(
@@ -1527,7 +1613,22 @@ async fn run_grouped(
             )
         })
         .collect::<Vec<_>>()
-        .join(", ");
+        .join(", "))
+}
+
+/// The first `GROUP_MEMBER_PREVIEW` members of each bucket on this page, keyed
+/// by group key.
+///
+/// ONE windowed query scoped to the page's keys, capped per group by a
+/// `ROW_NUMBER()` window so a huge bucket cannot blow the payload.
+async fn fetch_member_preview(
+    pool: &SqlitePool,
+    ctx: &GroupCtx<'_>,
+    key: &GroupKeySql<'_>,
+    page_keys: &[String],
+) -> Result<rustc_hash::FxHashMap<String, Vec<QueryResultRow>>, AppError> {
+    let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
+    let preview_order = preview_order_clause(ctx.has_fulltext)?;
 
     // `IN (?,?,…)` over the page's group keys; binds follow the per-statement
     // prefix (+ key bind).
@@ -1565,10 +1666,10 @@ async fn run_grouped(
     for b in ctx.filter_binds {
         mq = bind_as(mq, b);
     }
-    if let Some(b) = key_bind.as_ref() {
+    if let Some(b) = key_bind {
         mq = bind_as(mq, b);
     }
-    for k in &page_keys {
+    for k in page_keys {
         mq = mq.bind(k.clone());
     }
     mq = mq.bind(GROUP_MEMBER_PREVIEW);
@@ -1593,7 +1694,17 @@ async fn run_grouped(
             block: m.block,
         });
     }
+    Ok(by_key)
+}
 
+/// Fold the page's buckets and their members into the grouped response.
+fn grouped_page_response(
+    buckets: &[GroupBucketRow],
+    mut by_key: rustc_hash::FxHashMap<String, Vec<QueryResultRow>>,
+    has_more: bool,
+    total_count: Option<i64>,
+    global_aggregates: Vec<AggregateResult>,
+) -> Result<AdvancedQueryResponse, AppError> {
     let groups: Vec<QueryGroup> = buckets
         .iter()
         .map(|b| QueryGroup {
