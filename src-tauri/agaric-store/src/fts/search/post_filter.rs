@@ -146,7 +146,7 @@ where
     };
 
     // #2282 — assemble the invariant FTS query (MATCH + every structural filter
-    // + LIMIT + snippet projection) ONCE. The window loop below re-executes it
+    // + LIMIT + snippet projection) ONCE. `scan_post_filtered_windows` re-executes it
     // per window, rebinding ONLY the advancing cursor — it no longer rebuilds
     // the SQL string and recompiles the filters up to POST_FILTER_MAX_WINDOWS
     // times. `with_snippet = false` (the toggle post-filter clears `row.snippet`
@@ -213,7 +213,7 @@ where
             break;
         }
         // #2282 — re-execute the prebuilt query, rebinding only the advancing
-        // cursor for this window (the SQL + filters were assembled once above).
+        // cursor for this window (the SQL + filters were assembled once by the caller).
         let rows = execute_fts_fetch(
             pool,
             prepared,

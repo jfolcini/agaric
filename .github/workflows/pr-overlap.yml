@@ -966,6 +966,11 @@ jobs:
       # the (101)th entry actually showing up is proof there really are more
       # than 100 open PRs right now.
       PR_LIST_LIMIT: "100"
+
+      # Written by the board-fetch step and read by the interpreting step, so
+      # it lives here for the same reason `PR_LIST_LIMIT` does: two steps that
+      # must name the same path can never drift apart if only one name exists.
+      SELF_PR_STATE: self-pr-state.txt
     steps:
       - name: Checkout the merge target (trusted; never this PR's own commits)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1193,13 +1198,12 @@ jobs:
           # in time to the board read as it can be, and so `GH_TOKEN` stays in
           # this one step. A failed or empty read writes nothing, and the
           # interpreting step then fails exactly as it does today.
-          gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.state' > self-pr-state.txt \
+          gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.state' > "$SELF_PR_STATE" \
             || echo "::warning::session-log-pr-collision: could not re-read PR #$PR_NUMBER's own state; a mid-run merge will read as unverifiable below"
 
       - name: Check for a session-log number that would be duplicated in the merge result
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          SELF_PR_STATE: self-pr-state.txt
           # Every path this step touches is an env var rather than a literal,
           # so the shell below can be run against fixtures unchanged (#4431).
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
