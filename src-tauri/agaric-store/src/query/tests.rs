@@ -2061,6 +2061,58 @@ async fn per_group_aggregates_correct() {
     );
 }
 
+/// The group-key bind and the per-group aggregate binds occupy ADJACENT `?N`
+/// slots, and their order is carried only by the sequence of `bind` calls in
+/// `fetch_group_buckets`. Every other grouped test exercises at most one of
+/// them: `per_group_aggregates_correct` groups by `GroupKey::State` (a native
+/// column, no bind), and the `group_by_property_*` tests bind a key but request
+/// no aggregates. So the pair was half-covered — each arm pinned alone, their
+/// relative order open — and swapping the two `bind` loops left the whole suite
+/// green.
+///
+/// This request needs both: it groups by the `status` property while folding
+/// the `estimate` property. Swap the binds and the group key reads `estimate`
+/// while the fold reads `status`, so the buckets below stop existing at all.
+#[tokio::test]
+async fn group_by_property_with_aggregates_binds_key_before_aggregates() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    seed_estimates(&pool).await;
+    // estimate: B1=3, B2=5, B3=8, B4="big". Group B1+B3 as `open` and B2 as
+    // `closed` so the two sums (11 and 5) DIFFER: with B1+B2 vs B3 both fold to
+    // 8, only the counts would tell the buckets apart, and a defect attributing
+    // the right values to the wrong bucket would pass.
+    set_property(&pool, "01B1000000000000000000000", "status", "open").await;
+    set_property(&pool, "01B3000000000000000000000", "status", "open").await;
+    set_property(&pool, "01B2000000000000000000000", "status", "closed").await;
+
+    let mut request = group_req(
+        default_filter(),
+        GroupKey::Property {
+            key: "status".to_string(),
+        },
+    );
+    request.aggregates = vec![agg_prop(AggOp::Sum, "estimate")];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    let counts = group_counts(&resp);
+    assert_eq!(counts.get("open"), Some(&2), "got {counts:?}");
+    assert_eq!(counts.get("closed"), Some(&1), "got {counts:?}");
+
+    let open = find_group(&resp, "open");
+    let closed = find_group(&resp, "closed");
+    assert!(
+        approx(open.aggregates[0].value.unwrap(), 11.0),
+        "open = B1(3) + B3(8): {:?}",
+        open.aggregates
+    );
+    assert!(
+        approx(closed.aggregates[0].value.unwrap(), 5.0),
+        "closed = B2(5): {:?}",
+        closed.aggregates
+    );
+}
+
 #[tokio::test]
 async fn aggregates_compose_with_structural_filter_and_fulltext() {
     let (pool, _d) = test_pool().await;
