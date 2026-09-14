@@ -664,12 +664,16 @@ pub async fn refresh_inbound_counts_after_reindex(
 /// Per-op state captured BEFORE projection mutates `blocks` so the
 /// post-projection recompute knows exactly which page rows to refresh.
 ///
-/// Each variant carries exactly the data its op type needs; the empty
-/// `None` variant covers op types that don't touch the cache counts
-/// (tag / property / attachment). `apply_op_tx` constructs one variant
-/// per arm and `maintain_pages_cache_counts_after_op` matches on it, so
-/// the op→fields coupling is exhaustive-match-checked rather than an
-/// unchecked runtime convention.
+/// Each variant carries exactly the data its op type needs. Two carry nothing,
+/// and they mean opposite things: `None` is "this op cannot move either count"
+/// (tag / property / attachment), `Deferred` is "it moves them, and the
+/// background `RebuildPagesCacheCounts` task owns the recompute" (#2042). Both
+/// reach the same empty arm, by different arguments.
+///
+/// `apply_op_tx` constructs one variant per arm and
+/// `maintain_pages_cache_counts_after_op` matches on it, so the op→fields
+/// coupling is exhaustive-match-checked rather than an unchecked runtime
+/// convention.
 pub enum PreOpState {
     /// Op types that cannot affect either cache count.
     None,
