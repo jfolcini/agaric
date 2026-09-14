@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use sqlx::SqlitePool;
 
 use super::audit_ingest_metrics;
@@ -181,7 +183,130 @@ pub async fn ingest_replicated_batch_with_fault(
     ingest_replicated_batch_inner(pool, records, local_device_id, remote_device_id, fault).await
 }
 
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+/// Per-batch bookkeeping, every field keyed on a `device_id` borrowed from the
+/// records, so the whole thing lives exactly as long as the slice being ingested.
+#[derive(Default)]
+struct BatchState<'a> {
+    /// Devices whose chain hit a transient failure this session; their
+    /// remaining records are left for the peer to re-ship.
+    stalled: HashSet<&'a str>,
+    /// Every device this batch presented at all — the complement of `stalled`
+    /// is the set that made progress, which is what clears a device's
+    /// consecutive-stall count (#3727).
+    seen: HashSet<&'a str>,
+    /// #3740: devices for which something actually LANDED in this batch —
+    /// ingested, or found already held. Not the complement of `stalled`: a
+    /// device can land three records and stall on the fourth, and its frontier
+    /// has moved even though it stalled. That distinction is what the
+    /// consecutive-stall run is supposed to measure.
+    landed: HashSet<&'a str>,
+    /// #3726: the highest `seq` each device has presented SO FAR, which is what
+    /// the ascending-seq precondition is about. Tracks presentation order, not
+    /// what landed: a deferred record does not advance the frontier, but a
+    /// record arriving below it still means the batch was reordered.
+    highest_seq: HashMap<&'a str, i64>,
+    /// #3740: out-of-order violations aggregated per device, reported once at
+    /// the end of the batch rather than once per record. A reordered batch is
+    /// thousands of records over a handful of devices, and a log line each would
+    /// bury the finding it is trying to surface.
+    out_of_order: HashMap<&'a str, (i64, i64, u64)>,
+}
+
+/// #3726: note whether this record arrived below its device's high-water `seq`,
+/// then raise that mark.
+///
+/// Called before anything else in the loop, including the stalled
+/// short-circuit: the violation is about the order records were PRESENTED in,
+/// so a record skipped by the defer policy is still evidence of it.
+fn note_presentation_order<'a>(
+    record: &'a OpTransfer,
+    state: &mut BatchState<'a>,
+    outcome: &mut BatchIngestOutcome,
+) {
+    let device = record.device_id.as_str();
+    if let Some(&highest) = state.highest_seq.get(device)
+        && record.seq < highest
+    {
+        outcome.out_of_order += 1;
+        state
+            .out_of_order
+            .entry(device)
+            .and_modify(|(_, _, count)| *count += 1)
+            .or_insert((record.seq, highest, 1));
+    }
+    state
+        .highest_seq
+        .entry(device)
+        .and_modify(|h| *h = (*h).max(record.seq))
+        .or_insert(record.seq);
+}
+
+/// A transient DB error: defer the rest of this device's chain, so our
+/// advertised frontier stays contiguous and the peer re-ships from the gap
+/// (#2481, #3325).
+fn defer_device_chain<'a>(
+    record: &'a OpTransfer,
+    e: &AppError,
+    local_device_id: &str,
+    remote_device_id: &str,
+    state: &mut BatchState<'a>,
+    outcome: &mut BatchIngestOutcome,
+) {
+    let device = record.device_id.as_str();
+    state.stalled.insert(device);
+    outcome.deferred += 1;
+    // #3740: if this device already landed a record in THIS batch, its frontier
+    // moved, so whatever run it was carrying is over and this stall starts a
+    // new one. Retired here, before the stall is counted, and not in the
+    // post-loop sweep: the escalation fires from inside `record_stall`, so a
+    // reset that happened afterwards would arrive too late to stop an `error!`
+    // asserting that the device has been "running without landing anything" in
+    // the very batch where it landed something.
+    if state.landed.contains(device) {
+        audit_ingest_metrics::note_progress(device);
+    }
+    // #3727: aggregate the stall before logging it, so the warn line carries how
+    // many batches running this device has now failed to make any progress. One
+    // is a busy writer; a run of them is a condition that will not clear on its
+    // own, and `record_stall` escalates to `error!` at that point.
+    let consecutive =
+        audit_ingest_metrics::record_stall(remote_device_id, device, record.seq, &e.to_string());
+    tracing::warn!(
+        device_id = %local_device_id,
+        remote_device_id = %remote_device_id,
+        op_device_id = %record.device_id,
+        op_seq = record.seq,
+        consecutive,
+        error = %e,
+        "#2481: transient DB error ingesting a replicated op record; \
+         deferring the rest of this device's chain so our advertised \
+         frontier stays contiguous and the peer re-ships from the gap (#3325)"
+    );
+}
+
+/// The batch's aggregated metrics, emitted once per device after the loop: a
+/// batch is thousands of records over a handful of devices, and a line each
+/// would bury the finding these exist to surface.
+fn report_batch_metrics(state: &BatchState<'_>, remote_device_id: &str, deferred: usize) {
+    // #3727: a device that appeared in this batch and did NOT stall has made
+    // progress, which retires any consecutive-stall run it was carrying. The map
+    // being probed is normally empty. Devices that stalled *after* landing
+    // something were already retired at the stall itself (#3740).
+    for device in state.seen.difference(&state.stalled) {
+        audit_ingest_metrics::note_progress(device);
+    }
+    for (device, &(first_seq, first_highest, count)) in &state.out_of_order {
+        audit_ingest_metrics::record_out_of_order(
+            remote_device_id,
+            device,
+            first_seq,
+            first_highest,
+            count,
+        );
+    }
+    audit_ingest_metrics::record_deferred(deferred);
+}
+
 async fn ingest_replicated_batch_inner(
     pool: &SqlitePool,
     records: &[OpTransfer],
@@ -189,56 +314,15 @@ async fn ingest_replicated_batch_inner(
     remote_device_id: &str,
     fault: &(dyn Fn(&OpTransfer) -> Option<AppError> + Sync),
 ) -> BatchIngestOutcome {
-    use std::collections::{HashMap, HashSet};
-
     let mut outcome = BatchIngestOutcome::default();
-    // Devices whose chain hit a transient failure this session; their
-    // remaining records are left for the peer to re-ship.
-    let mut stalled: HashSet<&str> = HashSet::new();
-    // Every device this batch presented at all — the complement of `stalled`
-    // is the set that made progress, which is what clears a device's
-    // consecutive-stall count (#3727).
-    let mut seen: HashSet<&str> = HashSet::new();
-    // #3740: devices for which something actually LANDED in this batch —
-    // ingested, or found already held. Not the complement of `stalled`: a
-    // device can land three records and stall on the fourth, and its frontier
-    // has moved even though it stalled. That distinction is what the
-    // consecutive-stall run is supposed to measure.
-    let mut landed: HashSet<&str> = HashSet::new();
-    // #3726: the highest `seq` each device has presented SO FAR, which is what
-    // the ascending-seq precondition is about. Tracks presentation order, not
-    // what landed: a deferred record does not advance the frontier, but a
-    // record arriving below it still means the batch was reordered.
-    let mut highest_seq: HashMap<&str, i64> = HashMap::new();
-    // #3740: out-of-order violations aggregated per device, reported once at
-    // the end of the batch rather than once per record. A reordered batch is
-    // thousands of records over a handful of devices, and a log line each would
-    // bury the finding it is trying to surface.
-    let mut out_of_order: HashMap<&str, (i64, i64, u64)> = HashMap::new();
+    let mut state = BatchState::default();
 
     for record in records {
         let device = record.device_id.as_str();
-        seen.insert(device);
+        state.seen.insert(device);
+        note_presentation_order(record, &mut state, &mut outcome);
 
-        // #3726 — checked before anything else, including the stalled
-        // short-circuit: the violation is about the order records were
-        // PRESENTED in, so a record skipped by the defer policy is still
-        // evidence of it.
-        if let Some(&highest) = highest_seq.get(device)
-            && record.seq < highest
-        {
-            outcome.out_of_order += 1;
-            out_of_order
-                .entry(device)
-                .and_modify(|(_, _, count)| *count += 1)
-                .or_insert((record.seq, highest, 1));
-        }
-        highest_seq
-            .entry(device)
-            .and_modify(|h| *h = (*h).max(record.seq))
-            .or_insert(record.seq);
-
-        if stalled.contains(device) {
+        if state.stalled.contains(device) {
             outcome.deferred += 1;
             continue;
         }
@@ -251,7 +335,7 @@ async fn ingest_replicated_batch_inner(
         match result {
             Ok(true) => {
                 outcome.ingested += 1;
-                landed.insert(device);
+                state.landed.insert(device);
             }
             Ok(false) => {
                 outcome.already_held += 1;
@@ -262,45 +346,16 @@ async fn ingest_replicated_batch_inner(
                 // snapshot (for example through an earlier duplicate or a
                 // concurrent ingest), so retiring the old no-progress run is
                 // sound. Keep this coupled to that query's strict frontier.
-                landed.insert(device);
+                state.landed.insert(device);
             }
-            Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => {
-                stalled.insert(device);
-                outcome.deferred += 1;
-                // #3740: if this device already landed a record in THIS batch,
-                // its frontier moved, so whatever run it was carrying is over
-                // and this stall starts a new one. Retired here, before the
-                // stall is counted, and not in the post-loop sweep: the
-                // escalation fires from inside `record_stall`, so a reset that
-                // happened afterwards would arrive too late to stop an `error!`
-                // asserting that the device has been "running without landing
-                // anything" in the very batch where it landed something.
-                if landed.contains(device) {
-                    audit_ingest_metrics::note_progress(device);
-                }
-                // #3727: aggregate the stall before logging it, so the warn
-                // line carries how many batches running this device has now
-                // failed to make any progress. One is a busy writer; a run of
-                // them is a condition that will not clear on its own, and
-                // `record_stall` escalates to `error!` at that point.
-                let consecutive = audit_ingest_metrics::record_stall(
-                    remote_device_id,
-                    device,
-                    record.seq,
-                    &e.to_string(),
-                );
-                tracing::warn!(
-                    device_id = %local_device_id,
-                    remote_device_id = %remote_device_id,
-                    op_device_id = %record.device_id,
-                    op_seq = record.seq,
-                    consecutive,
-                    error = %e,
-                    "#2481: transient DB error ingesting a replicated op record; \
-                     deferring the rest of this device's chain so our advertised \
-                     frontier stays contiguous and the peer re-ships from the gap (#3325)"
-                );
-            }
+            Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => defer_device_chain(
+                record,
+                &e,
+                local_device_id,
+                remote_device_id,
+                &mut state,
+                &mut outcome,
+            ),
             Err(e) => {
                 outcome.rejected += 1;
                 tracing::error!(
@@ -317,27 +372,7 @@ async fn ingest_replicated_batch_inner(
         }
     }
 
-    // #3727: a device that appeared in this batch and did NOT stall has made
-    // progress, which retires any consecutive-stall run it was carrying. Done
-    // once per batch per device rather than once per record — a batch is
-    // thousands of records over a handful of devices, and the map being probed
-    // is normally empty. Devices that stalled *after* landing something were
-    // already retired at the stall itself (#3740).
-    for device in seen.difference(&stalled) {
-        audit_ingest_metrics::note_progress(device);
-    }
-    // #3726/#3740: one summarised line per offending device, after the loop, so
-    // a reordered batch produces a handful of lines rather than one per record.
-    for (device, (first_seq, first_highest, count)) in out_of_order {
-        audit_ingest_metrics::record_out_of_order(
-            remote_device_id,
-            device,
-            first_seq,
-            first_highest,
-            count,
-        );
-    }
-    audit_ingest_metrics::record_deferred(outcome.deferred);
+    report_batch_metrics(&state, remote_device_id, outcome.deferred);
 
     outcome
 }

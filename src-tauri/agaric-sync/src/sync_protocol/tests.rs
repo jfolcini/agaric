@@ -4838,6 +4838,41 @@ async fn a_never_clearing_transient_failure_shows_up_as_a_consecutive_stall_3727
     );
 }
 
+/// The stall record names the PEER that shipped the batch, not this device.
+///
+/// `AuditIngestStall` is serialised into `StatusInfo::audit_ingest_last_stall`,
+/// so `remote_device_id` is a field the user reads — and nothing said which of
+/// the ingest loop's two `&str` device ids ends up in it. Swapping them at the
+/// `defer_device_chain` call site left the whole crate green (#4639).
+#[tokio::test]
+async fn a_stall_names_the_peer_that_shipped_the_batch_not_this_device() {
+    use crate::sync_protocol::audit_ingest_metrics;
+
+    let device = "device-Z-shipper";
+    let records: Vec<OpTransfer> = (1..=2).map(|s| foreign_op_transfer(device, s)).collect();
+    let (pool, _dir) = test_pool().await;
+
+    crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &pool,
+        &records,
+        "local-device-shipper",
+        "peer-device-shipper",
+        &|r: &OpTransfer| (r.seq == 1).then_some(agaric_core::error::AppError::PoolTimedOut),
+    )
+    .await;
+
+    let run = audit_ingest_metrics::stall_run(device).expect("the stall must be recorded");
+    assert_eq!(
+        run.remote_device_id, "peer-device-shipper",
+        "the shipper is the remote peer, never this device"
+    );
+    assert_eq!(
+        run.op_device_id, device,
+        "and the chain that stalled belongs to a third identity again — the \
+         op-log device the peer was relaying"
+    );
+}
+
 /// #3740 — the persistent-stall `error!` asserts the device has been "deferred
 /// N batches running without landing anything". It must not be able to say that
 /// about a device that just landed records.
