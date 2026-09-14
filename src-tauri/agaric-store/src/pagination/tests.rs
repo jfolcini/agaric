@@ -1755,6 +1755,17 @@ async fn insert_property(pool: &SqlitePool, block_id: &str, key: &str, value_tex
         .unwrap();
 }
 
+/// Helper: insert a block_properties row whose value lives in `value_date`.
+async fn insert_property_date(pool: &SqlitePool, block_id: &str, key: &str, value_date: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value_date)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn query_by_property_returns_matching_blocks() {
     let (pool, _dir) = test_pool().await;
@@ -1848,18 +1859,8 @@ async fn query_by_property_neq_keeps_other_column_rows() {
 
     insert_property(&pool, "BLOCKTXT1", "when", "sometext").await;
     insert_property(&pool, "BLOCKTXT2", "when", "othertext").await;
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'when', ?)")
-        .bind("BLOCKDAT1")
-        .bind("2026-01-01")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'when', ?)")
-        .bind("BLOCKDAT2")
-        .bind("2026-02-02")
-        .execute(&pool)
-        .await
-        .unwrap();
+    insert_property_date(&pool, "BLOCKDAT1", "when", "2026-01-01").await;
+    insert_property_date(&pool, "BLOCKDAT2", "when", "2026-02-02").await;
 
     // neq against a value_date target: must return the two text rows (their
     // value_date is NULL — different column) AND the one date row whose date
@@ -1900,6 +1901,108 @@ async fn query_by_property_neq_keeps_other_column_rows() {
         resp.items.len(),
         3,
         "expected 3 rows (2 text + 1 differing date)"
+    );
+}
+
+/// Each reserved key reads its OWN column on the `blocks` table.
+///
+/// `is_reserved_property_key` says a key is reserved; `reserved_column` says
+/// where it lives, and nothing but this test makes the second agree with the
+/// first. Routing `priority` to `todo_state`, or `scheduled_date` to
+/// `due_date`, passed every other test in the estate — only `todo_state` and
+/// `due_date` had any routing coverage at all.
+#[tokio::test]
+async fn query_by_property_routes_each_reserved_key_to_its_own_column() {
+    let (pool, _dir) = test_pool().await;
+
+    // One block per reserved key, each carrying a value in that column ONLY,
+    // so a mis-route returns some other block rather than nothing.
+    let cases = [
+        ("BLOCKRSV1", "todo_state", "TODO"),
+        ("BLOCKRSV2", "priority", "A"),
+        ("BLOCKRSV3", "due_date", "2026-03-01"),
+        ("BLOCKRSV4", "scheduled_date", "2026-04-01"),
+    ];
+    for (id, col, value) in cases {
+        insert_block(&pool, id, "content", "reserved", None, None).await;
+        // The column name comes from the closed `cases` list above, never a
+        // caller, so the format! cannot carry untrusted text.
+        let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(value)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    for (id, key, _) in cases {
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = query_by_property(
+            &pool,
+            key,
+            None,
+            None,
+            "eq",
+            &page,
+            None,
+            None,
+            false,
+            None,
+            &[],
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, vec![id], "key {key:?} must read b.{key}; got {ids:?}");
+    }
+}
+
+/// `value_date_range` on the **property-row** path.
+///
+/// `query_by_property_value_date_range` pins the half-open `[from, to)`
+/// semantic against `due_date` — a reserved key, so it binds the range to
+/// `b.due_date` and never reaches `bp.value_date >= ?12 AND bp.value_date <
+/// ?13`. Swapping those two binds passed every test in the estate.
+#[tokio::test]
+async fn query_by_property_value_date_range_on_property_rows_is_half_open() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "BLOCKRNG1", "content", "lower", None, None).await;
+    insert_block(&pool, "BLOCKRNG2", "content", "interior", None, None).await;
+    insert_block(&pool, "BLOCKRNG3", "content", "upper", None, None).await;
+
+    insert_property_date(&pool, "BLOCKRNG1", "reviewed", "2026-01-01").await;
+    insert_property_date(&pool, "BLOCKRNG2", "reviewed", "2026-01-15").await;
+    insert_property_date(&pool, "BLOCKRNG3", "reviewed", "2026-02-01").await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = query_by_property(
+        &pool,
+        "reviewed",
+        None,
+        None,
+        "eq",
+        &page,
+        None,
+        None,
+        false,
+        None,
+        &[],
+        Some(("2026-01-01", "2026-02-01")),
+        &[],
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["BLOCKRNG1", "BLOCKRNG2"],
+        "[from, to) keeps the lower bound and drops the upper; got {ids:?}"
     );
 }
 
