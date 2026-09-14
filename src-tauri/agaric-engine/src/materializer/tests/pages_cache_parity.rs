@@ -288,17 +288,18 @@ async fn delete_restore_updates_child_count() {
 /// #2042 — a cohort op must DEFER its page-wide count recompute, not run it
 /// in this transaction.
 ///
-/// `maintain_pages_cache_counts_after_op` returns early for Delete / Restore /
-/// Purge because their affected set spans an arbitrarily large descendant
-/// subtree, and recomputing it here holds the single-writer apply lock for the
-/// whole walk. The background `RebuildPagesCacheCounts` task does it instead.
+/// `maintain_pages_cache_counts_after_op`'s Delete / Restore / Purge arm adds
+/// nothing to `affected`, because their affected set spans an arbitrarily large
+/// descendant subtree and recomputing it here holds the single-writer apply lock
+/// for the whole walk. The background `RebuildPagesCacheCounts` task does it
+/// instead.
 ///
 /// Nothing pinned that: the other parity tests drain the background handler
-/// before asserting, so they see the same final counts either way, and deleting
-/// the guard left all 1028 engine tests green. This calls the hook directly and
-/// asserts the counts are UNTOUCHED — the one observation that separates
-/// "deferred" from "done inline". A deliberately wrong seeded value stands in
-/// for the recompute's output, so the assertion fails the moment the walk runs.
+/// before asserting, so they see the same final counts either way. This calls
+/// the hook directly and asserts the counts are UNTOUCHED — the one observation
+/// that separates "deferred" from "done inline". A deliberately wrong seeded
+/// value stands in for the recompute's output, so the assertion fails the moment
+/// the walk runs.
 #[tokio::test]
 async fn cohort_ops_defer_the_count_recompute_2042() {
     use crate::apply::pages_cache::{PreOpState, maintain_pages_cache_counts_after_op};

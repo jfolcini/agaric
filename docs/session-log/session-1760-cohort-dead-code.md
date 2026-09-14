@@ -17,6 +17,13 @@ again after: the compile is the proof).
 
 `outbound_target_pages_for_block` — singular — stays. The `Edit` arm uses it.
 
+One of the three was not merely dead but a **duplicate**:
+`distinct_pages_for_blocks` and the surviving `target_pages_for_block_ids` carry
+byte-identical SQL, which is why no `.sqlx` regeneration was needed even though
+a `query!` site went away — the cached entry is still live under the other
+caller. (#5029's review caught that; it is a better description of the deletion
+than "dead code".)
+
 What made this a deletion rather than a judgement call is #5028's
 `cohort_ops_defer_the_count_recompute_2042`: before it, "those arms never run"
 was a reading of the guard; after it, it is a test.
