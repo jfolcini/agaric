@@ -549,7 +549,6 @@ pub async fn apply_op_tx(
 /// non-replay applier can never inherit replay suppression (the #2896 soundness
 /// fix that retired the ambient boot-replay suppression global).
 #[tracing::instrument(skip(conn, record, chunk, state, mode), fields(seq = record.seq), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_op_tx_with_mode(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,
@@ -577,183 +576,25 @@ pub async fn apply_op_tx_with_mode(
     let mut chunk = chunk;
     match op_type {
         OpType::CreateBlock => {
-            // The engine path is the only path; the SQL-only
-            // `apply_*_sql_only` helpers remain as fallbacks for
-            // test-scaffolding cases (uninitialised Loro state,
-            // unresolved space) inside the `via_loro` helpers
-            // themselves.
-            let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
-            // Capture payload fields for the post-projection
-            // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
-            pre_state = PreOpState::Create {
-                block_id: p.block_id.as_str().to_owned(),
-                parent_id: p.parent_id.as_ref().map(|id| id.as_str().to_owned()),
-                block_type: p.block_type.clone(),
-                content: p.content.clone(),
-            };
-            // #2200 Item 1: when in a chunk, DEFER the dense-position
-            // reprojection to end-of-chunk (record the touched parent group in
-            // the accumulator); off the chunk path (`None`) reproject inline.
-            apply_create_block_via_loro(
-                conn,
-                state,
-                &record.device_id,
-                &p,
-                chunk.as_deref_mut(),
-                replay_dirty,
-            )
-            .await?;
+            pre_state =
+                apply_create_block_op(conn, state, record, chunk.as_deref_mut(), replay_dirty)
+                    .await?;
         }
         OpType::EditBlock => {
-            let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
-            // Capture the new text so the post-projection
-            // recompute knows which target pages to refresh.
-            pre_state = PreOpState::Edit {
-                block_id: p.block_id.as_str().to_owned(),
-                to_text: p.to_text.clone(),
-            };
-            apply_edit_block_via_loro(conn, state, &record.device_id, &p).await?;
+            pre_state = apply_edit_block_op(conn, state, record).await?;
         }
         OpType::DeleteBlock => {
-            let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
-            // Capture the descendant cohort BEFORE the UPDATE. The SQL
-            // cascade uses `descendants_cte_active!()` which filters
-            // `deleted_at IS NULL`, so once the UPDATE stamps the
-            // cohort as deleted the CTE no longer matches them. We
-            // mirror the same CTE here so the captured set is exactly
-            // the rows the UPDATE will touch. The cohort INCLUDES the
-            // seed (mirrors `restored_cohort`'s shape).
-            //
-            // The space resolve runs at the same pre-UPDATE moment so
-            // the post-commit fanout has a known-good space id to
-            // pass to `engine_apply` (post-UPDATE every cohort row has
-            // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
-            // call would return `None` — see `ApplyEffects` doc).
-            let cohort = collect_delete_cohort(conn, &p).await?;
-            let delete_space_id =
-                agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
-            // Feed the cohort into the count-refresh hook.
-            pre_state = PreOpState::Cohort(cohort.clone());
-            apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at)
-                .await?;
-            effects.deleted_cohort = cohort;
-            effects.delete_space_id = delete_space_id;
+            pre_state = apply_delete_block_op(conn, state, record, &mut effects).await?;
         }
         OpType::RestoreBlock => {
-            let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
-            // Capture the descendant cohort BEFORE the UPDATE — once
-            // the UPDATE clears `deleted_at`, the cohort is no longer
-            // identifiable by `(seed_id, deleted_at_ref)`.  This SELECT
-            // mirrors the same CTE the UPDATE uses so the captured set
-            // is exactly what gets restored.
-            //
-            // Keep the seed in the cohort: the post-commit fanout
-            // (`dispatch_restore_descendants`) is the canonical path
-            // that drives Loro for the entire cohort. Including the
-            // seed makes the helper self-contained and avoids
-            // depending on the in-tx `apply_restore_block_via_loro`
-            // seed apply also reaching the engine — the duplicate
-            // apply on the seed is idempotent (engine's
-            // `apply_restore_block` is a no-op on an already-restored
-            // block).
-            let cohort = collect_restore_cohort(conn, &p).await?;
-            // #2017: `apply_restore_block_via_loro` returns the contiguous
-            // soft-deleted ANCESTOR chain it un-deleted upward (the #1884
-            // live-orphan fix). Surface it so the post-commit fan-out drives
-            // the engine for the ancestors too — the in-tx engine apply only
-            // touched the seed, so without this the ancestors stay tombstoned
-            // in the CRDT and the next reproject re-deletes them in SQL.
-            let restored_ancestors =
-                apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
-            // Both the descendant cohort AND the restored ancestors feed the
-            // pages_cache count refresh: an un-deleted ancestor's owning page
-            // gains a live child, so its `child_block_count` must be recomputed
-            // or it is left stale.
-            pre_state = PreOpState::RestoreCohortAndAncestors {
-                cohort: cohort.clone(),
-                ancestors: restored_ancestors.clone(),
-            };
-            effects.restored_cohort = cohort;
-            effects.restored_ancestors = restored_ancestors;
+            pre_state = apply_restore_block_op(conn, state, record, &mut effects).await?;
         }
         OpType::PurgeBlock => {
-            let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
-            // #2183: PurgeBlock's page-wide count recompute is deferred to the
-            // background `RebuildPagesCacheCounts` task (dispatch's lifecycle
-            // set), which recomputes from post-cascade state — so we no longer
-            // capture a pre-cascade affected-pages snapshot here.
-            pre_state = PreOpState::Purge;
-            apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
+            pre_state = apply_purge_block_op(conn, state, record).await?;
         }
         OpType::MoveBlock => {
-            let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
-            // E4: capture the moved block's owning page BEFORE the
-            // projection reparents it. A cross-page reparent recomputes
-            // `page_id` for the moved subtree, so the source page loses
-            // descendants and the destination page gains them — both
-            // `child_block_count`s must be refreshed post-projection.
-            let move_block_id_str = p.block_id.as_str();
-            let src_page =
-                sqlx::query_scalar!("SELECT page_id FROM blocks WHERE id = ?", move_block_id_str)
-                    .fetch_optional(&mut *conn)
-                    .await?
-                    .flatten();
-            // #2200 (Tier-2 reorder early-out): capture the moved block's OLD
-            // `parent_id` BEFORE the projection reparents it, so the count hook
-            // can detect a pure same-parent reorder. On a reorder the subtree
-            // stays under the same parent — hence the same owning page AND
-            // space — so `page_id`/`space_id`/counts are provably unchanged and
-            // the whole maintenance block is skipped. This ports move_ops.rs's
-            // `same_parent_reorder` early-out into the shared REMOTE path.
-            let old_parent_id = sqlx::query_scalar!(
-                "SELECT parent_id FROM blocks WHERE id = ?",
-                move_block_id_str
-            )
-            .fetch_optional(&mut *conn)
-            .await?
-            .flatten();
-            pre_state = PreOpState::Move {
-                block_id: p.block_id.as_str().to_owned(),
-                src_page,
-                old_parent_id,
-            };
-            // #4390: the move tail's un-sweep clears an INHERITED tombstone in
-            // SQL, on the arm that has no engine. Capture what it cleared, and
-            // the value the tail SETTLED on, so the post-commit fan-out can
-            // mirror the re-derivation onto the per-space engine — otherwise
-            // the next `reproject_block_deleted_at_from_engine` re-trashes the
-            // subtree from the stale register.
-            // #4733: the subject's own `deleted_at` is the tell for BOTH tail
-            // halves. The un-sweep clears an INHERITED tombstone rooted at the
-            // subject; the sweep stamps the subject and its subtree; #4188's
-            // shape does both and settles on a different cohort ts. Each moves
-            // this value, and each derives every descendant's value through
-            // the subject — so an unchanged subject means an unchanged
-            // subtree, and the walk below is skipped.
-            let deleted_at_before = subject_deleted_at(conn, p.block_id.as_str()).await?;
-            let unswept =
-                apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
-            if subject_deleted_at(conn, p.block_id.as_str()).await? != deleted_at_before {
-                effects.move_fts_cohort =
-                    agaric_store::block_descendants::collect_subtree_ids_unbounded(
-                        conn,
-                        p.block_id.as_str(),
-                        agaric_store::block_descendants::DescendantWalkFilter::All,
-                    )
-                    .await?;
-            }
-            if !unswept.is_empty() {
-                effects.unswept_cohort = read_settled_deleted_at(conn, &unswept).await?;
-                // `resolve_soft_deleted_block_space`, not `resolve_block_space`:
-                // in #4188's shape the sweep re-stamped the subject, so the
-                // `deleted_at IS NULL` filter would answer `None` for exactly
-                // the half that still needs mirroring. The denormalized
-                // `blocks.space_id` survives a soft delete either way, which is
-                // the same reason #2868's purge fix reads it.
-                effects.unswept_space_id =
-                    agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id)
-                        .await?;
-            }
+            pre_state =
+                apply_move_block_op(conn, state, record, replay_dirty, &mut effects).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
@@ -802,6 +643,236 @@ pub async fn apply_op_tx_with_mode(
     maintain_pages_cache_counts_after_op(conn, &pre_state, chunk).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
+}
+
+/// `CreateBlock`: project the create and report the pre-state the count hook
+/// needs. `chunk` is `Some` only inside a chunk, where the dense-position
+/// reprojection is deferred to the end-of-chunk flush (#2200 Item 1).
+async fn apply_create_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    chunk: Option<&mut ChunkAccumulator>,
+    replay_dirty: Option<&ReplayDirtyParents>,
+) -> Result<PreOpState, AppError> {
+    // The engine path is the only path; the SQL-only
+    // `apply_*_sql_only` helpers remain as fallbacks for
+    // test-scaffolding cases (uninitialised Loro state,
+    // unresolved space) inside the `via_loro` helpers
+    // themselves.
+    let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+    // Capture payload fields for the post-projection
+    // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
+    let pre_state = PreOpState::Create {
+        block_id: p.block_id.as_str().to_owned(),
+        parent_id: p.parent_id.as_ref().map(|id| id.as_str().to_owned()),
+        block_type: p.block_type.clone(),
+        content: p.content.clone(),
+    };
+    // #2200 Item 1: when in a chunk, DEFER the dense-position
+    // reprojection to end-of-chunk (record the touched parent group in
+    // the accumulator); off the chunk path (`None`) reproject inline.
+    apply_create_block_via_loro(conn, state, &record.device_id, &p, chunk, replay_dirty).await?;
+
+    Ok(pre_state)
+}
+
+/// `EditBlock`: project the edit and report the new text, so the count hook
+/// knows which target pages to refresh.
+async fn apply_edit_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+) -> Result<PreOpState, AppError> {
+    let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+    // Capture the new text so the post-projection
+    // recompute knows which target pages to refresh.
+    let pre_state = PreOpState::Edit {
+        block_id: p.block_id.as_str().to_owned(),
+        to_text: p.to_text.clone(),
+    };
+    apply_edit_block_via_loro(conn, state, &record.device_id, &p).await?;
+
+    Ok(pre_state)
+}
+
+/// `DeleteBlock`: capture the descendant cohort and the block's space BEFORE
+/// the UPDATE — both are unrecoverable afterwards — then project.
+async fn apply_delete_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    effects: &mut ApplyEffects,
+) -> Result<PreOpState, AppError> {
+    let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
+    // Capture the descendant cohort BEFORE the UPDATE. The SQL
+    // cascade uses `descendants_cte_active!()` which filters
+    // `deleted_at IS NULL`, so once the UPDATE stamps the
+    // cohort as deleted the CTE no longer matches them. We
+    // mirror the same CTE here so the captured set is exactly
+    // the rows the UPDATE will touch. The cohort INCLUDES the
+    // seed (mirrors `restored_cohort`'s shape).
+    //
+    // The space resolve runs at the same pre-UPDATE moment so
+    // the post-commit fanout has a known-good space id to
+    // pass to `engine_apply` (post-UPDATE every cohort row has
+    // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
+    // call would return `None` — see `ApplyEffects` doc).
+    let cohort = collect_delete_cohort(conn, &p).await?;
+    let delete_space_id = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+    // Feed the cohort into the count-refresh hook.
+    let pre_state = PreOpState::Cohort(cohort.clone());
+    apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at).await?;
+    effects.deleted_cohort = cohort;
+    effects.delete_space_id = delete_space_id;
+
+    Ok(pre_state)
+}
+
+/// `RestoreBlock`: capture the descendant cohort before the UPDATE, and
+/// surface the ancestor chain the restore un-deleted upward (#2017).
+async fn apply_restore_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    effects: &mut ApplyEffects,
+) -> Result<PreOpState, AppError> {
+    let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
+    // Capture the descendant cohort BEFORE the UPDATE — once
+    // the UPDATE clears `deleted_at`, the cohort is no longer
+    // identifiable by `(seed_id, deleted_at_ref)`.  This SELECT
+    // mirrors the same CTE the UPDATE uses so the captured set
+    // is exactly what gets restored.
+    //
+    // Keep the seed in the cohort: the post-commit fanout
+    // (`dispatch_restore_descendants`) is the canonical path
+    // that drives Loro for the entire cohort. Including the
+    // seed makes the helper self-contained and avoids
+    // depending on the in-tx `apply_restore_block_via_loro`
+    // seed apply also reaching the engine — the duplicate
+    // apply on the seed is idempotent (engine's
+    // `apply_restore_block` is a no-op on an already-restored
+    // block).
+    let cohort = collect_restore_cohort(conn, &p).await?;
+    // #2017: `apply_restore_block_via_loro` returns the contiguous
+    // soft-deleted ANCESTOR chain it un-deleted upward (the #1884
+    // live-orphan fix). Surface it so the post-commit fan-out drives
+    // the engine for the ancestors too — the in-tx engine apply only
+    // touched the seed, so without this the ancestors stay tombstoned
+    // in the CRDT and the next reproject re-deletes them in SQL.
+    let restored_ancestors =
+        apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
+    // Both the descendant cohort AND the restored ancestors feed the
+    // pages_cache count refresh: an un-deleted ancestor's owning page
+    // gains a live child, so its `child_block_count` must be recomputed
+    // or it is left stale.
+    let pre_state = PreOpState::RestoreCohortAndAncestors {
+        cohort: cohort.clone(),
+        ancestors: restored_ancestors.clone(),
+    };
+    effects.restored_cohort = cohort;
+    effects.restored_ancestors = restored_ancestors;
+
+    Ok(pre_state)
+}
+
+/// `PurgeBlock`: project the purge. The page-wide count recompute is the
+/// background task's (#2183), so there is no pre-cascade snapshot to take.
+async fn apply_purge_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+) -> Result<PreOpState, AppError> {
+    let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
+    // #2183: PurgeBlock's page-wide count recompute is deferred to the
+    // background `RebuildPagesCacheCounts` task (dispatch's lifecycle
+    // set), which recomputes from post-cascade state — so we no longer
+    // capture a pre-cascade affected-pages snapshot here.
+    let pre_state = PreOpState::Purge;
+    apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
+
+    Ok(pre_state)
+}
+
+/// `MoveBlock`: the reads either side of the projection are the whole point of
+/// this arm — the owning page and parent BEFORE (E4, #2200) and the subject's
+/// `deleted_at` on both sides (#4390, #4733), which is how the tail's sweep and
+/// un-sweep are detected.
+async fn apply_move_block_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    replay_dirty: Option<&ReplayDirtyParents>,
+    effects: &mut ApplyEffects,
+) -> Result<PreOpState, AppError> {
+    let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
+    // E4: capture the moved block's owning page BEFORE the
+    // projection reparents it. A cross-page reparent recomputes
+    // `page_id` for the moved subtree, so the source page loses
+    // descendants and the destination page gains them — both
+    // `child_block_count`s must be refreshed post-projection.
+    let move_block_id_str = p.block_id.as_str();
+    let src_page =
+        sqlx::query_scalar!("SELECT page_id FROM blocks WHERE id = ?", move_block_id_str)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+    // #2200 (Tier-2 reorder early-out): capture the moved block's OLD
+    // `parent_id` BEFORE the projection reparents it, so the count hook
+    // can detect a pure same-parent reorder. On a reorder the subtree
+    // stays under the same parent — hence the same owning page AND
+    // space — so `page_id`/`space_id`/counts are provably unchanged and
+    // the whole maintenance block is skipped. This ports move_ops.rs's
+    // `same_parent_reorder` early-out into the shared REMOTE path.
+    let old_parent_id = sqlx::query_scalar!(
+        "SELECT parent_id FROM blocks WHERE id = ?",
+        move_block_id_str
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .flatten();
+    let pre_state = PreOpState::Move {
+        block_id: p.block_id.as_str().to_owned(),
+        src_page,
+        old_parent_id,
+    };
+    // #4390: the move tail's un-sweep clears an INHERITED tombstone in
+    // SQL, on the arm that has no engine. Capture what it cleared, and
+    // the value the tail SETTLED on, so the post-commit fan-out can
+    // mirror the re-derivation onto the per-space engine — otherwise
+    // the next `reproject_block_deleted_at_from_engine` re-trashes the
+    // subtree from the stale register.
+    // #4733: the subject's own `deleted_at` is the tell for BOTH tail
+    // halves. The un-sweep clears an INHERITED tombstone rooted at the
+    // subject; the sweep stamps the subject and its subtree; #4188's
+    // shape does both and settles on a different cohort ts. Each moves
+    // this value, and each derives every descendant's value through
+    // the subject — so an unchanged subject means an unchanged
+    // subtree, and the walk below is skipped.
+    let deleted_at_before = subject_deleted_at(conn, p.block_id.as_str()).await?;
+    let unswept =
+        apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
+    if subject_deleted_at(conn, p.block_id.as_str()).await? != deleted_at_before {
+        effects.move_fts_cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
+            conn,
+            p.block_id.as_str(),
+            agaric_store::block_descendants::DescendantWalkFilter::All,
+        )
+        .await?;
+    }
+    if !unswept.is_empty() {
+        effects.unswept_cohort = read_settled_deleted_at(conn, &unswept).await?;
+        // `resolve_soft_deleted_block_space`, not `resolve_block_space`:
+        // in #4188's shape the sweep re-stamped the subject, so the
+        // `deleted_at IS NULL` filter would answer `None` for exactly
+        // the half that still needs mirroring. The denormalized
+        // `blocks.space_id` survives a soft delete either way, which is
+        // the same reason #2868's purge fix reads it.
+        effects.unswept_space_id =
+            agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?;
+    }
+
+    Ok(pre_state)
 }
 
 /// #4390 — read the `deleted_at` the move tail SETTLED on for each id the

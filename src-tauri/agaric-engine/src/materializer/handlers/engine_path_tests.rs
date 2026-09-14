@@ -1189,6 +1189,74 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     );
 }
 
+/// #2896 for the MOVE arm, which threads the same sink as the create arm.
+///
+/// `apply_op_tx_normal_mode_ignores_active_replay_sink_2896` below pins the
+/// mechanism on `CreateBlock` only. `MoveBlock` passes `replay_dirty` into
+/// `apply_move_block_via_loro` the same way, and nothing pinned that: drop the
+/// argument and all 1029 engine tests stayed green. Half of a symmetric pair
+/// covered is the shape AGENTS.md names.
+#[tokio::test]
+async fn apply_op_tx_move_records_into_the_replay_sink_2896() {
+    use crate::apply::kernel::{ApplyMode, ReplayDirtyParents, apply_op_tx_with_mode};
+
+    const MOVED: &str = "01HZ0000000000000000000MV1";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page_via_loro(&pool, &state).await;
+
+    // A block to move, created in NORMAL mode so nothing has touched a sink
+    // before the move under test.
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(MOVED),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: Some(1),
+        index: None,
+        content: "to move".into(),
+    });
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        .await
+        .expect("append create");
+    let mut tx = pool.begin().await.expect("begin");
+    apply_op_tx_with_mode(&mut tx, &record, None, &state, ApplyMode::Normal)
+        .await
+        .expect("apply create");
+    tx.commit().await.expect("commit");
+
+    // The move, in ReplaySuppressed mode: its touched sibling group must land
+    // in the sink instead of reprojecting inline.
+    let sink = ReplayDirtyParents::new();
+    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(MOVED),
+        new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        new_position: 2,
+        new_index: Some(1),
+    });
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        .await
+        .expect("append move");
+    let mut tx = pool.begin().await.expect("begin");
+    apply_op_tx_with_mode(
+        &mut tx,
+        &record,
+        None,
+        &state,
+        ApplyMode::ReplaySuppressed(sink.clone()),
+    )
+    .await
+    .expect("apply move");
+    tx.commit().await.expect("commit");
+
+    let recorded = sink.drain();
+    assert_eq!(
+        recorded,
+        vec![(SPACE_ID.to_string(), Some(PAGE_ID.to_string()))],
+        "a replay-suppressed MOVE must record its touched group into the sink"
+    );
+}
+
 /// #2896 — soundness by construction: the reprojection-suppression decision now
 /// travels per-op as an explicit `ApplyMode`, never as ambient shared state.
 ///
