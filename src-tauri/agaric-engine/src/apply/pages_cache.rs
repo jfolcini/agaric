@@ -303,7 +303,6 @@ async fn collect_cohort_affected_pages(
 /// recompute runs inline, unchanged — and because the recompute is a pure
 /// function of committed `blocks`/`block_links` state, deferring it produces
 /// identical final counts.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
     pre_state: &PreOpState,
@@ -340,109 +339,18 @@ pub async fn maintain_pages_cache_counts_after_op(
             block_type,
             content,
         } => {
-            // The new block exists in `blocks` post-projection. Resolve
-            // its owning page from the parent chain.
-            //
-            // For page creates the projection writes (id, block_type=page,
-            // content, parent_id=None). The block's `page_id` is set by
-            // the background `RebuildPageIds` task to its own id. To make
-            // the count visible immediately, we INSERT a `pages_cache`
-            // row here so the recompute UPDATE below has a target row.
-            // Determine the owning page.
-            let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
-            // Non-page blocks: stamp page_id/space_id in-tx (mirrors create_block_in_tx
-            // and the deferred SetBlockPageId task) so the count recompute below — which
-            // keys on blocks.page_id — is correct-in-tx instead of transiently wrong-low.
-            if block_type != "page"
-                && let Some(op) = owning_page.as_deref()
-            {
-                sqlx::query!(
-                    "UPDATE blocks SET page_id = ?, \
-                         space_id = (SELECT space_id FROM blocks WHERE id = ?) \
-                     WHERE id = ?",
-                    op,
-                    op,
-                    block_id,
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            if block_type == "page" {
-                // INSERT the pages_cache row if missing so the
-                // `UPDATE` below sees a target. Title = content
-                // (matches `rebuild_pages_cache`'s desired-state SQL).
-                let title = content.as_str();
-                let now = agaric_store::db::now_ms();
-                sqlx::query!(
-                    "INSERT OR IGNORE INTO pages_cache \
-                         (page_id, title, updated_at, inbound_link_count, child_block_count) \
-                     VALUES (?, ?, ?, 0, 0)",
-                    block_id,
-                    title,
-                    now,
-                )
-                .execute(&mut *conn)
-                .await?;
-                affected.insert(block_id.clone());
-            }
-            if let Some(p) = owning_page {
-                affected.insert(p);
-            }
-            // Parse [[ULID]]/((ULID)) tokens from the new content
-            // and add the inferred target pages.
-            let tokens = parse_link_targets_from_content(content);
-            if !tokens.is_empty() {
-                // #1548: write this block's outbound `block_links` edges IN
-                // THIS TX (idempotent diff, same engine the background
-                // `ReindexBlockLinks` task uses) BEFORE the recompute below,
-                // so the in-tx `inbound_link_count` SELECT — which joins
-                // `block_links` — observes the new edges immediately. Without
-                // this the count stayed stale until the async reindex caught
-                // up. The later background reindex re-diffs the same content,
-                // finds the edges already present, and is a no-op: the sync
-                // update and the backstop rebuild converge with no
-                // double-count.
-                agaric_store::cache::reindex_block_links_conn(conn, block_id).await?;
-                for p in target_pages_for_block_ids(conn, &tokens).await? {
-                    affected.insert(p);
-                }
-            }
+            affected_pages_for_create(
+                conn,
+                block_id,
+                parent_id.as_deref(),
+                block_type,
+                content,
+                &mut affected,
+            )
+            .await?;
         }
         PreOpState::Edit { block_id, to_text } => {
-            // Owning page of the edited block.
-            let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-            if let Some(Some(p)) = row.map(|r| r.page_id) {
-                affected.insert(p);
-            }
-            // Pages reachable via OLD outbound edges (still in
-            // `block_links` until we re-diff below). Collected BEFORE the
-            // in-tx reindex so a page that just LOST its only inbound edge
-            // (token removed) is still in the affected set and gets its
-            // decremented count recomputed.
-            for p in outbound_target_pages_for_block(conn, block_id).await? {
-                affected.insert(p);
-            }
-            // Pages parsed from the NEW content — caught via target's
-            // page_id. We add them so the affected set covers pages that
-            // just GAINED an inbound edge as well.
-            let tokens = parse_link_targets_from_content(to_text);
-            if !tokens.is_empty() {
-                for p in target_pages_for_block_ids(conn, &tokens).await? {
-                    affected.insert(p);
-                }
-            }
-            // #1548: bring this block's outbound `block_links` rows in sync
-            // with the new content IN THIS TX (idempotent diff — the same
-            // engine the background `ReindexBlockLinks` task runs), so the
-            // `inbound_link_count` recompute below — which joins
-            // `block_links` — reflects added AND removed edges immediately
-            // instead of staying stale until the async reindex catches up.
-            // The later background reindex re-diffs the same content, finds
-            // no changes, and is a no-op: the synchronous update and the
-            // backstop rebuild converge with no double-count.
-            agaric_store::cache::reindex_block_links_conn(conn, block_id).await?;
+            affected_pages_for_edit(conn, block_id, to_text, &mut affected).await?;
         }
         PreOpState::RestoreCohortAndAncestors { cohort, ancestors } => {
             // #2017: the descendant cohort half is identical to the `Cohort`
@@ -488,84 +396,14 @@ pub async fn maintain_pages_cache_counts_after_op(
             src_page,
             old_parent_id,
         } => {
-            // #2200 (Tier-2 reorder early-out): read the post-projection parent
-            // and skip ALL maintenance on a pure same-parent reorder. When the
-            // block stays under the same parent it stays under the same owning
-            // page AND space, so no `page_id`/`space_id` changes and no block
-            // crosses a page boundary — `child_block_count` /
-            // `inbound_link_count` are provably unchanged (committed state
-            // identical). This mirrors `move_ops.rs`'s `same_parent_reorder`
-            // guard and now also benefits the REMOTE/sync apply path, which
-            // previously always re-derived + recomputed on a reorder.
-            let new_parent_id: Option<String> =
-                sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
-                    .fetch_optional(&mut *conn)
-                    .await?
-                    .flatten();
-            if old_parent_id.as_deref() != new_parent_id.as_deref() {
-                // E4: a MoveBlock CAN alter `page_id` AND `space_id`.
-                // `commands/blocks/move_ops.rs` re-derives BOTH for the moved
-                // block + its descendants on a cross-page/cross-space reparent,
-                // so the source page loses children and the destination page
-                // gains them, and space-scoped reads see the new membership.
-                //
-                // The materializer's own MoveBlock projection
-                // (`apply_move_block_via_loro` → `project_move_block_to_sql`)
-                // only writes `parent_id`/`position`; it defers BOTH the
-                // `page_id` and `space_id` re-derivation to the background
-                // `RebuildPageIds` / `rebuild_space_ids` tasks. The page-wide
-                // count recompute below keys on `blocks.page_id`, and
-                // space-scoped reads key on `blocks.space_id`, so we re-derive
-                // both HERE via the SHARED helper (single source of truth with
-                // `move_ops.rs`, bounded/depth-capped) before recomputing —
-                // that keeps the in-tx committed state correct without waiting
-                // for the background rebuilds, and is idempotent with them.
-                //
-                // This also fixes a latent REMOTE bug: the previous
-                // page_id-only reparent did NO `space_id` maintenance, so a
-                // cross-space move left `space_id` stale until the background
-                // rebuild ran.
-                agaric_store::block_descendants::rederive_page_and_space_ids(conn, block_id)
-                    .await?;
-                // Old owning page loses the moved subtree's descendants.
-                if let Some(src) = src_page {
-                    affected.insert(src.clone());
-                }
-                // Affected pages = the moved subtree's page ids (incl. the
-                // destination page, now stamped by the rederive above) ∪ the
-                // outbound-target pages of the moved subtree (a linked page's
-                // `inbound_link_count` changes when the linking subtree crosses
-                // into/out of that page). Ported verbatim from `move_ops.rs`;
-                // the outbound-target term fixes a latent REMOTE bug where a
-                // move that changed a source block's `page_id` (e.g. a move to
-                // top level) left its link targets' `inbound_link_count` stale
-                // (the old affected set was only src ∪ dest).
-                // depth<100: DESCENDANT_DEPTH_CAP (see block_descendants).
-                // dynamic-sql: genuinely-dynamic reuse of move_ops.rs's
-                // subtree ∪ outbound-target affected-page CTE (runtime form
-                // mirrors that site so REMOTE and LOCAL compute the identical
-                // set); single bound column, no user input interpolated.
-                let rows = sqlx::query_scalar::<_, String>(
-                    "WITH RECURSIVE subtree(id, depth) AS ( \
-                         SELECT id, 0 FROM blocks WHERE id = ?1 \
-                         UNION ALL \
-                         SELECT b.id, s.depth + 1 FROM blocks b \
-                         JOIN subtree s ON b.parent_id = s.id \
-                         WHERE b.deleted_at IS NULL AND s.depth < 100 \
-                     ) \
-                     SELECT DISTINCT page_id FROM blocks \
-                     WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
-                     UNION \
-                     SELECT DISTINCT b.page_id FROM block_links bl \
-                     JOIN blocks b ON b.id = bl.target_id \
-                     WHERE bl.source_id IN (SELECT id FROM subtree) \
-                       AND b.page_id IS NOT NULL",
-                )
-                .bind(block_id)
-                .fetch_all(&mut *conn)
-                .await?;
-                affected.extend(rows);
-            }
+            affected_pages_for_move(
+                conn,
+                block_id,
+                src_page.as_deref(),
+                old_parent_id.as_deref(),
+                &mut affected,
+            )
+            .await?;
         }
         // No-ops for count maintenance: tag / property / attachment ops
         // never affect either count (they don't change the
@@ -585,6 +423,224 @@ pub async fn maintain_pages_cache_counts_after_op(
         let v: Vec<String> = affected.into_iter().collect();
         recompute_pages_cache_counts_for_pages(conn, &v).await?;
     }
+    Ok(())
+}
+
+/// The pages a `Create` touches, plus the in-tx writes its counts depend on:
+/// the `page_id`/`space_id` stamp, the `pages_cache` seed row for a new page,
+/// and the outbound-link reindex (#1548).
+async fn affected_pages_for_create(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    parent_id: Option<&str>,
+    block_type: &str,
+    content: &str,
+    affected: &mut std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    // The new block exists in `blocks` post-projection. Resolve
+    // its owning page from the parent chain.
+    //
+    // For page creates the projection writes (id, block_type=page,
+    // content, parent_id=None). The block's `page_id` is set by
+    // the background `RebuildPageIds` task to its own id. To make
+    // the count visible immediately, we INSERT a `pages_cache`
+    // row here so the recompute UPDATE below has a target row.
+    // Determine the owning page.
+    let owning_page = resolve_owning_page(conn, block_id, parent_id).await?;
+    // Non-page blocks: stamp page_id/space_id in-tx (mirrors create_block_in_tx
+    // and the deferred SetBlockPageId task) so the count recompute below — which
+    // keys on blocks.page_id — is correct-in-tx instead of transiently wrong-low.
+    if block_type != "page"
+        && let Some(op) = owning_page.as_deref()
+    {
+        sqlx::query!(
+            "UPDATE blocks SET page_id = ?, \
+                 space_id = (SELECT space_id FROM blocks WHERE id = ?) \
+             WHERE id = ?",
+            op,
+            op,
+            block_id,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    if block_type == "page" {
+        // INSERT the pages_cache row if missing so the
+        // `UPDATE` below sees a target. Title = content
+        // (matches `rebuild_pages_cache`'s desired-state SQL).
+        let title = content;
+        let now = agaric_store::db::now_ms();
+        sqlx::query!(
+            "INSERT OR IGNORE INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, ?, ?, 0, 0)",
+            block_id,
+            title,
+            now,
+        )
+        .execute(&mut *conn)
+        .await?;
+        affected.insert(block_id.to_string());
+    }
+    if let Some(p) = owning_page {
+        affected.insert(p);
+    }
+    // Parse [[ULID]]/((ULID)) tokens from the new content
+    // and add the inferred target pages.
+    let tokens = parse_link_targets_from_content(content);
+    if !tokens.is_empty() {
+        // #1548: write this block's outbound `block_links` edges IN
+        // THIS TX (idempotent diff, same engine the background
+        // `ReindexBlockLinks` task uses) BEFORE the recompute below,
+        // so the in-tx `inbound_link_count` SELECT — which joins
+        // `block_links` — observes the new edges immediately. Without
+        // this the count stayed stale until the async reindex caught
+        // up. The later background reindex re-diffs the same content,
+        // finds the edges already present, and is a no-op: the sync
+        // update and the backstop rebuild converge with no
+        // double-count.
+        agaric_store::cache::reindex_block_links_conn(conn, block_id).await?;
+        for p in target_pages_for_block_ids(conn, &tokens).await? {
+            affected.insert(p);
+        }
+    }
+
+    Ok(())
+}
+
+/// The pages an `Edit` touches: the block's own page, the pages its OLD
+/// outbound edges pointed at, and the pages its NEW content points at.
+async fn affected_pages_for_edit(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    to_text: &str,
+    affected: &mut std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    // Owning page of the edited block.
+    let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if let Some(Some(p)) = row.map(|r| r.page_id) {
+        affected.insert(p);
+    }
+    // Pages reachable via OLD outbound edges (still in
+    // `block_links` until we re-diff below). Collected BEFORE the
+    // in-tx reindex so a page that just LOST its only inbound edge
+    // (token removed) is still in the affected set and gets its
+    // decremented count recomputed.
+    for p in outbound_target_pages_for_block(conn, block_id).await? {
+        affected.insert(p);
+    }
+    // Pages parsed from the NEW content — caught via target's
+    // page_id. We add them so the affected set covers pages that
+    // just GAINED an inbound edge as well.
+    let tokens = parse_link_targets_from_content(to_text);
+    if !tokens.is_empty() {
+        for p in target_pages_for_block_ids(conn, &tokens).await? {
+            affected.insert(p);
+        }
+    }
+    // #1548: bring this block's outbound `block_links` rows in sync
+    // with the new content IN THIS TX (idempotent diff — the same
+    // engine the background `ReindexBlockLinks` task runs), so the
+    // `inbound_link_count` recompute below — which joins
+    // `block_links` — reflects added AND removed edges immediately
+    // instead of staying stale until the async reindex catches up.
+    // The later background reindex re-diffs the same content, finds
+    // no changes, and is a no-op: the synchronous update and the
+    // backstop rebuild converge with no double-count.
+    agaric_store::cache::reindex_block_links_conn(conn, block_id).await?;
+
+    Ok(())
+}
+
+/// The pages a `Move` touches — none at all when it is a same-parent reorder
+/// (#2200), which is why the early-out lives here rather than at the call site.
+async fn affected_pages_for_move(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    src_page: Option<&str>,
+    old_parent_id: Option<&str>,
+    affected: &mut std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    // #2200 (Tier-2 reorder early-out): read the post-projection parent
+    // and skip ALL maintenance on a pure same-parent reorder. When the
+    // block stays under the same parent it stays under the same owning
+    // page AND space, so no `page_id`/`space_id` changes and no block
+    // crosses a page boundary — `child_block_count` /
+    // `inbound_link_count` are provably unchanged (committed state
+    // identical). This mirrors `move_ops.rs`'s `same_parent_reorder`
+    // guard and now also benefits the REMOTE/sync apply path, which
+    // previously always re-derived + recomputed on a reorder.
+    let new_parent_id: Option<String> =
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+    if old_parent_id != new_parent_id.as_deref() {
+        // E4: a MoveBlock CAN alter `page_id` AND `space_id`.
+        // `commands/blocks/move_ops.rs` re-derives BOTH for the moved
+        // block + its descendants on a cross-page/cross-space reparent,
+        // so the source page loses children and the destination page
+        // gains them, and space-scoped reads see the new membership.
+        //
+        // The materializer's own MoveBlock projection
+        // (`apply_move_block_via_loro` → `project_move_block_to_sql`)
+        // only writes `parent_id`/`position`; it defers BOTH the
+        // `page_id` and `space_id` re-derivation to the background
+        // `RebuildPageIds` / `rebuild_space_ids` tasks. The page-wide
+        // count recompute below keys on `blocks.page_id`, and
+        // space-scoped reads key on `blocks.space_id`, so we re-derive
+        // both HERE via the SHARED helper (single source of truth with
+        // `move_ops.rs`, bounded/depth-capped) before recomputing —
+        // that keeps the in-tx committed state correct without waiting
+        // for the background rebuilds, and is idempotent with them.
+        //
+        // This also fixes a latent REMOTE bug: the previous
+        // page_id-only reparent did NO `space_id` maintenance, so a
+        // cross-space move left `space_id` stale until the background
+        // rebuild ran.
+        agaric_store::block_descendants::rederive_page_and_space_ids(conn, block_id).await?;
+        // Old owning page loses the moved subtree's descendants.
+        if let Some(src) = src_page {
+            affected.insert(src.to_string());
+        }
+        // Affected pages = the moved subtree's page ids (incl. the
+        // destination page, now stamped by the rederive above) ∪ the
+        // outbound-target pages of the moved subtree (a linked page's
+        // `inbound_link_count` changes when the linking subtree crosses
+        // into/out of that page). Ported verbatim from `move_ops.rs`;
+        // the outbound-target term fixes a latent REMOTE bug where a
+        // move that changed a source block's `page_id` (e.g. a move to
+        // top level) left its link targets' `inbound_link_count` stale
+        // (the old affected set was only src ∪ dest).
+        // depth<100: DESCENDANT_DEPTH_CAP (see block_descendants).
+        // dynamic-sql: genuinely-dynamic reuse of move_ops.rs's
+        // subtree ∪ outbound-target affected-page CTE (runtime form
+        // mirrors that site so REMOTE and LOCAL compute the identical
+        // set); single bound column, no user input interpolated.
+        let rows = sqlx::query_scalar::<_, String>(
+            "WITH RECURSIVE subtree(id, depth) AS ( \
+                 SELECT id, 0 FROM blocks WHERE id = ?1 \
+                 UNION ALL \
+                 SELECT b.id, s.depth + 1 FROM blocks b \
+                 JOIN subtree s ON b.parent_id = s.id \
+                 WHERE b.deleted_at IS NULL AND s.depth < 100 \
+             ) \
+             SELECT DISTINCT page_id FROM blocks \
+             WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
+             UNION \
+             SELECT DISTINCT b.page_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.target_id \
+             WHERE bl.source_id IN (SELECT id FROM subtree) \
+               AND b.page_id IS NOT NULL",
+        )
+        .bind(block_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        affected.extend(rows);
+    }
+
     Ok(())
 }
 
