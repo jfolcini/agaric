@@ -434,7 +434,6 @@ impl LoroEngine {
     /// delete the durable inbox slot until the post-import `oplog_vv()`
     /// demonstrably reached it (`agaric-sync`'s `replay_inbox_batch`). Decoded
     /// exactly once, here, where the metadata already is.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub fn gate_replay_blobs(&self, blobs: &[&[u8]]) -> Vec<ReplayBlobGate> {
         // Cumulative reachability base — see fn docs.
         let mut base: std::collections::HashMap<PeerID, Counter> = self
@@ -444,67 +443,17 @@ impl LoroEngine {
             .map(|(peer, counter)| (*peer, *counter))
             .collect();
 
-        // One decision per blob, filled POSITIONALLY (the caller zips these
-        // against its slots). `None` = not yet decided by the fixpoint.
-        let mut out: Vec<Option<ReplayBlobGate>> = (0..blobs.len()).map(|_| None).collect();
-        // Blobs whose reachability is still open, carrying their decoded
-        // metadata so the fixpoint never re-decodes: `decode_import_blob_meta`
-        // rebuilds the blob's whole change store and is by far the expensive
-        // part of this gate.
-        let mut pending: Vec<(usize, ImportBlobMetadata)> = Vec::with_capacity(blobs.len());
-
         // #792 / #3190 own-peer state, read ONCE: the gate never mutates the
         // doc, so this cannot drift while the sweep below runs.
         let own = self.doc.peer_id();
         let local_own = self.doc.oplog_vv().get(&own).copied().unwrap_or(0);
+
+        let (mut out, mut pending) = decode_and_screen_own_peer(blobs, own, local_own);
+
         // #3190: own-peer counter ranges `[start, end)` of the lineage-carrying
         // blobs accepted so far, with the slot index that contributed each.
         // Only populated (and only consulted) when `local_own == 0`.
         let mut own_lineage: Vec<(usize, Counter, Counter)> = Vec::new();
-
-        for (i, bytes) in blobs.iter().enumerate() {
-            // Decode failures are tolerated exactly as in the single-blob
-            // guards: accept, and let the real import surface the error. The
-            // base cannot be advanced for such a blob (no metadata), which is
-            // conservative — a later blob may then be reported unreachable and
-            // dropped rather than silently mis-imported. #3194: an ungated
-            // accept claims NO end frontier, so it imposes no delete condition
-            // on the caller either.
-            let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "loro: gate_replay_blobs: blob meta decode failed; accepting \
-                         the blob ungated (import will surface the real error)"
-                    );
-                    out[i] = Some(ReplayBlobGate::Accept { end_vv: Vec::new() });
-                    continue;
-                }
-            };
-
-            // #792, `local_counter > 0` form: our own ops are the lineage of
-            // record, so this does not consult the cumulative reachability base
-            // and is decided in this first sweep, never revisited. The
-            // `local_counter == 0` (#3190) form is NOT decided here — it
-            // compares blobs against each other, so it runs at the point a blob
-            // is actually accepted, below.
-            if local_own > 0 {
-                let blob_end = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
-                if blob_end > local_own {
-                    out[i] = Some(ReplayBlobGate::Fork(format!(
-                        "(peer,counter) fork detected for own peer id {own} (#792): inbound \
-                         blob carries our ops through counter {blob_end} but this doc only \
-                         holds {local_own} — a pre-epoch snapshot RESET reused the \
-                         deterministic peer id; importing would corrupt causal state. \
-                         Snapshot catch-up required."
-                    )));
-                    continue;
-                }
-            }
-
-            pending.push((i, meta));
-        }
 
         // #3188 fixpoint: keep re-testing the undecided blobs against the
         // growing base until a whole pass accepts nothing new. Each pass but
@@ -524,42 +473,12 @@ impl LoroEngine {
                     still_pending.push((i, meta));
                     continue;
                 }
-                // #3190: reachable, so this blob is about to become part of the
-                // batch's accepted history. On a doc with no own ops that
-                // accepted history is the ONLY lineage of our peer id the batch
-                // can contradict, so compare against it here — at the accept
-                // site, never in the first sweep. A blob that is ultimately
-                // dropped as `Unreachable` is never imported and must not
-                // consume our (peer,counter) space; deciding this early let one
-                // do exactly that, and forked otherwise-legitimate blobs on
-                // both sides of it.
-                if local_own == 0 {
-                    let blob_end = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
-                    if blob_end > 0 {
-                        let blob_start = meta.partial_start_vv.get(&own).copied().unwrap_or(0);
-                        let clash = own_lineage
-                            .iter()
-                            .find(|(_, start, end)| blob_start.max(*start) < blob_end.min(*end))
-                            .copied();
-                        if let Some((j, start, end)) = clash {
-                            out[i] = Some(ReplayBlobGate::Fork(format!(
-                                "(peer,counter) fork detected for own peer id {own} \
-                                 (#792/#3190): this doc holds no ops of its own, and \
-                                 batch blob {i} claims our peer at counters \
-                                 [{blob_start},{blob_end}) which OVERLAP the [{start},{end}) \
-                                 already accepted from batch blob {j} — two divergent \
-                                 lineages cannot share our (peer,counter) space, and blob \
-                                 metadata cannot prove they are the same one. Importing \
-                                 both would let loro skip the overlap and apply the rest \
-                                 against the wrong causal prefix. Snapshot catch-up \
-                                 required."
-                            )));
-                            // Not accepted ⇒ not imported ⇒ must NOT advance the
-                            // cumulative base, and must not be retried.
-                            continue;
-                        }
-                        own_lineage.push((i, blob_start, blob_end));
-                    }
+                if let Some(reason) = claim_own_lineage(own, local_own, i, &meta, &mut own_lineage)
+                {
+                    // Not accepted ⇒ not imported ⇒ must NOT advance the
+                    // cumulative base, and must not be retried.
+                    out[i] = Some(ReplayBlobGate::Fork(reason));
+                    continue;
                 }
                 // Accepted ⇒ its ops will be in the oplog once the batch import
                 // settles, so advance the cumulative base by its end frontier.
@@ -571,15 +490,7 @@ impl LoroEngine {
                 // `screen_inbound_blob` cannot disagree about what a blob
                 // declared.
                 let end_vv = declared_end_vv(&meta);
-                for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
-                    base.entry(*peer_id)
-                        .and_modify(|c| {
-                            if end_counter > *c {
-                                *c = end_counter;
-                            }
-                        })
-                        .or_insert(end_counter);
-                }
+                advance_base(&mut base, &meta);
                 out[i] = Some(ReplayBlobGate::Accept { end_vv });
                 accepted_any = true;
             }
@@ -598,19 +509,7 @@ impl LoroEngine {
             out[i] = Some(ReplayBlobGate::Unreachable(reason));
         }
 
-        out.into_iter()
-            .map(|decision| {
-                // Unreachable in practice — every index is decided above. Fall
-                // back to the conservative verdict (drop the slot, let the next
-                // sync session snapshot-catch-up) rather than panicking on the
-                // crash-recovery path.
-                decision.unwrap_or_else(|| {
-                    ReplayBlobGate::Unreachable(
-                        "boot-replay gate reached no verdict for this blob (#3188 bug)".to_string(),
-                    )
-                })
-            })
-            .collect()
+        finalize_gate_decisions(out)
     }
 
     /// #3194 — does this doc's op-log demonstrably cover `end_vv`?
@@ -812,6 +711,149 @@ fn own_peer_fork_in_meta(
         ));
     }
     None
+}
+
+/// The first sweep of [`LoroEngine::gate_replay_blobs`]: decode each blob's
+/// metadata once, and settle every decision that does not depend on the other
+/// blobs in the batch.
+///
+/// Returns the positional decision slots (the caller zips these against its
+/// inbox rows) and, for each blob still undecided, its decoded metadata — so
+/// the #3188 fixpoint never re-decodes. `decode_import_blob_meta` rebuilds the
+/// blob's whole change store and is by far the expensive part of the gate.
+fn decode_and_screen_own_peer(
+    blobs: &[&[u8]],
+    own: PeerID,
+    local_own: Counter,
+) -> (
+    Vec<Option<ReplayBlobGate>>,
+    Vec<(usize, ImportBlobMetadata)>,
+) {
+    let mut out: Vec<Option<ReplayBlobGate>> = (0..blobs.len()).map(|_| None).collect();
+    let mut pending: Vec<(usize, ImportBlobMetadata)> = Vec::with_capacity(blobs.len());
+
+    for (i, bytes) in blobs.iter().enumerate() {
+        // Decode failures are tolerated exactly as in the single-blob guards:
+        // accept, and let the real import surface the error. The base cannot be
+        // advanced for such a blob (no metadata), which is conservative — a
+        // later blob may then be reported unreachable and dropped rather than
+        // silently mis-imported. #3194: an ungated accept claims NO end
+        // frontier, so it imposes no delete condition on the caller either.
+        let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
+            Ok(meta) => meta,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro: gate_replay_blobs: blob meta decode failed; accepting \
+                     the blob ungated (import will surface the real error)"
+                );
+                out[i] = Some(ReplayBlobGate::Accept { end_vv: Vec::new() });
+                continue;
+            }
+        };
+
+        // #792, the `local_own > 0` form: our own ops are the lineage of
+        // record, so this does not consult the cumulative reachability base and
+        // is decided here, never revisited. Shared with `screen_inbound_blob`
+        // through the one statement of the rule, which is the drift this gate
+        // used to carry its own copy of. The `local_own == 0` (#3190) form is
+        // NOT decided here — it compares blobs against each other, so it runs
+        // at the point a blob is actually accepted (`claim_own_lineage`).
+        if let Some(reason) = own_peer_fork_in_meta(own, local_own, &meta) {
+            out[i] = Some(ReplayBlobGate::Fork(reason));
+            continue;
+        }
+
+        pending.push((i, meta));
+    }
+
+    (out, pending)
+}
+
+/// #3190 — claim this blob's own-peer counter range, or say why it clashes.
+///
+/// On a doc with no own ops (`local_own == 0`) the batch's own accepted history
+/// is the ONLY lineage of our peer id the batch can contradict, so the
+/// comparison belongs at the accept site and never in the first sweep: a blob
+/// ultimately dropped as `Unreachable` is never imported and must not consume
+/// our `(peer,counter)` space. Deciding it early let one do exactly that, and
+/// forked otherwise-legitimate blobs on both sides of it.
+///
+/// Returns `Some(reason)` when the range overlaps one already accepted;
+/// otherwise records the range and returns `None`. Inert unless
+/// `local_own == 0`, and for a blob carrying nothing of ours.
+///
+/// That last carve-out (`blob_end <= 0`) keeps the invariant rather than
+/// changing an answer, so no test can pin it: the range it would otherwise
+/// record is `[start, 0)`, and the strict overlap test above can never match an
+/// empty range. It stays so `own_lineage` holds only real lineage carriers —
+/// deleting it would leave the gate quietly depending on empty ranges being
+/// inert.
+fn claim_own_lineage(
+    own: PeerID,
+    local_own: Counter,
+    i: usize,
+    meta: &ImportBlobMetadata,
+    own_lineage: &mut Vec<(usize, Counter, Counter)>,
+) -> Option<String> {
+    if local_own != 0 {
+        return None;
+    }
+    let blob_end = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
+    if blob_end <= 0 {
+        return None;
+    }
+    let blob_start = meta.partial_start_vv.get(&own).copied().unwrap_or(0);
+    let clash = own_lineage
+        .iter()
+        .find(|(_, start, end)| blob_start.max(*start) < blob_end.min(*end))
+        .copied();
+    if let Some((j, start, end)) = clash {
+        return Some(format!(
+            "(peer,counter) fork detected for own peer id {own} \
+             (#792/#3190): this doc holds no ops of its own, and \
+             batch blob {i} claims our peer at counters \
+             [{blob_start},{blob_end}) which OVERLAP the [{start},{end}) \
+             already accepted from batch blob {j} — two divergent \
+             lineages cannot share our (peer,counter) space, and blob \
+             metadata cannot prove they are the same one. Importing \
+             both would let loro skip the overlap and apply the rest \
+             against the wrong causal prefix. Snapshot catch-up \
+             required."
+        ));
+    }
+    own_lineage.push((i, blob_start, blob_end));
+    None
+}
+
+/// Advance the cumulative reachability base by what this blob's metadata says
+/// it ends at, per peer, keeping the higher counter.
+fn advance_base(base: &mut std::collections::HashMap<PeerID, Counter>, meta: &ImportBlobMetadata) {
+    for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
+        base.entry(*peer_id)
+            .and_modify(|c| {
+                if end_counter > *c {
+                    *c = end_counter;
+                }
+            })
+            .or_insert(end_counter);
+    }
+}
+
+/// Unwrap the positional slots once the sweep and the fixpoint have decided
+/// every one. The fallback is unreachable in practice; it stays conservative
+/// (drop the slot, let the next sync session snapshot-catch-up) rather than
+/// panicking on the crash-recovery path.
+fn finalize_gate_decisions(out: Vec<Option<ReplayBlobGate>>) -> Vec<ReplayBlobGate> {
+    out.into_iter()
+        .map(|decision| {
+            decision.unwrap_or_else(|| {
+                ReplayBlobGate::Unreachable(
+                    "boot-replay gate reached no verdict for this blob (#3188 bug)".to_string(),
+                )
+            })
+        })
+        .collect()
 }
 
 /// #3194 / #3213 — the end frontier a decoded blob DECLARES, in the
