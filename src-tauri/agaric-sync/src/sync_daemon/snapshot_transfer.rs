@@ -393,10 +393,6 @@ pub async fn try_receive_snapshot_catchup(
     }
 }
 
-/// #2503 — receive + MERGE full per-space Loro snapshots from a peer after
-/// the initiator's main loop reached
-/// [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`.
-///
 /// Merge one inbound space snapshot into the local engine and fan its changed
 /// blocks out to the cache rebuilds.
 ///
@@ -462,6 +458,10 @@ async fn next_snapshot_frame(recv: &mut RecvStream) -> Result<(LoroSyncMessage, 
     }
 }
 
+/// #2503 — receive + MERGE full per-space Loro snapshots from a peer after
+/// the initiator's main loop reached
+/// [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`.
+///
 /// This is the "merge, not wipe" catch-up. Each inbound
 /// [`LoroSyncMessage::Snapshot`] is imported into THIS device's per-space
 /// engine via [`crate::sync_protocol::loro_sync::apply_remote`], which merges
