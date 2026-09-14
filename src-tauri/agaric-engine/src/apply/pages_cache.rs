@@ -125,28 +125,6 @@ pub async fn recompute_pages_cache_counts_for_pages(
     Ok(())
 }
 
-/// Read every `page_id` set on the given block ids (NULLs filtered out)
-/// and return the unique values. Used to map a set of affected blocks to
-/// the set of pages whose counts must be refreshed.
-pub async fn distinct_pages_for_blocks(
-    conn: &mut sqlx::SqliteConnection,
-    block_ids: &[String],
-) -> Result<Vec<String>, AppError> {
-    if block_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let json = serde_json::to_string(block_ids)?;
-    let rows = sqlx::query!(
-        "SELECT DISTINCT page_id AS \"page_id!\" FROM blocks \
-         WHERE id IN (SELECT value FROM json_each(?)) \
-           AND page_id IS NOT NULL",
-        json,
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.page_id).collect())
-}
-
 /// Parse all `[[ULID]]` / `((ULID))` link tokens from a block's content
 /// and return the unique target ids. Mirrors the regex used by
 /// `cache::reindex_block_links` so the materialised counts and the
@@ -180,36 +158,6 @@ pub async fn outbound_target_pages_for_block(
     Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
-/// Batch variant of [`outbound_target_pages_for_block`]: resolve the set of
-/// pages reachable via outbound edges from any block in `block_ids` in a
-/// single SQL round-trip, using `json_each(?)` to avoid an N+1 pattern.
-///
-/// Returns the distinct `page_id` values (NULLs excluded) across all
-/// `bl.target_id` rows where `bl.source_id IN block_ids`.  Empty input
-/// short-circuits without touching the DB.
-///
-/// Uses the runtime (non-macro) query form so the `.sqlx` offline-query
-/// cache does not need a regeneration when the function is first added.
-pub async fn outbound_target_pages_for_blocks(
-    conn: &mut sqlx::SqliteConnection,
-    block_ids: &[String],
-) -> Result<Vec<String>, AppError> {
-    if block_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let json = serde_json::to_string(block_ids)?;
-    let rows = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT b.page_id FROM block_links bl \
-         JOIN blocks b ON b.id = bl.target_id \
-         WHERE bl.source_id IN (SELECT value FROM json_each(?)) \
-           AND b.page_id IS NOT NULL",
-    )
-    .bind(&json)
-    .fetch_all(&mut *conn)
-    .await?;
-    Ok(rows)
-}
-
 /// Resolve the set of pages each candidate target block would contribute
 /// to as an `inbound_link_count` source if it were linked from a content
 /// block. For each `target_id` we read `blocks.page_id`; if the target is
@@ -235,64 +183,6 @@ pub async fn target_pages_for_block_ids(
     Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
-/// Maintenance hook called from `apply_op_tx` after each per-op
-/// projection commits. Computes the bounded set of pages whose counts may
-/// have changed and refreshes them via the canonical SELECT.
-///
-/// Per-op affected-page set:
-///
-/// - `CreateBlock`: the new block's owning page (`+= 1` child for non-page
-///   creates; `pages_cache` row insert for page creates) + every page
-///   targeted by `[[ULID]]`/`((ULID))` tokens in the new content.
-/// - `EditBlock`: the edited block's owning page + every page targeted by
-///   the OLD `block_links` rows (will lose an edge if the token is gone) +
-///   every page parsed out of the NEW content (will gain an edge once
-///   `ReindexBlockLinks` runs in the background).
-/// - `DeleteBlock` (cohort-aware): every page the cohort blocks lived on
-///   (lose a child) + every page each cohort block's outbound edges
-///   pointed to (lose an inbound) + every page that was inbound-linked
-///   FROM the cohort (their outbound counts unchanged but inbound was
-///   the descendants which are now deleted).
-/// - `RestoreBlock`: symmetric to delete — same affected set.
-/// - `PurgeBlock`: same as delete, plus the cohort's source-pages of
-///   inbound edges that get cleared by FK CASCADE on `block_links`.
-///
-/// NOTE on `EditBlock` / `CreateBlock` with link tokens (#1548): the new
-/// block's outbound `block_links` rows are brought in sync IN THIS TX via
-/// `cache::reindex_block_links_conn` BEFORE the count recompute, so the
-/// in-tx `inbound_link_count` SELECT (which joins `block_links`) reflects
-/// added and removed edges immediately — the count is synchronously correct
-/// per-op rather than eventually-consistent on the background
-/// `ReindexBlockLinks` task. That background task remains as the idempotent
-/// backstop: it re-diffs the same content, finds the edges already applied,
-/// and is a no-op, so the synchronous update and the rebuild converge on the
-/// same value with no double-count.
-/// Collect the pages whose counts a Delete/Restore COHORT affects into
-/// `affected`. Shared by the `Cohort` and `RestoreCohortAndAncestors`
-/// (#2017) arms so both compute the identical cohort affected-page set.
-///
-/// The set is (a) the distinct owning pages of the cohort blocks (their
-/// `child_block_count` changes) and (b) the pages targeted by outbound
-/// edges from any cohort block (their `inbound_link_count` changes). For
-/// DeleteBlock the outbound edges still exist in `block_links` (CASCADE FK
-/// fires on row DELETE, not on `deleted_at` stamp); for RestoreBlock the
-/// edges remain throughout — so the outbound union is identical pre- and
-/// post-projection in both directions.
-async fn collect_cohort_affected_pages(
-    conn: &mut sqlx::SqliteConnection,
-    cohort: &[String],
-    affected: &mut std::collections::HashSet<String>,
-) -> Result<(), AppError> {
-    for p in distinct_pages_for_blocks(conn, cohort).await? {
-        affected.insert(p);
-    }
-    // #463: single batch query instead of one round-trip per cohort block.
-    for p in outbound_target_pages_for_blocks(conn, cohort).await? {
-        affected.insert(p);
-    }
-    Ok(())
-}
-
 /// `chunk`: #2200 Item 2. When `Some`, the terminal
 /// `recompute_pages_cache_counts_for_pages` (a full descendant `COUNT(*)` over
 /// each affected page) is DEFERRED — the affected page ids are handed to the
@@ -309,26 +199,6 @@ pub async fn maintain_pages_cache_counts_after_op(
     chunk: Option<&mut super::ChunkAccumulator>,
 ) -> Result<(), AppError> {
     use std::collections::HashSet;
-
-    // #2042: the DELETE / RESTORE / PURGE cohort ops can touch the counts of
-    // arbitrarily many pages across an arbitrarily large descendant subtree.
-    // Running the correlated `COUNT(DISTINCT)`-over-descendants recompute HERE
-    // (the `recompute_pages_cache_counts_for_pages` call at the bottom) would
-    // hold the single-writer apply lock for the whole walk. Defer it to the
-    // background `RebuildPagesCacheCounts` task instead — `dispatch.rs` enqueues
-    // it in the lifecycle rebuild set for exactly these ops, and it is
-    // retry-queue-backstopped. The bounded single-block ops below
-    // (Create / Edit / Move) KEEP the synchronous in-tx recompute: #1548
-    // requires their counts to be correct immediately and their affected set is
-    // tiny. The cohort match arms further down are retained as the canonical
-    // documentation of each op's count impact, but this guard returns before
-    // they run.
-    if matches!(
-        pre_state,
-        PreOpState::Cohort(_) | PreOpState::RestoreCohortAndAncestors { .. } | PreOpState::Purge
-    ) {
-        return Ok(());
-    }
 
     let mut affected: HashSet<String> = HashSet::new();
 
@@ -352,45 +222,19 @@ pub async fn maintain_pages_cache_counts_after_op(
         PreOpState::Edit { block_id, to_text } => {
             affected_pages_for_edit(conn, block_id, to_text, &mut affected).await?;
         }
-        PreOpState::RestoreCohortAndAncestors { cohort, ancestors } => {
-            // #2017: the descendant cohort half is identical to the `Cohort`
-            // arm. The ancestor half adds the pages the restored ancestors
-            // now own. `distinct_pages_for_blocks` reads each ancestor's
-            // `page_id`; we ALSO insert the ancestor ids themselves so an
-            // ancestor that is itself a page (page_id == id) has its own
-            // `pages_cache` row recomputed (a page that rejoined the live tree
-            // gains its descendants back into `child_block_count`).
-            collect_cohort_affected_pages(conn, cohort, &mut affected).await?;
-            for p in distinct_pages_for_blocks(conn, ancestors).await? {
-                affected.insert(p);
-            }
-            for a in ancestors {
-                affected.insert(a.clone());
-            }
-        }
-        PreOpState::Cohort(cohort) => {
-            collect_cohort_affected_pages(conn, cohort, &mut affected).await?;
-            // Inbound: blocks whose links pointed INTO the cohort. Their
-            // page_id's `inbound_link_count` doesn't change because the
-            // inbound count is keyed on the TARGET page (the cohort's
-            // page), not the source. So nothing to add here beyond what
-            // we already collected via `distinct_pages_for_blocks`.
-            //
-            // Edge case: the cohort may include a page block. That page
-            // contributed to its own descendants' inbound count via
-            // `descendant.page_id = page_id`. After soft-delete, the
-            // page's own `pages_cache` row is still present (it's
-            // removed by the later `RebuildPagesCache` rebuild); the
-            // recompute UPDATE will set its inbound_link_count to 0
-            // (all descendants are now deleted_at IS NOT NULL).
-        }
-        // #2183: unreachable — the guard at the top returns for every cohort op
-        // (Delete / Restore / Purge), deferring the page-wide count recompute to
-        // the background `RebuildPagesCacheCounts` task. Kept only for match
-        // exhaustiveness; `PreOpState::Purge` no longer carries an affected-pages
-        // snapshot (the eager pre-cascade walk that populated it was pure waste
-        // once the recompute moved off this foreground tx).
-        PreOpState::Purge => {}
+        // #2042: the cohort ops can touch the counts of arbitrarily many pages
+        // across an arbitrarily large descendant subtree, and running the
+        // correlated `COUNT(DISTINCT)`-over-descendants recompute here would
+        // hold the single-writer apply lock for the whole walk. Adding nothing
+        // to `affected` IS the deferral: `dispatch.rs` enqueues
+        // `RebuildPagesCacheCounts` in the lifecycle rebuild set for exactly
+        // these ops, and it is retry-queue-backstopped. The bounded
+        // single-block ops above keep the synchronous in-tx recompute — #1548
+        // requires their counts to be correct immediately and their affected
+        // set is tiny. Pinned by `cohort_ops_defer_the_count_recompute_2042`.
+        PreOpState::Cohort(_)
+        | PreOpState::RestoreCohortAndAncestors { .. }
+        | PreOpState::Purge => {}
         PreOpState::Move {
             block_id,
             src_page,
@@ -468,14 +312,13 @@ async fn affected_pages_for_create(
         // INSERT the pages_cache row if missing so the
         // `UPDATE` below sees a target. Title = content
         // (matches `rebuild_pages_cache`'s desired-state SQL).
-        let title = content;
         let now = agaric_store::db::now_ms();
         sqlx::query!(
             "INSERT OR IGNORE INTO pages_cache \
                  (page_id, title, updated_at, inbound_link_count, child_block_count) \
              VALUES (?, ?, ?, 0, 0)",
             block_id,
-            title,
+            content,
             now,
         )
         .execute(&mut *conn)
