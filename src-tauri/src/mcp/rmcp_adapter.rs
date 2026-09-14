@@ -301,7 +301,94 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
     ///
     /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
     /// trait method does that at the trust boundary before calling here.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+    /// Run the tool inside the two task-local scopes, with #2954's drop-safe
+    /// emission guard armed for the cancellable window.
+    ///
+    /// Two scopes, following the same pattern as the hand-rolled server:
+    ///  - ACTOR so `current_actor()` reads the agent name in every downstream
+    ///    `*_inner` handler.
+    ///  - LAST_APPEND so any RW tool's `record_append` landings are harvested
+    ///    for the activity entry.
+    ///
+    /// Everything is `move`d in so `registry` and the args land on the spawned
+    /// future rather than on the enclosing handler, which is why this takes
+    /// owned values and not `&self`.
+    async fn call_in_task_local_scopes(
+        registry: Arc<R>,
+        name: String,
+        args: Value,
+        call_ctx: ActorContext,
+        scoped_ctx: ActorContext,
+        guard: Option<ToolCompletionGuard>,
+    ) -> (Result<Value, AppError>, Vec<agaric_store::op::OpRef>) {
+        ACTOR
+            .scope(scoped_ctx, async move {
+                agaric_store::task_locals::LAST_APPEND
+                    .scope(std::cell::RefCell::new(Vec::new()), async move {
+                        // #2954 — the guard is armed for the duration of the
+                        // (cancellable) call. It is `None` on the read-only
+                        // surface, where there is no activity context to emit
+                        // into.
+                        let mut completion_guard = guard;
+                        let r = registry.call_tool(&name, args, &call_ctx).await;
+                        // The commit (if any) is now durable and past its only
+                        // cancellation window. Capture the op refs and disarm
+                        // the guard: the caller's emission is henceforth the
+                        // authoritative one, so the guard must not double-emit.
+                        let captured = agaric_store::task_locals::take_appends();
+                        if let Some(g) = completion_guard.as_mut() {
+                            g.disarm();
+                        }
+                        drop(completion_guard);
+                        (r, captured)
+                    })
+                    .await
+            })
+            .await
+    }
+
+    /// The emission point.
+    ///
+    /// The success branch routes through the field-filtering summariser; the
+    /// error branch clips at `ERROR_CLIP_CAP` chars before pushing.
+    fn emit_completion(
+        &self,
+        name: &str,
+        agent_name: String,
+        args_for_summary: &Value,
+        result: &Result<Value, AppError>,
+        op_refs: Vec<agaric_store::op::OpRef>,
+    ) {
+        let (summary, result_variant) = match result {
+            Ok(value) => (
+                super::summarise::summarise(name, args_for_summary, value),
+                ActivityResult::Ok,
+            ),
+            Err(err) => {
+                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
+                (name.to_owned(), ActivityResult::Err(short))
+            }
+        };
+        let mut iter = op_refs.into_iter();
+        let op_ref = iter.next();
+        let additional_op_refs: Vec<agaric_store::op::OpRef> = iter.collect();
+        if let Some(ref ctx) = self.activity_ctx {
+            emit_tool_completion(
+                ctx,
+                ToolCompletionEvent {
+                    tool_name: name,
+                    summary: &summary,
+                    actor_kind: ActorKind::Agent,
+                    agent_name: Some(agent_name),
+                    result: result_variant,
+                    session_id: &self.session_id,
+                    op_ref,
+                    additional_op_refs,
+                },
+            );
+        }
+    }
+
     async fn dispatch_tool_call(
         &self,
         name: String,
@@ -329,89 +416,30 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
 
         let args_for_summary = args.clone();
 
-        let registry = self.registry.clone();
-        let name_for_call = name.clone();
+        // #2954 — the drop-safe emission guard, built here so the values it
+        // needs can move into the scoped future alongside `registry`/`args`
+        // while the `self`-borrowed fields stay available to the emission
+        // below. `None` on the read-only surface, which has no activity
+        // context to emit into.
+        let guard = self.activity_ctx.clone().map(|ctx| ToolCompletionGuard {
+            activity_ctx: ctx,
+            tool_name: name.clone(),
+            agent_name: agent_name.clone(),
+            session_id: self.session_id.clone(),
+            armed: true,
+        });
 
-        // #2954 — values the drop-safe emission guard needs if this connection
-        // future is cancelled mid-commit. Cloned out here so they can move into
-        // the `move` scope alongside `registry`/`args`, while the outer
-        // `self`-borrowed fields stay available to the normal emission below.
-        let guard_ctx = self.activity_ctx.clone();
-        let guard_session_id = self.session_id.clone();
-        let guard_tool_name = name.clone();
-        let guard_agent_name = agent_name.clone();
+        let (result, op_refs) = Self::call_in_task_local_scopes(
+            self.registry.clone(),
+            name.clone(),
+            args,
+            call_ctx,
+            scoped_ctx,
+            guard,
+        )
+        .await;
 
-        // Two task-local scopes, following the same pattern as the
-        // hand-rolled server:
-        //  - ACTOR scope so `current_actor()` reads the agent name in
-        //    every downstream `*_inner` handler.
-        //  - LAST_APPEND scope so any RW tool's `record_append`
-        //    landings are harvested for the activity entry.
-        //
-        // The whole block is `move` so `registry` and the args land
-        // on the spawned future, not on the enclosing handler.
-        let (result, op_refs) = ACTOR
-            .scope(scoped_ctx, async move {
-                agaric_store::task_locals::LAST_APPEND
-                    .scope(std::cell::RefCell::new(Vec::new()), async move {
-                        // #2954 — arm the drop-safe emission guard for the
-                        // duration of the (cancellable) call. Only meaningful
-                        // when there is an activity context to emit into (the
-                        // RW surface); `None` on the read-only surface.
-                        let mut completion_guard = guard_ctx.map(|ctx| ToolCompletionGuard {
-                            activity_ctx: ctx,
-                            tool_name: guard_tool_name,
-                            agent_name: guard_agent_name,
-                            session_id: guard_session_id,
-                            armed: true,
-                        });
-                        let r = registry.call_tool(&name_for_call, args, &call_ctx).await;
-                        // The commit (if any) is now durable and past its only
-                        // cancellation window. Capture the op refs and disarm
-                        // the guard: the normal emission below is henceforth the
-                        // authoritative one, so the guard must not double-emit.
-                        let captured = agaric_store::task_locals::take_appends();
-                        if let Some(g) = completion_guard.as_mut() {
-                            g.disarm();
-                        }
-                        drop(completion_guard);
-                        (r, captured)
-                    })
-                    .await
-            })
-            .await;
-
-        // Emission point.
-        // The success branch routes through the field-filtering summariser;
-        // the error branch clips at ERROR_CLIP_CAP chars before pushing.
-        let (summary, result_variant) = match &result {
-            Ok(value) => (
-                super::summarise::summarise(&name, &args_for_summary, value),
-                ActivityResult::Ok,
-            ),
-            Err(err) => {
-                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
-                (name.clone(), ActivityResult::Err(short))
-            }
-        };
-        let mut iter = op_refs.into_iter();
-        let op_ref = iter.next();
-        let additional_op_refs: Vec<agaric_store::op::OpRef> = iter.collect();
-        if let Some(ref ctx) = self.activity_ctx {
-            emit_tool_completion(
-                ctx,
-                ToolCompletionEvent {
-                    tool_name: &name,
-                    summary: &summary,
-                    actor_kind: ActorKind::Agent,
-                    agent_name: Some(agent_name),
-                    result: result_variant,
-                    session_id: &self.session_id,
-                    op_ref,
-                    additional_op_refs,
-                },
-            );
-        }
+        self.emit_completion(&name, agent_name, &args_for_summary, &result, op_refs);
 
         match result {
             // `CallToolResult::structured` produces the MCP wire shape
