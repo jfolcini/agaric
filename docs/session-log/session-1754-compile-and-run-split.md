@@ -1,7 +1,28 @@
 # Session 1754 — compile_and_run, and a hole where I did not predict one
 
 `compile_and_run` was 217 code lines, the largest `too_many_lines` violator
-left after #5021. It is now **25**. Workspace count **31 → 30**.
+left after #5021. It is now **25**. Workspace
+`#[expect(clippy::too_many_lines)]` count **30 → 29**.
+
+## The count was wrong, and so were the earlier slices'
+
+I had been counting with `grep -c "expect(clippy::too_many_lines"`, which also
+matches a **doc-comment mention** at `src-tauri/src/commands/history.rs:2785`
+(`/// line budget without an \`#[expect(clippy::too_many_lines)]\` (#4746)`).
+Every figure in this sweep is therefore one too high: #5021 says 32 → 31 where
+the attribute counts were 31 → 30, and this slice first said 31 → 30 where they
+are 30 → 29. Each slice's *delta* was right — one function split, one attribute
+removed — but the absolute number was not. The anchored form, which agrees with
+`origin/main` = 30 and this branch = 29:
+
+```
+grep -rc '^[[:space:]]*#\[expect(clippy::too_many_lines' src-tauri --include=*.rs \
+  | awk -F: '{s+=$NF} END {print s}'
+```
+
+The pattern is the one this session kept repeating: the number was carried
+forward from a previous slice instead of re-derived, and a grep that matches its
+own documentation is exactly the kind of thing restating never catches.
 
 | helper | lines | what it is |
 |---|---|---|

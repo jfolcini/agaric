@@ -693,7 +693,6 @@ fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppErro
             "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL AND ({filter_sql})"
         ),
         space_id: request.space_id.clone(),
-        space_pos,
         next_pos,
         match_sanitized,
         filter_binds,
@@ -1150,10 +1149,9 @@ struct QueryCtx {
     /// The assembled `… WHERE` predicate (`?N` numbered, sans the group key
     /// bind / keyset / LIMIT).
     predicate: String,
-    /// The space id (bound at `?space_pos`).
+    /// The space id. Its `?N` slot is already rendered into `predicate`, so
+    /// every statement binds it positionally rather than by number.
     space_id: String,
-    /// The `?N` slot the space id occupies.
-    space_pos: usize,
     /// The first FREE `?N` slot after the space + filter binds — where the
     /// group-key bind (property key) and the keyset/LIMIT binds begin.
     next_pos: usize,
@@ -1383,7 +1381,6 @@ async fn run_grouped(
         Some(s) => Some(GroupCursor::decode(s)?),
         None => None,
     };
-    let _ = ctx.space_pos; // documented in `predicate`; bound positionally.
 
     // FIRST page only: the bucket count is invariant across cursor pages.
     let total_count: Option<i64> = if group_cursor.is_none() {
