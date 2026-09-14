@@ -755,10 +755,9 @@ fn record_absent_from_engine_skip(root_record: &OpRecord, op: &'static str, bloc
 /// `apply::kernel` when the in-tx apply already found the seed absent. That is
 /// wrong in both directions:
 ///
-/// * `deleted_cohort` is the SQL cascade's own output. It also feeds
-///   `PreOpState::Cohort` (the `pages_cache` count refresh) and the command
-///   path's `descendants_affected` reply, neither of which is about engine
-///   membership. Truncating it there would corrupt two unrelated consumers to
+/// * `deleted_cohort` is the SQL cascade's own output. It also feeds the
+///   command path's `descendants_affected` reply, which is not about engine
+///   membership. Truncating it there would corrupt an unrelated consumer to
 ///   fix a third.
 /// * Seed membership does not imply cohort membership. A block C created in
 ///   this engine and later MOVED under an engine-absent parent A takes
