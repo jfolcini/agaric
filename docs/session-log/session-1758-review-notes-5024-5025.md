@@ -77,3 +77,20 @@ back-reference. The `session-log-immutable` hook caught the attempt to edit it,
 which is the guard doing exactly what it is for — the reviewer's note said to
 fix the log "since it is the copy that outlives the PR", and this is how the
 repo does that.
+
+## The batch's own over-explaining
+
+#5027's review made the note the batch itself was about, one level up:
+
+- `first_free_pos` arrived with seven lines of rationale over a one-line body —
+  the `has_fulltext` analogy and the divergence argument, which are #5024's
+  comment *moved* rather than deleted. The method's name plus its two call sites
+  is the whole claim.
+- The stale `match col` pointer needed to become a pointer and stayed a
+  paragraph, so the fall-through-returns-`Validation` reason then read twice:
+  once at `query_by_property` and once in `reserved_column`'s own doc, which is
+  the site that can act on it.
+
+Both trimmed. Worth naming the pattern: a comment written to justify a change
+outlives the change, and the fix for a comment that points at the wrong place is
+usually a shorter comment, not a corrected one.

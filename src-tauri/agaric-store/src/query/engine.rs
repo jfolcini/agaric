@@ -1195,13 +1195,8 @@ struct GroupKeySql<'a> {
 }
 
 impl GroupKeySql<'_> {
-    /// The first `?N` slot after the group key's own bind.
-    ///
-    /// `fetch_group_buckets` and `fetch_member_preview` both number their binds
-    /// from here, and both used to compute it themselves. One derivation, for
-    /// the reason `QueryCtx::has_fulltext` is a method: two things that must
-    /// agree are two things that can disagree, and bind numbering is what this
-    /// file's bind-order test exists to catch.
+    /// The first `?N` slot after the group key's own bind, for the two grouped
+    /// statements that number their binds from it.
     fn first_free_pos(&self, ctx: &QueryCtx) -> usize {
         ctx.next_pos + usize::from(self.bind.is_some())
     }

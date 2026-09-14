@@ -31,11 +31,8 @@ use agaric_core::error::AppError;
 ///   `block_properties` to `blocks`.
 ///
 /// **Source of truth** for the reserved-key set: `op::is_reserved_property_key`.
-/// If a fifth reserved column is ever added (e.g., `effort`), that helper
-/// must be updated AND the private `reserved_column` helper must gain the
-/// matching arm. Its fall-through returns `AppError::Validation` rather than
-/// panicking via `unreachable!()`, so a missed update surfaces as a clean
-/// runtime error instead of crashing the IPC.
+/// Adding a fifth reserved column (e.g., `effort`) means updating that helper
+/// and `reserved_column` in lockstep.
 ///
 /// # Value filter
 ///
