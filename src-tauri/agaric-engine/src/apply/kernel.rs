@@ -667,17 +667,12 @@ async fn apply_create_block_op(
     // unresolved space) inside the `via_loro` helpers
     // themselves.
     let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
-    // Capture payload fields for the post-projection
-    // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
     let pre_state = PreOpState::Create {
         block_id: p.block_id.as_str().to_owned(),
         parent_id: p.parent_id.as_ref().map(|id| id.as_str().to_owned()),
         block_type: p.block_type.clone(),
         content: p.content.clone(),
     };
-    // #2200 Item 1: when in a chunk, DEFER the dense-position
-    // reprojection to end-of-chunk (record the touched parent group in
-    // the accumulator); off the chunk path (`None`) reproject inline.
     apply_create_block_via_loro(conn, state, &record.device_id, &p, chunk, replay_dirty).await?;
 
     Ok(pre_state)
@@ -691,8 +686,6 @@ async fn apply_edit_block_op(
     record: &OpRecord,
 ) -> Result<PreOpState, AppError> {
     let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
-    // Capture the new text so the post-projection
-    // recompute knows which target pages to refresh.
     let pre_state = PreOpState::Edit {
         block_id: p.block_id.as_str().to_owned(),
         to_text: p.to_text.clone(),
