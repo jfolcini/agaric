@@ -73,3 +73,27 @@ line lets deleted debt stay booked.
 from `content.as_str()` before the `&str` parameter; `content` binds into the
 `query!` directly. (#5028's review note, folded in here rather than batched
 because this PR was already rewriting the same function.)
+
+## Four rounds of the same miss
+
+The review found stale comments four times on this PR, and each time I fixed
+the site it named instead of the class:
+
+1. the #2042 test's doc comment → fixed, grepped nothing;
+2. the `PreOpState` enum docs **and** the test's inline comment → grepped
+   `pages_cache.rs` and the test file, not `kernel.rs`;
+3. a claim I introduced *in* round 2 ("carried for the post-commit fan-out")
+   — the fan-out reads `ApplyEffects`;
+4. `kernel.rs`'s two construction-site comments, which the round-2 grep would
+   have caught had it covered the file the enum is *built* in.
+
+The deletion's whole point was removing documentation of an unreachable path,
+and the documentation of the deletion kept reproducing the defect. What made it
+recur was scoping each grep to where I had last been reading rather than to
+where the deleted thing was referenced. The fix for "who mentions X" is to ask
+git, not to remember.
+
+Recorded rather than quietly repaired, because the pattern is the finding: the
+code held up under mutation every round, and none of the four was caught by a
+test — comments have no falsification surface, so review is the only thing
+holding them.

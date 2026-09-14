@@ -632,7 +632,9 @@ pub async fn apply_op_tx_with_mode(
             let cohort = collect_delete_cohort(conn, &p).await?;
             let delete_space_id =
                 agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
-            // Feed the cohort into the count-refresh hook.
+            // #2042: the count hook does no in-tx work for a cohort op — the
+            // page-wide recompute is the background task's — so this variant
+            // carries the cohort without anything reading it.
             pre_state = PreOpState::Cohort(cohort.clone());
             apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at)
                 .await?;
@@ -665,10 +667,9 @@ pub async fn apply_op_tx_with_mode(
             // in the CRDT and the next reproject re-deletes them in SQL.
             let restored_ancestors =
                 apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
-            // Both the descendant cohort AND the restored ancestors feed the
-            // pages_cache count refresh: an un-deleted ancestor's owning page
-            // gains a live child, so its `child_block_count` must be recomputed
-            // or it is left stale.
+            // As with the delete cohort above, neither field is read: #2042
+            // leaves the recompute to the background task. The fan-out takes
+            // its copies from `effects` on the next two lines.
             pre_state = PreOpState::RestoreCohortAndAncestors {
                 cohort: cohort.clone(),
                 ancestors: restored_ancestors.clone(),

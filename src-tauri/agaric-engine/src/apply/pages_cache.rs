@@ -695,9 +695,7 @@ pub enum PreOpState {
     /// chain the restore un-deleted UPWARD (the #1884 live-orphan fix). Like
     /// [`PreOpState::Cohort`], the count hook defers both halves to the
     /// background task, so neither field is read today — the post-commit
-    /// fan-out takes its copies from [`ApplyEffects`], not from here. Carrying
-    /// them clones a whole cohort on the apply path for nothing; collapsing the
-    /// three deferred variants into one payload-free variant is the follow-up.
+    /// fan-out takes its copies from [`ApplyEffects`], not from here.
     RestoreCohortAndAncestors {
         cohort: Vec<String>,
         ancestors: Vec<String>,
