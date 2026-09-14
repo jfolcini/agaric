@@ -1518,6 +1518,48 @@ mod tests {
     /// #3164 — the batch gate must still REJECT a blob whose base no blob in
     /// the batch supplies, and must not let an accepted blob's end frontier
     /// paper over a genuine gap.
+    /// A blob whose metadata will not decode is accepted UNGATED, and does not
+    /// disturb the verdicts around it.
+    ///
+    /// The batch gate cannot reason about a blob it cannot decode: it has no
+    /// frontier to advance the cumulative base by, and no own-peer range to
+    /// compare. Dropping the slot would discard content the real import might
+    /// still apply, so the rule is to accept and let the import surface the
+    /// error — with an EMPTY `end_vv`, so the caller is not asked to prove the
+    /// op-log reached a frontier the blob never declared (#3194).
+    ///
+    /// `own_peer_fork_in_blob_tolerates_malformed_bytes_792` pins the same
+    /// tolerance on the single-blob guard; nothing pinned it on the batch gate,
+    /// so flipping this arm to `Unreachable` passed the whole estate.
+    #[test]
+    fn gate_replay_blobs_accepts_an_undecodable_blob_ungated_3188() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since0 = a.version_vector();
+        a.apply_create_block("A-1", "content", "one", None, 0)
+            .expect("a-1");
+        let good = a.export_update_since(&since0).expect("delta");
+
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("B");
+        let garbage: &[u8] = b"not a loro blob";
+        let verdicts = fresh.gate_replay_blobs(&[garbage, &good]);
+
+        assert_eq!(verdicts.len(), 2, "one verdict per blob, positionally");
+        match &verdicts[0] {
+            ReplayBlobGate::Accept { end_vv } => assert!(
+                end_vv.is_empty(),
+                "an ungated accept must claim NO end frontier; got {end_vv:?}"
+            ),
+            other => panic!("undecodable blob must be accepted ungated, got {other:?}"),
+        }
+        assert!(
+            matches!(verdicts[1], ReplayBlobGate::Accept { .. }),
+            "the decodable blob beside it still decides normally, got {:?}",
+            verdicts[1]
+        );
+    }
+
     #[test]
     fn gate_replay_blobs_rejects_genuinely_unreachable_update_3164() {
         use super::{LoroDoc, LoroEngine, ReplayBlobGate};
