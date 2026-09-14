@@ -24,9 +24,9 @@ two arms with post-commit fan-out (`DeleteBlock`, `RestoreBlock`) and the move
 also take `&mut ApplyEffects`.
 
 The move was verified by normalising both revisions to code lines and diffing:
-everything is relocation except the `#[expect]`, six `pre_state = X` becoming
-`let pre_state = X`, and `chunk.as_deref_mut()` moving from inside the arm to
-the call site. No logic line changed.
+everything is relocation except the `#[expect]`, five `pre_state = X` becoming
+`let pre_state = X` (purge's stayed put, inline), and `chunk.as_deref_mut()`
+moving from inside the arm to the call site. No logic line changed.
 
 ## What the split could plausibly get wrong
 
