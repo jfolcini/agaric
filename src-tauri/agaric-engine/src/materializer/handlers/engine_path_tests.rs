@@ -1194,8 +1194,8 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
 /// `apply_op_tx_normal_mode_ignores_active_replay_sink_2896` below pins the
 /// mechanism on `CreateBlock` only. `MoveBlock` passes `replay_dirty` into
 /// `apply_move_block_via_loro` the same way, and nothing pinned that: drop the
-/// argument and all 1029 engine tests stayed green. Half of a symmetric pair
-/// covered is the shape AGENTS.md names.
+/// argument at the call site and the rest of the estate stays green. Half of a
+/// symmetric pair covered is the shape AGENTS.md names.
 #[tokio::test]
 async fn apply_op_tx_move_records_into_the_replay_sink_2896() {
     use crate::apply::kernel::{ApplyMode, ReplayDirtyParents, apply_op_tx_with_mode};
