@@ -1183,7 +1183,7 @@ fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
 
 /// The group key as SQL. Every grouped statement reuses the SAME rendered
 /// expression, join and bind — passing them as one value is what keeps the
-/// four of them agreeing on the key they group, partition and filter by.
+/// three of them agreeing on the key they group, partition and filter by.
 struct GroupKeySql<'a> {
     /// The rendered `COALESCE(<key>, 'none')`, reused verbatim in SELECT /
     /// GROUP BY / HAVING / PARTITION BY / IN.
@@ -1366,7 +1366,6 @@ async fn run_grouped(
     // the space + filter binds; every subsequent bind follows it.
     let key_pos = ctx.next_pos;
     let (raw_key_expr, join, key_bind) = group_key_expr(&spec.key, key_pos);
-    let next_pos = key_pos + usize::from(key_bind.is_some());
     // The rendered key: NULL/absent → the `"none"` bucket. Reused verbatim in
     // SELECT / GROUP BY / HAVING / PARTITION BY / IN so a single key bind (if
     // any) feeds every occurrence.
@@ -1403,7 +1402,6 @@ async fn run_grouped(
         &key_sql,
         &request.aggregates,
         group_cursor.as_ref(),
-        next_pos,
         limit,
     )
     .await?;
@@ -1451,7 +1449,7 @@ async fn grouped_total_count(
     if let Some(m) = ctx.match_sanitized.as_ref() {
         q = q.bind(m.to_string()); // ?1 = MATCH
     }
-    q = q.bind(ctx.space_id.to_string()); // ?space_pos
+    q = q.bind(&ctx.space_id); // ?space_pos
     for b in &ctx.filter_binds {
         q = bind_scalar(q, b);
     }
@@ -1465,12 +1463,12 @@ async fn grouped_total_count(
     }
 }
 
-/// The GLOBAL aggregate fold for a grouped request.
+/// The GLOBAL aggregate fold, for either path.
 ///
-/// Computed over the SAME match set as the flat path — the un-grouped
-/// predicate / FROM, with NO group-key join, so a multi-valued tag key does not
-/// double-count. A separate statement with its OWN bind numbering (a local
-/// position counter), so the group-page numbering is untouched.
+/// Computed over the un-grouped predicate / FROM with NO group-key join, so a
+/// multi-valued tag key does not double-count. A separate statement with its
+/// OWN bind numbering (a local position counter), so whichever numbering its
+/// caller is spending — the flat page's or the group page's — is untouched.
 async fn global_aggregates(
     pool: &SqlitePool,
     ctx: &QueryCtx,
@@ -1507,9 +1505,13 @@ async fn fetch_group_buckets(
     key: &GroupKeySql<'_>,
     specs: &[AggregateSpec],
     cursor: Option<&GroupCursor>,
-    mut next_pos: usize,
     limit: i64,
 ) -> Result<Vec<GroupBucketRow>, AppError> {
+    // The first slot after the group key's own bind — the same expression
+    // `fetch_member_preview` computes for its `IN` list. Derived here rather
+    // than passed in: two sources for one number is the divergence this
+    // file's bind-order test exists to catch.
+    let mut next_pos = ctx.next_pos + usize::from(key.bind.is_some());
     // Named locals so the statement below reads as the one `run_grouped` used
     // to inline, and so `format!`'s inline captures still resolve.
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
@@ -1548,7 +1550,7 @@ async fn fetch_group_buckets(
     if let Some(m) = ctx.match_sanitized.as_ref() {
         q = q.bind(m.to_string()); // ?1 = MATCH
     }
-    q = q.bind(ctx.space_id.to_string()); // ?space_pos
+    q = q.bind(&ctx.space_id); // ?space_pos
     for b in &ctx.filter_binds {
         q = bind_raw(q, b);
     }
@@ -1656,7 +1658,7 @@ async fn fetch_member_preview(
     if let Some(m) = ctx.match_sanitized.as_ref() {
         mq = mq.bind(m.to_string()); // ?1 = MATCH
     }
-    mq = mq.bind(ctx.space_id.to_string()); // ?space_pos
+    mq = mq.bind(&ctx.space_id); // ?space_pos
     for b in &ctx.filter_binds {
         mq = bind_as(mq, b);
     }
