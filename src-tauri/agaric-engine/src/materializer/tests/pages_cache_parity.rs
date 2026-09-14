@@ -285,6 +285,62 @@ async fn delete_restore_updates_child_count() {
     assert_eq!(child, 1, "child_block_count must return to 1");
 }
 
+/// #2042 — a cohort op must DEFER its page-wide count recompute, not run it
+/// in this transaction.
+///
+/// `maintain_pages_cache_counts_after_op` returns early for Delete / Restore /
+/// Purge because their affected set spans an arbitrarily large descendant
+/// subtree, and recomputing it here holds the single-writer apply lock for the
+/// whole walk. The background `RebuildPagesCacheCounts` task does it instead.
+///
+/// Nothing pinned that: the other parity tests drain the background handler
+/// before asserting, so they see the same final counts either way, and deleting
+/// the guard left all 1028 engine tests green. This calls the hook directly and
+/// asserts the counts are UNTOUCHED — the one observation that separates
+/// "deferred" from "done inline". A deliberately wrong seeded value stands in
+/// for the recompute's output, so the assertion fails the moment the walk runs.
+#[tokio::test]
+async fn cohort_ops_defer_the_count_recompute_2042() {
+    use crate::apply::pages_cache::{PreOpState, maintain_pages_cache_counts_after_op};
+
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "PAGE_X", "Page X").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES ('CHILD_X', 'content', 'c', 'PAGE_X', 'PAGE_X')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Deliberately wrong: the real count is 1. An inline recompute would
+    // correct it, which is exactly what the guard must prevent here.
+    sqlx::query("UPDATE pages_cache SET child_block_count = 99 WHERE page_id = 'PAGE_X'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    for state in [
+        PreOpState::Cohort(vec!["CHILD_X".to_string()]),
+        PreOpState::RestoreCohortAndAncestors {
+            cohort: vec!["CHILD_X".to_string()],
+            ancestors: vec!["PAGE_X".to_string()],
+        },
+        PreOpState::Purge,
+    ] {
+        maintain_pages_cache_counts_after_op(&mut conn, &state, None)
+            .await
+            .unwrap();
+    }
+    drop(conn);
+
+    let (_, child) = cached_counts(&pool, "PAGE_X").await.unwrap();
+    assert_eq!(
+        child, 99,
+        "a cohort op must leave the count to the background task; got {child}"
+    );
+}
+
 /// Multi-page fixture with mixed link patterns; exercises every
 /// op kind and asserts parity at every step. The fixture is
 /// Intentionally small (10 pages instead of the 1000
