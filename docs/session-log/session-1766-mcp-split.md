@@ -17,8 +17,14 @@ alongside.
 arrived (the SQLite bind-parameter cap) and how LARGE each is (#1607's byte cap).
 Neither bounds the other — that is the whole reason #1607 exists on top of the
 count cap — so they are `validate_search_term_count` and
-`validate_search_term_bytes`, and the budget function is the two calls that say
-so.
+`validate_search_term_bytes` now, called in sequence at `handle_search`.
+
+The function itself is gone. It survived the first round as a two-line
+delegator, which #5035's review correctly called a helper for a one-off: one
+caller, and a doc comment that only restated the two names it called. The one
+sentence it carried that was not a restatement — *neither bounds the other* —
+is already the opening of `validate_search_term_bytes`' own #1607 doc, so
+deleting it lost nothing.
 
 **`dispatch_tool_call`** was setup, a doubly-nested task-local scope, and an
 emission point. The scope block is `call_in_task_local_scopes` (an associated

@@ -163,9 +163,8 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
 /// This guard closes that gap. It is built by the caller and MOVED into the
 /// `LAST_APPEND` task-local scope, where it lives across the (cancellable)
 /// `call_tool` await, and disarmed on the normal path right after the op refs
-/// are captured — at
-/// which point the outer scope emits the full entry (real summary + result)
-/// itself. If instead the future is dropped before it can disarm, the guard's
+/// are captured — at which point the outer scope emits the full entry (real
+/// summary + result) itself. If instead the future is dropped before it can disarm, the guard's
 /// `Drop` drains whatever op refs the RW handler already recorded into
 /// `LAST_APPEND` (recorded by `append_local_op_in_tx` INSIDE the tx, i.e.
 /// before the commit await) and emits the completion entry so the mutation is

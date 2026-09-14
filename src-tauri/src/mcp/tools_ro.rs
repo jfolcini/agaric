@@ -917,13 +917,6 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     to_tool_result(&resp)
 }
 
-/// Both halves of the search-term budget: how MANY terms arrived, and how LARGE
-/// each of them is. Neither bounds the other, which is why there are two.
-fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
-    validate_search_term_count(args)?;
-    validate_search_term_bytes(args)
-}
-
 /// The SQLite bind-parameter budget: `tag_ids` plus every filter vector.
 fn validate_search_term_count(args: &SearchArgs) -> Result<(), AppError> {
     let f = args.filter.as_ref();
@@ -1028,15 +1021,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
-    // #699 — bound the input vectors before they reach SQL.
-    validate_search_term_budget(&args)?;
+    // #699 — bound the input vectors before they reach SQL. Two budgets,
+    // because neither bounds the other: how MANY terms arrived, and how LARGE
+    // each of them is.
+    validate_search_term_count(&args)?;
+    validate_search_term_bytes(&args)?;
     // #3301 — PARSE the ULID-shaped ids, as `space_id` has always done: a
     // malformed or truncated one must error rather than bind a string that
     // matches nothing, which an agent reads as "no block carries that tag"
     // and does not retry. No normalise step ahead of this — `canonical_ulid`
     // compares against the uppercased input, so `from_string` already accepts
-    // any case. Runs after `validate_search_term_budget` so an oversized
-    // vector still gets its own actionable message.
+    // any case. Runs after the two budget checks so an oversized vector still
+    // gets its own actionable message.
     let parent_id = args
         .parent_id
         .as_deref()
