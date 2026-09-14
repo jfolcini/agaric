@@ -287,20 +287,11 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
   // (each gained a second block the ops treat differently), not because the
   // tree was clean. Waiving them here would have been the cheaper option and
   // would have left two fixtures that pass without testing anything.
-  //
-  // The entry below is a different case from those two, and the distinction is
-  // what keeps this map from becoming the cheap option: they were ROUND TRIPS
-  // over projected state, so an op sequence that moved the snapshot existed and
-  // they were rewritten to use it. `property_definitions` is not in the
-  // projection at all, so no sequence of these two commands can move
-  // blocks/properties/block_tags/page_links — repairing it is impossible, not
-  // merely harder. Its evidence is `expected_ops` (the returned row, the four
-  // validation refusals and the NotFound) and `expected_queries` (the registry
-  // read back), neither of which this guard inspects.
   [
     'property_def_writes',
     'the two writers touch `property_definitions` only, a table outside the ' +
-      'projected snapshot (#3830); the returns and query steps carry the claim',
+      'projected snapshot (#3830), so no op sequence can move it; the returns ' +
+      'and query steps carry the claim',
   ],
 ])
 
