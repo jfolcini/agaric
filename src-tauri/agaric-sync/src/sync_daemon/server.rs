@@ -365,7 +365,6 @@ async fn reject(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 /// #800's surviving guarantee, as a decision rather than an expression buried in the
 /// session's tail.
 ///
@@ -656,12 +655,22 @@ async fn admit_peer(
 /// so we stream our per-space snapshots (engine truth) for it to MERGE, preserving
 /// its unsynced local content.
 ///
-/// Returns whether this side now spoke last. The offering side writes last: the
-/// Loro catch-up ends with `LoroSync { is_last: true }` (or `SyncComplete` for an
-/// empty registry) and the receiver answers nothing. So this side is a round trip
-/// ahead of the peer's read, and closing without waiting is what would truncate a
-/// catch-up at the tail — silently, since the peer's error would be
+/// Returns whether this side now OWES THE SHUTDOWN WAIT — not whether it spoke
+/// last. The two differ on the error path, which returns `false` while
+/// `end.spoke_last` may already be `true` (the responder did reply
+/// `ResetRequired`). The caller must therefore `||` this in, never assign it:
+/// `spoke_last = offer_snapshot_catchup(..).await` would clear a wait that is
+/// still owed and truncate the tail. It is spelled as an `&&` short-circuit at
+/// the call site for exactly that reason.
+///
+/// A completed offer does owe the wait. The offering side writes last: the Loro
+/// catch-up ends with `LoroSync { is_last: true }` (or `SyncComplete` for an
+/// empty registry) and the receiver answers nothing. So this side is a round
+/// trip ahead of the peer's read, and closing without waiting is what would
+/// truncate a catch-up at the tail — silently, since the peer's error would be
 /// "connection lost".
+///
+/// Nothing pins that; see [`finish_responder`] for why the harness cannot.
 async fn offer_snapshot_catchup(
     ctx: &ResponderCtx<'_>,
     session: &mut InboundSession,
