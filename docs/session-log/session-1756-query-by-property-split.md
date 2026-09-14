@@ -35,7 +35,7 @@ why they were mutated independently rather than as one function.
 five-line blocks, each with its own comment arguing the same
 `None`-short-circuits point. One function, one reason.
 
-## Nine bind swaps, one survivor
+## Twenty-one mutations, four survivors
 
 Slice 20's lesson was that predicting which arm is uncovered is guesswork. So
 every same-typed bind pair in both branches was swapped, not the pair I
@@ -104,8 +104,9 @@ proof the arms were equivalent. What holds it up is
 `query_by_property_rejects_both_value_filters`, which pins the refusal on both
 paths.
 
-`properties.rs` was confirmed byte-identical to its pre-mutation copy after
-every one of the thirteen mutations (#4287, #4018, #4204).
+Twenty-one mutation runs in all. Every one was applied to a copy and restored
+from it immediately, and `properties.rs` was `cmp`-verified against that copy at
+the end of every batch (#4287, #4018, #4204).
 
 ## The verify cannot see the tests that matter here
 
