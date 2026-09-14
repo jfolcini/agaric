@@ -160,9 +160,10 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
 /// yet its `mcp:activity` entry (and the `blocks:changed` refresh event that
 /// entry carries) is never emitted.
 ///
-/// This guard closes that gap. It is constructed INSIDE the `LAST_APPEND`
-/// task-local scope, immediately before the (cancellable) `call_tool` await,
-/// and disarmed on the normal path right after the op refs are captured — at
+/// This guard closes that gap. It is built by the caller and MOVED into the
+/// `LAST_APPEND` task-local scope, where it lives across the (cancellable)
+/// `call_tool` await, and disarmed on the normal path right after the op refs
+/// are captured — at
 /// which point the outer scope emits the full entry (real summary + result)
 /// itself. If instead the future is dropped before it can disarm, the guard's
 /// `Drop` drains whatever op refs the RW handler already recorded into
@@ -170,10 +171,11 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
 /// before the commit await) and emits the completion entry so the mutation is
 /// never silently missing from the feed.
 ///
-/// Draining the task-local from `Drop` is sound: tokio drops a
+/// Draining the task-local from `Drop` is sound, and it is the DROP point that
+/// makes it so, not where the guard was built: tokio drops a
 /// `TaskLocalFuture`'s inner future WITH the task-local still set
-/// (`task_local.rs::PinnedDrop`), so `take_appends()` observes the correct
-/// slot here.
+/// (`task_local.rs::PinnedDrop`), and the guard is owned by that inner future,
+/// so `take_appends()` observes the correct slot here.
 struct ToolCompletionGuard {
     activity_ctx: ActivityContext,
     tool_name: String,
@@ -287,20 +289,6 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         }
     }
 
-    /// Core tool dispatch shared by the `ServerHandler::call_tool` trait
-    /// method (which only adds the rmcp request/context plumbing on top).
-    ///
-    /// Split out from `call_tool` for two reasons:
-    ///  1. `call_tool` needs an rmcp `RequestContext` to extract the agent
-    ///     name; that type is impractical to construct in a unit test. This
-    ///     helper takes the already-sanitised `agent_name` directly, so a
-    ///     test can drive the real dispatch — and CANCEL it mid-flight — to
-    ///     exercise the #2954 drop-safe emission path.
-    ///  2. It keeps the (subtle) task-local scoping + drop-guard wiring in one
-    ///     place.
-    ///
-    /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
-    /// trait method does that at the trust boundary before calling here.
     /// Run the tool inside the two task-local scopes, with #2954's drop-safe
     /// emission guard armed for the cancellable window.
     ///
@@ -317,29 +305,30 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         registry: Arc<R>,
         name: String,
         args: Value,
-        call_ctx: ActorContext,
-        scoped_ctx: ActorContext,
-        guard: Option<ToolCompletionGuard>,
+        actor_ctx: ActorContext,
+        mut guard: Option<ToolCompletionGuard>,
     ) -> (Result<Value, AppError>, Vec<agaric_store::op::OpRef>) {
+        // Two copies needed: one moves into `ACTOR.scope`, one is borrowed by
+        // the explicit-parameter path of [`ToolRegistry::call_tool`].
+        let call_ctx = actor_ctx.clone();
         ACTOR
-            .scope(scoped_ctx, async move {
+            .scope(actor_ctx, async move {
                 agaric_store::task_locals::LAST_APPEND
                     .scope(std::cell::RefCell::new(Vec::new()), async move {
                         // #2954 — the guard is armed for the duration of the
                         // (cancellable) call. It is `None` on the read-only
                         // surface, where there is no activity context to emit
                         // into.
-                        let mut completion_guard = guard;
                         let r = registry.call_tool(&name, args, &call_ctx).await;
                         // The commit (if any) is now durable and past its only
                         // cancellation window. Capture the op refs and disarm
                         // the guard: the caller's emission is henceforth the
                         // authoritative one, so the guard must not double-emit.
                         let captured = agaric_store::task_locals::take_appends();
-                        if let Some(g) = completion_guard.as_mut() {
+                        if let Some(g) = guard.as_mut() {
                             g.disarm();
                         }
-                        drop(completion_guard);
+                        drop(guard);
                         (r, captured)
                     })
                     .await
@@ -389,6 +378,20 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         }
     }
 
+    /// Core tool dispatch shared by the `ServerHandler::call_tool` trait
+    /// method (which only adds the rmcp request/context plumbing on top).
+    ///
+    /// Split out from `call_tool` for two reasons:
+    ///  1. `call_tool` needs an rmcp `RequestContext` to extract the agent
+    ///     name; that type is impractical to construct in a unit test. This
+    ///     helper takes the already-sanitised `agent_name` directly, so a
+    ///     test can drive the real dispatch — and CANCEL it mid-flight — to
+    ///     exercise the #2954 drop-safe emission path.
+    ///  2. It keeps the (subtle) task-local scoping + drop-guard wiring in one
+    ///     place.
+    ///
+    /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
+    /// trait method does that at the trust boundary before calling here.
     async fn dispatch_tool_call(
         &self,
         name: String,
@@ -409,11 +412,6 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             },
             request_id: Ulid::generate().to_string(),
         };
-        // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
-        // by the explicit-parameter path of [`ToolRegistry::call_tool`].
-        let scoped_ctx = actor_ctx.clone();
-        let call_ctx = actor_ctx;
-
         let args_for_summary = args.clone();
 
         // #2954 — the drop-safe emission guard, built here so the values it
@@ -433,8 +431,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             self.registry.clone(),
             name.clone(),
             args,
-            call_ctx,
-            scoped_ctx,
+            actor_ctx,
             guard,
         )
         .await;

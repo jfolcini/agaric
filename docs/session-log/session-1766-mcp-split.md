@@ -65,3 +65,47 @@ cargo nextest run -p agaric            # 2593 passed, 0 failed
 
 The app crate has no dependents, so `-p agaric` is the coverage boundary here —
 unlike #5033, where narrowing a `pub` made `--workspace` the check that mattered.
+
+## The doc-block anchor, a fourth time — and the rule that did not hold
+
+`session-1765`, written immediately before this slice, states the rule: *anchor
+on the first line of the doc block, or on the blank line above it.* This slice
+then broke it in the very next file.
+
+Inserting `call_in_task_local_scopes` and `emit_completion` before
+`async fn dispatch_tool_call(` put them between that function and its own doc
+block. `call_in_task_local_scopes` inherited a header claiming it is "Core tool
+dispatch shared by the `ServerHandler::call_tool` trait method" and carrying the
+precondition "`agent_name` must already be sanitised" — for a function with no
+`agent_name` parameter. `dispatch_tool_call`, which the trait method actually
+calls and which that precondition constrains, was left undocumented. #5035's
+review caught it.
+
+Four occurrences, four mechanisms (#5026 `#[test]`, #5030 an indented
+`#[tokio::test]`, #5031 the doc's second paragraph, this one an anchor on the
+`fn` line itself). The pattern across all four is the same: **I anchor on the
+item I can see and forget the doc block above it is part of that item.**
+
+A prose rule in a session log did not survive one slice, so the fix is
+procedural, not a better sentence: **insert a new item after the previous
+item's closing brace, never before the next item's signature.** The closing
+brace is unambiguous; a signature line has an invisible prefix.
+
+That is a change to how I edit, not something the repo can check. Nothing here
+catches it — the code compiles, the tests pass, and rustdoc renders the wrong
+paragraph without complaint. A reviewer has caught it four times out of four,
+which is the fact worth recording rather than the rule I keep restating.
+
+## The other three notes from that review
+
+- `ToolCompletionGuard`'s doc said it is "constructed INSIDE the `LAST_APPEND`
+  task-local scope". This PR made that false, and it is the sentence carrying
+  the soundness argument for draining the task-local from `Drop`. Corrected to
+  say what actually makes it sound: the guard is built by the caller and MOVED
+  in, and it is the DROP point inside the scope that matters, not the
+  construction site.
+- `call_in_task_local_scopes` took `call_ctx` and `scoped_ctx` — two clones of
+  one `ActorContext` made two lines earlier. It takes one and clones inside now,
+  and the "two copies needed" comment went with the clone.
+- `let mut completion_guard = guard;` existed only to add `mut`. The signature
+  says `mut guard` instead.
