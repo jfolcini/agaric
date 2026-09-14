@@ -481,42 +481,6 @@ struct OpeningParts {
     stated_device_id: Option<String>,
 }
 
-/// The first frame must be a `HeadExchange`; `None` for any other variant.
-///
-/// Under the old stack this was #3324's fix and it was an *authorization* gate: a
-/// non-`HeadExchange` first message fell through to the orchestrator with no
-/// per-peer lock and no identity check, and a single `ResetRequired` frame reached
-/// `try_offer_loro_snapshot_catchup`, which exports every registered space's full
-/// `LoroDoc`.
-///
-/// It is no longer load-bearing for that, twice over: nothing dispatches anything
-/// until the checks below have run, and the driver cannot dispatch a frame
-/// `handle_incoming_sync_inner` did not hand it. It is kept because it is still
-/// load-bearing for something else — the #855 proof rides inside `HeadExchange`,
-/// so a peer that opens with any other variant has no way to present one, and
-/// admitting it during the pairing window would be #3324 wearing different
-/// clothes. Rejecting the variant here says that once, rather than leaving it to
-/// be re-derived from the shape of the `Option` at the call site.
-fn opening_parts(opening: &SyncMessage) -> Option<OpeningParts> {
-    match opening {
-        SyncMessage::HeadExchange {
-            heads,
-            pairing_proof,
-            device_name,
-            sender_device_id,
-            ..
-        } => Some(OpeningParts {
-            heads: heads.clone(),
-            offered_proof: pairing_proof.clone(),
-            offered_device_name: device_name.as_deref().and_then(clamp_device_name),
-            stated_device_id: sender_device_id
-                .as_deref()
-                .and_then(crate::sync_protocol::accept_stated_device_id),
-        }),
-        _ => None,
-    }
-}
-
 /// #4380: whether the heads ALONE identify the joiner, for the peers too old to
 /// state an id.
 ///
@@ -812,7 +776,7 @@ async fn bind_peer_to_key(
     ctx: &ResponderCtx<'_>,
     settled_remote_id: &str,
     pairing_pending: bool,
-    heads_are_ambiguous: bool,
+    heads_ambiguous: bool,
 ) -> bool {
     // #800's surviving guarantee; see `peer_is_bound_to_another_key` for what it holds
     // and why a failed read denies rather than assumes.
@@ -836,7 +800,7 @@ async fn bind_peer_to_key(
         );
         return false;
     }
-    if pairing_pending && heads_are_ambiguous {
+    if pairing_pending && heads_ambiguous {
         // #4380: the peer did not state an id and its heads name more than one
         // candidate, so `settled_remote_id` is whichever sorted lowest. Refuse.
         //
@@ -1004,23 +968,52 @@ async fn recv_opening(
     session: &mut InboundSession,
 ) -> Result<Option<(SyncMessage, OpeningParts)>, AppError> {
     let opening = recv_sync_message_within(&mut session.recv, RECV_TIMEOUT).await?;
-    let Some(parts) = opening_parts(&opening) else {
-        // Log the variant name only (`variant_name`, the convention in
-        // `session_state_machine::handle_message`) — never the payload.
-        tracing::warn!(
-            endpoint_id = %ctx.endpoint_id,
-            msg = opening.variant_name(),
-            "rejecting sync: first message was not a HeadExchange"
-        );
-        reject(
-            session,
-            &Rejection::NotHeadExchange,
-            &ctx.endpoint_id_str,
-            ctx.event_sink,
-            ctx.limits,
-        )
-        .await?;
-        return Ok(None);
+    let parts = match &opening {
+        SyncMessage::HeadExchange {
+            heads,
+            pairing_proof,
+            device_name,
+            sender_device_id,
+            ..
+        } => OpeningParts {
+            heads: heads.clone(),
+            offered_proof: pairing_proof.clone(),
+            offered_device_name: device_name.as_deref().and_then(clamp_device_name),
+            stated_device_id: sender_device_id
+                .as_deref()
+                .and_then(crate::sync_protocol::accept_stated_device_id),
+        },
+        // Under the old stack this was #3324's fix and it was an *authorization*
+        // gate: a non-`HeadExchange` first message fell through to the
+        // orchestrator with no per-peer lock and no identity check, and a single
+        // `ResetRequired` frame reached `try_offer_loro_snapshot_catchup`, which
+        // exports every registered space's full `LoroDoc`.
+        //
+        // It is no longer load-bearing for that, twice over: nothing dispatches
+        // anything until the checks below have run, and the driver cannot
+        // dispatch a frame this function did not hand it. It is kept because it
+        // is still load-bearing for something else — the #855 proof rides inside
+        // `HeadExchange`, so a peer that opens with any other variant has no way
+        // to present one, and admitting it during the pairing window would be
+        // #3324 wearing different clothes.
+        other => {
+            // Log the variant name only (`variant_name`, the convention in
+            // `session_state_machine::handle_message`) — never the payload.
+            tracing::warn!(
+                endpoint_id = %ctx.endpoint_id,
+                msg = other.variant_name(),
+                "rejecting sync: first message was not a HeadExchange"
+            );
+            reject(
+                session,
+                &Rejection::NotHeadExchange,
+                &ctx.endpoint_id_str,
+                ctx.event_sink,
+                ctx.limits,
+            )
+            .await?;
+            return Ok(None);
+        }
     };
     Ok(Some((opening, parts)))
 }
