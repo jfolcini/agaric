@@ -3,12 +3,20 @@
 `apply_op_tx_with_mode` is the per-op dispatch: thirteen `OpType` arms between
 a short prologue and the terminal `pages_cache` count hook. It carried an
 `#[expect(clippy::too_many_lines)]`; clippy now accepts the file without one.
-Workspace attribute count **26 → 25** (anchored grep, both sides).
+Workspace attribute count **26 → 25** (anchored grep, both sides — the
+unanchored form reports 27 → 26 because it also matches the doc comment at
+`commands/history.rs:2785`).
 
-Six arms move out, one function each — `CreateBlock`, `EditBlock`,
-`DeleteBlock`, `RestoreBlock`, `PurgeBlock`, `MoveBlock`. The seven trivial
-arms (tags, properties, attachments) are three lines apiece and stay; wrapping
-them would add a signature longer than the body.
+Five arms move out, one function each — `CreateBlock`, `EditBlock`,
+`DeleteBlock`, `RestoreBlock`, `MoveBlock`. The eight that stay (tags,
+properties, attachments, and purge) are short enough that a signature would
+cost more than the extraction saves.
+
+`PurgeBlock` was extracted first and put back: a six-line signature plus a
+two-line doc wrapping a four-line body, replacing a three-line arm — the same
+rule that kept the tag arms inline, and I had applied it in only one direction.
+#5030's review caught that. `EditBlock` is the same shape more weakly, and stays
+out because inlining both would push the dispatch back over 70.
 
 Each helper parses its own payload and **returns** the `PreOpState` the count
 hook needs, rather than assigning a shared `mut` binding across 180 lines. The

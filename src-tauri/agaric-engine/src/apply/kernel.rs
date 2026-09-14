@@ -590,7 +590,13 @@ pub async fn apply_op_tx_with_mode(
             pre_state = apply_restore_block_op(conn, state, record, &mut effects).await?;
         }
         OpType::PurgeBlock => {
-            pre_state = apply_purge_block_op(conn, state, record).await?;
+            let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
+            // #2183: the page-wide count recompute is the background
+            // `RebuildPagesCacheCounts` task's (dispatch's lifecycle set),
+            // which works from post-cascade state — so no pre-cascade
+            // affected-pages snapshot is taken here.
+            pre_state = PreOpState::Purge;
+            apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
             pre_state =
@@ -772,24 +778,6 @@ async fn apply_restore_block_op(
     };
     effects.restored_cohort = cohort;
     effects.restored_ancestors = restored_ancestors;
-
-    Ok(pre_state)
-}
-
-/// `PurgeBlock`: project the purge. The page-wide count recompute is the
-/// background task's (#2183), so there is no pre-cascade snapshot to take.
-async fn apply_purge_block_op(
-    conn: &mut sqlx::SqliteConnection,
-    state: &crate::loro::shared::LoroState,
-    record: &OpRecord,
-) -> Result<PreOpState, AppError> {
-    let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
-    // #2183: PurgeBlock's page-wide count recompute is deferred to the
-    // background `RebuildPagesCacheCounts` task (dispatch's lifecycle
-    // set), which recomputes from post-cascade state — so we no longer
-    // capture a pre-cascade affected-pages snapshot here.
-    let pre_state = PreOpState::Purge;
-    apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
 
     Ok(pre_state)
 }
