@@ -1017,6 +1017,71 @@ async fn fulltext_pagination_under_relevance_equals_one_big_page() {
     );
 }
 
+/// The full-text path, a filter that BINDS, and a cursor page — together.
+///
+/// `fulltext_pagination_under_relevance_equals_one_big_page` pages the FT path
+/// but with `default_filter()`, which contributes ZERO binds, and
+/// `relational_predicate_paginates_correctly` pairs filter binds with a keyset
+/// but never on the FT path. So the relative order of the filter binds and the
+/// keyset binds was pinned only when `has_fulltext` was false: swapping the two
+/// `bind` loops for the full-text case alone left all 169 query tests green.
+///
+/// `alpha` matches F1/F2/F3 and TAG_RED covers F1/F2/F4, so the intersection is
+/// F1 + F2 — two rows, enough for one cursor page at `limit = 1`. F3 (alpha, no
+/// tag) and F4 (tag, no alpha) are the negative halves that make the filter
+/// bind load-bearing rather than decorative.
+#[tokio::test]
+async fn fulltext_with_bound_filter_paginates_equal_to_one_big_page() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    let tagged_alpha = || {
+        let mut r = ft_req("alpha");
+        r.filter = leaf(FilterPrimitive::Tag {
+            tag: TAG_RED.to_string(),
+        });
+        r
+    };
+
+    let mut big = tagged_alpha();
+    big.limit = Some(50);
+    let big_resp = compile_and_run(&pool, big).await.unwrap();
+    let all: Vec<String> = big_resp
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str().to_string())
+        .collect();
+    assert!(!big_resp.has_more);
+    assert_eq!(
+        ids(&big_resp),
+        set(&[F1, F2]),
+        "alpha and TAG_RED intersect at F1 + F2: F3 has no tag, F4 has no alpha, FX is another space"
+    );
+
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut page = tagged_alpha();
+        page.limit = Some(1);
+        page.cursor = cursor.clone();
+        let resp = compile_and_run(&pool, page).await.unwrap();
+        for r in &resp.rows {
+            collected.push(r.block.id.as_str().to_string());
+        }
+        if resp.has_more {
+            cursor = resp.next_cursor.clone();
+            assert!(cursor.is_some());
+        } else {
+            assert!(resp.next_cursor.is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        collected, all,
+        "paging the full-text path with a bound filter must equal one big page"
+    );
+}
+
 #[tokio::test]
 async fn invalid_fts_query_is_validation_error() {
     let (pool, _d) = test_pool().await;

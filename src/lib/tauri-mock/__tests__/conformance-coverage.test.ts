@@ -3081,7 +3081,7 @@ describe('#3083 conformance-coverage ratchet', () => {
       ['the full-text switch', 'let has_fulltext = match_sanitized.is_some();'],
       ['the full-text request field', 'request.fulltext.as_deref()'],
       ['the full-text FROM swap', 'fts_blocks fts JOIN blocks b ON b.id = fts.block_id'],
-      ['the grouped path entry', 'return run_grouped(pool, spec, &request, ctx, limit).await;'],
+      ['the grouped path entry', 'return run_grouped(pool, spec, &request, &ctx, limit).await;'],
     ] as const) {
       expect(
         engine.includes(needle),
