@@ -64,6 +64,56 @@ function setReservedColumnProperty(
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
 }
 
+/** The `value_type` vocabulary `validate_property_def_shape` matches on. */
+const PROPERTY_DEF_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean'])
+
+/** `serde_json::from_str::<Vec<String>>`: anything but an array of strings is refused. */
+function parsePropertyDefOptions(options: string): string[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(options)
+  } catch {
+    parsed = undefined
+  }
+  if (!Array.isArray(parsed) || parsed.some((o) => typeof o !== 'string')) {
+    throw validationRejection('options must be a JSON array of strings')
+  }
+  return parsed as string[]
+}
+
+/**
+ * Mock twin of `validate_property_def_shape` (`commands/properties.rs`). The
+ * mock used to accept every key, every value_type and every options blob, so a
+ * conformance op could not tell a refusal from a write (#3830).
+ */
+function validatePropertyDefShape(key: string, valueType: string, options: string | null): void {
+  if (key.length === 0 || key.length > 64) {
+    throw validationRejection('property definition key must be 1-64 characters')
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(key)) {
+    throw validationRejection(
+      'property definition key must contain only alphanumeric, underscore, or hyphen characters',
+    )
+  }
+  if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
+    throw validationRejection(
+      `invalid value_type '${valueType}': must be text, number, date, select, ref, or boolean`,
+    )
+  }
+  if (valueType === 'select') {
+    if (options === null) {
+      throw validationRejection('select-type definitions require an options array')
+    }
+    if (parsePropertyDefOptions(options).length === 0) {
+      throw validationRejection('select-type options must not be empty')
+    }
+  } else if (options !== null) {
+    throw validationRejection(
+      `options are only allowed for select-type definitions, not '${valueType}'`,
+    )
+  }
+}
+
 export const propertiesHandlers = {
   // Mirrors `pagination::query_by_property` (#3827). One `block_properties`
   // (or native-column) row per block; the comparison operator applies to
@@ -564,10 +614,18 @@ export const propertiesHandlers = {
   create_property_def: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
+    const valueType = a['valueType'] as string
+    const options = (a['options'] as string | null) ?? null
+    validatePropertyDefShape(key, valueType, options)
+    // INSERT OR IGNORE (`create_property_def_inner`): an existing declaration
+    // wins untouched, so re-asserting a key under a different value_type
+    // answers with the FIRST one rather than overwriting it.
+    const existing = propertyDefs.get(key)
+    if (existing) return { ...existing }
     const def = {
       key,
-      value_type: a['valueType'] as string,
-      options: (a['options'] as string | null) ?? null,
+      value_type: valueType,
+      options,
       created_at: new Date().toISOString(),
     }
     propertyDefs.set(key, def)
@@ -598,10 +656,21 @@ export const propertiesHandlers = {
   update_property_def_options: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
+    const options = a['options'] as string
+    // The backend parses the array BEFORE it looks the key up, so a malformed
+    // or empty array on an unknown key is a validation refusal, not NotFound.
+    if (parsePropertyDefOptions(options).length === 0) {
+      throw validationRejection('options must not be empty')
+    }
     const def = propertyDefs.get(key)
     if (!def) throw notFoundRejection(`property definition '${key}'`)
-    def['options'] = a['options'] as string
-    return { ...def }
+    const valueType = def['value_type'] as string
+    if (valueType !== 'select') {
+      throw validationRejection(`cannot update options on '${valueType}'-type definition '${key}'`)
+    }
+    const updated = { ...def, options }
+    propertyDefs.set(key, updated)
+    return updated
   },
 
   delete_property_def: (args) => {
