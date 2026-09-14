@@ -1239,21 +1239,6 @@ async fn handle_incoming_sync_inner(
         return Ok(());
     };
 
-    // ── S-5: per-peer mutual exclusion ────────────────────────────────────────
-    //
-    // The key is the handshake-authenticated endpoint id, which is also what
-    // `session_supervisor::try_sync_with_peer` locks on — see [`peer_lock_key`] for why
-    // that identifier and not the device id. The lock only does its job if both roles
-    // on THIS device agree on the spelling, and this is the only identifier both of
-    // them hold unconditionally: we have it here before the peer has said anything at
-    // all, and the initiator has it before it can dial.
-    //
-    // It is deliberately NOT `remote_id`. That is empty for a fresh joiner with an
-    // empty `op_log` — the pairing window — and the endpoint-id fallback the old code
-    // used there disagreed with the initiator's device-id key, so an inbound and an
-    // outbound session with one physical peer could overlap in exactly the window where
-    // both ends arm a dial. `remote_id` stays the *reported* identity below; it is no
-    // longer the lock's spelling.
     let Some(_peer_guard) = lock_peer_or_reject(&ctx, &mut session, &scheduler, &remote_id).await?
     else {
         return Ok(());
