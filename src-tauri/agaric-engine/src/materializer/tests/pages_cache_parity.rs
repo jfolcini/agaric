@@ -288,11 +288,11 @@ async fn delete_restore_updates_child_count() {
 /// #2042 — a cohort op must DEFER its page-wide count recompute, not run it
 /// in this transaction.
 ///
-/// `maintain_pages_cache_counts_after_op`'s Delete / Restore / Purge arm adds
-/// nothing to `affected`, because their affected set spans an arbitrarily large
-/// descendant subtree and recomputing it here holds the single-writer apply lock
-/// for the whole walk. The background `RebuildPagesCacheCounts` task does it
-/// instead.
+/// `maintain_pages_cache_counts_after_op`'s [`PreOpState::Deferred`] arm adds
+/// nothing to `affected`, because the affected set of a Delete, Restore or Purge
+/// spans an arbitrarily large descendant subtree and recomputing it here holds
+/// the single-writer apply lock for the whole walk. The background
+/// `RebuildPagesCacheCounts` task does it instead.
 ///
 /// Nothing pinned that: the other parity tests drain the background handler
 /// before asserting, so they see the same final counts either way. This calls
@@ -300,6 +300,9 @@ async fn delete_restore_updates_child_count() {
 /// that separates "deferred" from "done inline". A deliberately wrong seeded
 /// value stands in for the recompute's output, so the assertion fails the moment
 /// the walk runs.
+///
+/// One state, not three: all three ops name the same payload-free variant, so
+/// there is no longer a per-op shape that could diverge from the others.
 #[tokio::test]
 async fn cohort_ops_defer_the_count_recompute_2042() {
     use crate::apply::pages_cache::{PreOpState, maintain_pages_cache_counts_after_op};
@@ -321,18 +324,9 @@ async fn cohort_ops_defer_the_count_recompute_2042() {
         .unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
-    for state in [
-        PreOpState::Cohort(vec!["CHILD_X".to_string()]),
-        PreOpState::RestoreCohortAndAncestors {
-            cohort: vec!["CHILD_X".to_string()],
-            ancestors: vec!["PAGE_X".to_string()],
-        },
-        PreOpState::Purge,
-    ] {
-        maintain_pages_cache_counts_after_op(&mut conn, &state, None)
-            .await
-            .unwrap();
-    }
+    maintain_pages_cache_counts_after_op(&mut conn, &PreOpState::Deferred, None)
+        .await
+        .unwrap();
     drop(conn);
 
     let (_, child) = cached_counts(&pool, "PAGE_X").await.unwrap();
