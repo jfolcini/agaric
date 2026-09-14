@@ -71,7 +71,7 @@ iroh-dns = "=1.1.0"
 # range, not a pin: it is a satellite of the pinned `iroh`, resolved against
 # whatever that pin allows, and must be re-resolved in the same commit whenever
 # `iroh` moves (AGENTS.md § Coupled Dependency Updates).
-iroh-mdns-address-lookup = "0.4"
+iroh-mdns-address-lookup = "0.5"
 # `n0-error` / `n0-future` — iroh's error and future plumbing, needed to
 # implement the `Resolver` trait (`BoxFuture`, the `e!` macro). Left as caret
 # ranges deliberately: they must agree with whatever the pinned iroh resolves,
