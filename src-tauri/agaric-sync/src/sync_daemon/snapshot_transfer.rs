@@ -397,6 +397,71 @@ pub async fn try_receive_snapshot_catchup(
 /// the initiator's main loop reached
 /// [`SyncState`](crate::sync_protocol::SyncState)`::ResetRequired`.
 ///
+/// Merge one inbound space snapshot into the local engine and fan its changed
+/// blocks out to the cache rebuilds.
+///
+/// Returns the page ids the merge touched, for the caller to accumulate across
+/// the whole catch-up.
+async fn merge_one_snapshot(
+    pool: &SqlitePool,
+    engine: &EngineReloadCtx<'_>,
+    materializer: &dyn ApplyHost,
+    remote_device_id: &str,
+    loro_msg: LoroSyncMessage,
+) -> Result<Vec<String>, AppError> {
+    // Merge semantics: `apply_remote` imports the snapshot into our engine
+    // (preserving unsynced local content) and reprojects the changed blocks into
+    // SQL inside its own transaction.
+    match loro_sync::apply_remote(pool, engine.registry, engine.device_id, loro_msg).await? {
+        ApplyOutcome::Imported {
+            changed_blocks,
+            purged_blocks,
+            changed_page_ids,
+            ..
+        } => {
+            // Non-fatal: the projection already committed inside apply_remote; a
+            // queue-closed error must not unwind the catch-up (mirrors the
+            // orchestrator's LoroSync arm).
+            if let Err(e) = materializer
+                .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
+                .await
+            {
+                tracing::warn!(
+                    peer_id = %remote_device_id,
+                    error = %e,
+                    "loro-snapshot catch-up: failed to enqueue inbound-sync cache rebuilds"
+                );
+            }
+            Ok(changed_page_ids)
+        }
+        ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+            Err(AppError::InvalidOperation(format!(
+                "loro-snapshot catch-up: peer snapshot for space {space} could not be merged \
+                 ({reason}); local engine likely forked its own (peer,counter) space (#792) — \
+                 engine-only reset is not yet implemented (#2503 open q1)",
+                space = space_id.as_str(),
+            )))
+        }
+    }
+}
+
+/// Await the next snapshot frame of the catch-up.
+///
+/// Bounded per message, not per catch-up: the responder exports and sends one
+/// space snapshot at a time, so a peer with many large spaces legitimately takes
+/// longer than `RECV_TIMEOUT` in total while never being silent for that long.
+/// QUIC contributes no clock here, so without this an export that dies between
+/// spaces leaves the caller awaiting a frame that will never come, forever.
+async fn next_snapshot_frame(recv: &mut RecvStream) -> Result<(LoroSyncMessage, bool), AppError> {
+    match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
+        SyncMessage::LoroSync { msg, is_last } => Ok((msg, is_last)),
+        other => Err(AppError::InvalidOperation(format!(
+            "loro-snapshot catch-up: expected another LoroSync frame, got {}",
+            other.variant_name()
+        ))),
+    }
+}
+
 /// This is the "merge, not wipe" catch-up. Each inbound
 /// [`LoroSyncMessage::Snapshot`] is imported into THIS device's per-space
 /// engine via [`crate::sync_protocol::loro_sync::apply_remote`], which merges
@@ -430,7 +495,6 @@ pub async fn try_receive_snapshot_catchup(
 /// bookkeeping write below — not a cue to look somewhere else for one.
 #[tracing::instrument(skip_all, err)]
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn receive_loro_snapshot_catchup(
     _send: &mut SendStream,
     recv: &mut RecvStream,
@@ -442,10 +506,7 @@ async fn receive_loro_snapshot_catchup(
     first_msg: LoroSyncMessage,
     first_is_last: bool,
 ) -> Result<(), AppError> {
-    let EngineReloadCtx {
-        registry,
-        device_id,
-    } = engine_reload.ok_or_else(|| {
+    let engine = engine_reload.ok_or_else(|| {
         AppError::InvalidOperation(
             "loro-snapshot catch-up requires a live engine registry to merge into; \
              none was provided"
@@ -466,65 +527,17 @@ async fn receive_loro_snapshot_catchup(
     let mut is_last = first_is_last;
     loop {
         bytes_received += loro_msg_payload_len(&loro_msg);
-        // Merge semantics: `apply_remote` imports the snapshot into our
-        // engine (preserving unsynced local content) and reprojects the
-        // changed blocks into SQL inside its own transaction.
-        match loro_sync::apply_remote(pool, registry, device_id, loro_msg).await? {
-            ApplyOutcome::Imported {
-                changed_blocks,
-                purged_blocks,
-                changed_page_ids: pids,
-                ..
-            } => {
-                for pid in pids {
-                    if !changed_page_ids.contains(&pid) {
-                        changed_page_ids.push(pid);
-                    }
-                }
-                // Non-fatal: the projection already committed inside
-                // apply_remote; a queue-closed error must not unwind the
-                // catch-up (mirrors the orchestrator's LoroSync arm).
-                if let Err(e) = materializer
-                    .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
-                    .await
-                {
-                    tracing::warn!(
-                        peer_id = %remote_device_id,
-                        error = %e,
-                        "loro-snapshot catch-up: failed to enqueue inbound-sync cache rebuilds"
-                    );
-                }
-            }
-            ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
-                return Err(AppError::InvalidOperation(format!(
-                    "loro-snapshot catch-up: peer snapshot for space {space} could not be merged \
-                     ({reason}); local engine likely forked its own (peer,counter) space (#792) — \
-                     engine-only reset is not yet implemented (#2503 open q1)",
-                    space = space_id.as_str(),
-                )));
+        for pid in
+            merge_one_snapshot(pool, &engine, materializer, remote_device_id, loro_msg).await?
+        {
+            if !changed_page_ids.contains(&pid) {
+                changed_page_ids.push(pid);
             }
         }
         if is_last {
             break;
         }
-        // Bounded per message, not per catch-up: the responder exports and
-        // sends one space snapshot at a time, so a peer with many large
-        // spaces legitimately takes longer than `RECV_TIMEOUT` in total
-        // while never being silent for that long. QUIC contributes no clock
-        // here, so without this an export that dies between spaces leaves
-        // this loop awaiting a frame that will never come, forever.
-        match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
-            SyncMessage::LoroSync { msg, is_last: il } => {
-                loro_msg = msg;
-                is_last = il;
-            }
-            other => {
-                return Err(AppError::InvalidOperation(format!(
-                    "loro-snapshot catch-up: expected another LoroSync frame, got {}",
-                    other.variant_name()
-                )));
-            }
-        }
+        (loro_msg, is_last) = next_snapshot_frame(recv).await?;
     }
 
     // #4097: the caller already resolved the identity (session id, else the
@@ -545,7 +558,7 @@ async fn receive_loro_snapshot_catchup(
     }
     let resolved_peer_id: &str = remote_device_id;
 
-    record_catchup_pull(pool, resolved_peer_id, device_id).await;
+    record_catchup_pull(pool, resolved_peer_id, engine.device_id).await;
 
     tracing::info!(
         peer_id = %resolved_peer_id,

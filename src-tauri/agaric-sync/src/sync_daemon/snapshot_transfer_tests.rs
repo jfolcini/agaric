@@ -655,9 +655,19 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     let resp_registry = LoroEngineRegistry::new();
     {
         let mut g = resp_registry.for_space(&space, REMOTE_DEV).unwrap();
-        g.engine_mut()
-            .apply_create_block("RESPBLOCK001", "content", "responder ahead", None, 0)
+        let e = g.engine_mut();
+        // A page, so the merge has a `changed_page_ids` entry to report — a
+        // root content block belongs to no page and reports none.
+        e.apply_create_block("RESPPAGE0001", "page", "Responder Page", None, 0)
             .unwrap();
+        e.apply_create_block(
+            "RESPBLOCK001",
+            "content",
+            "responder ahead",
+            Some("RESPPAGE0001"),
+            0,
+        )
+        .unwrap();
     }
 
     // Initiator: engine + SQL hold an UNSYNCED local block under a
@@ -684,7 +694,8 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let init_recorder = Arc::new(RecordingEventSink::new());
+    let init_sink: Arc<dyn SyncEventSink> = init_recorder.clone();
 
     // Drive both sides concurrently on one task (borrows, no 'static).
     let (offer_res, recv_res) = tokio::join!(
@@ -719,6 +730,29 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     );
     recv_res.expect("initiator merge catch-up must succeed");
 
+    // ── The terminal event names the page the merge touched ──────────
+    //
+    // `useSyncEvents` reloads exactly the pages in `changed_page_ids`, so a
+    // catch-up that merges content and reports none leaves that content
+    // invisible until the user reloads by hand. The ids travel from
+    // `apply_remote` through `merge_one_snapshot`'s return value, which is a
+    // hop a split can silently drop (#4639).
+    let completed: Vec<Vec<String>> = init_recorder
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SyncEvent::Complete {
+                changed_page_ids, ..
+            } => Some(changed_page_ids),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        completed,
+        vec![vec!["RESPPAGE0001".to_string()]],
+        "one Complete event, naming the page the merged block belongs to"
+    );
+
     init_mat.flush_background().await.unwrap();
 
     // ── SQL union: both blocks present ───────────────────────────────
@@ -727,12 +761,13 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
         .await
         .unwrap();
     assert_eq!(
-        count, 2,
+        count, 3,
         "initiator SQL must hold the UNION: its unsynced local block + the \
-             merged responder block"
+             merged responder page and its child"
     );
     for (id, content) in [
         ("INITLOCAL001", "unsynced local"),
+        ("RESPPAGE0001", "Responder Page"),
         ("RESPBLOCK001", "responder ahead"),
     ] {
         let got: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
