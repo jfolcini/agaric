@@ -1194,6 +1194,14 @@ struct GroupKeySql<'a> {
     bind: Option<&'a Bind>,
 }
 
+impl GroupKeySql<'_> {
+    /// The first `?N` slot after the group key's own bind, for the two grouped
+    /// statements that number their binds from it.
+    fn first_free_pos(&self, ctx: &QueryCtx) -> usize {
+        ctx.next_pos + usize::from(self.bind.is_some())
+    }
+}
+
 /// Resolve a [`GroupKey`] into its SQL group-key expression, an optional
 /// `JOIN` clause, and an optional bound parameter.
 ///
@@ -1507,11 +1515,7 @@ async fn fetch_group_buckets(
     cursor: Option<&GroupCursor>,
     limit: i64,
 ) -> Result<Vec<GroupBucketRow>, AppError> {
-    // The first slot after the group key's own bind — the same expression
-    // `fetch_member_preview` computes for its `IN` list. Derived here rather
-    // than passed in: two sources for one number is the divergence this
-    // file's bind-order test exists to catch.
-    let mut next_pos = ctx.next_pos + usize::from(key.bind.is_some());
+    let mut next_pos = key.first_free_pos(ctx);
     // Named locals so the statement below reads as the one `run_grouped` used
     // to inline, and so `format!`'s inline captures still resolve.
     let (gkey_expr, join, key_bind) = (key.expr, key.join, key.bind);
@@ -1628,7 +1632,7 @@ async fn fetch_member_preview(
 
     // `IN (?,?,…)` over the page's group keys; binds follow the per-statement
     // prefix (+ key bind).
-    let in_start = ctx.next_pos + usize::from(key_bind.is_some());
+    let in_start = key.first_free_pos(ctx);
     let in_placeholders = (0..page_keys.len())
         .map(|i| format!("?{}", in_start + i))
         .collect::<Vec<_>>()

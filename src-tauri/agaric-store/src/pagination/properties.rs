@@ -31,11 +31,8 @@ use agaric_core::error::AppError;
 ///   `block_properties` to `blocks`.
 ///
 /// **Source of truth** for the reserved-key set: `op::is_reserved_property_key`.
-/// If a fifth reserved column is ever added (e.g., `effort`), that helper
-/// must be updated AND the `match col { … }` arm below must gain the new
-/// case. The fall-through arm now returns `AppError::Validation` instead of
-/// panicking via `unreachable!()` so a missed update surfaces as a clean
-/// runtime error rather than crashing the IPC.
+/// Adding a fifth reserved column (e.g., `effort`) means updating that helper
+/// and `reserved_column` in lockstep.
 ///
 /// # Value filter
 ///
@@ -281,7 +278,6 @@ async fn fetch_reserved_column_rows(
          ORDER BY b.id ASC \
          LIMIT ?4",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
-        col = col,
         sql_op = filters.sql_op,
     );
     // One column holds the value, so the caller's two inputs collapse into one

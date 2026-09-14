@@ -278,15 +278,13 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
   // Fixtures whose ops legitimately leave the projected domain state
   // untouched, each with the reason.
   //
-  // Empty today, but NOT because the sweep found nothing. The #3966 sweep over
-  // all 40 fixtures found TWO offenders — `restore_block` (delete S2, restore
-  // S2) and `delete_property_reserved_key_clears_column` (set `todo_state`,
-  // delete `todo_state`) — both pure round trips whose recorded `expected`
-  // equalled their seed-only snapshot, and both reproducible by a mock with
-  // the handlers no-op'd. This map is empty because those two were REPAIRED
-  // (each gained a second block the ops treat differently), not because the
-  // tree was clean. Waiving them here would have been the cheaper option and
-  // would have left two fixtures that pass without testing anything.
+  // A waiver is the last resort, not the first: the #3966 sweep found two
+  // inert fixtures (`restore_block`, `delete_property_reserved_key_clears_column`
+  // — pure round trips whose `expected` equalled their seed-only snapshot) and
+  // both were REPAIRED, each gaining a second block the ops treat differently.
+  // Waiving them would have been cheaper and would have left two fixtures that
+  // pass without testing anything. Only add an entry when no op sequence can
+  // move the snapshot at all.
   [
     'property_def_writes',
     'the two writers touch `property_definitions` only, a table outside the ' +

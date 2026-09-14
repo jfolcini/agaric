@@ -1515,9 +1515,6 @@ mod tests {
         );
     }
 
-    /// #3164 — the batch gate must still REJECT a blob whose base no blob in
-    /// the batch supplies, and must not let an accepted blob's end frontier
-    /// paper over a genuine gap.
     /// A blob whose metadata will not decode is accepted UNGATED, and does not
     /// disturb the verdicts around it.
     ///
@@ -1560,6 +1557,9 @@ mod tests {
         );
     }
 
+    /// #3164 — the batch gate must still REJECT a blob whose base no blob in
+    /// the batch supplies, and must not let an accepted blob's end frontier
+    /// paper over a genuine gap.
     #[test]
     fn gate_replay_blobs_rejects_genuinely_unreachable_update_3164() {
         use super::{LoroDoc, LoroEngine, ReplayBlobGate};
