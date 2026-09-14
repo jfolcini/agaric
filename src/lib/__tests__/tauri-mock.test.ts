@@ -2539,8 +2539,16 @@ describe('property definition commands', () => {
   it('update_property_def_options throws for non-existent key', () => {
     // #2463: message now mirrors `update_property_def_options_inner`'s
     // `NotFound` text (`src-tauri/src/commands/properties.rs`).
+    //
+    // #3830: the options array must be VALID here, or this never reaches the
+    // lookup. `update_property_def_options_inner` parses `Vec<String>` and
+    // rejects an empty one BEFORE it opens the transaction, so the `'[]'` this
+    // used to pass is a `validation` refusal on the backend whatever the key
+    // is. `conformance/fixtures/property_def_writes.json` pins both arms with
+    // backend-authored answers: `update_options_empty_rejects` (validation)
+    // and `update_options_unknown_key_rejects` (not_found).
     expect(() =>
-      invoke('update_property_def_options', { key: 'nonexistent', options: '[]' }),
+      invoke('update_property_def_options', { key: 'nonexistent', options: '["a"]' }),
     ).toThrow("property definition 'nonexistent'")
   })
 
