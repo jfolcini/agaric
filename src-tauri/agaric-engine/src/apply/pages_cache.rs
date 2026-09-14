@@ -686,17 +686,15 @@ pub enum PreOpState {
     },
     /// EditBlock: the edited block + its new text (for link-token parsing).
     Edit { block_id: String, to_text: String },
-    /// DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`).
-    /// The descendant cohort captured BEFORE the UPDATE; both ops refresh
-    /// the same affected set.
+    /// DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`), captured
+    /// BEFORE the UPDATE. The count hook does no in-tx work for it: #2042 leaves
+    /// the page-wide recompute to the background `RebuildPagesCacheCounts` task
+    /// rather than hold the apply lock across the descendant walk.
     Cohort(Vec<String>),
     /// #2017: RestoreBlock cohort PLUS the contiguous soft-deleted ancestor
-    /// chain the restore un-deleted UPWARD (the #1884 live-orphan fix). The
-    /// `cohort` half is handled identically to [`PreOpState::Cohort`]; the
-    /// `ancestors` half additionally refreshes every page the restored
-    /// ancestors now own (an un-deleted ancestor adds a live child to its
-    /// owning page, and an ancestor that is itself a page rejoins the
-    /// `child_block_count` view) — without this those counts stay stale.
+    /// chain the restore un-deleted UPWARD (the #1884 live-orphan fix). Carried
+    /// for the post-commit fan-out; like [`PreOpState::Cohort`], the count hook
+    /// defers both halves to the background task.
     RestoreCohortAndAncestors {
         cohort: Vec<String>,
         ancestors: Vec<String>,

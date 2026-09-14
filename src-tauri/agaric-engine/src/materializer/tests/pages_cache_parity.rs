@@ -314,7 +314,7 @@ async fn cohort_ops_defer_the_count_recompute_2042() {
     .await
     .unwrap();
     // Deliberately wrong: the real count is 1. An inline recompute would
-    // correct it, which is exactly what the guard must prevent here.
+    // correct it, which is exactly what the deferral must not do here.
     sqlx::query("UPDATE pages_cache SET child_block_count = 99 WHERE page_id = 'PAGE_X'")
         .execute(&pool)
         .await
