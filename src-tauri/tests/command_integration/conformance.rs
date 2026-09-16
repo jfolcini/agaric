@@ -1817,7 +1817,7 @@ async fn structural_op_parent_read_names_an_absent_target() {
     insert_block(&pool, &child, "content", "child", Some(&parent), Some(1)).await;
 
     assert_eq!(
-        read_gapped_parent_candidates(&pool, "made_up", "move_block", &[child.clone()])
+        read_gapped_parent_candidates(&pool, "made_up", "move_block", std::slice::from_ref(&child))
             .await
             .expect("a present block's parent must read back"),
         vec![Some(parent)],
@@ -1825,9 +1825,14 @@ async fn structural_op_parent_read_names_an_absent_target() {
     );
 
     let absent = seed_label_to_id("GHOST");
-    let message = read_gapped_parent_candidates(&pool, "made_up", "purge_block", &[absent.clone()])
-        .await
-        .expect_err("a structural op aimed at an absent block must be an explicit failure");
+    let message = read_gapped_parent_candidates(
+        &pool,
+        "made_up",
+        "purge_block",
+        std::slice::from_ref(&absent),
+    )
+    .await
+    .expect_err("a structural op aimed at an absent block must be an explicit failure");
     assert!(
         message.contains("made_up") && message.contains("purge_block") && message.contains(&absent),
         "the diagnostic must name the fixture, the command and the block: {message}"
