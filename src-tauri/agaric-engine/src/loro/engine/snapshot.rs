@@ -462,7 +462,7 @@ impl LoroEngine {
         // `ImportStatus::pending` and returns `Ok` regardless. This wrapper used
         // to discard the status, so a caller could not tell a fully-committed
         // import from one whose payload is still buffered outside the op-log.
-        // Carry it on every return path below.
+        // Returned alongside the capture so the caller can carry it.
         let pending: Vec<(PeerID, Counter, Counter)> = status
             .pending
             .as_ref()

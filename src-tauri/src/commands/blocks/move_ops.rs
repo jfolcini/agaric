@@ -454,7 +454,7 @@ async fn ordered_live_children(
     tx: &mut CommandTx,
     parent_id: Option<&str>,
 ) -> Result<Vec<String>, AppError> {
-    let ordered: Vec<String> = match parent_id {
+    Ok(match parent_id {
         Some(pid) => {
             // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
             sqlx::query_scalar::<_, String>(
@@ -474,8 +474,7 @@ async fn ordered_live_children(
             .fetch_all(&mut ***tx)
             .await?
         }
-    };
-    Ok(ordered)
+    })
 }
 
 /// Destination slot for every member of a batch move, in input order, so the
