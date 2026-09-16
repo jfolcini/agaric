@@ -2,11 +2,21 @@
  * #4353 — the mobile React-node-view freeze, pinned end to end.
  *
  * #4315 established the mechanism: `@tiptap/core`'s default
- * `NodeView.ignoreMutation` carries a branch that, on an iOS/Android user agent
- * with the editor focused, does NOT ignore a `childList` mutation anywhere
+ * `NodeView.ignoreMutation` carried a branch that, on an iOS/Android user agent
+ * with the editor focused, did NOT ignore a `childList` mutation anywhere
  * inside the node view's `dom` — not merely inside `contentDOM`. React rewriting
- * its own subtree therefore reads back as a user edit, prosemirror-view flushes
- * it, the flush re-renders the node view, and the cycle never terminates.
+ * its own subtree therefore read back as a user edit, prosemirror-view flushed
+ * it, the flush re-rendered the node view, and the cycle never terminated.
+ *
+ * FIXED UPSTREAM in `@tiptap/core@3.31.3`, which narrowed that branch's
+ * containment test from `this.dom.contains(target)` to
+ * `this.contentDOM.contains(target)` — in both `NodeView` and `MarkView`. React
+ * chrome lives inside `dom` and outside `contentDOM`, so it no longer reaches
+ * the branch at all. This suite caught the change rather than being told about
+ * it: the two tests that pinned the pre-fix answers went red on the bump, which
+ * is exactly what point (3) below exists to do, in the direction nobody plans
+ * for. They now pin the fixed shape, both arms, so a revert upstream reddens
+ * them again.
  *
  * The obvious reading of that is "every React node view in the app is exposed",
  * and it is wrong — but only because of two guards ABOVE the branch, in a
@@ -28,9 +38,13 @@
  *      freeze. The first also fires BEFORE `options.ignoreMutation` is
  *      consulted, which is why the override is not handed to a leaf node view.
  *   4. The branch itself is reproduced against the real prototype under a mobile
- *      user agent, next to `ignoreReactNodeViewChrome` answering the same
- *      mutation correctly — the falsifiable proof that the override is
- *      load-bearing for the one node view that reaches it.
+ *      user agent, both arms: chrome is ignored, a real `contentDOM` mutation
+ *      is not. `ignoreReactNodeViewChrome` is asserted alongside and still
+ *      short-circuits ahead of the branch, but since 3.31.3 it is no longer
+ *      compensating for an upstream defect — it answers `true` where the
+ *      default now also answers `true`. Whether to keep it is a judgement this
+ *      file does not make; it is recorded here so nobody re-derives it as
+ *      load-bearing from prose that has stopped being true.
  *   5. React MARK views are ratcheted separately (#4516 review note 1). Marks
  *      are the one class (1)–(4) do not cover, and the more dangerous one: a
  *      mark has no `isLeaf`/`isAtom`, so `MarkView.ignoreMutation` has no guard
@@ -38,11 +52,11 @@
  *      unconditionally, so guard (1) never fires either. `REACT_MARK_VIEWS` is
  *      empty because `src/` has none — the tests fail the moment one appears.
  *
- * Version note: the snippet #4353 quotes is `MarkView`'s copy of the method.
- * `NodeView`'s (the one React node views run, `@tiptap/core@3.30.2`
+ * Version note: the snippet #4353 quotes is `MarkView`'s copy of the method,
+ * as it stood before 3.31.3. `NodeView`'s (the one React node views run,
  * upstream NodeView.ts, not a path in this repo) carries guard (2) as well,
- * which `MarkView`'s does not —
- * so the blast radius is smaller than the issue assumed. Everything here reads
+ * which `MarkView`'s does not — so the blast radius was smaller than the issue
+ * assumed. Everything here reads
  * the real `NodeView.prototype` / `MarkView.prototype`, not a transcription of
  * either; the difference between them is asserted differentially, by handing
  * ONE `this` to both.
@@ -425,6 +439,16 @@ function chromeChildListMutation(target: Node): ViewMutationRecord {
   } as unknown as ViewMutationRecord
 }
 
+/**
+ * The same `childList` shape, but targeting the CONTENT host rather than the
+ * chrome beside it. `@tiptap/core@3.31.3` narrowed the mobile branch's
+ * containment check from `this.dom` to `this.contentDOM`, so this is the target
+ * that still reaches it — the other arm of the pair.
+ */
+function contentChildListMutation(target: Node): ViewMutationRecord {
+  return chromeChildListMutation(target)
+}
+
 /** Force `isAndroid()` (and so the mobile branch) true for the duration of a test. */
 function useMobileUserAgent(): void {
   vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
@@ -490,7 +514,7 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
     expect(override).toHaveBeenCalledTimes(1)
   })
 
-  it('without an override, refuses to ignore React chrome on a mobile UA with the editor focused', () => {
+  it('mobile branch reaches contentDOM mutations only — both arms (#4353 fixed upstream in 3.31.3)', () => {
     useMobileUserAgent()
     const { dom, contentHost, chrome } = buildNodeViewDom()
     const self: IgnoreMutationSelf = {
@@ -500,13 +524,25 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
       options: { ignoreMutation: null },
       editor: { isFocused: true },
     }
-    const mutation = chromeChildListMutation(chrome)
 
-    // `false` = "re-read / re-parse this" — React's own write fed back into
-    // prosemirror-view. That is the freeze.
-    expect(defaultIgnoreMutation.call(self, mutation)).toBe(false)
-    // …and this is what the override answers for the same mutation.
-    expect(ignoreReactNodeViewChrome({ mutation })).toBe(true)
+    // THE FIX. Up to 3.31.0 this branch tested `this.dom.contains(target)`, so
+    // React chrome — inside `dom`, outside `contentDOM` — answered `false`
+    // ("re-read / re-parse this"), React's own write fed back into
+    // prosemirror-view, and that was the freeze. 3.31.3 narrowed the check to
+    // `this.contentDOM.contains(target)`, so chrome now falls through to the
+    // trailing `return true` and is ignored.
+    expect(defaultIgnoreMutation.call(self, chromeChildListMutation(chrome))).toBe(true)
+
+    // The other arm, and the reason the first is not vacuous: the branch is
+    // NARROWED, not removed. A mutation genuinely inside `contentDOM` still
+    // answers `false`. Pinning only the chrome arm would pass just as well
+    // against a build that deleted the branch outright.
+    expect(defaultIgnoreMutation.call(self, contentChildListMutation(contentHost))).toBe(false)
+
+    // The override still answers `true` for the chrome mutation, and still
+    // short-circuits ahead of the branch (the test above this one). It is no
+    // longer compensating for the upstream defect — see the file header.
+    expect(ignoreReactNodeViewChrome({ mutation: chromeChildListMutation(chrome) })).toBe(true)
   })
 
   it('ignores the same mutation on a DESKTOP UA — which is why the freeze was UA-gated', () => {
@@ -786,7 +822,12 @@ describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored con
       options: { ignoreMutation: null },
       editor: { isFocused: true },
     }
-    const mutation = chromeChildListMutation(chrome)
+    // Targeted at the CONTENT host, not the chrome: since 3.31.3 narrowed the
+    // mobile branch to `contentDOM`, a chrome mutation is ignored by both
+    // prototypes and the differential would be invisible. This target still
+    // reaches the branch, so the leaf/atom guard is the only thing that can
+    // separate the two answers — which is the claim.
+    const mutation = contentChildListMutation(contentHost)
 
     expect(defaultIgnoreMutation.call(self as unknown as IgnoreMutationSelf, mutation)).toBe(true)
     // `false` = "re-read / re-parse this". That is the freeze, on a mark view
