@@ -189,11 +189,27 @@ function revertPropertyMap(
   payload: Record<string, unknown>,
   blockId: string,
   properties: Properties,
+  b: Record<string, unknown> | undefined,
 ): boolean {
   if (opType !== 'set_property' && opType !== 'delete_property') return false
 
   const key = payload['key'] as string
   const fromValue = payload['from_value'] as Record<string, unknown> | null | undefined
+
+  /**
+   * #5057 — `space` is column-backed, so restoring the property map alone
+   * leaves the row in the space it was just moved out of. The forward
+   * `set_property` mirrors `space` into `blocks.space_id`, and the backend's
+   * reverse clears the column through `DeleteProperty(space)` →
+   * `reserved_key_blocks_column`. The four OTHER column-backed keys ride
+   * dedicated op types that `revertBlockRowField` already restores; `space`
+   * rides the generic one, which is why it needs this. Page row only, as in the
+   * forward write and `move_blocks_to_space`.
+   */
+  const mirrorSpaceColumn = (): void => {
+    if (key !== 'space' || !b) return
+    b['space_id'] = (fromValue?.['value_ref'] as string | null | undefined) ?? null
+  }
 
   if (opType === 'set_property') {
     if (fromValue == null) {
@@ -204,6 +220,7 @@ function revertPropertyMap(
       if (!properties.has(blockId)) properties.set(blockId, new Map())
       properties.get(blockId)?.set(key, { key, ...fromValue })
     }
+    mirrorSpaceColumn()
     return true
   }
 
@@ -211,6 +228,7 @@ function revertPropertyMap(
   if (fromValue == null) return true
   if (!properties.has(blockId)) properties.set(blockId, new Map())
   properties.get(blockId)?.set(key, { key, ...fromValue })
+  mirrorSpaceColumn()
   return true
 }
 
@@ -358,7 +376,10 @@ export function applyRevertForOp(
 
   // Property and tag reverts: silent no-op if the relevant aux map wasn't
   // wired in by the caller.
-  if (state.properties && revertPropertyMap(target.op_type, payload, blockId, state.properties)) {
+  if (
+    state.properties &&
+    revertPropertyMap(target.op_type, payload, blockId, state.properties, b)
+  ) {
     return
   }
   if (state.blockTags && revertTagSet(target.op_type, payload, blockId, state.blockTags)) {

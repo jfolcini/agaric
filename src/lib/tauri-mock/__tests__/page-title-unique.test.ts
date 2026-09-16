@@ -96,9 +96,9 @@ describe('tauri-mock page-title uniqueness (#4723)', () => {
     }) as string
 
     expect(opLog.map((o) => o.op_type)).toEqual(['create_block', 'set_property'])
-    const spaceOp = opLog[1]
-    expect(spaceOp).toBeDefined()
-    expect(JSON.parse(spaceOp?.payload ?? '{}')).toMatchObject({ block_id: id, key: 'space' })
+    // `?? '{}'` already fails the match when the op is missing, so a separate
+    // presence assertion would add nothing.
+    expect(JSON.parse(opLog[1]?.payload ?? '{}')).toMatchObject({ block_id: id, key: 'space' })
   })
 
   it('edit_block refuses a page rename to a title held in the same space, coded DuplicatePageTitle', () => {
