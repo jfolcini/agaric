@@ -1306,6 +1306,21 @@ export const blocksHandlers = {
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
+      // Capture the prior membership so a revert restores THAT space, not
+      // nothing. The backend's `set_property_in_tx` records it, and the mock's
+      // generic `set_property` handler does too; omitting it here made an undo
+      // of a cross-space move clear `space_id` and drop the page out of every
+      // space (#5057 review).
+      const priorSpace = properties.get(blockId)?.get('space')
+      const fromValue = priorSpace
+        ? {
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: (priorSpace['value_ref'] as string | null) ?? null,
+            value_bool: null,
+          }
+        : null
       if (!properties.has(blockId)) properties.set(blockId, new Map())
       properties.get(blockId)?.set('space', {
         block_id: blockId,
@@ -1330,6 +1345,7 @@ export const blocksHandlers = {
         value_number: null,
         value_date: null,
         value_ref: spaceId,
+        from_value: fromValue,
       })
       count++
     }

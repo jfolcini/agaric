@@ -218,17 +218,13 @@ test.describe('Draft autosave', () => {
 
   // #2813 (#2786 fix) — Enter caret-splitting a block must not strand the
   // departed block's pre-existing draft row. The five draft commands were pure
-  // no-op stubs when this spec was written; #5057 gave the mock a real
-  // `blockDrafts` store, so a draft ROW is observable now and this assertion
-  // could be tightened to read it back. It still asserts on the outgoing IPC,
-  // as the rest of this file does, and a `page.reload()` cannot
-  // distinguish fixed-vs-buggy behaviour either: nothing the mock ever
-  // "persists" survives a reload regardless of which code path ran (see
-  // this file's own header — `setupMock()` wipes all module-scoped mock
-  // state on every fresh load). The only substrate that actually
-  // discriminates the fix is the OUTGOING IPC call the discard makes,
-  // which is exactly what every other test in this file already asserts
-  // on — so this test follows suit instead of reaching for a reload.
+  // no-op stubs when this spec was written, so the outgoing IPC was the only
+  // substrate that could discriminate the fix. #5057 gave the mock a real
+  // `blockDrafts` store, so the test now re-queries `list_drafts` and asserts
+  // the row is GONE — the durable effect testing invariant 1 asks for, with the
+  // IPC assertion kept as the "discarded, not flushed" half. The header's
+  // reload caveat still stands and does not apply here: this reads the store
+  // in-page, without a navigation to wipe it.
   test("Enter caret-splits a block: the departed block's pre-existing draft is discarded via delete_draft, not flushed (#2786)", async ({
     page,
   }) => {
@@ -289,5 +285,21 @@ test.describe('Draft autosave', () => {
     // would append a second edit_block that clobbers the split just made.
     const flushedIds = (await getInvokeCalls(page, 'flush_draft')).map((c) => c['blockId'])
     expect(flushedIds).not.toContain(blockId)
+
+    // #5057 — the durable effect, not just the call. The discard has already
+    // been observed above, so this reads settled state: re-query the store and
+    // assert the departed block holds no draft row. Asserting the response is
+    // an array first keeps a broken IPC from passing as "no draft".
+    const draftIds = await page.evaluate(async () => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const rows = await internals?.invoke('list_drafts', {})
+      return Array.isArray(rows) ? rows.map((r: { block_id: string }) => r.block_id) : null
+    })
+    expect(draftIds).not.toBeNull()
+    expect(draftIds).not.toContain(blockId)
   })
 })
