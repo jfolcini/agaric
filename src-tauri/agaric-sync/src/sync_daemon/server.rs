@@ -405,8 +405,9 @@ pub(crate) fn peer_is_bound_to_another_key(
     endpoint_id: &str,
 ) -> bool {
     if settled_remote_id.is_empty() {
-        // Nothing was named, so there is nothing to take over; the caller's own
-        // `!settled_remote_id.is_empty()` arm is what declines to bind.
+        // Nothing was named, so there is nothing to take over; `bind_peer_to_key`'s
+        // own `settled_remote_id.is_empty() || settled_remote_id == ctx.device_id`
+        // guard is what declines to bind.
         return false;
     }
     match peers {
@@ -545,7 +546,7 @@ async fn admit_peer(
     // used to make the coin flip permanent.
     //
     // #4451: and it goes through the SAME normaliser as the stated id.
-    // `accept_stated_device_id` was applied in `opening_parts` and not here, so the
+    // `accept_stated_device_id` is applied in `recv_opening` and not here, so the
     // value that reaches `bind_endpoint_id` — which validates only `is_empty()` —
     // could still be arbitrarily long or display-hostile wire text, on a row
     // that is permanent and in a device list the user acts on. One function,
@@ -658,10 +659,7 @@ async fn admit_peer(
 /// Returns whether this side now OWES THE SHUTDOWN WAIT — not whether it spoke
 /// last. The two differ on the error path, which returns `false` while
 /// `end.spoke_last` may already be `true` (the responder did reply
-/// `ResetRequired`). The caller must therefore `||` this in, never assign it:
-/// `spoke_last = offer_snapshot_catchup(..).await` would clear a wait that is
-/// still owed and truncate the tail. It is spelled as an `&&` short-circuit at
-/// the call site for exactly that reason.
+/// `ResetRequired`), so the caller must `||` this in rather than assign it.
 ///
 /// A completed offer does owe the wait. The offering side writes last: the Loro
 /// catch-up ends with `LoroSync { is_last: true }` (or `SyncComplete` for an

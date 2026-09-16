@@ -256,34 +256,28 @@ async fn resolve_attachment_blob(
     .fetch_optional(&mut ***tx)
     .await?;
 
-    match existing_blob {
-        Some(canonical) if canonical != fs_path => {
-            // Reuse: redirect the row at the canonical blob file. The
-            // just-written duplicate at `fs_path` is now redundant and is left
-            // to the GC (see this function's doc comment).
-            Ok(canonical)
-        }
-        Some(canonical) => {
-            // Same path already is the canonical file (e.g. re-add of the
-            // exact same fs_path). Nothing redundant.
-            Ok(canonical)
-        }
-        None => {
-            // First copy of these bytes — register the blob owning them.
-            sqlx::query!(
-                "INSERT INTO attachment_blobs \
-                 (content_hash, on_disk_path, size_bytes, created_at) \
-                 VALUES (?, ?, ?, ?)",
-                content_hash,
-                fs_path,
-                size_bytes,
-                now,
-            )
-            .execute(&mut ***tx)
-            .await?;
-            Ok(fs_path.to_string())
-        }
+    // Reuse the canonical blob file. When it differs from `fs_path` the
+    // just-written duplicate is now redundant and is left to the GC (see this
+    // function's doc comment); when it is the same path (a re-add of the exact
+    // same `fs_path`) there is nothing redundant. Both answer with the
+    // canonical path.
+    if let Some(canonical) = existing_blob {
+        return Ok(canonical);
     }
+
+    // First copy of these bytes — register the blob owning them.
+    sqlx::query!(
+        "INSERT INTO attachment_blobs \
+         (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES (?, ?, ?, ?)",
+        content_hash,
+        fs_path,
+        size_bytes,
+        now,
+    )
+    .execute(&mut ***tx)
+    .await?;
+    Ok(fs_path.to_string())
 }
 
 /// Best-effort cleanup for bytes written by a rejected upload.

@@ -582,68 +582,68 @@ fn tool_desc_get_page() -> ToolDescription {
 /// a new filter dimension is a change to this shape and nothing else.
 fn search_filter_schema() -> serde_json::Value {
     json!({
-            "type": "object",
-            "additionalProperties": false,
-            "description": "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
-            "properties": {
-                "include_page_globs": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
-                },
-                "exclude_page_globs": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Page-name glob exclude list.",
-                },
-                "case_sensitive": { "type": "boolean" },
-                "whole_word": { "type": "boolean" },
-                "is_regex": { "type": "boolean", "description": "Treat `query` as a regex (FTS5 bypassed)." },
-                "block_type_filter": { "type": "string", "description": "Restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
-                "state_filter": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
-                },
-                "priority_filter": { "type": "array", "items": { "type": "string" } },
-                "excluded_state_filter": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Adding literal `'none'` excludes the NULL bucket too, AND-joining to `(todo_state IS NOT NULL AND todo_state NOT IN (...))`; `'none'` alone emits `todo_state IS NOT NULL`.",
-                },
-                "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
-                "due_filter": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
+        "properties": {
+            "include_page_globs": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
+            },
+            "exclude_page_globs": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Page-name glob exclude list.",
+            },
+            "case_sensitive": { "type": "boolean" },
+            "whole_word": { "type": "boolean" },
+            "is_regex": { "type": "boolean", "description": "Treat `query` as a regex (FTS5 bypassed)." },
+            "block_type_filter": { "type": "string", "description": "Restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
+            "state_filter": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
+            },
+            "priority_filter": { "type": "array", "items": { "type": "string" } },
+            "excluded_state_filter": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Adding literal `'none'` excludes the NULL bucket too, AND-joining to `(todo_state IS NOT NULL AND todo_state NOT IN (...))`; `'none'` alone emits `todo_state IS NOT NULL`.",
+            },
+            "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
+            "due_filter": {
+                "type": "object",
+                "description": "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
+            },
+            "scheduled_filter": {
+                "type": "object",
+                "description": "Same shape as `due_filter` but on `blocks.scheduled_date`.",
+            },
+            "property_filters": {
+                "type": "array",
+                "items": {
                     "type": "object",
-                    "description": "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
+                    "properties": {
+                        "key": { "type": "string" },
+                        "value": { "type": "string" },
+                    },
+                    "required": ["key", "value"],
                 },
-                "scheduled_filter": {
+                "description": "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
+            },
+            "excluded_property_filters": {
+                "type": "array",
+                "items": {
                     "type": "object",
-                    "description": "Same shape as `due_filter` but on `blocks.scheduled_date`.",
-                },
-                "property_filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "key": { "type": "string" },
-                            "value": { "type": "string" },
-                        },
-                        "required": ["key", "value"],
+                    "properties": {
+                        "key": { "type": "string" },
+                        "value": { "type": "string" },
                     },
-                    "description": "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
-                },
-                "excluded_property_filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "key": { "type": "string" },
-                            "value": { "type": "string" },
-                        },
-                        "required": ["key", "value"],
-                    },
+                    "required": ["key", "value"],
                 },
             },
+        },
     })
 }
 
