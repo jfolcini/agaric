@@ -655,6 +655,35 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * #3830 — the THIRD read bucket: waived because no fixture can spell the INPUT,
+ * which is a different permanence from `NO_DOMAIN_STATE_READ`'s "there is no
+ * state to compare".
+ *
+ * The line between this and `NOT_YET_PINNED_READ` is the one #4667's doc block
+ * above already draws, and it is easy to get wrong — I did, in #5055. "Outside
+ * the conformance snapshot scope" is NOT a reason to be here: it says the
+ * snapshot is too narrow, and a widened snapshot fixes it. Only an input a
+ * fixture could never name belongs here.
+ *
+ * The check that catches the mistake is mechanical, so apply it before adding a
+ * name: a read whose table has a MUTATING counterpart sitting in
+ * `NOT_YET_PINNED_MUTATING` is debt, not a blocker. If the snapshot can widen
+ * to pin `create_space`, it can carry spaces, so `list_spaces` can be pinned
+ * with it. That test is what moved four commands out of this bucket; #5056
+ * tracks making it a guard rather than a paragraph.
+ */
+const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
+  // Selected by an op-log coordinate each stack generates independently, so no
+  // static fixture can name the same op on both sides (#3824's conclusion).
+  'compute_block_vs_current_diff',
+  'compute_edit_diff',
+  // Wall-clock dependent: a backend-authored `expected` binds to the day it was
+  // generated on, so the fixture cannot spell the input on any other day.
+  'compute_reconciliation_report',
+  'list_projected_agenda',
+])
+
+/**
  * The shrink-only ratchet (#4667), mirroring the retired
  * `tauri-import-baseline` one (#2927): these are the waived commands that
  * COULD be pinned and are not yet.
@@ -706,23 +735,70 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'update_peer_name',
 ]
 
+/**
+ * The read leg's debt, and it is NOT zero. Each of these is waived because the
+ * snapshot or the query harness is too narrow, which a widening fixes — and
+ * each has a mutating counterpart already counted as debt above:
+ * `list_spaces` against `create_space` / `create_page_in_space` /
+ * `move_blocks_to_space`, `list_drafts` against the four draft writers,
+ * `get_compaction_status` against `compact_op_log_cmd`, and
+ * `export_page_markdown` against `import_markdown` / `import_bibliography`
+ * (the query projection binds row sets and cannot compare a rendered `String`).
+ *
+ * Pinning the write is most of the work for the read, so #5057 burns these down
+ * by table rather than by command.
+ */
 const NOT_YET_PINNED_READ: readonly string[] = [
-  'compute_block_vs_current_diff',
-  'compute_edit_diff',
-  'compute_reconciliation_report',
   'export_page_markdown',
   'get_compaction_status',
   'list_drafts',
-  'list_projected_agenda',
   'list_spaces',
 ]
 
+/**
+ * #5056 — the check that makes the read-leg classification falsifiable instead
+ * of merely argued.
+ *
+ * `notYetPinned()` is allowlist keys minus the permanent sets, so moving a name
+ * into a permanent set makes debt vanish with the ratchet still green. That is
+ * not hypothetical: #5055 landed `NOT_YET_PINNED_READ = []` with three
+ * misclassified entries and every test passed.
+ *
+ * The contradiction is mechanical. A read and a write over the same table are
+ * blocked by the same thing — the snapshot not carrying that table — so they
+ * cannot be in different halves. If `create_space` is debt, the snapshot can
+ * widen to carry spaces, and `list_spaces` is debt too.
+ *
+ * Fail-closed in both directions: every command named below must still exist in
+ * `bindings.ts`, so a rename disables the pairing loudly rather than silently.
+ */
+const READ_WRITE_TABLE_PAIRS: Readonly<
+  Record<string, { readonly reads: readonly string[]; readonly writes: readonly string[] }>
+> = {
+  spaces: {
+    reads: ['list_spaces'],
+    writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
+  },
+  drafts: {
+    reads: ['list_drafts'],
+    writes: ['save_draft', 'delete_draft', 'flush_draft', 'flush_all_drafts'],
+  },
+  'op-log maintenance': {
+    reads: ['get_compaction_status'],
+    writes: ['compact_op_log_cmd'],
+  },
+  'markdown import/export': {
+    reads: ['export_page_markdown'],
+    writes: ['import_markdown', 'import_bibliography'],
+  },
+}
+
 function notYetPinned(
   allowlist: Readonly<Record<string, string>>,
-  principled: ReadonlySet<string>,
+  ...principled: readonly ReadonlySet<string>[]
 ): string[] {
   return Object.keys(allowlist)
-    .filter((cmd) => !principled.has(cmd))
+    .filter((cmd) => !principled.some((set) => set.has(cmd)))
     .toSorted()
 }
 
@@ -2704,7 +2780,14 @@ describe('#3083 conformance-coverage ratchet', () => {
     // name that silently shrinks the debt count without pinning anything.
     const orphanMutating = [...NO_DOMAIN_STATE_MUTATING].filter((c) => !(c in NO_FIXTURE_ALLOWLIST))
     const orphanRead = [...NO_DOMAIN_STATE_READ].filter((c) => !(c in READ_NO_QUERY_ALLOWLIST))
-    expect({ orphanMutating, orphanRead }).toEqual({ orphanMutating: [], orphanRead: [] })
+    const orphanBlockedRead = [...PINNING_BLOCKED_READ].filter(
+      (c) => !(c in READ_NO_QUERY_ALLOWLIST),
+    )
+    expect({ orphanMutating, orphanRead, orphanBlockedRead }).toEqual({
+      orphanMutating: [],
+      orphanRead: [],
+      orphanBlockedRead: [],
+    })
   })
 
   it('#4667 the not-yet-pinned lists match exactly (shrink-only)', () => {
@@ -2715,9 +2798,41 @@ describe('#3083 conformance-coverage ratchet', () => {
     expect(notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING), message).toEqual(
       NOT_YET_PINNED_MUTATING,
     )
-    expect(notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ), message).toEqual(
-      NOT_YET_PINNED_READ,
-    )
+    expect(
+      notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ, PINNING_BLOCKED_READ),
+      message,
+    ).toEqual(NOT_YET_PINNED_READ)
+  })
+
+  it('#5056 a read is not "permanently blocked" while its table\'s writes are debt', () => {
+    const mutatingDebt = new Set(NOT_YET_PINNED_MUTATING)
+    const contradictions: string[] = []
+    const unknown: string[] = []
+
+    for (const [table, { reads, writes }] of Object.entries(READ_WRITE_TABLE_PAIRS)) {
+      for (const cmd of [...reads, ...writes]) {
+        if (!bindingsCommands.includes(cmd)) unknown.push(`${table}: ${cmd}`)
+      }
+      const debtWrites = writes.filter((w) => mutatingDebt.has(w))
+      if (debtWrites.length === 0) continue
+      for (const read of reads.filter((r) => PINNING_BLOCKED_READ.has(r))) {
+        contradictions.push(
+          `${read} is waived as permanently unpinnable, but ${table} writes ` +
+            `${JSON.stringify(debtWrites)} are counted as debt — widening the ` +
+            `snapshot to pin them carries ${read} too, so it is debt, not a blocker`,
+        )
+      }
+    }
+
+    // Fail closed: a renamed command must break this loudly, not quietly stop
+    // pairing anything.
+    expect(
+      unknown,
+      `READ_WRITE_TABLE_PAIRS names commands absent from bindings.ts ` +
+        `${JSON.stringify(unknown)}. Update the map; do not delete the pair.`,
+    ).toEqual([])
+
+    expect(contradictions, contradictions.join('\n')).toEqual([])
   })
 
   it('allowlist stays honest (no stale, read-only, or now-covered entries)', () => {
