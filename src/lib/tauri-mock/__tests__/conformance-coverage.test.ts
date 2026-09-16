@@ -655,45 +655,6 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
 ])
 
 /**
- * #3830 — the THIRD read bucket, and the reason the read leg's not-yet-pinned
- * list is empty.
- *
- * `notYetPinned()` is mechanical: allowlist keys minus the principled sets. With
- * only `NO_DOMAIN_STATE_READ` to subtract, a command waived for a principled
- * reason that is *not* "this command reads no domain state" had nowhere to go
- * and landed in the backlog bucket by default. All eight entries below were in
- * that position — each already carried a substantive blocker in its waiver
- * string, and none of them was "nobody has written the fixture yet".
- *
- * The distinction from `NO_DOMAIN_STATE_READ` is the shape of the blocker, and
- * both are permanent. There the command has no domain state to compare; here it
- * has state, and the FIXTURE cannot name it — the input is an op coordinate the
- * two stacks generate independently, or a wall clock, or a table the snapshot
- * does not carry. A widened snapshot does not fix any of the three.
- *
- * This bucket is an explicit list for the same reason the others are: a
- * predicate over waiver strings would accept every new entry that happened to
- * be worded like a blocker, which is the fail-open the split exists to prevent.
- * A newly waived read command named in neither set still falls through to
- * `NOT_YET_PINNED_READ` and reddens the ratchet.
- */
-const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
-  // Selected by an op-log coordinate the two stacks generate independently, so
-  // no fixture can spell the same input on both sides (#3824's conclusion).
-  'compute_block_vs_current_diff',
-  'compute_edit_diff',
-  'get_compaction_status',
-  // Wall-clock dependent — a backend-authored `expected` binds to the day it
-  // was generated on.
-  'compute_reconciliation_report',
-  'list_projected_agenda',
-  // Outside the conformance snapshot's scope by construction.
-  'export_page_markdown',
-  'list_drafts',
-  'list_spaces',
-])
-
-/**
  * The shrink-only ratchet (#4667), mirroring the retired
  * `tauri-import-baseline` one (#2927): these are the waived commands that
  * COULD be pinned and are not yet.
@@ -745,20 +706,23 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'update_peer_name',
 ]
 
-/**
- * Empty since #3830, and that is the claim: every waived read command is waived
- * for a stated permanent reason, so the read leg carries no debt. A new entry
- * here means a read command was waived without being classified — name its
- * blocker in `PINNING_BLOCKED_READ`, or pin it and drop the waiver.
- */
-const NOT_YET_PINNED_READ: readonly string[] = []
+const NOT_YET_PINNED_READ: readonly string[] = [
+  'compute_block_vs_current_diff',
+  'compute_edit_diff',
+  'compute_reconciliation_report',
+  'export_page_markdown',
+  'get_compaction_status',
+  'list_drafts',
+  'list_projected_agenda',
+  'list_spaces',
+]
 
 function notYetPinned(
   allowlist: Readonly<Record<string, string>>,
-  ...principled: readonly ReadonlySet<string>[]
+  principled: ReadonlySet<string>,
 ): string[] {
   return Object.keys(allowlist)
-    .filter((cmd) => !principled.some((set) => set.has(cmd)))
+    .filter((cmd) => !principled.has(cmd))
     .toSorted()
 }
 
@@ -1431,8 +1395,10 @@ const RUST_COMMANDS_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', '
  *
  * #4639 moved the reserved-key arm out of `filtered_blocks_query_inner` into
  * its own `reserved_column_predicate_sql`, so this parser follows it there.
- * The chain is byte-identical and still terminates the function; only its
- * sentinel changed, from the loop's `continue;` to the helper's `Ok(frag)`.
+ * The chain is not byte-identical — it appends to the helper's local `frag`
+ * rather than to the caller's `sql`. What this guard reads, and what the move
+ * preserved, is the `pf.value_*` dispatch ORDER; the sentinel that ends the
+ * chain changed from the loop's `continue;` to the helper's `Ok(frag)`.
  *
  * Each site is read twice over:
  *
@@ -2738,14 +2704,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     // name that silently shrinks the debt count without pinning anything.
     const orphanMutating = [...NO_DOMAIN_STATE_MUTATING].filter((c) => !(c in NO_FIXTURE_ALLOWLIST))
     const orphanRead = [...NO_DOMAIN_STATE_READ].filter((c) => !(c in READ_NO_QUERY_ALLOWLIST))
-    const orphanBlockedRead = [...PINNING_BLOCKED_READ].filter(
-      (c) => !(c in READ_NO_QUERY_ALLOWLIST),
-    )
-    expect({ orphanMutating, orphanRead, orphanBlockedRead }).toEqual({
-      orphanMutating: [],
-      orphanRead: [],
-      orphanBlockedRead: [],
-    })
+    expect({ orphanMutating, orphanRead }).toEqual({ orphanMutating: [], orphanRead: [] })
   })
 
   it('#4667 the not-yet-pinned lists match exactly (shrink-only)', () => {
@@ -2756,10 +2715,9 @@ describe('#3083 conformance-coverage ratchet', () => {
     expect(notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING), message).toEqual(
       NOT_YET_PINNED_MUTATING,
     )
-    expect(
-      notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ, PINNING_BLOCKED_READ),
-      message,
-    ).toEqual(NOT_YET_PINNED_READ)
+    expect(notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ), message).toEqual(
+      NOT_YET_PINNED_READ,
+    )
   })
 
   it('allowlist stays honest (no stale, read-only, or now-covered entries)', () => {

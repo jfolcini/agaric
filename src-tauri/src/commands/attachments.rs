@@ -178,7 +178,7 @@ async fn persist_attachment(
         )));
     }
 
-    let (row_fs_path, redundant_file) =
+    let row_fs_path =
         resolve_attachment_blob(&mut tx, &fs_path, size_bytes, &content_hash, now).await?;
 
     // Append to op_log within transaction
@@ -212,16 +212,6 @@ async fn persist_attachment(
     // canonical blob path instead). Reclamation of those bytes is DEFERRED to
     // the GC pass (`cleanup_orphaned_attachments`) rather than unlinked here.
     //
-    // Same reasoning as the delete path: an eager post-commit "EXISTS? then
-    // remove_file" is racy on a multi-connection write pool with no global
-    // write mutex — between the EXISTS check and the unlink a concurrent
-    // operation could link a row to this path. The blast radius of unlinking
-    // wrongly is smaller here (the path is a fresh per-add ULID), but we defer
-    // for consistency and to never unlink a path a committed row may
-    // reference. The GC reclaims the orphan race-free (its referenced-path
-    // membership test and unlink are colocated).
-    let _ = redundant_file;
-
     Ok(AttachmentRow {
         id: BlockId::from_trusted(&attachment_id),
         block_id,
@@ -241,15 +231,24 @@ async fn persist_attachment(
 /// commit). Otherwise this is the first copy of these bytes — create the blob
 /// row pointing at the supplied `fs_path`.
 ///
-/// Returns the path the attachment row will store + the path whose bytes are
-/// now redundant.
+/// Returns the path the attachment row will store.
+///
+/// The bytes left redundant by a reuse are deliberately NOT reported back for
+/// unlinking, and the GC reclaims them instead. Same reasoning as the delete
+/// path: an eager post-commit "EXISTS? then remove_file" is racy on a
+/// multi-connection write pool with no global write mutex — between the EXISTS
+/// check and the unlink a concurrent operation could link a row to this path.
+/// The blast radius of unlinking wrongly is smaller here (the path is a fresh
+/// per-add ULID), but we defer for consistency and to never unlink a path a
+/// committed row may reference. The GC reclaims the orphan race-free (its
+/// referenced-path membership test and unlink are colocated).
 async fn resolve_attachment_blob(
     tx: &mut CommandTx,
     fs_path: &str,
     size_bytes: i64,
     content_hash: &str,
     now: i64,
-) -> Result<(String, Option<String>), AppError> {
+) -> Result<String, AppError> {
     let existing_blob = sqlx::query_scalar!(
         "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
         content_hash
@@ -259,14 +258,15 @@ async fn resolve_attachment_blob(
 
     match existing_blob {
         Some(canonical) if canonical != fs_path => {
-            // Reuse: redirect the row at the canonical blob file and mark the
-            // just-written duplicate for post-commit cleanup.
-            Ok((canonical, Some(fs_path.to_string())))
+            // Reuse: redirect the row at the canonical blob file. The
+            // just-written duplicate at `fs_path` is now redundant and is left
+            // to the GC (see this function's doc comment).
+            Ok(canonical)
         }
         Some(canonical) => {
             // Same path already is the canonical file (e.g. re-add of the
             // exact same fs_path). Nothing redundant.
-            Ok((canonical, None))
+            Ok(canonical)
         }
         None => {
             // First copy of these bytes — register the blob owning them.
@@ -281,7 +281,7 @@ async fn resolve_attachment_blob(
             )
             .execute(&mut ***tx)
             .await?;
-            Ok((fs_path.to_string(), None))
+            Ok(fs_path.to_string())
         }
     }
 }

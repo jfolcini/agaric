@@ -301,7 +301,7 @@ async fn fetch_page_link_edges(
     tag_ids_json: Option<&str>,
     cap_param: i64,
 ) -> Result<Vec<PageLink>, AppError> {
-    let edges = sqlx::query_as!(
+    Ok(sqlx::query_as!(
         PageLink,
         r#"WITH space_members AS MATERIALIZED (
              SELECT id AS block_id FROM blocks
@@ -341,8 +341,7 @@ async fn fetch_page_link_edges(
         cap_param,
     )
     .fetch_all(pool)
-    .await?;
-    Ok(edges)
+    .await?)
 }
 
 /// The TRUE edge count behind [`list_page_links_inner_split_with_cap`]: the
@@ -352,7 +351,7 @@ async fn count_page_link_edges(
     scope: &SpaceScope,
     tag_ids_json: Option<&str>,
 ) -> Result<i64, AppError> {
-    let total = sqlx::query_scalar!(
+    Ok(sqlx::query_scalar!(
         r#"WITH space_members AS MATERIALIZED (
                  SELECT id AS block_id FROM blocks
                  WHERE space_id = ?1
@@ -384,8 +383,7 @@ async fn count_page_link_edges(
         tag_ids_json,
     )
     .fetch_one(pool)
-    .await?;
-    Ok(total)
+    .await?)
 }
 
 /// Tauri command: list page-to-page links for graph visualization.
