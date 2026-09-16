@@ -1,5 +1,5 @@
 {
-  "description": "#5057 \u2014 the trash-lifecycle batch trio (`delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`) driven through the command leg. What separates these from their single-block siblings is the COHORT: each acts on and reports every block the cascade reached, not the ids the caller listed. The fixture drives a delete that cascades DOWN a 3-level subtree, a restore that must bring back that exact cohort, a restore that must walk UP a tombstoned ancestor chain, a purge that must cascade to descendants while appending one op per ROOT, and every refusal the three share.",
+  "description": "#5057 — the trash-lifecycle batch trio (`delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`) driven through the command leg. What separates these from their single-block siblings is the COHORT: each acts on and reports every block the cascade reached, not the ids the caller listed. The fixture drives a delete that cascades DOWN a 3-level subtree, a restore that must bring back that exact cohort, a restore that must walk UP a tombstoned ancestor chain, a purge that must cascade to descendants while appending one op per ROOT, and every refusal the three share.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -147,6 +147,12 @@
     },
     {
       "code": null,
+      "error": "invalid_operation",
+      "name": "restore_refuses_a_live_block",
+      "returns": []
+    },
+    {
+      "code": null,
       "error": null,
       "name": "purge_nested_page_cascades_to_descendants",
       "returns": ["purge_blocks_by_ids#affected_count=2"]
@@ -189,7 +195,7 @@
         "blockIds": ["S2", "S5"]
       },
       "command": "delete_blocks_by_ids",
-      "comment": "Two roots, one carrying a 2-level subtree. `deleted_count` is the whole cohort (S2+S3+S4, plus S5), not the two ids listed \u2014 that difference is the entire point of the batch variant.",
+      "comment": "Two roots, one carrying a 2-level subtree. `deleted_count` is the whole cohort (S2+S3+S4, plus S5), not the two ids listed — that difference is the entire point of the batch variant.",
       "name": "delete_alpha_and_beta",
       "via": "command"
     },
@@ -216,7 +222,7 @@
         "blockIds": ["S2"]
       },
       "command": "restore_blocks_by_ids",
-      "comment": "Restoring the ROOT alone must bring back S3 and S4 with it \u2014 the exact cohort the delete tombstoned \u2014 and unlike the ancestors in the next op, a cohort member IS counted. A handler that only clears `deleted_at` on the listed id answers 1 here instead of 3.",
+      "comment": "Restoring the ROOT alone must bring back S3 and S4 with it — the exact cohort the delete tombstoned — and unlike the ancestors in the next op, a cohort member IS counted. A handler that only clears `deleted_at` on the listed id answers 1 here instead of 3.",
       "name": "restore_alpha_brings_back_its_cohort",
       "via": "command"
     },
@@ -225,8 +231,18 @@
         "blockIds": ["S9"]
       },
       "command": "restore_blocks_by_ids",
-      "comment": "S9's parent S8 is still tombstoned, so restoring S9 alone would leave a live block under a dead parent. The restore revives the ancestor chain too \u2014 S8 is live in the settled snapshot \u2014 while `affected_count` stays 1. Count and effect deliberately disagree here: the number reports the requested roots' cohort, not the ancestors dragged back with it. The op above pins the other half of that rule, where the cohort IS counted.",
+      "comment": "S9's parent S8 is still tombstoned, so restoring S9 alone would leave a live block under a dead parent. The restore revives the ancestor chain too — S8 is live in the settled snapshot — while `affected_count` stays 1. Count and effect deliberately disagree here: the number reports the requested roots' cohort, not the ancestors dragged back with it. The op above pins the other half of that rule, where the cohort IS counted.",
       "name": "restore_walks_up_the_tombstoned_ancestor_chain",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "S2 is live by now, restored two ops above. The restore path REFUSES a live id rather than filtering it out, which is the asymmetry worth pinning: a MISSING id is skipped on this same call, so \"ignore what you cannot restore\" is not the rule. Matches the single-block `restore_block`.",
+      "expect_error": "invalid_operation",
+      "name": "restore_refuses_a_live_block",
       "via": "command"
     },
     {
@@ -234,7 +250,7 @@
         "blockIds": ["S6"]
       },
       "command": "purge_blocks_by_ids",
-      "comment": "One root listed, two rows destroyed: the physical cascade reaches S7. `affected_count` counts rows, while the op log records one `purge_block` per ROOT \u2014 the two numbers are deliberately different and both are pinned here.",
+      "comment": "One root listed, two rows destroyed: the physical cascade reaches S7. `affected_count` counts rows, while the op log records one `purge_block` per ROOT — the two numbers are deliberately different and both are pinned here.",
       "name": "purge_nested_page_cascades_to_descendants",
       "via": "command"
     },

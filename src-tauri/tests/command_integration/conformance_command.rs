@@ -94,6 +94,29 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["affected_count"],
         &[],
     ),
+    // #5057 — the three batch COUNTERS answer with a bare `i64`, which carries
+    // no field to name it. The shape's single attribute names the scalar, so
+    // the token reads `set_property_batch#updated=3` instead of exposing a
+    // synthetic key. See `project_return`.
+    ("set_property_batch", HEADED_ID_KEY, &["updated"], &[]),
+    ("set_todo_state_batch", HEADED_ID_KEY, &["updated"], &[]),
+    ("add_tags_by_ids", HEADED_ID_KEY, &["tagged"], &[]),
+    // #5057 — the two batch commands that answer with a LIST OF ROWS. Each
+    // element becomes its own row token in the order returned, so the returned
+    // ORDER is pinned as well as the rows: a batch that answers with the right
+    // set in the wrong order reds.
+    (
+        "create_blocks_batch",
+        "id",
+        &["block_type", "content", "parent_id", "position"],
+        &[],
+    ),
+    (
+        "move_blocks_batch",
+        "block_id",
+        &["new_parent_id", "new_position"],
+        &[],
+    ),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -121,6 +144,35 @@ pub(super) async fn apply_op_via_command(
     // A batch command's `blockIds` is a LIST of the same labels `blockId`
     // takes, each expanded through `resolve_op_arg_id`, so a fixture names
     // seed rows and op-created blocks in a batch exactly as it does singly.
+    // `create_blocks_batch` is the one batch command whose list is not ids but
+    // SPECS. Only `parentId` inside a spec is a label — everything else is the
+    // caller's own text, as for the scalar args above.
+    let block_specs = || {
+        arg("specs")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'specs'"))
+            .iter()
+            .map(|spec| CreateBlockSpec {
+                block_type: spec["blockType"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("conformance op '{command}': spec blockType"))
+                    .to_owned(),
+                content: spec["content"].as_str().unwrap_or_default().to_owned(),
+                parent_id: spec["parentId"]
+                    .as_str()
+                    .map(|l| BlockId::from(resolve_op_arg_id(l, created_ids).as_str())),
+                position: spec["position"].as_i64(),
+                properties: spec["properties"]
+                    .as_object()
+                    .map(|map| {
+                        map.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_owned()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>()
+    };
     let block_ids = || {
         arg("blockIds")
             .and_then(Value::as_array)
@@ -176,6 +228,46 @@ pub(super) async fn apply_op_via_command(
         "purge_blocks_by_ids" => {
             to_json(purge_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
         }
+        "set_property_batch" => to_json(
+            set_property_batch_inner(
+                pool,
+                DEV,
+                mat,
+                block_ids(),
+                req_str("key"),
+                opt_str("value"),
+            )
+            .await,
+        ),
+        "set_todo_state_batch" => {
+            to_json(set_todo_state_batch_inner(pool, DEV, mat, block_ids(), opt_str("state")).await)
+        }
+        "add_tags_by_ids" => to_json(
+            add_tags_by_ids_inner(
+                pool,
+                DEV,
+                mat,
+                block_ids(),
+                BlockId::from(arg_label_id("tagId").expect("tagId").as_str()),
+            )
+            .await,
+        ),
+        "create_blocks_batch" => {
+            to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
+        }
+        "move_blocks_batch" => to_json(
+            move_blocks_batch_inner(
+                pool,
+                DEV,
+                mat,
+                block_ids(),
+                arg_label_id("newParentId").map(|id| BlockId::from(id.as_str())),
+                arg("newIndex").and_then(Value::as_i64).unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'newIndex'")
+                }),
+            )
+            .await,
+        ),
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -190,9 +282,35 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         .unwrap_or_else(|| panic!("conformance op '{command}' has no RETURN_SHAPE entry"));
     // A headed shape has no id column: the head is the command name and the
     // attributes are read off the response beside it.
+    // A LIST return is a list of ROWS: one row token per element, in the order
+    // the command returned them. Distinct from `tuple_token`, which reads a
+    // JSON array POSITIONALLY as a single row.
+    if let Some(rows) = response.as_array() {
+        return rows
+            .iter()
+            .map(|row| row_token(row, id_key, attrs))
+            .collect();
+    }
     let headed;
     let row = if *id_key == HEADED_ID_KEY {
-        let mut obj = response.as_object().cloned().unwrap_or_default();
+        // A response that is not an object has no field for an attribute to
+        // name. `()` serializes to `null` and declares no attributes, so it
+        // renders as the bare head; a bare COUNT is the whole return value, so
+        // the shape's single attribute names it.
+        let mut obj = if let Some(fields) = response.as_object() {
+            fields.clone()
+        } else {
+            assert!(
+                attrs.len() <= 1,
+                "conformance op '{command}' returns a scalar, so at most ONE attribute can name \
+                 it; `RETURN_SHAPE` declares {attrs:?}"
+            );
+            let mut fields = serde_json::Map::new();
+            if let Some(name) = attrs.first() {
+                fields.insert((*name).to_owned(), response.clone());
+            }
+            fields
+        };
         obj.insert(HEADED_ID_KEY.to_owned(), json!(command));
         headed = Value::Object(obj);
         &headed
@@ -488,7 +606,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 11;
+    const MUTATING_ARM_COUNT: usize = 16;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
