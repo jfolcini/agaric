@@ -810,7 +810,10 @@ function defaultMarkIgnoreMutation(
 describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored contract)', () => {
   it('has NO leaf/atom guard: the same `this` a NodeView ignores, a MarkView does not', () => {
     useMobileUserAgent()
-    const { dom, contentHost, chrome } = buildMarkViewDom()
+    // `chrome` is deliberately not destructured: since 3.31.3 narrowed the
+    // mobile branch to `contentDOM`, a chrome mutation reaches neither
+    // prototype's branch and cannot show the differential (see below).
+    const { dom, contentHost } = buildMarkViewDom()
     // One object, handed to both prototypes. `isLeaf`/`isAtom` are set to the
     // values that make NodeView bail at guard (2); MarkView has no such guard
     // to reach, which is the whole claim — asserted differentially against the
