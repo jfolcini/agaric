@@ -49,7 +49,8 @@ pub struct ParsedBlock {
     /// #2510 — the raw Obsidian block-anchor id (WITHOUT the leading `^`)
     /// when this block's assembled content ended in a trailing `^block-id`
     /// marker, stripped out of `content` by the post-parse pass
-    /// [`extract_block_anchors`]. `None` for the overwhelming majority of
+    /// `extract_block_anchors` (private, so not linked). `None` for the
+    /// overwhelming majority of
     /// blocks (no trailing marker, or the block is `is_code`, which is never
     /// scanned). Consumed by `commands::pages::markdown` to resolve an
     /// Obsidian `[[Page#^block-id]]` / `[[#^block-id]]` wiki-link to the
