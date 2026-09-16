@@ -764,7 +764,6 @@ pub async fn add_tag(
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn add_tags_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -791,82 +790,10 @@ pub async fn add_tags_by_ids_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Validate `tag_id` ONCE: live block with block_type = 'tag' (TOCTOU-safe
-    // inside the tx). Mirrors `add_tag_inner`.
-    let tag_row = sqlx::query!(
-        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        tag_id_str
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    match tag_row {
-        None => {
-            return Err(AppError::NotFound(format!(
-                "tag block '{tag_id}' (not found or deleted)"
-            )));
-        }
-        Some(ref r) if r.block_type != "tag" => {
-            return Err(AppError::InvalidOperation(format!(
-                "block '{tag_id}' has block_type '{}', expected 'tag'",
-                r.block_type
-            )));
-        }
-        _ => {}
-    }
+    ensure_tag_block_in_tx(&mut tx, &tag_id).await?;
 
-    // #2038: resolve the live target set in ONE membership query instead of a
-    // per-block existence SELECT inside the loop (N+1). Skip-on-miss preserved.
-    let block_ids_json = serde_json::to_string(&block_ids)?;
-    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
-        r#"SELECT id FROM blocks
-           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
-        block_ids_json
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .collect();
-
-    // #2191: resolve the loop-invariant tag space ONCE (single `tag_id`, so
-    // its space cannot vary block-to-block) and every source-block space in
-    // ONE batched query, instead of the former ~2N `resolve_block_space` JOINs
-    // (one per block, one per tag, every iteration) under the IMMEDIATE writer
-    // lock. The batched map mirrors `resolve_block_space`'s orphan semantics:
-    // a block absent from the map has no space (an orphan) → `None`.
-    let mut tag_space =
-        agaric_store::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(tag_id_str))
-            .await?;
-
-    // Only the live, non-self blocks actually reach the per-block core, so
-    // pre-resolve spaces + dup status for exactly that set (skips wasted work
-    // on missing / self / already-tagged targets and keeps the maps small).
-    let candidate_ids: Vec<&str> = block_ids
-        .iter()
-        .filter(|b| *b != &tag_id && alive.contains(b.as_str()))
-        .map(BlockId::as_str)
-        .collect();
-
-    let block_spaces =
-        agaric_store::cross_space_validation::resolve_block_spaces_batch(&mut tx, &candidate_ids)
-            .await?;
-
-    // #2191: pre-fetch the WHOLE dup set for this tag in ONE query, replacing
-    // the former per-block `block_tags` dup SELECT inside the loop. A block in
-    // this set already carries the tag → skip (no op, not counted), preserving
-    // the lenient-batch + idempotence contract byte-for-byte. This set is also
-    // GROWN as the loop tags blocks so a block id repeated within the SAME
-    // input list is de-duplicated exactly as the former per-iteration re-SELECT
-    // did (the first occurrence tags, later ones skip).
-    let mut already_tagged: std::collections::HashSet<String> = sqlx::query_scalar!(
-        r#"SELECT block_id FROM block_tags
-           WHERE tag_id = ? AND block_id IN (SELECT value FROM json_each(?))"#,
-        tag_id_str,
-        block_ids_json
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .collect();
+    let (alive, mut tag_space, block_spaces, mut already_tagged) =
+        prefetch_batch_state(&mut tx, &block_ids, &tag_id).await?;
 
     let mut tagged: i64 = 0;
     for block_id in &block_ids {
@@ -919,6 +846,115 @@ pub async fn add_tags_by_ids_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(tagged)
+}
+
+/// Validate `tag_id` ONCE for a batch: live block with block_type = 'tag'
+/// (TOCTOU-safe inside the tx). Mirrors `add_tag_inner`.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
+/// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
+async fn ensure_tag_block_in_tx(tx: &mut CommandTx, tag_id: &BlockId) -> Result<(), AppError> {
+    let tag_id_str = tag_id.as_str();
+    let tag_row = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        tag_id_str
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+    match tag_row {
+        None => {
+            return Err(AppError::NotFound(format!(
+                "tag block '{tag_id}' (not found or deleted)"
+            )));
+        }
+        Some(ref r) if r.block_type != "tag" => {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{tag_id}' has block_type '{}', expected 'tag'",
+                r.block_type
+            )));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Everything [`add_tags_by_ids_inner`]'s per-block loop needs, resolved ONCE
+/// for the whole batch instead of ~3N queries inside the loop, under the
+/// IMMEDIATE writer lock.
+///
+/// Returns `(alive, tag_space, block_spaces, already_tagged)`.
+async fn prefetch_batch_state(
+    tx: &mut CommandTx,
+    block_ids: &[BlockId],
+    tag_id: &BlockId,
+) -> Result<
+    (
+        std::collections::HashSet<String>,
+        Option<agaric_store::space::SpaceId>,
+        std::collections::HashMap<String, agaric_store::space::SpaceId>,
+        std::collections::HashSet<String>,
+    ),
+    AppError,
+> {
+    let tag_id_str = tag_id.as_str();
+
+    // #2038: resolve the live target set in ONE membership query instead of a
+    // per-block existence SELECT inside the loop (N+1). Skip-on-miss preserved.
+    let block_ids_json = serde_json::to_string(block_ids)?;
+    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT id FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
+        block_ids_json
+    )
+    .fetch_all(&mut ***tx)
+    .await?
+    .into_iter()
+    .collect();
+
+    // #2191: resolve the loop-invariant tag space ONCE (single `tag_id`, so
+    // its space cannot vary block-to-block) and every source-block space in
+    // ONE batched query, instead of the former ~2N `resolve_block_space` JOINs
+    // (one per block, one per tag, every iteration) under the IMMEDIATE writer
+    // lock. The batched map mirrors `resolve_block_space`'s orphan semantics:
+    // a block absent from the map has no space (an orphan) → `None`.
+    let tag_space =
+        agaric_store::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id_str))
+            .await?;
+
+    // Only the live, non-self blocks actually reach the per-block core, so
+    // pre-resolve spaces + dup status for exactly that set (skips wasted work
+    // on missing / self / already-tagged targets and keeps the maps small).
+    let candidate_ids: Vec<&str> = block_ids
+        .iter()
+        .filter(|b| *b != tag_id && alive.contains(b.as_str()))
+        .map(BlockId::as_str)
+        .collect();
+
+    let block_spaces =
+        agaric_store::cross_space_validation::resolve_block_spaces_batch(tx, &candidate_ids)
+            .await?;
+
+    // #2191: pre-fetch the WHOLE dup set for this tag in ONE query, replacing
+    // the former per-block `block_tags` dup SELECT inside the loop. A block in
+    // this set already carries the tag → skip (no op, not counted), preserving
+    // the lenient-batch + idempotence contract byte-for-byte. The caller GROWS
+    // this set as the loop tags blocks so a block id repeated within the SAME
+    // input list is de-duplicated exactly as the former per-iteration re-SELECT
+    // did (the first occurrence tags, later ones skip).
+    let already_tagged: std::collections::HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT block_id FROM block_tags
+           WHERE tag_id = ? AND block_id IN (SELECT value FROM json_each(?))"#,
+        tag_id_str,
+        block_ids_json
+    )
+    .fetch_all(&mut ***tx)
+    .await?
+    .into_iter()
+    .collect();
+
+    Ok((alive, tag_space, block_spaces, already_tagged))
 }
 
 /// Tauri command: add ONE tag to N blocks (#81). Delegates to

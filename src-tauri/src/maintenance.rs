@@ -352,7 +352,6 @@ fn is_write_contention(err: &AppError) -> bool {
 /// 60 s tick instead of 24 h from now — the cadence a transient
 /// `SQLITE_BUSY` deserves. Rows purged before the contention stay purged:
 /// every batch commits in its own transaction.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,
@@ -408,58 +407,16 @@ pub async fn tombstone_purge(
         }
 
         let batch_count = ids.len();
-        match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+        purge_batch(
             pool,
             device_id,
             materializer,
-            ids.iter().cloned().map(Into::into).collect(),
+            ids,
+            batches,
+            &mut poisoned,
+            &mut total_purged,
         )
-        .await
-        {
-            Ok(_resp) => total_purged += batch_count,
-            // #4018 — the writer is busy, not the batch. Bail out BEFORE the
-            // per-root fallback: see [`is_write_contention`] for why retrying
-            // each root would be up to `batch_limit` serialised `busy_timeout`
-            // waits against the writer that just refused the whole batch, and
-            // why the run must end with `Err` (next-tick retry) rather than
-            // `Ok` (24 h).
-            Err(e) if is_write_contention(&e) => {
-                tracing::warn!(
-                    error = %e,
-                    batch_count,
-                    batches,
-                    purged = total_purged,
-                    skipped = poisoned.len(),
-                    "tombstone_purge: the SQLite writer is busy/locked — abandoning this \
-                     run instead of retrying the batch one root at a time (#4018). \
-                     Contention is not a poison root, so per-root isolation buys nothing \
-                     and costs one serialised busy_timeout wait per root. Already-purged \
-                     batches are committed; the daemon retries on the next tick"
-                );
-                return Err(e);
-            }
-            Err(e) => {
-                // #3311 — the whole batch rolled back. Retry it one root at
-                // a time so a single poison root costs only itself, and
-                // record the roots that still fail so the loop advances.
-                tracing::warn!(
-                    error = %e,
-                    batch_count,
-                    first = ids.first().map_or("", String::as_str),
-                    last = ids.last().map_or("", String::as_str),
-                    "tombstone_purge: batch purge failed; falling back to one root at a time"
-                );
-                purge_roots_one_at_a_time(
-                    pool,
-                    device_id,
-                    materializer,
-                    ids,
-                    &mut poisoned,
-                    &mut total_purged,
-                )
-                .await?;
-            }
-        }
+        .await?;
 
         batches += 1;
 
@@ -482,9 +439,82 @@ pub async fn tombstone_purge(
         }
     }
 
-    if !poisoned.is_empty() {
+    log_run_outcome(total_purged, batches, poisoned.len(), cutoff_ms);
+    Ok(())
+}
+
+/// One drain-loop batch: purge `ids` as a single batch and, when that fails,
+/// decide between the per-root fallback and abandoning the run.
+///
+/// # Errors
+///
+/// The writer being busy/locked (#4018), or the per-root fallback hitting the
+/// same — either way the caller's `?` ends the run so `run_tick` retries on
+/// the next 60 s tick instead of 24 h from now.
+async fn purge_batch(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &crate::materializer::Materializer,
+    ids: Vec<String>,
+    batches: usize,
+    poisoned: &mut std::collections::HashSet<String>,
+    total_purged: &mut usize,
+) -> Result<(), AppError> {
+    let batch_count = ids.len();
+    match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+        pool,
+        device_id,
+        materializer,
+        ids.iter().cloned().map(Into::into).collect(),
+    )
+    .await
+    {
+        Ok(_resp) => *total_purged += batch_count,
+        // #4018 — the writer is busy, not the batch. Bail out BEFORE the
+        // per-root fallback: see [`is_write_contention`] for why retrying
+        // each root would be up to `batch_limit` serialised `busy_timeout`
+        // waits against the writer that just refused the whole batch, and
+        // why the run must end with `Err` (next-tick retry) rather than
+        // `Ok` (24 h).
+        Err(e) if is_write_contention(&e) => {
+            tracing::warn!(
+                error = %e,
+                batch_count,
+                batches,
+                purged = *total_purged,
+                skipped = poisoned.len(),
+                "tombstone_purge: the SQLite writer is busy/locked — abandoning this \
+                 run instead of retrying the batch one root at a time (#4018). \
+                 Contention is not a poison root, so per-root isolation buys nothing \
+                 and costs one serialised busy_timeout wait per root. Already-purged \
+                 batches are committed; the daemon retries on the next tick"
+            );
+            return Err(e);
+        }
+        Err(e) => {
+            // #3311 — the whole batch rolled back. Retry it one root at
+            // a time so a single poison root costs only itself, and
+            // record the roots that still fail so the loop advances.
+            tracing::warn!(
+                error = %e,
+                batch_count,
+                first = ids.first().map_or("", String::as_str),
+                last = ids.last().map_or("", String::as_str),
+                "tombstone_purge: batch purge failed; falling back to one root at a time"
+            );
+            purge_roots_one_at_a_time(pool, device_id, materializer, ids, poisoned, total_purged)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The end-of-run line for [`tombstone_purge`]: what was purged, and what was
+/// skipped as poison (#3311) and stays eligible for the next run.
+fn log_run_outcome(total_purged: usize, batches: usize, skipped: usize, cutoff_ms: i64) {
+    if skipped > 0 {
         tracing::warn!(
-            skipped = poisoned.len(),
+            skipped,
             purged = total_purged,
             cutoff = %cutoff_ms,
             "tombstone_purge: some roots could not be purged and were skipped for this run \
@@ -500,12 +530,11 @@ pub async fn tombstone_purge(
         tracing::info!(
             purged = total_purged,
             batches,
-            skipped = poisoned.len(),
+            skipped,
             cutoff = %cutoff_ms,
             "tombstone_purge: hard-deleted soft-tombstones past the retention window"
         );
     }
-    Ok(())
 }
 
 /// #3311 — the per-root fallback for a batch that rolled back. Retries each
