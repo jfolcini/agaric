@@ -595,7 +595,7 @@ pub async fn apply_op_tx_with_mode(
             // `RebuildPagesCacheCounts` task's (dispatch's lifecycle set),
             // which works from post-cascade state — so no pre-cascade
             // affected-pages snapshot is taken here.
-            pre_state = PreOpState::Purge;
+            pre_state = PreOpState::Deferred;
             apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
@@ -719,15 +719,11 @@ async fn apply_delete_block_op(
     // call would return `None` — see `ApplyEffects` doc).
     let cohort = collect_delete_cohort(conn, &p).await?;
     let delete_space_id = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
-    // #2042: the count hook does no in-tx work for a cohort op — the page-wide
-    // recompute is the background task's — so this variant carries the cohort
-    // without anything reading it.
-    let pre_state = PreOpState::Cohort(cohort.clone());
     apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at).await?;
     effects.deleted_cohort = cohort;
     effects.delete_space_id = delete_space_id;
 
-    Ok(pre_state)
+    Ok(PreOpState::Deferred)
 }
 
 /// `RestoreBlock`: capture the descendant cohort before the UPDATE, and
@@ -763,17 +759,10 @@ async fn apply_restore_block_op(
     // in the CRDT and the next reproject re-deletes them in SQL.
     let restored_ancestors =
         apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
-    // As with the delete cohort above, neither field is read: #2042 leaves the
-    // recompute to the background task. The fan-out takes its copies from
-    // `effects` on the next two lines.
-    let pre_state = PreOpState::RestoreCohortAndAncestors {
-        cohort: cohort.clone(),
-        ancestors: restored_ancestors.clone(),
-    };
     effects.restored_cohort = cohort;
     effects.restored_ancestors = restored_ancestors;
 
-    Ok(pre_state)
+    Ok(PreOpState::Deferred)
 }
 
 /// `MoveBlock`: the reads either side of the projection are the whole point of
