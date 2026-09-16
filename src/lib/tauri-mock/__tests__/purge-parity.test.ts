@@ -177,6 +177,38 @@ describe('#3091 purge parity', () => {
       // Durable: nothing was purged — the root is still present.
       expect(blocks.has(rootChain)).toBe(true)
     })
+
+    // #5057 — the batch purge seeds the SAME walk from N roots, so it carries
+    // the same refusal. Without this the guard on that path is parity code
+    // nothing can redden: the conformance fixture cannot express a 99-deep
+    // tree, and the backend refuses there too (`MAX(depth) >= 99` over the
+    // multi-root CTE).
+    it('refuses a >= 99 level subtree reached through the batch purge', () => {
+      let parent = PAGE
+      const rootChain = padId(3000)
+      blocks.set(rootChain, makeBlock(rootChain, 'content', 'r', parent, 1))
+      parent = rootChain
+      for (let i = 0; i < 101; i++) {
+        const id = padId(4000 + i)
+        blocks.set(id, makeBlock(id, 'content', `c${i}`, parent, 1))
+        parent = id
+      }
+      const shallow = padId(3001)
+      blocks.set(shallow, makeBlock(shallow, 'content', 'shallow', PAGE, 2))
+      dispatch('delete_blocks_by_ids', { blockIds: [rootChain, shallow] })
+      let caught: unknown
+      try {
+        dispatch('purge_blocks_by_ids', { blockIds: [shallow, rootChain] })
+      } catch (e) {
+        caught = e
+      }
+      expect((caught as { kind?: string }).kind).toBe('validation')
+      expect((caught as Error).message).toContain('too deep to purge (>=99 levels)')
+      // All-or-nothing: the shallow root listed FIRST is untouched too, so the
+      // refusal is not a partial purge that stopped when it hit the deep one.
+      expect(blocks.has(rootChain)).toBe(true)
+      expect(blocks.has(shallow)).toBe(true)
+    })
   })
 
   describe('purge_blocks_by_ids cleans satellites uniformly', () => {

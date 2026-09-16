@@ -71,6 +71,38 @@ const PURGE_DEPTH_SATURATION = 99
  *     gave the mock a real drafts store — before that `list_drafts` was
  *     hardcoded to `[]`, so a leaked row had nothing to leak into.
  */
+/**
+ * Every block a purge physically destroys, seeded from one or more roots, plus
+ * the deepest level the walk reached so the caller can apply the depth-cap
+ * refusal. No `deleted_at` filter: purge erases the whole subtree regardless of
+ * tombstone state, mirroring the backend's `descendants_cte_purge!()`.
+ */
+function collectPurgeCohort(rootIds: readonly string[]): {
+  cohort: string[]
+  maxDepth: number
+} {
+  const cohort: string[] = []
+  const seen = new Set<string>()
+  let maxDepth = 0
+  const stack: Array<{ id: string; depth: number }> = rootIds.map((id) => ({ id, depth: 0 }))
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (node == null) break
+    const { id, depth } = node
+    if (seen.has(id)) continue
+    seen.add(id)
+    if (!blocks.has(id)) continue
+    cohort.push(id)
+    if (depth > maxDepth) maxDepth = depth
+    for (const child of blocks.values()) {
+      if (child['parent_id'] === id && !seen.has(child['id'] as string)) {
+        stack.push({ id: child['id'] as string, depth: depth + 1 })
+      }
+    }
+  }
+  return { cohort, maxDepth }
+}
+
 function purgeCohortAndSatellites(cohort: Iterable<string>): void {
   const ids = cohort instanceof Set ? cohort : new Set(cohort)
   for (const id of ids) {
@@ -959,28 +991,7 @@ export const blocksHandlers = {
     if (!root['deleted_at']) {
       throw invalidOperationRejection(`block '${rootId}' must be soft-deleted before purging`)
     }
-    // BFS the full descendant subtree via `parent_id` (no `deleted_at`
-    // filter — purge erases the whole subtree regardless of tombstone state),
-    // tracking depth so the depth-cap guard below can fire.
-    const cohort: string[] = []
-    const stack: Array<{ id: string; depth: number }> = [{ id: rootId, depth: 0 }]
-    const seen = new Set<string>()
-    let maxDepth = 0
-    while (stack.length > 0) {
-      const node = stack.pop()
-      if (node == null) break
-      const { id, depth } = node
-      if (seen.has(id)) continue
-      seen.add(id)
-      if (!blocks.has(id)) continue
-      cohort.push(id)
-      if (depth > maxDepth) maxDepth = depth
-      for (const child of blocks.values()) {
-        if (child['parent_id'] === id && !seen.has(child['id'] as string)) {
-          stack.push({ id: child['id'] as string, depth: depth + 1 })
-        }
-      }
-    }
+    const { cohort, maxDepth } = collectPurgeCohort([rootId])
     // #3091 — depth-cap guard, mirroring `purge_block_inner`'s
     // `cascade_depth_saturated` check (`MAX(depth) >= 99`): refuse a subtree
     // so deep the backend cascade would saturate the depth-100 cap and strand
@@ -1008,14 +1019,18 @@ export const blocksHandlers = {
   restore_blocks_by_ids: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['blockIds'] as string[]) ?? []
+    if (ids.length === 0) throw validationRejection('block_ids list cannot be empty')
     let count = 0
     for (const id of ids) {
       const b = blocks.get(id)
-      if (b?.['deleted_at']) {
-        b['deleted_at'] = null
-        pushOp('restore_block', { block_id: id })
-        count++
-      }
+      if (!b?.['deleted_at']) continue
+      // The SAME cohort restore the single-block handler runs: back down the
+      // exact cohort the delete tombstoned, then up the tombstoned ancestor
+      // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor
+      // dragged back to keep the row reachable is an effect, not a restore the
+      // caller asked for.
+      count += restoreCohort(blocks, id)
+      pushOp('restore_block', { block_id: id })
     }
     return { affected_count: count }
   },
@@ -1041,15 +1056,29 @@ export const blocksHandlers = {
     // from the raw input list and hard-delete the live block's whole subtree
     // with no op; the mock must enforce the refusal or a stray live-id batch
     // purge passes in tests. Missing ids stay skipped (nothing to destroy).
-    const cohort: string[] = []
+    if (ids.length === 0) throw validationRejection('block_ids list cannot be empty')
+    const roots: string[] = []
     for (const id of ids) {
       const b = blocks.get(id)
       if (b && !b['deleted_at']) {
         throw invalidOperationRejection(`block '${id}' must be soft-deleted before purging`)
       }
-      if (b?.['deleted_at']) cohort.push(id)
+      if (b?.['deleted_at']) roots.push(id)
+    }
+    // The physical cascade reaches every DESCENDANT of every root, exactly as
+    // the single-block purge does — the backend seeds one multi-root CTE from
+    // the input list. `affected_count` is that whole cohort, while the op log
+    // records one `purge_block` per ROOT; the two numbers differ on purpose.
+    const { cohort, maxDepth } = collectPurgeCohort(roots)
+    if (maxDepth >= PURGE_DEPTH_SATURATION) {
+      throw validationRejection(
+        `a selected block's subtree is too deep to purge (>=99 levels); ` +
+          `the recursive cascade would hit the depth-100 cap and leave ` +
+          `descendants below depth 100 dangling. Purge in chunks instead.`,
+      )
     }
     purgeCohortAndSatellites(cohort)
+    for (const root of roots) pushOp('purge_block', { block_id: root })
     return { affected_count: cohort.length }
   },
 

@@ -583,27 +583,58 @@ fn parity_property_key(key: &str) -> bool {
 /// person it fires on: the author of a brand-new fixture. `fetch_optional`
 /// turns the absence into a diagnostic the reader can act on without opening
 /// the harness.
+/// The target's parent at this point in the op list, read BEFORE the op
+/// destroys or moves the row. The OUTER `Option` is row presence: `None` means
+/// the block has no `blocks` row. That is a fixture bug for the single-block
+/// commands, which name exactly one target, and legal for the batch purge,
+/// whose backend silently skips an id it cannot find.
 async fn read_structural_op_parent(
     pool: &SqlitePool,
     fixture_name: &str,
     command: &str,
     block_id: &str,
-) -> Result<Option<String>, String> {
-    sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
-        .bind(block_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| {
-            format!("fixture '{fixture_name}': read parent of {command} target {block_id}: {error}")
-        })?
-        .map(|row| row.0)
-        .ok_or_else(|| {
-            format!(
-                "fixture '{fixture_name}': op '{command}' targets block {block_id}, which has no \
-                 `blocks` row at that point in the op list — the fixture's ops are inconsistent \
-                 with its seed, or an earlier op already removed the block"
-            )
-        })
+) -> Result<Option<Option<String>>, String> {
+    Ok(
+        sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| {
+                format!(
+                    "fixture '{fixture_name}': read parent of {command} target {block_id}: {error}"
+                )
+            })?
+            .map(|row| row.0),
+    )
+}
+
+/// The parent groups a structural op will leave gapped, read before it runs.
+/// Empty for an op that gaps nothing.
+async fn read_gapped_parent_candidates(
+    pool: &SqlitePool,
+    fixture_name: &str,
+    command: &str,
+    block_ids: &[String],
+) -> Result<Vec<Option<String>>, String> {
+    let mut parents = Vec::new();
+    for block_id in block_ids {
+        match read_structural_op_parent(pool, fixture_name, command, block_id).await? {
+            Some(parent) => parents.push(parent),
+            // A missing id is legal only on the batch path, whose backend skips
+            // it: it destroys nothing, so it gaps no group. The single-block
+            // commands name the one block they act on, so an absent row there
+            // means the fixture's ops disagree with its seed.
+            None if command == "purge_blocks_by_ids" => {}
+            None => {
+                return Err(format!(
+                    "fixture '{fixture_name}': op '{command}' targets block {block_id}, which \
+                     has no `blocks` row at that point in the op list — the fixture's ops are \
+                     inconsistent with its seed, or an earlier op already removed the block"
+                ));
+            }
+        }
+    }
+    Ok(parents)
 }
 
 async fn verify_fixture_engine_parity(
@@ -1364,15 +1395,30 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                 ),
             };
             let resolve = |label: Option<&str>| label.map(|l| resolve_op_arg_id(l, &created_ids));
-            let old_parent = if matches!(command, "move_block" | "purge_block") {
-                let block_id =
-                    resolve(op["args"]["blockId"].as_str()).expect("structural op blockId");
-                read_structural_op_parent(&pool, &name, command, &block_id)
-                    .await
-                    .unwrap_or_else(|message| panic!("{message}"))
-            } else {
-                None
+            // Every parent group this op may leave gapped. `purge_block` and
+            // `move_block` name one target; `purge_blocks_by_ids` names a list,
+            // and gaps the group of EACH listed root — its descendant cascade
+            // needs no entry, because a descendant's parent is destroyed with
+            // it and has no surviving sibling left to compare.
+            let structural_targets: Vec<String> = match command {
+                "move_block" | "purge_block" => {
+                    vec![resolve(op["args"]["blockId"].as_str()).expect("structural op blockId")]
+                }
+                "purge_blocks_by_ids" => op["args"]["blockIds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|label| {
+                        resolve(label.as_str()).expect("purge_blocks_by_ids blockIds entry")
+                    })
+                    .collect(),
+                _ => Vec::new(),
             };
+            let old_parents =
+                read_gapped_parent_candidates(&pool, &name, command, &structural_targets)
+                    .await
+                    .unwrap_or_else(|message| panic!("{message}"));
+            let old_parent = old_parents.first().cloned().flatten();
             // #4670 — a REJECTED command changed nothing, so the structural
             // bookkeeping and the removed-value check below only apply to an
             // op that ran; the engine-parity guard after them stays
@@ -1406,8 +1452,8 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                         purge_gapped_parents.remove(&old_parent);
                         purge_gapped_parents.remove(&new_parent);
                     }
-                    "purge_block" => {
-                        purge_gapped_parents.insert(old_parent);
+                    "purge_block" | "purge_blocks_by_ids" => {
+                        purge_gapped_parents.extend(old_parents);
                     }
                     _ => {}
                 }
@@ -1771,20 +1817,37 @@ async fn structural_op_parent_read_names_an_absent_target() {
     insert_block(&pool, &child, "content", "child", Some(&parent), Some(1)).await;
 
     assert_eq!(
-        read_structural_op_parent(&pool, "made_up", "move_block", &child)
+        read_gapped_parent_candidates(&pool, "made_up", "move_block", std::slice::from_ref(&child))
             .await
             .expect("a present block's parent must read back"),
-        Some(parent),
+        vec![Some(parent)],
         "the helper must still return the pre-op parent for a block that exists"
     );
 
     let absent = seed_label_to_id("GHOST");
-    let message = read_structural_op_parent(&pool, "made_up", "purge_block", &absent)
-        .await
-        .expect_err("a structural op aimed at an absent block must be an explicit failure");
+    let message = read_gapped_parent_candidates(
+        &pool,
+        "made_up",
+        "purge_block",
+        std::slice::from_ref(&absent),
+    )
+    .await
+    .expect_err("a structural op aimed at an absent block must be an explicit failure");
     assert!(
         message.contains("made_up") && message.contains("purge_block") && message.contains(&absent),
         "the diagnostic must name the fixture, the command and the block: {message}"
+    );
+
+    // #5057 — the other arm of that pair: the BATCH purge is the one command
+    // whose backend skips an id it cannot find, so an absent id there gaps no
+    // group rather than failing the fixture. Without this arm the tolerance
+    // could widen to every command and nothing would redden.
+    assert_eq!(
+        read_gapped_parent_candidates(&pool, "made_up", "purge_blocks_by_ids", &[child, absent])
+            .await
+            .expect("a batch purge tolerates an id with no row"),
+        vec![Some(seed_label_to_id("P1"))],
+        "the present id still contributes its parent; the absent one contributes nothing"
     );
 }
 

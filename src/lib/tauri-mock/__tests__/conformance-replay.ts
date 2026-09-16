@@ -316,6 +316,16 @@ export function expandOpArgs(
   for (const key of ['blockId', 'parentId', 'newParentId', 'tagId']) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
   }
+  // #5057 — a batch command takes the SAME labels as a list, so each entry
+  // expands exactly as the scalar keys above do. Mirror of the Rust runner's
+  // `block_ids()`; without it the mock is handed raw labels, matches no block,
+  // and every batch op silently degenerates into a no-op that still "passes"
+  // its own guards.
+  if (Array.isArray(out['blockIds'])) {
+    out['blockIds'] = out['blockIds'].map((label) =>
+      typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
+    )
+  }
   if (out['value'] != null && typeof out['value'] === 'object') {
     const v = { ...(out['value'] as Record<string, unknown>) }
     if (typeof v['value_ref'] === 'string') {
