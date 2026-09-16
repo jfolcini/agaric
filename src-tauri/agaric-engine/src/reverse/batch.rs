@@ -211,7 +211,6 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 ///     SQL error from the prior-context prefetch.
 ///
 /// An empty input slice returns `Ok(Vec::new())`.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compute_reverse_batch(
     pool: &SqlitePool,
     ops: &[OpRecord],
@@ -230,11 +229,38 @@ pub async fn compute_reverse_batch(
         parsed_types.push(t);
     }
 
+    let ctx = fetch_prior_context(pool, ops, &parsed_types).await?;
+    assemble_reverses(ops, &parsed_types, &ctx)
+}
+
+/// Every prior-context row the assembly needs, one batched query per op-type
+/// group.
+///
+/// Each field is aligned with its own group's input positions — not with
+/// `ops` — so `assemble_reverses` walks it with a cursor advanced once per op
+/// of that type.
+struct PriorContext {
+    edit_prev: Vec<Option<(String, String)>>,
+    edit_prior: Vec<Option<(String, String)>>,
+    move_prior: Vec<Option<(String, String)>>,
+    set_prior: Vec<Option<String>>,
+    del_prior: Vec<Option<String>>,
+    att_prior: Vec<Option<String>>,
+    add_att_live: Vec<Option<attachment_ops::LiveAttachmentState>>,
+}
+
+/// Bucket the input positions by the prior-context query each op-type needs,
+/// then run one batched fetch per bucket.
+async fn fetch_prior_context(
+    pool: &SqlitePool,
+    ops: &[OpRecord],
+    parsed_types: &[OpType],
+) -> Result<PriorContext, AppError> {
     // Bucket op indices by the prior-context query they need. Op
     // types whose reverse is a pure payload transform (CreateBlock,
     // DeleteBlock, AddTag, RemoveTag, RestoreBlock, PurgeBlock) do not
     // appear in any bucket — they are handled by the synchronous
-    // fallback at the bottom. #4259 moved `AddAttachment` OFF that list:
+    // fallback in `assemble_reverses`. #4259 moved `AddAttachment` OFF that list:
     // its reverse now describes the LIVE `attachments` row, so it needs
     // a DB read like the context-bearing types do.
     let mut edit_idxs: Vec<usize> = Vec::new();
@@ -290,16 +316,31 @@ pub async fn compute_reverse_batch(
     // so there is one implementation to keep correct rather than two.
     let add_att_live: Vec<Option<attachment_ops::LiveAttachmentState>> =
         fetch_live_attachment_state_batch(pool, ops, &add_att_idxs).await?;
+    Ok(PriorContext {
+        edit_prev,
+        edit_prior,
+        move_prior,
+        set_prior,
+        del_prior,
+        att_prior,
+        add_att_live,
+    })
+}
 
-    // ----- assemble per-op reverse payloads in input order ------------
-    //
-    // Each arm yields a `Result<OpPayload, AppError>`. A skippable
-    // `NonReversible` (per `is_skippable_non_reversible`) is pushed as an
-    // inner `Err` so the caller can SKIP+COUNT that single op; every
-    // other error (serde, NotFound prior-context, unknown variant) is a
-    // fatal batch-level failure surfaced via `?` to abort the whole
-    // computation — matching the single-op `super::compute_reverse`
-    // contract for those cases.
+/// Assemble the per-op reverse payloads in input order.
+///
+/// Each arm yields a `Result<OpPayload, AppError>`. A skippable
+/// `NonReversible` (per `is_skippable_non_reversible`) is pushed as an
+/// inner `Err` so the caller can SKIP+COUNT that single op; every
+/// other error (serde, NotFound prior-context, unknown variant) is a
+/// fatal batch-level failure surfaced via `?` to abort the whole
+/// computation — matching the single-op `super::compute_reverse`
+/// contract for those cases.
+fn assemble_reverses(
+    ops: &[OpRecord],
+    parsed_types: &[OpType],
+    ctx: &PriorContext,
+) -> Result<Vec<Result<OpPayload, AppError>>, AppError> {
     let mut result: Vec<Result<OpPayload, AppError>> = Vec::with_capacity(ops.len());
     let mut edit_cursor = 0usize;
     let mut move_cursor = 0usize;
@@ -314,36 +355,36 @@ pub async fn compute_reverse_batch(
             OpType::CreateBlock => block_ops::reverse_create_block(record),
             OpType::DeleteBlock => block_ops::reverse_delete_block(record),
             OpType::EditBlock => {
-                let prev_row = edit_prev[edit_cursor].as_ref();
-                let prior = edit_prior[edit_cursor].as_ref();
+                let prev_row = ctx.edit_prev[edit_cursor].as_ref();
+                let prior = ctx.edit_prior[edit_cursor].as_ref();
                 edit_cursor += 1;
                 build_reverse_edit_block(record, prev_row, prior)
             }
             OpType::MoveBlock => {
-                let prior = move_prior[move_cursor].as_ref();
+                let prior = ctx.move_prior[move_cursor].as_ref();
                 move_cursor += 1;
                 build_reverse_move_block(record, prior)
             }
             OpType::AddTag => tag_ops::reverse_add_tag(record),
             OpType::RemoveTag => tag_ops::reverse_remove_tag(record),
             OpType::SetProperty => {
-                let prior = set_prior[set_cursor].as_deref();
+                let prior = ctx.set_prior[set_cursor].as_deref();
                 set_cursor += 1;
                 build_reverse_set_property(record, prior)
             }
             OpType::DeleteProperty => {
-                let prior = del_prior[del_cursor].as_deref();
+                let prior = ctx.del_prior[del_cursor].as_deref();
                 del_cursor += 1;
                 build_reverse_delete_property(record, prior)
             }
             OpType::AddAttachment => {
-                let live = add_att_live[add_att_cursor].as_ref();
+                let live = ctx.add_att_live[add_att_cursor].as_ref();
                 add_att_cursor += 1;
                 attachment_ops::build_reverse_add_attachment(record, live)
             }
             OpType::RestoreBlock => block_ops::reverse_restore_block(record),
             OpType::DeleteAttachment => {
-                let prior = att_prior[att_cursor].as_deref();
+                let prior = ctx.att_prior[att_cursor].as_deref();
                 att_cursor += 1;
                 build_reverse_delete_attachment(record, prior)
             }

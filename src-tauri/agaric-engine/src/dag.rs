@@ -408,13 +408,63 @@ pub async fn ingest_replicated_record(
 /// The two callers differ ONLY in `profile` (parent-gap policy +
 /// `is_replicated` stamp) and `origin`; every integrity check below is
 /// identical so the two ingest paths cannot drift.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn ingest_remote_record(
     pool: &SqlitePool,
     record: &OpRecord,
     origin: &str,
     profile: IngestProfile,
 ) -> Result<bool, AppError> {
+    verify_remote_record_integrity(record)?;
+
+    // #2275 — run the parent-existence check, the #1572 divergence probe, and
+    // the INSERT inside ONE `BEGIN IMMEDIATE` transaction. Previously each ran
+    // as an independent autocommitted statement against `pool`, so a concurrent
+    // inserter could land a row between the divergence probe (which classifies
+    // "benign duplicate vs fork") and the `INSERT OR IGNORE`: the read that
+    // makes the decision and the write that acts on it were not atomic, so a
+    // divergent op could slip through the window and be silently ignored.
+    // `BEGIN IMMEDIATE` takes the write lock up front, serializing concurrent
+    // inserters so the probe → insert decision cannot be raced. A pure-CPU
+    // validation failure above returns before the lock is taken; any `Err`
+    // below drops `tx`, rolling the transaction back.
+    // TOCTOU fix (#2275 item 5): parent-check, divergence probe, and the op
+    // INSERT must be one atomic unit; sync-ingestion-only (no materializer
+    // dispatch), so a raw immediate tx is the correct scope.
+    // allow-raw-tx: atomic parent-check + insert for sync ingestion (#2275)
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "insert_remote_op").await?;
+
+    verify_parent_seqs_exist(&mut tx, record, profile).await?;
+    reject_hash_divergence(&mut tx, record).await?;
+
+    // INSERT OR IGNORE — duplicate delivery is a no-op. The store-owned
+    // primitive (#2895 slice 5) returns true when a row was inserted, false
+    // when it was a duplicate; it also populates the indexed block_id
+    // (migration 0030) / attachment_id (migration 0064) columns from the JSON
+    // payload for fast block-scoped and reverse-attachment lookups.
+    //
+    // #2481: `origin` carries cross-device attribution and `is_replicated` is
+    // the isolation boundary — audit records (`is_replicated = true`, migration
+    // 0099) are provably skipped by boot replay / materializer / apply-cursor
+    // bookkeeping; the Audit profile passes the transfer-carried origin, while
+    // Strict keeps the `"user"` default and `is_replicated = false`.
+    let inserted = agaric_store::op_log::ingest_remote_op_in_tx(
+        &mut tx,
+        record,
+        origin,
+        matches!(profile, IngestProfile::Audit),
+    )
+    .await?;
+
+    tx.commit().await?;
+    Ok(inserted)
+}
+
+/// Pure-CPU integrity gate for a remote op record: NUL bytes in hashed
+/// fields, the blake3 hash recipe, and the `SetProperty` payload domain.
+///
+/// Runs before the ingest transaction is opened, so a rejected record never
+/// takes the write lock.
+fn verify_remote_record_integrity(record: &OpRecord) -> Result<(), AppError> {
     // #1600 — Reject any raw NUL byte in a hashed field *before* the op
     // reaches the hash recipe. The `\0` delimiter is the wire-format
     // contract for the hash preimage (see `compute_op_hash`); a NUL in a
@@ -470,31 +520,27 @@ async fn ingest_remote_record(
         validate_set_property(&payload)?;
     }
 
-    // #2275 — run the parent-existence check, the #1572 divergence probe, and
-    // the INSERT inside ONE `BEGIN IMMEDIATE` transaction. Previously each ran
-    // as an independent autocommitted statement against `pool`, so a concurrent
-    // inserter could land a row between the divergence probe (which classifies
-    // "benign duplicate vs fork") and the `INSERT OR IGNORE`: the read that
-    // makes the decision and the write that acts on it were not atomic, so a
-    // divergent op could slip through the window and be silently ignored.
-    // `BEGIN IMMEDIATE` takes the write lock up front, serializing concurrent
-    // inserters so the probe → insert decision cannot be raced. A pure-CPU
-    // validation failure above returns before the lock is taken; any `Err`
-    // below drops `tx`, rolling the transaction back.
-    // TOCTOU fix (#2275 item 5): parent-check, divergence probe, and the op
-    // INSERT must be one atomic unit; sync-ingestion-only (no materializer
-    // dispatch), so a raw immediate tx is the correct scope.
-    // allow-raw-tx: atomic parent-check + insert for sync ingestion (#2275)
-    let mut tx = agaric_store::db::begin_immediate_logged(pool, "insert_remote_op").await?;
+    Ok(())
+}
 
-    // Verify every `(device_id, seq)` entry in `parent_seqs` already
-    // exists in `op_log` before landing this row.  Without the check, a
-    // buggy peer or a corrupted stream can insert a row whose parent
-    // pointer dangles, silently breaking later DAG walks (`find_lca`,
-    // history reconstruction).  The single-user threat model rules out
-    // hardening against malicious peers, but data integrity is the
-    // explicit defensive priority — fail fast on insert rather than
-    // surface as a `NotFound` deep inside a sync log.
+/// Verify every `(device_id, seq)` entry in `parent_seqs` already
+/// exists in `op_log` before landing this row.  Without the check, a
+/// buggy peer or a corrupted stream can insert a row whose parent
+/// pointer dangles, silently breaking later DAG walks (`find_lca`,
+/// history reconstruction).  The single-user threat model rules out
+/// hardening against malicious peers, but data integrity is the
+/// explicit defensive priority — fail fast on insert rather than
+/// surface as a `NotFound` deep inside a sync log.
+///
+/// `profile` picks the parent-gap policy: `Strict` rejects an unresolved
+/// pointer, `Audit` lands the row with a `warn!` breadcrumb. Runs on the
+/// caller's ingest transaction so the check and the INSERT it guards stay
+/// one atomic unit (#2275).
+async fn verify_parent_seqs_exist(
+    conn: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+    profile: IngestProfile,
+) -> Result<(), AppError> {
     if let Some(parent_seqs_json) = record.parent_seqs.as_deref() {
         // Canonicalize on read: the stored bytes may be non-canonically
         // ordered (preserved verbatim to keep the hash valid), so any
@@ -523,7 +569,7 @@ async fn ingest_remote_record(
                  )",
             )
             .bind(parent_seqs_json)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *conn)
             .await?;
             let expected: i64 =
                 i64::try_from(unique_parents.len()).expect("parent count fits in i64");
@@ -560,27 +606,34 @@ async fn ingest_remote_record(
         }
     }
 
-    // #1572 — distinguish a benign idempotent re-delivery from a fork /
-    // corruption / device-id reuse at the same composite PK.
-    //
-    // The bare `INSERT OR IGNORE` below collapses BOTH cases into the same
-    // `rows_affected() == 0 -> Ok(false)`: a row that already exists with the
-    // SAME hash (genuine duplicate delivery, harmless) and a row that already
-    // exists with a DIFFERENT hash (the incoming op diverges from what we
-    // stored). The latter silently drops conflicting content with no error,
-    // log, or integrity signal. Probe the existing row first and reject the
-    // mismatch explicitly so divergence is observable.
-    //
-    // A `Some(h)` where `h == record.hash` is a genuine idempotent
-    // re-delivery: fall through to the `INSERT OR IGNORE`, which is a no-op
-    // and returns `Ok(false)`, keeping the pre-existing benign behaviour
-    // unchanged. Only the different-hash case is rejected.
+    Ok(())
+}
+
+/// #1572 — distinguish a benign idempotent re-delivery from a fork /
+/// corruption / device-id reuse at the same composite PK.
+///
+/// The caller's bare `INSERT OR IGNORE` collapses BOTH cases into the same
+/// `rows_affected() == 0 -> Ok(false)`: a row that already exists with the
+/// SAME hash (genuine duplicate delivery, harmless) and a row that already
+/// exists with a DIFFERENT hash (the incoming op diverges from what we
+/// stored). The latter silently drops conflicting content with no error,
+/// log, or integrity signal. Probe the existing row first and reject the
+/// mismatch explicitly so divergence is observable.
+///
+/// A `Some(h)` where `h == record.hash` is a genuine idempotent
+/// re-delivery: fall through to the `INSERT OR IGNORE`, which is a no-op
+/// and returns `Ok(false)`, keeping the pre-existing benign behaviour
+/// unchanged. Only the different-hash case is rejected.
+async fn reject_hash_divergence(
+    conn: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+) -> Result<(), AppError> {
     let existing_hash = sqlx::query_scalar!(
         "SELECT hash FROM op_log WHERE device_id = ? AND seq = ?",
         record.device_id,
         record.seq,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some(existing_hash) = existing_hash
         && existing_hash != record.hash
@@ -601,27 +654,7 @@ async fn ingest_remote_record(
         ));
     }
 
-    // INSERT OR IGNORE — duplicate delivery is a no-op. The store-owned
-    // primitive (#2895 slice 5) returns true when a row was inserted, false
-    // when it was a duplicate; it also populates the indexed block_id
-    // (migration 0030) / attachment_id (migration 0064) columns from the JSON
-    // payload for fast block-scoped and reverse-attachment lookups.
-    //
-    // #2481: `origin` carries cross-device attribution and `is_replicated` is
-    // the isolation boundary — audit records (`is_replicated = true`, migration
-    // 0099) are provably skipped by boot replay / materializer / apply-cursor
-    // bookkeeping; the Audit profile passes the transfer-carried origin, while
-    // Strict keeps the `"user"` default and `is_replicated = false`.
-    let inserted = agaric_store::op_log::ingest_remote_op_in_tx(
-        &mut tx,
-        record,
-        origin,
-        matches!(profile, IngestProfile::Audit),
-    )
-    .await?;
-
-    tx.commit().await?;
-    Ok(inserted)
+    Ok(())
 }
 
 /// Create a merge op whose `parent_seqs` contains entries from multiple

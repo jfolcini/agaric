@@ -53,7 +53,6 @@ use crate::loro::shared::LoroState;
 /// dispatched materializer tasks. Validation failures (e.g. a corrupt
 /// `repeat-until` value that can't round-trip through `set_property_in_tx`)
 /// surface to the caller instead of being hidden.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn build_recurrence_sibling_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &LoroState,
@@ -125,6 +124,58 @@ pub async fn build_recurrence_sibling_in_tx(
     // prefer due_date, fall back to scheduled_date.
     let reference_date = shifted_due.as_deref().or(shifted_sched.as_deref());
 
+    let Some(bounds) = remaining_repeat_bounds(&mut *tx, block_id, reference_date).await? else {
+        // An end condition fired — this occurrence is the last one.
+        return Ok((false, Vec::new()));
+    };
+
+    // --- Resolve repeat-origin for the chain ---
+    let repeat_origin: Option<String> = sqlx::query_scalar!(
+        "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .flatten();
+    // Use existing origin, or this block is the first in the chain
+    let origin_id = repeat_origin.unwrap_or_else(|| block_id.to_string());
+
+    let op_records = create_recurrence_sibling(
+        &mut *tx,
+        state,
+        device_id,
+        block_id,
+        original,
+        rule,
+        shifted_due,
+        shifted_sched,
+        bounds,
+        origin_id,
+    )
+    .await?;
+
+    // Hand the op records back to the caller, which drives commit + dispatch.
+    Ok((true, op_records))
+}
+
+/// The `repeat-until` / `repeat-count` / `repeat-seq` bounds carried forward
+/// onto every sibling in a recurrence chain.
+struct RepeatBounds {
+    until: Option<String>,
+    count: Option<f64>,
+    seq: Option<f64>,
+}
+
+/// Read the block's repeat bounds and evaluate them as end conditions.
+///
+/// `None` means recurrence stops here: the shifted `reference_date` is past
+/// `repeat-until`, `repeat-until` is not a valid `YYYY-MM-DD` date, or
+/// `repeat-count` is already exhausted.
+async fn remaining_repeat_bounds(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    block_id: &str,
+    reference_date: Option<&str>,
+) -> Result<Option<RepeatBounds>, AppError> {
     // --- End condition: repeat-until ---
     let repeat_until: Option<String> = sqlx::query_scalar!(
         "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
@@ -147,7 +198,7 @@ pub async fn build_recurrence_sibling_in_tx(
         // (already imported) which enforces the same strict shape used
         // when the value was originally written via `set_property_in_tx`.
         // On malformed input we warn loudly and stop the recurrence
-        // (`Ok(false)`) rather than silently letting it continue past
+        // (`Ok(None)`) rather than silently letting it continue past
         // the deadline.
         if !is_valid_iso_date(until_str) {
             tracing::warn!(
@@ -155,12 +206,12 @@ pub async fn build_recurrence_sibling_in_tx(
                 until_str = %until_str,
                 "repeat-until is not a valid YYYY-MM-DD date; stopping recurrence"
             );
-            return Ok((false, Vec::new()));
+            return Ok(None);
         }
         // Simple lexicographic comparison works for YYYY-MM-DD strings
         if ref_date > until_str.as_str() {
             // Shifted date is past the repeat-until deadline — stop recurring
-            return Ok((false, Vec::new()));
+            return Ok(None);
         }
     }
 
@@ -191,23 +242,34 @@ pub async fn build_recurrence_sibling_in_tx(
         let max_count = count as i64;
         if current_seq >= max_count {
             // Already exhausted the repeat count — stop recurring
-            return Ok((false, Vec::new()));
+            return Ok(None);
         }
     }
 
-    // --- Resolve repeat-origin for the chain ---
-    let repeat_origin: Option<String> = sqlx::query_scalar!(
-        "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
-        block_id
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
-    // Use existing origin, or this block is the first in the chain
-    let origin_id = repeat_origin.unwrap_or_else(|| block_id.to_string());
+    Ok(Some(RepeatBounds {
+        until: repeat_until,
+        count: repeat_count,
+        seq: repeat_seq,
+    }))
+}
 
+/// Create the next occurrence as a sibling of `original` and write every
+/// recurrence property onto it, returning the ops for the caller to dispatch.
+#[allow(clippy::too_many_arguments)]
+async fn create_recurrence_sibling(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
+    device_id: &str,
+    block_id: &str,
+    original: BlockRow,
+    rule: String,
+    shifted_due: Option<String>,
+    shifted_sched: Option<String>,
+    bounds: RepeatBounds,
+    origin_id: String,
+) -> Result<Vec<op_log::OpRecord>, AppError> {
     // --- Create the recurrence sibling ---
-    // All writes below happen in the same IMMEDIATE tx opened above.
+    // All writes below happen in the same IMMEDIATE tx the caller opened.
     let mut op_records: Vec<op_log::OpRecord> = Vec::new();
 
     // (#400): append the next occurrence after the last living sibling.
@@ -231,6 +293,51 @@ pub async fn build_recurrence_sibling_in_tx(
     .await?;
     op_records.push(op);
 
+    seed_sibling_todo_and_repeat(
+        &mut *tx,
+        state,
+        device_id,
+        &new_block,
+        rule,
+        &mut op_records,
+    )
+    .await?;
+
+    copy_shifted_dates(
+        &mut *tx,
+        state,
+        device_id,
+        &new_block,
+        block_id,
+        shifted_due,
+        shifted_sched,
+        &mut op_records,
+    )
+    .await?;
+
+    copy_repeat_bounds(
+        &mut *tx,
+        state,
+        device_id,
+        &new_block,
+        bounds,
+        origin_id,
+        &mut op_records,
+    )
+    .await?;
+
+    Ok(op_records)
+}
+
+/// Stamp the new sibling as a TODO carrying the same `repeat` rule.
+async fn seed_sibling_todo_and_repeat(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
+    device_id: &str,
+    new_block: &BlockRow,
+    rule: String,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), AppError> {
     // Set TODO state on new block
     set_recurrence_property(
         &mut *tx,
@@ -242,7 +349,7 @@ pub async fn build_recurrence_sibling_in_tx(
         None,
         None,
         None,
-        &mut op_records,
+        op_records,
     )
     .await?;
 
@@ -253,14 +360,29 @@ pub async fn build_recurrence_sibling_in_tx(
         device_id,
         new_block.id.clone().into_string(),
         "repeat",
-        Some(rule.clone()),
+        Some(rule),
         None,
         None,
         None,
-        &mut op_records,
+        op_records,
     )
     .await?;
 
+    Ok(())
+}
+
+/// Copy the shifted `due_date` / `scheduled_date` onto the new sibling.
+#[allow(clippy::too_many_arguments)]
+async fn copy_shifted_dates(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
+    device_id: &str,
+    new_block: &BlockRow,
+    block_id: &str,
+    shifted_due: Option<String>,
+    shifted_sched: Option<String>,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), AppError> {
     // Shift due_date / scheduled_date if present.
     //
     // Failures in `set_property_in_tx` propagate via `?` — the
@@ -281,14 +403,7 @@ pub async fn build_recurrence_sibling_in_tx(
     // cleanly instead of committing a half-formed, dateless sibling.
     if let Some(shifted) = shifted_due {
         push_shifted_date_property(
-            &mut *tx,
-            state,
-            device_id,
-            &new_block,
-            block_id,
-            "due_date",
-            shifted,
-            &mut op_records,
+            &mut *tx, state, device_id, new_block, block_id, "due_date", shifted, op_records,
         )
         .await?;
     }
@@ -298,14 +413,33 @@ pub async fn build_recurrence_sibling_in_tx(
             &mut *tx,
             state,
             device_id,
-            &new_block,
+            new_block,
             block_id,
             "scheduled_date",
             shifted,
-            &mut op_records,
+            op_records,
         )
         .await?;
     }
+
+    Ok(())
+}
+
+/// Copy the repeat bounds and the chain origin onto the new sibling.
+async fn copy_repeat_bounds(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
+    device_id: &str,
+    new_block: &BlockRow,
+    bounds: RepeatBounds,
+    origin_id: String,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), AppError> {
+    let RepeatBounds {
+        until: repeat_until,
+        count: repeat_count,
+        seq: repeat_seq,
+    } = bounds;
 
     // Copy repeat-until to new block if present (propagate via `?`).
     if let Some(ref until_str) = repeat_until {
@@ -319,47 +453,86 @@ pub async fn build_recurrence_sibling_in_tx(
             None,
             Some(until_str.clone()),
             None,
-            &mut op_records,
+            op_records,
         )
         .await?;
     }
 
-    // Copy repeat-count and increment repeat-seq on new block.
-    //
-    // `repeat-seq` only carries forward (and only gets bumped)
-    // when `repeat-count` is also set on the origin. This gating is
-    // intentional, not a bug:
-    //
-    //   * `repeat-seq` is a system-managed *output* — the engine
-    //     stamps it on each sibling so the UI/MCP can show "3 of 5"
-    //     style progress alongside `repeat-count`.
-    //   * Without `repeat-count` there is no *bound* against which
-    //     `repeat-seq` is meaningful, so the engine deliberately
-    //     leaves `repeat-seq` off the sibling.
-    //   * A user who manually sets `repeat-seq` on a block without
-    //     `repeat-count` will therefore see the counter "freeze" at
-    //     whatever value they wrote — the engine treats their seed
-    //     as a one-shot annotation, not a counter to advance. This
-    //     is the behaviour pinned by
-    //     `tests_l99_l100::repeat_seq_not_incremented_without_repeat_count`.
-    //
-    // Cross-references:
-    //   - The property-definition seed migration that registers
-    //     `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`,
-    //     and `repeat-origin` is `migrations/0016_seed_repeat_properties.sql`.
-    //   - ISO-date validation for the *value* written to
-    //     `repeat-until` (and other date columns) is enforced by
-    //     `crate::block_ops::is_valid_iso_date` inside
-    // `set_property_in_tx`. The fix above this block
-    //     re-uses the same validator to gate the `repeat-until`
-    //     end-condition compare so a malformed value cannot slip
-    //     through a lexicographic compare.
-    //
-    // If a future change wants `repeat-seq` to advance on every
-    // recurrence regardless of `repeat-count`, that is a *behavioural*
-    // shift (it changes the contract `repeat-seq` carries) and must
-    // be discussed with the user first — not introduced silently by
-    // dropping this gate.
+    copy_repeat_counter(
+        &mut *tx,
+        state,
+        device_id,
+        new_block,
+        repeat_count,
+        repeat_seq,
+        op_records,
+    )
+    .await?;
+
+    // Set repeat-origin on new block (points to original block in chain)
+    // (propagate via `?`).
+    set_recurrence_property(
+        &mut *tx,
+        state,
+        device_id,
+        new_block.id.clone().into_string(),
+        "repeat-origin",
+        None,
+        None,
+        None,
+        Some(origin_id),
+        op_records,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Copy repeat-count and increment repeat-seq on new block.
+///
+/// `repeat-seq` only carries forward (and only gets bumped)
+/// when `repeat-count` is also set on the origin. This gating is
+/// intentional, not a bug:
+///
+///   * `repeat-seq` is a system-managed *output* — the engine
+///     stamps it on each sibling so the UI/MCP can show "3 of 5"
+///     style progress alongside `repeat-count`.
+///   * Without `repeat-count` there is no *bound* against which
+///     `repeat-seq` is meaningful, so the engine deliberately
+///     leaves `repeat-seq` off the sibling.
+///   * A user who manually sets `repeat-seq` on a block without
+///     `repeat-count` will therefore see the counter "freeze" at
+///     whatever value they wrote — the engine treats their seed
+///     as a one-shot annotation, not a counter to advance. This
+///     is the behaviour pinned by
+///     `tests_l99_l100::repeat_seq_not_incremented_without_repeat_count`.
+///
+/// Cross-references:
+///   - The property-definition seed migration that registers
+///     `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`,
+///     and `repeat-origin` is `migrations/0016_seed_repeat_properties.sql`.
+///   - ISO-date validation for the *value* written to
+///     `repeat-until` (and other date columns) is enforced by
+///     `crate::block_ops::is_valid_iso_date` inside
+///     `set_property_in_tx`. `remaining_repeat_bounds`
+///     re-uses the same validator to gate the `repeat-until`
+///     end-condition compare so a malformed value cannot slip
+///     through a lexicographic compare.
+///
+/// If a future change wants `repeat-seq` to advance on every
+/// recurrence regardless of `repeat-count`, that is a *behavioural*
+/// shift (it changes the contract `repeat-seq` carries) and must
+/// be discussed with the user first — not introduced silently by
+/// dropping this gate.
+async fn copy_repeat_counter(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
+    device_id: &str,
+    new_block: &BlockRow,
+    repeat_count: Option<f64>,
+    repeat_seq: Option<f64>,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), AppError> {
     if let Some(count) = repeat_count {
         // f64 → i64 has no `TryFrom` in std; the cast is safe because
         // repeat_seq is a non-negative whole number stored as f64.
@@ -378,7 +551,7 @@ pub async fn build_recurrence_sibling_in_tx(
             Some(count),
             None,
             None,
-            &mut op_records,
+            op_records,
         )
         .await?;
 
@@ -393,29 +566,12 @@ pub async fn build_recurrence_sibling_in_tx(
             Some(next_seq as f64),
             None,
             None,
-            &mut op_records,
+            op_records,
         )
         .await?;
     }
 
-    // Set repeat-origin on new block (points to original block in chain)
-    // (propagate via `?`).
-    set_recurrence_property(
-        &mut *tx,
-        state,
-        device_id,
-        new_block.id.clone().into_string(),
-        "repeat-origin",
-        None,
-        None,
-        None,
-        Some(origin_id),
-        &mut op_records,
-    )
-    .await?;
-
-    // Hand the op records back to the caller, which drives commit + dispatch.
-    Ok((true, op_records))
+    Ok(())
 }
 
 /// #1547: write a shifted `due_date` / `scheduled_date` onto the recurrence

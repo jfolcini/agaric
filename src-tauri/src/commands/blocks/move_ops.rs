@@ -445,6 +445,129 @@ pub async fn move_block(
     .map_err(sanitize_internal_error)
 }
 
+/// Pre-batch ordering of the target parent's LIVE children (position ASC, id
+/// ASC — the canonical sibling order the engine reprojects to), or of the
+/// top-level blocks when `parent_id` is `None`. Read ONCE per batch; every
+/// per-member slot is computed against this immutable snapshot. Runtime query
+/// (no sqlx macro) so no `.sqlx` cache entry is needed.
+async fn ordered_live_children(
+    tx: &mut CommandTx,
+    parent_id: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    let ordered: Vec<String> = match parent_id {
+        Some(pid) => {
+            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(pid)
+            .fetch_all(&mut ***tx)
+            .await?
+        }
+        None => {
+            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id IS NULL AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .fetch_all(&mut ***tx)
+            .await?
+        }
+    };
+    Ok(ordered)
+}
+
+/// Destination slot for every member of a batch move, in input order, so the
+/// selection lands as ONE contiguous run among `ordered_children`'s NON-selected
+/// members at base position `start_index` (Refs #914 / Closes #2305).
+///
+/// `apply_move_block_to(index)` treats `index` as a LIVE-sibling slot among the
+/// OTHER children (moved node excluded). Because the members move one at a time,
+/// a not-yet-moved selected member still occupying the group shifts a naive
+/// `start_index + k` slot — the #2305 bug (interleaved selections landed
+/// non-contiguous, e.g. `[A,B,C,D]` move `[A,C]` → B,A,D,C). Instead we pin an
+/// ANCHOR (the non-selected child the run lands BEFORE) and send each member to
+/// the live-slot immediately before it; stacking them there in selection order
+/// builds the contiguous run. Each member's slot is derived up-front from the
+/// pre-batch ordering (an immutable snapshot):
+///
+///   slot_k = p + k + |{ j > k : sel_j is currently a child of the target
+///                              parent and positioned before the anchor }|
+///
+///     * p     non-selected children before the anchor (fixed — never move),
+///     * k     the already-placed members sel_0..sel_{k-1} (all now before it),
+///     * tail  the not-yet-moved members still in their original pre-anchor
+///             slot (sel_k itself excluded).
+///
+/// When the run appends past the last non-selected child (`p == non_selected`)
+/// there is no anchor: every member is appended to the end in order (still a
+/// contiguous run). A single-block batch reduces to `slot = p` — identical to
+/// `move_block` at slot `start_index` (the degenerate case).
+fn contiguous_run_slots(
+    block_ids: &[BlockId],
+    ordered_children: &[String],
+    start_index: i64,
+) -> Vec<i64> {
+    let selected: std::collections::HashSet<&str> = block_ids
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
+    // Index of each target-group child in the pre-batch ordering. Selected members
+    // NOT currently under the target parent (a cross-parent move) are simply absent
+    // — they contribute nothing to the anchor arithmetic below, which is correct
+    // (they enter the group fresh, after every existing child).
+    let orig_index: std::collections::HashMap<&str, usize> = ordered_children
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i))
+        .collect();
+    let non_selected_count = ordered_children
+        .iter()
+        .filter(|s| !selected.contains(s.as_str()))
+        .count();
+    // `p` — the run's base position among the non-selected children (clamped).
+    let p = usize::try_from(start_index)
+        .unwrap_or(usize::MAX)
+        .min(non_selected_count);
+    // `anchor_pos` — the pre-batch index the run lands BEFORE. When `p` is inside
+    // the non-selected children it is the index of the p-th non-selected child;
+    // when the run appends past the last non-selected child (`p ==
+    // non_selected_count`) there is no anchor, so the "before" boundary is the end
+    // of the group. Using `len()` as the sentinel end unifies the two cases: the
+    // slot formula below stays CONSECUTIVE for a non-interleaved run (so the
+    // engine-less SQL-only fallback — which takes the slot as the position
+    // verbatim, no reproject — still lands dense ranks), while an interleaved run
+    // gets each member's slot bumped past the not-yet-moved members ahead of it so
+    // the engine path settles them into one contiguous run.
+    let anchor_pos = if p < non_selected_count {
+        ordered_children
+            .iter()
+            .filter(|s| !selected.contains(s.as_str()))
+            .nth(p)
+            .and_then(|anchor| orig_index.get(anchor.as_str()).copied())
+            .unwrap_or(ordered_children.len())
+    } else {
+        ordered_children.len()
+    };
+    (0..block_ids.len())
+        .map(|k| {
+            // Not-yet-moved members (j > k) still sitting before the anchor boundary.
+            let later_before_anchor = ((k + 1)..block_ids.len())
+                .filter(|&j| {
+                    orig_index
+                        .get(block_ids[j].as_str())
+                        .is_some_and(|&idx| idx < anchor_pos)
+                })
+                .count();
+            i64::try_from(p)
+                .unwrap_or(i64::MAX)
+                .saturating_add(i64::try_from(k).unwrap_or(i64::MAX))
+                .saturating_add(i64::try_from(later_before_anchor).unwrap_or(i64::MAX))
+        })
+        .collect()
+}
+
 /// Atomically move an ORDERED list of block subtrees under a single new parent,
 /// landing them as ONE contiguous run at base position `new_index` among the
 /// target parent's non-selected children (#2274; contiguous-run semantics per
@@ -490,7 +613,6 @@ pub async fn move_block(
 /// Returns one [`MoveResponse`] per moved root, in input order (1:1 with
 /// `block_ids`), carrying its new `parent_id` + provisional `position`.
 #[instrument(skip(pool, device_id, materializer), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn move_blocks_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -545,112 +667,13 @@ pub async fn move_blocks_batch_inner(
     // the non-selected siblings). We still append one `move_block` op per block
     // (wire format unchanged, undo/sync stay per-op) and drive the shared per-op
     // engine-apply + dense-rank reproject pipeline — ONLY the destination slot each
-    // op carries changes.
-    //
-    // `apply_move_block_to(index)` treats `index` as a LIVE-sibling slot among the
-    // OTHER children (moved node excluded). Because the members move one at a time,
-    // a not-yet-moved selected member still occupying the group shifts a naive
-    // `start_index + k` slot — the #2305 bug (interleaved selections landed
-    // non-contiguous, e.g. [A,B,C,D] move [A,C] → B,A,D,C). Instead we pin an
-    // ANCHOR (the non-selected child the run lands BEFORE) and send each member to
-    // the live-slot immediately before it; stacking them there in selection order
-    // builds the contiguous run. Each member's slot is derived up-front from the
-    // pre-batch ordering (an immutable snapshot):
-    //
-    //   slot_k = p + k + |{ j > k : sel_j is currently a child of the target
-    //                              parent and positioned before the anchor }|
-    //
-    //     * p     non-selected children before the anchor (fixed — never move),
-    //     * k     the already-placed members sel_0..sel_{k-1} (all now before it),
-    //     * tail  the not-yet-moved members still in their original pre-anchor
-    //             slot (sel_k itself excluded).
-    //
-    // When the run appends past the last non-selected child (`p == non_selected`)
-    // there is no anchor: every member is appended to the end in order (still a
-    // contiguous run). A single-block batch reduces to `slot = p` — identical to
-    // `move_block` at slot `start_index` (the degenerate case).
-
-    // Pre-batch ordering of the target parent's LIVE children (position ASC, id
-    // ASC — the canonical sibling order the engine reprojects to). Read ONCE; every
-    // per-member slot is computed against this immutable snapshot. Runtime query
-    // (no sqlx macro) so no `.sqlx` cache entry is needed.
-    let ordered_children: Vec<String> = match new_parent_id.as_deref() {
-        Some(pid) => {
-            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
-            sqlx::query_scalar::<_, String>(
-                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
-                 ORDER BY position ASC, id ASC",
-            )
-            .bind(pid)
-            .fetch_all(&mut **tx)
-            .await?
-        }
-        None => {
-            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
-            sqlx::query_scalar::<_, String>(
-                "SELECT id FROM blocks WHERE parent_id IS NULL AND deleted_at IS NULL \
-                 ORDER BY position ASC, id ASC",
-            )
-            .fetch_all(&mut **tx)
-            .await?
-        }
-    };
-    let selected: std::collections::HashSet<&str> = block_ids
-        .iter()
-        .map(agaric_core::ulid::BlockId::as_str)
-        .collect();
-    // Index of each target-group child in the pre-batch ordering. Selected members
-    // NOT currently under the target parent (a cross-parent move) are simply absent
-    // — they contribute nothing to the anchor arithmetic below, which is correct
-    // (they enter the group fresh, after every existing child).
-    let orig_index: std::collections::HashMap<&str, usize> = ordered_children
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.as_str(), i))
-        .collect();
-    let non_selected_count = ordered_children
-        .iter()
-        .filter(|s| !selected.contains(s.as_str()))
-        .count();
-    // `p` — the run's base position among the non-selected children (clamped).
-    let p = usize::try_from(start_index)
-        .unwrap_or(usize::MAX)
-        .min(non_selected_count);
-    // `anchor_pos` — the pre-batch index the run lands BEFORE. When `p` is inside
-    // the non-selected children it is the index of the p-th non-selected child;
-    // when the run appends past the last non-selected child (`p ==
-    // non_selected_count`) there is no anchor, so the "before" boundary is the end
-    // of the group. Using `len()` as the sentinel end unifies the two cases: the
-    // slot formula below stays CONSECUTIVE for a non-interleaved run (so the
-    // engine-less SQL-only fallback — which takes the slot as the position
-    // verbatim, no reproject — still lands dense ranks), while an interleaved run
-    // gets each member's slot bumped past the not-yet-moved members ahead of it so
-    // the engine path settles them into one contiguous run.
-    let anchor_pos = if p < non_selected_count {
-        ordered_children
-            .iter()
-            .filter(|s| !selected.contains(s.as_str()))
-            .nth(p)
-            .and_then(|anchor| orig_index.get(anchor.as_str()).copied())
-            .unwrap_or(ordered_children.len())
-    } else {
-        ordered_children.len()
-    };
+    // op carries changes, and `contiguous_run_slots` derives those up-front from
+    // the pre-batch sibling ordering.
+    let ordered_children = ordered_live_children(&mut tx, new_parent_id.as_deref()).await?;
+    let slots = contiguous_run_slots(&block_ids, &ordered_children, start_index);
 
     let mut responses = Vec::with_capacity(block_ids.len());
-    for (k, id) in block_ids.iter().enumerate() {
-        // Not-yet-moved members (j > k) still sitting before the anchor boundary.
-        let later_before_anchor = ((k + 1)..block_ids.len())
-            .filter(|&j| {
-                orig_index
-                    .get(block_ids[j].as_str())
-                    .is_some_and(|&idx| idx < anchor_pos)
-            })
-            .count();
-        let slot = i64::try_from(p)
-            .unwrap_or(i64::MAX)
-            .saturating_add(i64::try_from(k).unwrap_or(i64::MAX))
-            .saturating_add(i64::try_from(later_before_anchor).unwrap_or(i64::MAX));
+    for (id, slot) in block_ids.iter().zip(slots) {
         let response = move_block_in_tx(
             &mut tx,
             materializer.loro_state(),
