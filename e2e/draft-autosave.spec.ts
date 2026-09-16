@@ -61,20 +61,20 @@
  * This cannot be simulated against the current mock for TWO independent,
  * compounding reasons:
  *
- *   1. `save_draft` / `flush_draft` / `delete_draft` / `list_drafts` /
- *      `flush_all_drafts` (src/lib/tauri-mock/handlers.ts:4510-4519) are
- *      pure stateless stubs — `flush_all_drafts` hardcodes
- *      `{ flushed: 0 }` unconditionally, `list_drafts` always returns
- *      `[]`. Even a debounced `save_draft` that lands right before a
- *      `page.reload()` is never recorded anywhere the boot-time flush
- *      could read back.
- *   2. Even if (1) were fixed with an in-memory `drafts` map, it would
- *      not survive the reload needed to re-trigger
+ *   1. RESOLVED by #5057: the five commands were pure stateless stubs
+ *      (`flush_all_drafts` hardcoding `{ flushed: 0 }`, `list_drafts`
+ *      always `[]`), so a debounced `save_draft` landing before a
+ *      `page.reload()` was never recorded anywhere the boot-time flush
+ *      could read back. `src/lib/tauri-mock/handlers/drafts.ts` now
+ *      keeps a real `blockDrafts` store and the draft IS recorded.
+ *   2. This one still blocks the spec on its own. An in-memory drafts
+ *      map does not survive the reload needed to re-trigger
  *      `useAppBootRecovery`'s mount effect: `setupMock()`
  *      (src/lib/tauri-mock/index.ts:66) unconditionally calls
  *      `seedBlocks()` on every fresh page load, wiping ALL module-scoped
- *      mock state — including any drafts map — before `App.tsx` ever
- *      mounts and calls `flushAllDrafts()`. There is no
+ *      mock state — `blockDrafts` included, which `seedBlocks` now
+ *      clears — before `App.tsx` ever mounts and calls
+ *      `flushAllDrafts()`. There is no
  *      localStorage/IndexedDB-backed persistence layer under the mock
  *      that could survive a full navigation, so a genuine crash → reload
  *      → recover round trip has no substrate to run on in Playwright.

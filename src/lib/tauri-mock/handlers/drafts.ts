@@ -8,30 +8,18 @@
  * row.
  *
  * Twin of `src-tauri/src/commands/drafts.rs` (guards) and
- * `src-tauri/agaric-engine/src/draft.rs` (SQL). The three guards below decide
- * whether a flush commits or discards, and the two flush paths deliberately
- * disagree about oversized content — see {@link flushOne}.
+ * `src-tauri/agaric-engine/src/draft.rs` (SQL). Two guards decide whether a
+ * flush commits or discards — the target must still be live, and the draft must
+ * not have been superseded. The backend's third, a size refusal, is not
+ * modelled; {@link flushOne} says why.
  */
 
 import {
   type Handler,
   MOCK_LOCAL_DEVICE,
   type TypedHandlers,
-  validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { type MockDraftRow, blockDrafts, blocks, opLog, pushOp } from '@/lib/tauri-mock/seed'
-
-/** `MAX_CONTENT_LENGTH` (`agaric-engine/src/block_ops.rs`). */
-const MAX_CONTENT_LENGTH = 256 * 1024
-
-/** `FLUSH_ALL_DRAFTS_CAP` (`commands/drafts.rs`). */
-const FLUSH_ALL_DRAFTS_CAP = 1000
-
-/** Rust compares `content.len()`, which is BYTES; `String.length` is UTF-16
- *  code units, so a multi-byte draft near the cap would disagree. */
-function byteLength(content: string): number {
-  return new TextEncoder().encode(content).length
-}
 
 /** `COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?`. */
 function localAnchorSeq(): number {
@@ -48,12 +36,13 @@ function draftsOldestFirst(): MockDraftRow[] {
 }
 
 /**
- * H-12a — the target must be live. A draft whose block was hard-deleted is
- * already gone (the row CASCADEs), so this catches the SOFT-deleted case.
+ * H-12a — the live target row, or `undefined` when the draft is orphaned. A
+ * draft whose block was HARD-deleted went with it (the row CASCADEs), so this
+ * catches the SOFT-deleted case.
  */
-function targetIsLive(blockId: string): boolean {
+function liveTarget(blockId: string): Record<string, unknown> | undefined {
   const block = blocks.get(blockId)
-  return block !== undefined && !block['deleted_at']
+  return block && !block['deleted_at'] ? block : undefined
 }
 
 /**
@@ -73,39 +62,28 @@ function isSuperseded(draft: MockDraftRow): boolean {
 }
 
 /**
- * Resolve one draft. Returns whether the row was CONSUMED — which the flush-all
- * counter reports as `flushed`, so a guard-dropped draft counts even though it
- * appended no op.
+ * Resolve one draft: apply it, or discard it when a guard says the block has
+ * moved on. Either way the row is CONSUMED, which is what `flush_all_drafts`
+ * counts — a guard-dropped draft counts as well as an applied one, even though
+ * it appends no op.
  *
- * `oversized` is the one place the two flush paths differ: `flush_draft`
- * REFUSES (its caller rolls back, keeping the row) while `flush_all_drafts`
- * skips the offender so the rest of the batch still commits (#3262). The guard
- * order matters — an orphaned or superseded draft is dropped before its size is
- * ever looked at, so an oversized draft on a dead block is reaped, not stuck.
+ * The backend also REFUSES a draft over `MAX_CONTENT_LENGTH` from `flush_draft`
+ * while `flush_all_drafts` skips it (#3262). That asymmetry is not modelled: no
+ * frontend path stages a draft near 256 KiB, no fixture can express one without
+ * a quarter-megabyte op arg, and the mock enforces no content bound anywhere
+ * else — so it would be parity code nothing could redden.
  */
-function flushOne(draft: MockDraftRow, oversized: 'refuse' | 'skip'): boolean {
-  if (!targetIsLive(draft.block_id) || isSuperseded(draft)) {
-    blockDrafts.delete(draft.block_id)
-    return true
-  }
-  if (byteLength(draft.content) > MAX_CONTENT_LENGTH) {
-    if (oversized === 'refuse') {
-      throw validationRejection(
-        `draft content ${byteLength(draft.content)} exceeds maximum ${MAX_CONTENT_LENGTH}`,
-      )
-    }
-    return false
-  }
-  const block = blocks.get(draft.block_id)
-  const fromText = (block?.['content'] as string | null | undefined) ?? null
-  if (block) block['content'] = draft.content
+function flushOne(draft: MockDraftRow): void {
+  blockDrafts.delete(draft.block_id)
+  const block = liveTarget(draft.block_id)
+  if (!block || isSuperseded(draft)) return
+  const fromText = (block['content'] as string | null | undefined) ?? null
+  block['content'] = draft.content
   pushOp('edit_block', {
     block_id: draft.block_id,
     to_text: draft.content,
     from_text: fromText,
   })
-  blockDrafts.delete(draft.block_id)
-  return true
 }
 
 export const draftsHandlers = {
@@ -131,16 +109,14 @@ export const draftsHandlers = {
     const draft = blockDrafts.get((args as Record<string, unknown>)['blockId'] as string)
     // No draft is not an error: the editor flushes on blur whether or not one
     // was ever staged.
-    if (draft) flushOne(draft, 'refuse')
+    if (draft) flushOne(draft)
     return null
   },
 
   flush_all_drafts: () => {
-    let flushed = 0
-    for (const draft of draftsOldestFirst().slice(0, FLUSH_ALL_DRAFTS_CAP)) {
-      if (flushOne(draft, 'skip')) flushed += 1
-    }
-    return { flushed }
+    const drafts = draftsOldestFirst()
+    for (const draft of drafts) flushOne(draft)
+    return { flushed: drafts.length }
   },
 
   list_drafts: () => draftsOldestFirst(),
