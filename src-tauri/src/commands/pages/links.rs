@@ -132,7 +132,6 @@ pub async fn list_page_links_inner_split(
 /// `cap` so the over-cap / truncation behaviour is exercised without
 /// seeding 20K+ rows.
 #[instrument(skip(write_pool, read_pool, tag_ids), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn list_page_links_inner_split_with_cap(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
@@ -251,7 +250,58 @@ pub async fn list_page_links_inner_split_with_cap(
     // target_page_id)` tiebreak so the truncation boundary is stable
     // across calls (maintainer decision on #2298).
     let cap_param = i64::try_from(cap).unwrap_or(i64::MAX);
-    let edges = sqlx::query_as!(
+    let edges = fetch_page_link_edges(pool, scope, tag_ids_json.as_deref(), cap_param).await?;
+
+    let returned = i64::try_from(edges.len()).unwrap_or(i64::MAX);
+
+    // #2298 — compute the TRUE edge count independently of the cap
+    // (same WHERE predicate, same pool) so the FE can surface
+    // "showing N of M — large graph truncated". Mirrors the
+    // `load_page_subtree_inner` (#1258) shape: the second query is only
+    // worth running when the returned set actually hit the cap; below
+    // the cap the LIMIT cannot have fired, so `total == returned`.
+    let total = if returned >= cap_param {
+        count_page_link_edges(pool, scope, tag_ids_json.as_deref()).await?
+    } else {
+        returned
+    };
+
+    // #426 / #2298: telemetry tripwire, re-anchored to the TRUE total.
+    // The shipped edge count is now bounded by the cap, so `edges.len()`
+    // can never reach the threshold — the total is what tells us a
+    // vault's edge set has grown into the regime the tripwire exists to
+    // observe. (When `returned < cap` the count query is skipped, but
+    // then `total == returned < cap < threshold`, so no warn is missed.)
+    if usize::try_from(total).unwrap_or(usize::MAX) > GRAPH_EDGE_WARN_THRESHOLD {
+        tracing::warn!(
+            target: "agaric::list_page_links",
+            edges = edges.len(),
+            total,
+            threshold = GRAPH_EDGE_WARN_THRESHOLD,
+            "graph edge set exceeds the telemetry tripwire; only the \
+             strongest `cap` edges are returned (#2298 count-then-cap) — \
+             at this scale the FE shows the 'showing N of M' truncation \
+             affordance"
+        );
+    }
+
+    let truncated = total > returned;
+
+    Ok(PageLinksResponse {
+        edges,
+        total,
+        truncated,
+    })
+}
+
+/// The capped edge read behind [`list_page_links_inner_split_with_cap`].
+async fn fetch_page_link_edges(
+    pool: &SqlitePool,
+    scope: &SpaceScope,
+    tag_ids_json: Option<&str>,
+    cap_param: i64,
+) -> Result<Vec<PageLink>, AppError> {
+    Ok(sqlx::query_as!(
         PageLink,
         r#"WITH space_members AS MATERIALIZED (
              SELECT id AS block_id FROM blocks
@@ -287,23 +337,22 @@ pub async fn list_page_links_inner_split_with_cap(
              plc.target_page_id ASC
          LIMIT ?3"#,
         scope.as_filter_param(),
-        tag_ids_json.as_deref(),
+        tag_ids_json,
         cap_param,
     )
     .fetch_all(pool)
-    .await?;
+    .await?)
+}
 
-    let returned = i64::try_from(edges.len()).unwrap_or(i64::MAX);
-
-    // #2298 — compute the TRUE edge count independently of the cap
-    // (same WHERE predicate, same pool) so the FE can surface
-    // "showing N of M — large graph truncated". Mirrors the
-    // `load_page_subtree_inner` (#1258) shape: the second query is only
-    // worth running when the returned set actually hit the cap; below
-    // the cap the LIMIT cannot have fired, so `total == returned`.
-    let total = if returned >= cap_param {
-        sqlx::query_scalar!(
-            r#"WITH space_members AS MATERIALIZED (
+/// The TRUE edge count behind [`list_page_links_inner_split_with_cap`]: the
+/// same `WHERE` predicate as [`fetch_page_link_edges`] without the cap.
+async fn count_page_link_edges(
+    pool: &SqlitePool,
+    scope: &SpaceScope,
+    tag_ids_json: Option<&str>,
+) -> Result<i64, AppError> {
+    Ok(sqlx::query_scalar!(
+        r#"WITH space_members AS MATERIALIZED (
                  SELECT id AS block_id FROM blocks
                  WHERE space_id = ?1
              )
@@ -330,41 +379,11 @@ pub async fn list_page_links_inner_split_with_cap(
                      WHERE btr.source_id = plc.target_page_id
                        AND btr.tag_id IN (SELECT value FROM json_each(?2))
                  ))"#,
-            scope.as_filter_param(),
-            tag_ids_json.as_deref(),
-        )
-        .fetch_one(pool)
-        .await?
-    } else {
-        returned
-    };
-
-    // #426 / #2298: telemetry tripwire, re-anchored to the TRUE total.
-    // The shipped edge count is now bounded by the cap, so `edges.len()`
-    // can never reach the threshold — the total is what tells us a
-    // vault's edge set has grown into the regime the tripwire exists to
-    // observe. (When `returned < cap` the count query is skipped, but
-    // then `total == returned < cap < threshold`, so no warn is missed.)
-    if usize::try_from(total).unwrap_or(usize::MAX) > GRAPH_EDGE_WARN_THRESHOLD {
-        tracing::warn!(
-            target: "agaric::list_page_links",
-            edges = edges.len(),
-            total,
-            threshold = GRAPH_EDGE_WARN_THRESHOLD,
-            "graph edge set exceeds the telemetry tripwire; only the \
-             strongest `cap` edges are returned (#2298 count-then-cap) — \
-             at this scale the FE shows the 'showing N of M' truncation \
-             affordance"
-        );
-    }
-
-    let truncated = total > returned;
-
-    Ok(PageLinksResponse {
-        edges,
-        total,
-        truncated,
-    })
+        scope.as_filter_param(),
+        tag_ids_json,
+    )
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Tauri command: list page-to-page links for graph visualization.

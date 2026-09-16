@@ -132,7 +132,6 @@ fn validate_new_attachment(
 /// private ensures renderer callers can never supply an arbitrary app-data
 /// path while preserving the existing transaction, op-log, and dedup queries.
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn persist_attachment(
     pool: &SqlitePool,
     device_id: &str,
@@ -179,47 +178,8 @@ async fn persist_attachment(
         )));
     }
 
-    // #1993 Phase 1 — content-addressed blob dedup. If a blob with this hash
-    // already exists, REUSE its canonical file: the new attachment row links
-    // to it by pointing `fs_path` at the blob's `on_disk_path`, and the
-    // freshly-written duplicate at the supplied `fs_path` becomes redundant
-    // (unlinked after commit). Otherwise this is the first copy of these
-    // bytes — create the blob row pointing at the supplied `fs_path`.
-    let existing_blob = sqlx::query_scalar!(
-        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
-        content_hash
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-
-    // The path the row will store + the path whose bytes are now redundant.
-    let (row_fs_path, redundant_file): (String, Option<String>) = match existing_blob {
-        Some(canonical) if canonical != fs_path => {
-            // Reuse: redirect the row at the canonical blob file and mark the
-            // just-written duplicate for post-commit cleanup.
-            (canonical, Some(fs_path.clone()))
-        }
-        Some(canonical) => {
-            // Same path already is the canonical file (e.g. re-add of the
-            // exact same fs_path). Nothing redundant.
-            (canonical, None)
-        }
-        None => {
-            // First copy of these bytes — register the blob owning them.
-            sqlx::query!(
-                "INSERT INTO attachment_blobs \
-                 (content_hash, on_disk_path, size_bytes, created_at) \
-                 VALUES (?, ?, ?, ?)",
-                content_hash,
-                fs_path,
-                size_bytes,
-                now,
-            )
-            .execute(&mut **tx)
-            .await?;
-            (fs_path.clone(), None)
-        }
-    };
+    let row_fs_path =
+        resolve_attachment_blob(&mut tx, &fs_path, size_bytes, &content_hash, now).await?;
 
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
@@ -252,16 +212,6 @@ async fn persist_attachment(
     // canonical blob path instead). Reclamation of those bytes is DEFERRED to
     // the GC pass (`cleanup_orphaned_attachments`) rather than unlinked here.
     //
-    // Same reasoning as the delete path: an eager post-commit "EXISTS? then
-    // remove_file" is racy on a multi-connection write pool with no global
-    // write mutex — between the EXISTS check and the unlink a concurrent
-    // operation could link a row to this path. The blast radius of unlinking
-    // wrongly is smaller here (the path is a fresh per-add ULID), but we defer
-    // for consistency and to never unlink a path a committed row may
-    // reference. The GC reclaims the orphan race-free (its referenced-path
-    // membership test and unlink are colocated).
-    let _ = redundant_file;
-
     Ok(AttachmentRow {
         id: BlockId::from_trusted(&attachment_id),
         block_id,
@@ -272,6 +222,68 @@ async fn persist_attachment(
         created_at: now,
         content_hash: Some(content_hash),
     })
+}
+
+/// #1993 Phase 1 — content-addressed blob dedup. If a blob with this hash
+/// already exists, REUSE its canonical file: the new attachment row links to it
+/// by pointing `fs_path` at the blob's `on_disk_path`, and the freshly-written
+/// duplicate at the supplied `fs_path` becomes redundant (unlinked after
+/// commit). Otherwise this is the first copy of these bytes — create the blob
+/// row pointing at the supplied `fs_path`.
+///
+/// Returns the path the attachment row will store.
+///
+/// The bytes left redundant by a reuse are deliberately NOT reported back for
+/// unlinking, and the GC reclaims them instead. Same reasoning as the delete
+/// path: an eager post-commit "EXISTS? then remove_file" is racy on a
+/// multi-connection write pool with no global write mutex — between the EXISTS
+/// check and the unlink a concurrent operation could link a row to this path.
+/// The blast radius of unlinking wrongly is smaller here (the path is a fresh
+/// per-add ULID), but we defer for consistency and to never unlink a path a
+/// committed row may reference. The GC reclaims the orphan race-free (its
+/// referenced-path membership test and unlink are colocated).
+async fn resolve_attachment_blob(
+    tx: &mut CommandTx,
+    fs_path: &str,
+    size_bytes: i64,
+    content_hash: &str,
+    now: i64,
+) -> Result<String, AppError> {
+    let existing_blob = sqlx::query_scalar!(
+        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+        content_hash
+    )
+    .fetch_optional(&mut ***tx)
+    .await?;
+
+    match existing_blob {
+        Some(canonical) if canonical != fs_path => {
+            // Reuse: redirect the row at the canonical blob file. The
+            // just-written duplicate at `fs_path` is now redundant and is left
+            // to the GC (see this function's doc comment).
+            Ok(canonical)
+        }
+        Some(canonical) => {
+            // Same path already is the canonical file (e.g. re-add of the
+            // exact same fs_path). Nothing redundant.
+            Ok(canonical)
+        }
+        None => {
+            // First copy of these bytes — register the blob owning them.
+            sqlx::query!(
+                "INSERT INTO attachment_blobs \
+                 (content_hash, on_disk_path, size_bytes, created_at) \
+                 VALUES (?, ?, ?, ?)",
+                content_hash,
+                fs_path,
+                size_bytes,
+                now,
+            )
+            .execute(&mut ***tx)
+            .await?;
+            Ok(fs_path.to_string())
+        }
+    }
 }
 
 /// Best-effort cleanup for bytes written by a rejected upload.

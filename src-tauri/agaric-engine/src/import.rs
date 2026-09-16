@@ -48,8 +48,9 @@ pub struct ParsedBlock {
     pub is_code: bool,
     /// #2510 — the raw Obsidian block-anchor id (WITHOUT the leading `^`)
     /// when this block's assembled content ended in a trailing `^block-id`
-    /// marker, stripped out of `content` by the post-parse pass in
-    /// [`parse_logseq_markdown`]. `None` for the overwhelming majority of
+    /// marker, stripped out of `content` by the post-parse pass
+    /// `extract_block_anchors` (private, so not linked). `None` for the
+    /// overwhelming majority of
     /// blocks (no trailing marker, or the block is `is_code`, which is never
     /// scanned). Consumed by `commands::pages::markdown` to resolve an
     /// Obsidian `[[Page#^block-id]]` / `[[#^block-id]]` wiki-link to the
@@ -592,34 +593,7 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// warning is recorded (mirroring the depth-clamp warning counter).
 ///
 /// `((uuid))` references are converted to plain text.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
-    let mut blocks: Vec<ParsedBlock> = Vec::new();
-    // #682: count property lines that could not be attached to any owning
-    // ancestor block, mirroring the depth-clamp `clamped_count` pattern so the
-    // lossy case is surfaced in `warnings` rather than silently swallowed.
-    let mut orphan_property_count: usize = 0;
-    // #1568: count body-property lines whose key is a reserved/exporter-managed
-    // key (`FRONTMATTER_RESERVED_KEYS`, e.g. `space`). Such keys are
-    // column-backed / lifecycle-managed and would make `set_property_in_tx`
-    // return a Validation error, aborting the whole import chunk. We filter them
-    // here — exactly as the frontmatter path does (`parse_frontmatter`) — so a
-    // hand-crafted/untrusted body bullet like `space:: X` is skipped instead of
-    // failing an otherwise-valid import.
-    let mut reserved_property_count: usize = 0;
-    // #1933: count `((uuid))` block references removed from content. Block-ref
-    // stripping is a lossy transform (the reference target vanishes) held to a
-    // lower observability bar than the other lossy transforms in this function;
-    // counting it here surfaces an aggregate warning so an import that drops
-    // block-refs is diagnosable from the returned warnings / logs.
-    let mut stripped_block_ref_count: usize = 0;
-    // #2725: count `- `-prefixed lines that appeared STRICTLY INSIDE an open
-    // fenced code block and were therefore folded into the owning block's
-    // content instead of (mis)spawning a new block. Mirrors the other lossy /
-    // corrected-parse counters so a fenced code sample carrying list-like lines
-    // is diagnosable from the returned warnings rather than silently reshaped.
-    let mut fence_split_avoided_count: usize = 0;
-
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
     // because `\n---` is a substring of `\r\n---`) and outright broken for
@@ -661,33 +635,210 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         &mut frontmatter_warnings,
     );
 
+    let (mut blocks, mut lossy) = parse_block_lines(&normalized);
+    extract_block_anchors(&mut blocks);
+    lossy.clamped = clamp_block_depths(&mut blocks);
+
+    let mut warnings = frontmatter_warnings;
+    lossy.push_warnings(&mut warnings);
+
+    ParseOutput {
+        blocks,
+        frontmatter,
+        frontmatter_list_items,
+        warnings,
+    }
+}
+
+/// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]
+/// and the post-passes applied to a file. Each non-zero counter becomes one
+/// aggregate line in [`ParseOutput::warnings`] so a reshaped import is
+/// diagnosable rather than silent.
+#[derive(Default)]
+struct LossyCounts {
+    /// Blocks nested deeper than [`MAX_IMPORT_DEPTH`] and flattened to it.
+    clamped: usize,
+    /// #682 — property lines that could not be attached to any owning
+    /// ancestor block and were dropped.
+    orphan_property: usize,
+    /// #1568 — body-property lines whose key is reserved/exporter-managed
+    /// (`FRONTMATTER_RESERVED_KEYS`, e.g. `space`). Such keys are
+    /// column-backed / lifecycle-managed and would make `set_property_in_tx`
+    /// return a Validation error, aborting the whole import chunk. We filter
+    /// them here — exactly as the frontmatter path does (`parse_frontmatter`)
+    /// — so a hand-crafted/untrusted body bullet like `space:: X` is skipped
+    /// instead of failing an otherwise-valid import.
+    reserved_property: usize,
+    /// #1933 — `((uuid))` block references removed from content. Block-ref
+    /// stripping is a lossy transform (the reference target vanishes) held to
+    /// a lower observability bar than the other lossy transforms here;
+    /// counting it surfaces an aggregate warning so an import that drops
+    /// block-refs is diagnosable from the returned warnings / logs.
+    stripped_refs: usize,
+    /// #2725 — `- `-prefixed lines that appeared STRICTLY INSIDE an open
+    /// fenced code block and were therefore folded into the owning block's
+    /// content instead of (mis)spawning a new block.
+    fence_split_avoided: usize,
+}
+
+impl LossyCounts {
+    /// Append one aggregate warning per non-zero counter, in the order the
+    /// import summary has always listed them.
+    fn push_warnings(&self, warnings: &mut Vec<String>) {
+        let Self {
+            clamped,
+            orphan_property,
+            reserved_property,
+            stripped_refs,
+            fence_split_avoided,
+        } = *self;
+        if clamped > 0 {
+            warnings.push(format!(
+                "{clamped} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
+            ));
+        }
+        if orphan_property > 0 {
+            warnings.push(format!(
+                "{orphan_property} property line(s) had no owning block at or above their \
+                 indentation and were dropped"
+            ));
+        }
+        if reserved_property > 0 {
+            warnings.push(format!(
+                "{reserved_property} reserved/exporter-managed property line(s) (e.g. `space`) \
+                 were skipped during import"
+            ));
+        }
+        if stripped_refs > 0 {
+            warnings.push(format!(
+                "{stripped_refs} ((block-ref)) reference(s) were stripped from imported \
+                 content and could not be preserved"
+            ));
+        }
+        if fence_split_avoided > 0 {
+            warnings.push(format!(
+                "{fence_split_avoided} list-like line(s) inside a code fence were kept as \
+                 literal code content instead of new blocks"
+            ));
+        }
+    }
+}
+
+/// A bullet line: `- text`, or the bare `-` empty bullet Logseq/Obsidian emit
+/// for an empty list item.
+fn is_bullet_line(trimmed: &str) -> bool {
+    trimmed == "-" || trimmed.starts_with("- ")
+}
+
+/// Document-global fenced-code state for the line scan (#1924). A line whose
+/// trimmed text begins with three or more backticks is a fence delimiter; it
+/// toggles the fence, and the delimiter line plus every line until the closing
+/// delimiter is treated as code. This is intentionally a single-fence-char
+/// (`` ` ``) heuristic — full code-fence import handling (tilde fences,
+/// language hints, indented fences, verbatim preservation) is separate,
+/// out-of-scope work.
+#[derive(Default)]
+struct FenceState {
+    open: bool,
+    /// #2866: depth of the block that opened the currently-open fence (if
+    /// any). The fence flag is document-global, so a block whose content
+    /// contains an ODD number of fence delimiters (an unbalanced/unterminated
+    /// fence) would otherwise leave the fence open past the end of that block
+    /// and swallow the next sibling into it. This depth lets the scan detect
+    /// that boundary — see [`FenceState::close_unbalanced_at`].
+    open_depth: Option<usize>,
+}
+
+impl FenceState {
+    /// #2866 — recover from an unbalanced fence at a sibling boundary: the
+    /// fence is still open from an earlier, unterminated delimiter and the
+    /// line is a NEW bullet at or above the depth of the block that opened it. That
+    /// means we have left the owning block's scope, so the fence must have
+    /// been meant to close by the end of that block — force it closed here so
+    /// the sibling spawns its own block instead of being folded into the
+    /// never-closed fence. Only applies to non-delimiter lines; a genuine
+    /// closing delimiter is handled by [`FenceState::toggle`].
+    ///
+    /// `rest` is the scan's own line iterator, cloned so this can peek — see
+    /// the ambiguity note inside.
+    fn close_unbalanced_at(
+        &mut self,
+        trimmed: &str,
+        depth: usize,
+        is_fence_delim: bool,
+        rest: std::str::Lines<'_>,
+    ) {
+        let Some(open_depth) = self.open_depth else {
+            return;
+        };
+        if !self.open || is_fence_delim || !is_bullet_line(trimmed) || depth > open_depth {
+            return;
+        }
+        // Regression guard against #2725: a bullet-shaped line at (or above)
+        // the fence-opener's own depth is genuinely ambiguous on its own — it
+        // could be the sibling bullet #2866 needs to recover at (the fence
+        // never really closes), OR it could be literal fence CONTENT that just
+        // happens to look bullet-shaped, with the fence properly closing on
+        // the very next line (e.g. a pasted snippet whose last line is
+        // `- interior`, immediately followed by the closing fence:
+        // `- ```\n- interior\n``` `). Those two shapes are indistinguishable
+        // from this line alone.
+        //
+        // Resolve the ambiguity with a single-line peek: if the next non-blank
+        // line is a BARE closing delimiter (no `- ` prefix), that's an
+        // UNAMBIGUOUS signal the fence closes right here — a bare
+        // ```` ``` ```` can only ever be a continuation/close of an
+        // already-open fence, never the start of a new bullet — so treat the
+        // current line as fence content and do NOT recover. A BULLETED
+        // delimiter (`- ``` `) on the next line is NOT treated as unambiguous:
+        // it could just as easily be opening a brand-new sibling code block
+        // (the exact shape #2866 was filed over, see the multi-code-block
+        // regression test below), so recovery still fires in that case.
+        // Anything else on the next line (or EOF) also falls through to
+        // recovery, matching the pre-existing (unrefined) behaviour.
+        let next_is_unambiguous_close = rest
+            .map(str::trim_start)
+            .find(|next| !next.is_empty())
+            .is_some_and(|next| next.starts_with("```"));
+        if !next_is_unambiguous_close {
+            self.open = false;
+            self.open_depth = None;
+        }
+    }
+
+    /// Toggle over a fence-delimiter line. Opening a fence records the depth
+    /// of the block that owns it (for the unbalanced-fence recovery above): a
+    /// delimiter that opens a bullet (`- ```rust`) owns that bullet's own
+    /// depth; a bare ```` ``` ```` continuation line belongs to the
+    /// most-recently-pushed block instead.
+    fn toggle(&mut self, trimmed: &str, depth: usize, last_block: Option<&ParsedBlock>) {
+        self.open_depth = if self.open {
+            None
+        } else if is_bullet_line(trimmed) {
+            Some(depth)
+        } else {
+            Some(last_block.map_or(depth, |b| b.depth))
+        };
+        self.open = !self.open;
+    }
+}
+
+/// Scan already-normalized, frontmatter-free markdown into blocks, collecting
+/// the lossy-transform counters [`parse_logseq_markdown`] turns into warnings.
+fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, LossyCounts) {
+    let mut blocks: Vec<ParsedBlock> = Vec::new();
+    let mut lossy = LossyCounts::default();
+    let mut fence = FenceState::default();
     // #1921 — iterate `normalized.lines()` directly instead of collecting into
-    // a `Vec<&str>`. The parse loop only ever reads the CURRENT line in
-    // document order (no random indexing / lookahead), so a streaming iterator
-    // is a drop-in that avoids the intermediate allocation.
-    // #1924 — MINIMAL fenced-code tracking. We do NOT change how blocks are
-    // split; we only flag blocks born inside a ```` ``` ````-fenced region so
-    // the inline-tag pre-pass skips them (a `#tag` inside a code fence must
-    // stay literal). A line whose trimmed text begins with three or more
-    // backticks is a fence delimiter; it toggles `in_fence`. The delimiter line
-    // and every line until the closing delimiter are treated as code. This is
-    // intentionally a single-fence-char (`` ` ``) heuristic — full code-fence
-    // import handling (tilde fences, language hints, indented fences, verbatim
-    // preservation) is separate, out-of-scope work.
-    let mut in_fence = false;
-    // #2866: depth of the block that opened the currently-open fence (if
-    // any). `in_fence` is document-global, so a block whose content contains
-    // an ODD number of fence delimiters (an unbalanced/unterminated fence)
-    // would otherwise leave `in_fence` open past the end of that block and
-    // swallow the next sibling into the never-closed fence. `fence_open_depth`
-    // lets the loop detect that boundary — see the check below.
-    let mut fence_open_depth: Option<usize> = None;
+    // a `Vec<&str>`. The scan only ever reads the CURRENT line in document
+    // order, so a streaming iterator is a drop-in that avoids the intermediate
+    // allocation.
     // #2866 (review follow-up) — `lines()` (`Lines<'_>`) is `Clone`, so a
     // manual `while let` over it (instead of a `for` loop) lets the boundary
-    // check below CLONE the iterator to peek one line ahead without
-    // consuming it. This is a read-only peek: the cloned iterator is
-    // discarded after the check, so the outer loop's position and every
-    // other line's processing is completely unaffected.
+    // check below CLONE the iterator to peek one line ahead without consuming
+    // it. This is a read-only peek: the cloned iterator is discarded after the
+    // check, so the outer loop's position and every other line's processing is
+    // completely unaffected.
     let mut lines_iter = normalized.lines();
     while let Some(line) = lines_iter.next() {
         let trimmed = line.trim_start();
@@ -697,116 +848,41 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             continue;
         }
 
-        // #1924 — fence-delimiter detection + toggle. The delimiter line is
-        // itself part of the code region (`line_is_code` is true on both the
-        // opening and closing fence), and every line strictly inside a fence is
-        // code. Computed BEFORE classification so the block this line lands in
-        // (or appends to) can be marked.
-        // A fence delimiter may appear either standalone (a bare ```` ``` ````
-        // continuation line) OR as the body of a list bullet (`- ```rust`), so
-        // probe both shapes: strip a leading `- ` bullet marker before the
-        // backtick test.
+        // #1924 — fence-delimiter detection. A fence delimiter may appear
+        // either standalone (a bare ```` ``` ```` continuation line) OR as the
+        // body of a list bullet (`- ```rust`), so probe both shapes: strip a
+        // leading `- ` bullet marker before the backtick test.
         let fence_probe = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         let is_fence_delim = fence_probe.starts_with("```");
 
-        // Calculate indentation (number of leading spaces / 2). Moved ahead of
-        // the fence toggle below (#2866) so `depth` is available for the
-        // boundary check.
+        // Calculate indentation (number of leading spaces / 2). Computed ahead
+        // of the fence handling (#2866) so `depth` is available to it.
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
 
-        // #2866 — an unbalanced fence recovery: `in_fence` is still open from
-        // an earlier, unterminated fence (odd delimiter count inside the
-        // owning block), and this line is a NEW bullet at or above the depth
-        // of the block that opened that fence. That means we've left the
-        // owning block's scope, so the fence must have been meant to close by
-        // the end of that block — force it closed at this boundary so the
-        // sibling spawns its own block instead of being folded into the
-        // never-closed fence. Only applies to non-delimiter lines; a genuine
-        // closing delimiter is handled by the toggle below.
-        if in_fence
-            && !is_fence_delim
-            && (trimmed == "-" || trimmed.starts_with("- "))
-            && fence_open_depth.is_some_and(|open_depth| depth <= open_depth)
-        {
-            // (#2866 review follow-up) — regression guard against #2725: a
-            // bullet-shaped line at (or above) the fence-opener's own depth
-            // is genuinely ambiguous on its own — it could be the sibling
-            // bullet #2866 needs to recover at (the fence never really
-            // closes), OR it could be literal fence CONTENT that just
-            // happens to look bullet-shaped, with the fence properly closing
-            // on the very next line (e.g. a pasted snippet whose last line
-            // is `- interior`, immediately followed by the closing fence:
-            // `- ```\n- interior\n``` `). Those two shapes are
-            // indistinguishable from this line alone.
-            //
-            // Resolve the ambiguity with a single-line peek: if the next
-            // non-blank line is a BARE closing delimiter (no `- ` prefix),
-            // that's an UNAMBIGUOUS signal the fence closes right here — a
-            // bare ```` ``` ```` can only ever be a continuation/close of an
-            // already-open fence, never the start of a new bullet — so treat
-            // the current line as fence content and do NOT recover. A
-            // BULLETED delimiter (`- ``` `) on the next line is NOT treated
-            // as unambiguous: it could just as easily be opening a brand-new
-            // sibling code block (the exact shape #2866 was filed over, see
-            // the multi-code-block regression test below), so recovery still
-            // fires in that case. Anything else on the next line (or EOF)
-            // also falls through to recovery, matching the pre-existing
-            // (unrefined) behaviour.
-            let next_is_unambiguous_close = {
-                let mut peek = lines_iter.clone();
-                loop {
-                    match peek.next() {
-                        None => break false,
-                        Some(next_line) => {
-                            let next_trimmed = next_line.trim_start();
-                            if next_trimmed.is_empty() {
-                                continue;
-                            }
-                            break next_trimmed.starts_with("```");
-                        }
-                    }
-                }
-            };
-            if !next_is_unambiguous_close {
-                in_fence = false;
-                fence_open_depth = None;
-            }
-        }
+        fence.close_unbalanced_at(trimmed, depth, is_fence_delim, lines_iter.clone());
 
-        let line_is_code = in_fence || is_fence_delim;
+        // The delimiter line is itself part of the code region (`line_is_code`
+        // is true on both the opening and closing fence), and every line
+        // strictly inside a fence is code. Computed BEFORE classification so
+        // the block this line lands in (or appends to) can be marked.
+        let line_is_code = fence.open || is_fence_delim;
         if is_fence_delim {
-            if in_fence {
-                // Closing an open fence.
-                fence_open_depth = None;
-            } else {
-                // Opening a fence: record the depth of the block that owns
-                // it, so an unbalanced fence can be detected at the next
-                // sibling boundary (see above). A delimiter that opens a
-                // bullet (`- ```rust`) owns that bullet's own depth; a bare
-                // ```` ``` ```` continuation line belongs to the
-                // most-recently-pushed block instead.
-                let owner_depth = if trimmed == "-" || trimmed.starts_with("- ") {
-                    depth
-                } else {
-                    blocks.last().map(|b| b.depth).unwrap_or(depth)
-                };
-                fence_open_depth = Some(owner_depth);
-            }
-            in_fence = !in_fence;
+            fence.toggle(trimmed, depth, blocks.last());
         }
 
-        // #2725 — a `- `-prefixed line STRICTLY INSIDE an open code fence (i.e.
-        // not itself a fence delimiter) is literal code content, NOT a new list
-        // item. `line_is_code` is also true on the fence-DELIMITER line (`- ```rust`
-        // opens the code block's own bullet), so guarding on `line_is_code`
-        // would wrongly swallow that opening bullet; guard on `in_code_body`
-        // instead — true only for lines between (not on) the delimiters. Such a
-        // line falls through to the continuation branch (folded into the fenced
-        // block's content), mirroring the already-guarded property branch below.
-        let in_code_body = in_fence && !is_fence_delim;
-        if in_code_body && (trimmed == "-" || trimmed.starts_with("- ")) {
-            fence_split_avoided_count += 1;
+        // #2725 — a `- `-prefixed line STRICTLY INSIDE an open code fence
+        // (i.e. not itself a fence delimiter) is literal code content, NOT a
+        // new list item. `line_is_code` is also true on the fence-DELIMITER
+        // line (`- ```rust` opens the code block's own bullet), so guarding on
+        // `line_is_code` would wrongly swallow that opening bullet; guard on
+        // `in_code_body` instead — true only for lines between (not on) the
+        // delimiters. Such a line falls through to the continuation branch
+        // (folded into the fenced block's content), mirroring the
+        // already-guarded property branch below.
+        let in_code_body = fence.open && !is_fence_delim;
+        if in_code_body && is_bullet_line(trimmed) {
+            lossy.fence_split_avoided += 1;
         }
 
         // Check if this is a list item (- prefix). #1917: a bare `-` with no
@@ -823,34 +899,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 block_anchor: None,
             });
         } else if !in_code_body && let Some(text) = trimmed.strip_prefix("- ") {
-            // #4552 slice 4 — a SECOND list marker right after the outline
-            // bullet is the block's `listStyle`, not its content: the exporter
-            // writes `- - foo` / `- 1. foo` for a `bullet` / `ordered` block
-            // and `- \- foo` for a plain block whose text merely begins with a
-            // marker. Consume the marker into a property row and keep
-            // `blocks.content` bare — the marker is a document-assembly
-            // concern, not a block-content one. The literal ordinal is
-            // discarded; export re-derives it positionally.
-            let (list_style, text) = split_block_list_marker(text);
-            let mut properties: Vec<(String, String)> = Vec::new();
-            if let Some(style) = list_style {
-                properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
-            }
-
-            // Strip ((uuid)) block references -> plain text
-            let (cleaned, removed) = strip_block_refs_counted(text);
-            stripped_block_ref_count += removed;
-
-            blocks.push(ParsedBlock {
-                content: cleaned,
-                depth,
-                // A body `listStyle:: value` line further down the file is
-                // appended AFTER this seed and therefore wins — an explicit
-                // property line overrides the marker, not the other way round.
-                properties,
-                is_code: line_is_code,
-                block_anchor: None,
-            });
+            lossy.stripped_refs += push_bullet_block(&mut blocks, text, depth, line_is_code);
         } else if !line_is_code
             && let Some((key_candidate, value)) = trimmed
                 .split_once(":: ")
@@ -863,101 +912,14 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // Logseq) would otherwise be misclassified and produce arbitrary
             // key/value pairs. The stricter discriminator falls through to
             // the content-block branch when the LHS is not a valid key.
-            let key = key_candidate.trim().to_string();
-            let value = value.trim().to_string();
-            // #1568: skip reserved/exporter-managed keys before attaching them
-            // to an owning block. These mirror the frontmatter filter
-            // (`FRONTMATTER_RESERVED_KEYS`): `space` is column-backed and
-            // requires a `value_ref`, so a body bullet `space:: X` (text value,
-            // no ref) makes `set_property_in_tx` return a Validation error that
-            // `?`-aborts the entire import chunk. Filtering here matches the
-            // frontmatter round-trip semantics: a reserved body property is
-            // dropped, never written, and the surrounding good content imports.
-            if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
-                tracing::debug!(
-                    key = %key,
-                    "skipping reserved/column-backed body property during import (#1568)"
-                );
-                reserved_property_count += 1;
-                continue;
-            }
-            // #682: attach to the block that *indentation* says owns this
-            // property, not just the most-recently-pushed block. Logseq emits
-            // a property line indented one level under (or level with) its
-            // owning bullet, so the owner is the nearest preceding block whose
-            // depth is <= the property line's depth. Scanning in reverse over
-            // the document-ordered `blocks` finds that nearest ancestor; a
-            // property nested under a grandchild therefore no longer
-            // mis-attaches to an unrelated later sibling.
-            match blocks.iter_mut().rev().find(|b| b.depth <= depth) {
-                Some(owner) => owner.properties.push((key, value)),
-                None => {
-                    // No ancestor at or above this indentation (e.g. a
-                    // property line indented deeper than any preceding bullet,
-                    // or before any bullet at all). Lossy — surface it via a
-                    // warning counter rather than swallow it silently.
-                    orphan_property_count += 1;
-                }
-            }
+            attach_property_line(&mut blocks, key_candidate, value, depth, &mut lossy);
         } else if let Some(last) = blocks.last_mut() {
-            // #682: continuation line — a non-list, non-property line that
-            // follows a bullet is the soft-wrapped / multi-line body of that
-            // bullet. Append it (newline-joined) to the owning block's content
-            // instead of spawning a separate block, matching how Logseq stores
-            // multi-line bullet bodies.
-            // #2716 — reverse the exporter's continuation-line escape: a
-            // NON-code continuation line the exporter had to guard (it opens a
-            // bullet or matches `key:: value`) was emitted with a single
-            // leading `\` so it would land HERE (folded) instead of spawning a
-            // block / property. Strip that one backslash — but ONLY when the
-            // escaped payload really is such an ambiguous line, so an ordinary
-            // continuation line that legitimately begins with `\` (e.g. a LaTeX
-            // command) is preserved verbatim. Skipped inside a code fence
-            // (`line_is_code`): code is emitted verbatim and must keep its
-            // backslashes intact.
-            let unescaped = if !line_is_code
-                && let Some(rest) = trimmed.strip_prefix('\\')
-                && {
-                    // The exporter escapes based on the line's TRIMMED shape
-                    // (`content_line_is_ambiguous`) and anchors the `\` BEFORE
-                    // the continuation line's own leading whitespace, so an
-                    // INDENTED ambiguous line reaches here as `\<ws><token>`
-                    // (`  - sub` → wire `  \  - sub`, `trimmed` = `\  - sub`).
-                    // Match the same TRIMMED shape — otherwise the untrimmed
-                    // `rest.starts_with("- ")` misses it and the `\` leaks into
-                    // the folded content as a spurious character. (Interior
-                    // indentation itself is still normalised away downstream by
-                    // `strip_block_refs_counted`'s trim, exactly as it is for a
-                    // non-ambiguous indented continuation line; the point of the
-                    // un-escape is only to strip the escape marker, never to
-                    // inject one.)
-                    let body = rest.trim_start();
-                    body == "-" || body.starts_with("- ") || line_is_property_shaped(body)
-                } {
-                rest
-            } else {
-                trimmed
-            };
-            let (cleaned, removed) = strip_block_refs_counted(unescaped);
-            stripped_block_ref_count += removed;
-            // #1924 — a continuation line inside a fence makes the owning block
-            // code (e.g. the fenced body lines that follow a `- ```rust` bullet,
-            // and the closing ```` ``` ```` delimiter line). Once a block is
-            // flagged code it stays code.
-            if line_is_code {
-                last.is_code = true;
-            }
-            if !cleaned.is_empty() {
-                if !last.content.is_empty() {
-                    last.content.push('\n');
-                }
-                last.content.push_str(&cleaned);
-            }
+            lossy.stripped_refs += append_continuation_line(last, trimmed, line_is_code);
         } else {
             // Non-list, non-property line with no preceding block (file starts
             // with bare text) -- treat as a standalone depth-0 content block.
             let (cleaned, removed) = strip_block_refs_counted(trimmed);
-            stripped_block_ref_count += removed;
+            lossy.stripped_refs += removed;
             blocks.push(ParsedBlock {
                 content: cleaned,
                 depth,
@@ -968,14 +930,148 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         }
     }
 
-    // #2510 — strip a trailing Obsidian block-anchor marker (`^block-id`) off
-    // each block's now-FULLY-assembled content. Run as a POST-pass over
-    // `blocks` (not inline during the line-by-line scan above) because the
-    // marker sits at the end of the WHOLE block, and a block's content is
-    // only fully assembled once every continuation line (#682) has been
-    // appended to it. `is_code` blocks are skipped — a fenced code sample
-    // ending in `^something` is code, not an Obsidian anchor.
-    for block in &mut blocks {
+    (blocks, lossy)
+}
+
+/// Push a `- text` bullet as a new block: the leading list marker (if any)
+/// becomes a `listStyle` property (#4552) and `((uuid))` block references are
+/// stripped to plain text. Returns how many references were stripped.
+fn push_bullet_block(
+    blocks: &mut Vec<ParsedBlock>,
+    text: &str,
+    depth: usize,
+    line_is_code: bool,
+) -> usize {
+    // #4552 slice 4 — a SECOND list marker right after the outline bullet is
+    // the block's `listStyle`, not its content: the exporter writes `- - foo` /
+    // `- 1. foo` for a `bullet` / `ordered` block and `- \- foo` for a plain
+    // block whose text merely begins with a marker. Consume the marker into a
+    // property row and keep `blocks.content` bare — the marker is a
+    // document-assembly concern, not a block-content one. The literal ordinal
+    // is discarded; export re-derives it positionally.
+    let (list_style, text) = split_block_list_marker(text);
+    let mut properties: Vec<(String, String)> = Vec::new();
+    if let Some(style) = list_style {
+        properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
+    }
+    let (cleaned, removed) = strip_block_refs_counted(text);
+    blocks.push(ParsedBlock {
+        content: cleaned,
+        depth,
+        // A body `listStyle:: value` line further down the file is
+        // appended AFTER this seed and therefore wins — an explicit
+        // property line overrides the marker, not the other way round.
+        properties,
+        is_code: line_is_code,
+        block_anchor: None,
+    });
+    removed
+}
+
+/// Attach a `key:: value` body property to the block that *indentation* says
+/// owns it, rather than to the most-recently-pushed block (#682): Logseq emits
+/// a property line indented one level under (or level with) its owning bullet,
+/// so the owner is the nearest preceding block whose depth is <= the property
+/// line's depth. Scanning in reverse over the document-ordered `blocks` finds
+/// that nearest ancestor; a property nested under a grandchild therefore no
+/// longer mis-attaches to an unrelated later sibling. Reserved keys and
+/// properties with no owning ancestor are dropped and counted in `lossy`.
+fn attach_property_line(
+    blocks: &mut [ParsedBlock],
+    key_candidate: &str,
+    value: &str,
+    depth: usize,
+    lossy: &mut LossyCounts,
+) {
+    let key = key_candidate.trim().to_string();
+    let value = value.trim().to_string();
+    // #1568: skip reserved/exporter-managed keys before attaching them to an
+    // owning block. Filtering here matches the frontmatter round-trip
+    // semantics: a reserved body property is dropped, never written, and the
+    // surrounding good content imports.
+    if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
+        tracing::debug!(
+            key = %key,
+            "skipping reserved/column-backed body property during import (#1568)"
+        );
+        lossy.reserved_property += 1;
+        return;
+    }
+    match blocks.iter_mut().rev().find(|b| b.depth <= depth) {
+        Some(owner) => owner.properties.push((key, value)),
+        // No ancestor at or above this indentation (e.g. a property line
+        // indented deeper than any preceding bullet, or before any bullet at
+        // all). Lossy — surface it via a warning counter rather than swallow
+        // it silently.
+        None => lossy.orphan_property += 1,
+    }
+}
+
+/// Fold a continuation line into the block it belongs to (#682): a non-list,
+/// non-property line that follows a bullet is the soft-wrapped / multi-line
+/// body of that bullet, appended (newline-joined) to the owning block's
+/// content instead of spawning a separate block, matching how Logseq stores
+/// multi-line bullet bodies. Returns how many `((uuid))` references were
+/// stripped from it.
+fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code: bool) -> usize {
+    // #2716 — reverse the exporter's continuation-line escape: a NON-code
+    // continuation line the exporter had to guard (it opens a bullet or matches
+    // `key:: value`) was emitted with a single leading `\` so it would land
+    // HERE (folded) instead of spawning a block / property. Strip that one
+    // backslash — but ONLY when the escaped payload really is such an
+    // ambiguous line, so an ordinary continuation line that legitimately begins
+    // with `\` (e.g. a LaTeX command) is preserved verbatim. Skipped inside a
+    // code fence (`line_is_code`): code is emitted verbatim and must keep its
+    // backslashes intact.
+    let unescaped = if !line_is_code
+        && let Some(rest) = trimmed.strip_prefix('\\')
+        && {
+            // The exporter escapes based on the line's TRIMMED shape
+            // (`content_line_is_ambiguous`) and anchors the `\` BEFORE the
+            // continuation line's own leading whitespace, so an INDENTED
+            // ambiguous line reaches here as `\<ws><token>` (`  - sub` → wire
+            // `  \  - sub`, `trimmed` = `\  - sub`). Match the same TRIMMED
+            // shape — otherwise the untrimmed `rest.starts_with("- ")` misses
+            // it and the `\` leaks into the folded content as a spurious
+            // character. (Interior indentation itself is still normalised away
+            // downstream by `strip_block_refs_counted`'s trim, exactly as it is
+            // for a non-ambiguous indented continuation line; the point of the
+            // un-escape is only to strip the escape marker, never to inject
+            // one.)
+            let body = rest.trim_start();
+            is_bullet_line(body) || line_is_property_shaped(body)
+        } {
+        rest
+    } else {
+        trimmed
+    };
+    let (cleaned, removed) = strip_block_refs_counted(unescaped);
+    // #1924 — a continuation line inside a fence makes the owning block code
+    // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
+    // closing ```` ``` ```` delimiter line). Once a block is flagged code it
+    // stays code.
+    if line_is_code {
+        last.is_code = true;
+    }
+    if !cleaned.is_empty() {
+        if !last.content.is_empty() {
+            last.content.push('\n');
+        }
+        last.content.push_str(&cleaned);
+    }
+    removed
+}
+
+/// #2510 — strip a trailing Obsidian block-anchor marker (`^block-id`) off
+/// each block's now-FULLY-assembled content, recording it in
+/// [`ParsedBlock::block_anchor`]. Runs as a POST-pass over the scanned blocks
+/// (not inline during the line-by-line scan) because the marker sits at the
+/// end of the WHOLE block, and a block's content is only fully assembled once
+/// every continuation line (#682) has been appended to it. `is_code` blocks
+/// are skipped — a fenced code sample ending in `^something` is code, not an
+/// Obsidian anchor.
+fn extract_block_anchors(blocks: &mut [ParsedBlock]) {
+    for block in blocks {
         if block.is_code {
             continue;
         }
@@ -984,60 +1080,19 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             block.block_anchor = Some(anchor);
         }
     }
+}
 
-    // Clamp depth to MAX_IMPORT_DEPTH (flatten deeper blocks) and track
-    // how many were clamped.
-    let mut clamped_count: usize = 0;
-    for block in &mut blocks {
+/// Clamp depth to [`MAX_IMPORT_DEPTH`] (flattening deeper blocks) and return
+/// how many blocks were clamped.
+fn clamp_block_depths(blocks: &mut [ParsedBlock]) -> usize {
+    let mut clamped = 0;
+    for block in blocks {
         if block.depth > MAX_IMPORT_DEPTH {
             block.depth = MAX_IMPORT_DEPTH;
-            clamped_count += 1;
+            clamped += 1;
         }
     }
-
-    let mut warnings = frontmatter_warnings;
-    if clamped_count > 0 {
-        warnings.push(format!(
-            "{clamped_count} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
-        ));
-    }
-    if orphan_property_count > 0 {
-        warnings.push(format!(
-            "{orphan_property_count} property line(s) had no owning block at or above their \
-             indentation and were dropped"
-        ));
-    }
-    if reserved_property_count > 0 {
-        warnings.push(format!(
-            "{reserved_property_count} reserved/exporter-managed property line(s) (e.g. `space`) \
-             were skipped during import"
-        ));
-    }
-    if stripped_block_ref_count > 0 {
-        // #1933: block-ref stripping is data-lossy (the `((uuid))` target is
-        // removed). Surface an aggregate warning so the drop is recoverable
-        // from the returned warnings / the import summary log, not silent.
-        warnings.push(format!(
-            "{stripped_block_ref_count} ((block-ref)) reference(s) were stripped from imported \
-             content and could not be preserved"
-        ));
-    }
-    if fence_split_avoided_count > 0 {
-        // #2725: surface that list-like lines inside a code fence were folded
-        // into the fenced block (not split into new blocks) — the corrected
-        // behaviour, but observable so a reshaped code sample is diagnosable.
-        warnings.push(format!(
-            "{fence_split_avoided_count} list-like line(s) inside a code fence were kept as \
-             literal code content instead of new blocks"
-        ));
-    }
-
-    ParseOutput {
-        blocks,
-        frontmatter,
-        frontmatter_list_items,
-        warnings,
-    }
+    clamped
 }
 
 /// Excise a leading YAML frontmatter block from already-EOL-normalized
@@ -1245,6 +1300,233 @@ fn commit_block(
     }
 }
 
+/// One open YAML block-style sequence (#1917): a `key:` line with no inline
+/// value, followed by `- item` lines. Items are collected here and committed
+/// as a single comma-joined scalar — the same canonical representation the
+/// inline flow-sequence (`[a, b]`) path produces — so block-style and flow
+/// `aliases:`/`tags:` both round-trip through single-value property storage.
+struct PendingSeq {
+    key: String,
+    items: Vec<String>,
+}
+
+/// State threaded through the [`parse_frontmatter`] line scan: the parsed
+/// pairs plus the de-dup set, the two skip counters, and whichever multi-line
+/// construct (block scalar, block sequence) is currently open. Grouped into
+/// one value so each step of the scan is a method instead of a free function
+/// taking eight `&mut` arguments.
+struct FrontmatterScan<'a> {
+    pairs: Vec<(String, String)>,
+    seen: std::collections::HashSet<String>,
+    list_items: &'a mut std::collections::HashMap<String, Vec<String>>,
+    warnings: &'a mut Vec<String>,
+    block: Option<BlockScalar>,
+    pending_seq: Option<PendingSeq>,
+    skipped_array: usize,
+    skipped_invalid: usize,
+}
+
+impl<'a> FrontmatterScan<'a> {
+    fn new(
+        list_items: &'a mut std::collections::HashMap<String, Vec<String>>,
+        warnings: &'a mut Vec<String>,
+    ) -> Self {
+        Self {
+            pairs: Vec::new(),
+            seen: std::collections::HashSet::new(),
+            list_items,
+            warnings,
+            block: None,
+            pending_seq: None,
+            skipped_array: 0,
+            skipped_invalid: 0,
+        }
+    }
+
+    /// Commit a finished block-style sequence into `pairs` (de-dup aware),
+    /// joining its items into a comma-separated scalar. A sequence with no
+    /// items (`key:` with nothing following) commits as an empty scalar,
+    /// matching the prior `key:` (empty value) behaviour. The unjoined items
+    /// are ALSO recorded into `list_items` (#2829) so a consumer needing exact
+    /// item boundaries (an item may itself contain a literal comma) doesn't
+    /// have to re-split the lossy joined scalar.
+    fn commit_seq(&mut self, seq: PendingSeq) {
+        let joined = seq.items.join(", ");
+        if self.seen.insert(seq.key.clone()) {
+            if !seq.items.is_empty() {
+                self.list_items.insert(seq.key.clone(), seq.items);
+            }
+            self.pairs.push((seq.key, joined));
+        } else {
+            self.warnings.push(format!(
+                "frontmatter key '{}' appears more than once; keeping the first value",
+                seq.key
+            ));
+        }
+    }
+
+    /// While a block scalar is open, a MORE-INDENTED (or blank) line is
+    /// continuation content and must NOT be mis-counted as invalid: capture it
+    /// and report `true`. A line indented at-or-below the opening key ends the
+    /// block — it is committed here and `false` is reported so the caller
+    /// re-processes the line as an ordinary frontmatter line.
+    fn absorb_block_scalar_line(&mut self, raw: &str) -> bool {
+        let Some(b) = self.block.as_mut() else {
+            return false;
+        };
+        let raw_indent = frontmatter_indent_of(raw);
+        let is_blank = raw.trim().is_empty();
+        // Blank lines inside a block are part of the scalar (a blank line
+        // is only a terminator at-or-below the key indent — but a blank
+        // line carries no indent, so treat it as continuation while the
+        // block is open).
+        if is_blank || raw_indent > b.key_indent {
+            let content_indent = *b.content_indent.get_or_insert(raw_indent);
+            // Strip the uniform block indentation; never panic on a line
+            // that is shorter than the content indent (blank lines).
+            let stripped = if raw.len() >= content_indent {
+                raw[raw
+                    .char_indices()
+                    .nth(content_indent)
+                    .map_or(raw.len(), |(i, _)| i)..]
+                    .to_string()
+            } else {
+                String::new()
+            };
+            b.lines.push(stripped);
+            return true;
+        }
+        let finished = self.block.take().expect("block present");
+        commit_block(finished, &mut self.pairs, &mut self.seen, self.warnings);
+        false
+    }
+
+    /// Append a `- item` block-sequence element to the open sequence, so
+    /// block-style `aliases:` / `tags:` round-trip exactly as the inline
+    /// `[a, b]` form does. A `- item` with NO open sequence (a stray bullet)
+    /// is parse-and-ignored with a warning. A bare `-` (empty element) is a
+    /// no-op element.
+    fn absorb_sequence_item(&mut self, line: &str) {
+        let Some(seq) = self.pending_seq.as_mut() else {
+            self.skipped_array += 1;
+            return;
+        };
+        let item = strip_yaml_quotes(line.strip_prefix("- ").unwrap_or("").trim());
+        if !item.is_empty() {
+            seq.items.push(item.to_string());
+        }
+    }
+
+    /// Parse one ordinary frontmatter line — a `key: value` scalar, a
+    /// block-scalar header, a flow sequence/mapping, or the `key:` that opens
+    /// a block sequence. `raw` is the untrimmed line, needed for the
+    /// block-scalar key indent.
+    fn parse_entry_line(&mut self, line: &str, raw: &str) {
+        let Some((key_raw, value_raw)) = line.split_once(':') else {
+            // No colon: not a `key: value` scalar (e.g. a stray scalar or
+            // malformed line). Surface it rather than silently swallow.
+            self.skipped_invalid += 1;
+            return;
+        };
+        let key = key_raw.trim();
+        if !is_property_key(key) {
+            self.skipped_invalid += 1;
+            return;
+        }
+        if FRONTMATTER_RESERVED_KEYS.contains(&key) {
+            // Exporter-managed key — silently filtered (it is never meant
+            // to round-trip as a user property).
+            return;
+        }
+        let value_trimmed = value_raw.trim();
+        // Block-scalar indicator (#1590): `key: |`, `key: >`, with optional
+        // chomping (`-`/`+`) and/or a one-digit indentation indicator, e.g.
+        // `|-`, `>+`, `|2`, `>2-`. The subsequent more-indented lines are the
+        // value and must not be mis-counted as invalid. Open a block instead
+        // of treating the (empty) inline value as a scalar.
+        if let Some(spec) = parse_block_scalar_indicator(value_trimmed) {
+            self.block = Some(BlockScalar {
+                key: key.to_string(),
+                folded: spec.folded,
+                key_indent: frontmatter_indent_of(raw),
+                content_indent: None,
+                lines: Vec::new(),
+            });
+            return;
+        }
+        // Inline flow-sequence syntax (`[a, b]`) — #1917. The exporter writes
+        // `aliases: [..]` / `tags: [..]` as YAML flow sequences, so dropping
+        // them (the pre-fix behaviour) silently lost every exported alias/tag
+        // on re-import. Committed exactly like a block-style sequence: the
+        // items join into a single canonical scalar (`a, b`) — the SAME shape
+        // a re-export of the resulting text property would emit — so the value
+        // round-trips through the existing single-value property storage
+        // (`set_property_in_tx` stamps one row per key; duplicate keys would
+        // collapse under its INSERT-OR-REPLACE, so multiple pairs are NOT a
+        // viable representation — one joined value is). A flow MAPPING
+        // (`{a: b}`) has no single sensible scalar projection and stays
+        // skipped-with-warning.
+        if value_trimmed.starts_with('[') && value_trimmed.ends_with(']') {
+            self.commit_seq(PendingSeq {
+                key: key.to_string(),
+                items: parse_flow_sequence_items(value_trimmed),
+            });
+            return;
+        }
+        if value_trimmed.starts_with('{') && value_trimmed.ends_with('}') {
+            self.skipped_array += 1;
+            return;
+        }
+
+        let value = strip_yaml_quotes(value_trimmed);
+        // An empty inline value (`key:`) may be the header of a block-style
+        // sequence whose `- item` elements follow on subsequent lines (#1917).
+        // Open a pending sequence keyed on this line; `absorb_sequence_item`
+        // appends to it, and the next non-sequence line (or end of input)
+        // commits it. A `key:` with no following `- item` lines commits as an
+        // empty scalar (unchanged behaviour).
+        if value.is_empty() {
+            self.pending_seq = Some(PendingSeq {
+                key: key.to_string(),
+                items: Vec::new(),
+            });
+            return;
+        }
+        if !self.seen.insert(key.to_string()) {
+            self.warnings.push(format!(
+                "frontmatter key '{key}' appears more than once; keeping the first value"
+            ));
+            return;
+        }
+        self.pairs.push((key.to_string(), value.to_string()));
+    }
+
+    /// Flush whatever is still open at end of input, append the aggregate
+    /// skip warnings, and yield the parsed pairs.
+    fn finish(mut self) -> Vec<(String, String)> {
+        if let Some(b) = self.block.take() {
+            commit_block(b, &mut self.pairs, &mut self.seen, self.warnings);
+        }
+        if let Some(seq) = self.pending_seq.take() {
+            self.commit_seq(seq);
+        }
+        let (skipped_array, skipped_invalid) = (self.skipped_array, self.skipped_invalid);
+        if skipped_array > 0 {
+            self.warnings.push(format!(
+                "{skipped_array} frontmatter line(s) used array/collection syntax \
+                 (not yet supported) and were ignored"
+            ));
+        }
+        if skipped_invalid > 0 {
+            self.warnings.push(format!(
+                "{skipped_invalid} frontmatter line(s) were not a valid `key: value` scalar \
+                 and were ignored"
+            ));
+        }
+        self.pairs
+    }
+}
+
 /// Parse a leading YAML frontmatter block into page-property pairs (#1432).
 ///
 /// This is a deliberately HAND-ROLLED parser over a fixed YAML *subset* — not
@@ -1266,236 +1548,34 @@ fn commit_block(
 /// which fail the `key: value` scalar test). Reserved/exporter-managed keys
 /// (see [`FRONTMATTER_RESERVED_KEYS`]) are silently filtered. Duplicate keys
 /// keep the FIRST value and warn.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn parse_frontmatter(
     yaml: &str,
     list_items: &mut std::collections::HashMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> Vec<(String, String)> {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut skipped_array = 0usize;
-    let mut skipped_invalid = 0usize;
-
-    let mut block: Option<BlockScalar> = None;
-
-    // Block-style sequence state (#1917): a `key:` line with no inline value
-    // followed by `- item` lines. Items are collected here and committed as a
-    // single comma-joined scalar — the same canonical representation the
-    // inline flow-sequence (`[a, b]`) path produces — so block-style and flow
-    // `aliases:`/`tags:` both round-trip through single-value property storage.
-    struct PendingSeq {
-        key: String,
-        items: Vec<String>,
-    }
-    let mut pending_seq: Option<PendingSeq> = None;
-
-    // Commit a finished block-style sequence into `pairs` (de-dup aware),
-    // joining its items into a comma-separated scalar. A sequence with no items
-    // (`key:` with nothing following) commits as an empty scalar, matching the
-    // prior `key:` (empty value) behaviour. The unjoined items are ALSO
-    // recorded into `list_items` (#2829) so a consumer needing exact item
-    // boundaries (an item may itself contain a literal comma) doesn't have to
-    // re-split the lossy joined scalar.
-    macro_rules! commit_seq {
-        ($s:expr) => {{
-            let s = $s;
-            let joined = s.items.join(", ");
-            if seen.insert(s.key.clone()) {
-                if !s.items.is_empty() {
-                    list_items.insert(s.key.clone(), s.items);
-                }
-                pairs.push((s.key, joined));
-            } else {
-                warnings.push(format!(
-                    "frontmatter key '{}' appears more than once; keeping the first value",
-                    s.key
-                ));
-            }
-        }};
-    }
-
+    let mut scan = FrontmatterScan::new(list_items, warnings);
     for raw in yaml.lines() {
-        // While a block scalar is open, a MORE-INDENTED (or blank) line is
-        // continuation content and must NOT be mis-counted as invalid. A line
-        // indented at-or-below the opening key ends the block; it is then
-        // re-processed as a normal frontmatter line below.
-        if let Some(b) = block.as_mut() {
-            let raw_indent = frontmatter_indent_of(raw);
-            let is_blank = raw.trim().is_empty();
-            // Blank lines inside a block are part of the scalar (a blank line
-            // is only a terminator at-or-below the key indent — but a blank
-            // line carries no indent, so treat it as continuation while the
-            // block is open).
-            if is_blank || raw_indent > b.key_indent {
-                let content_indent = *b.content_indent.get_or_insert(raw_indent);
-                // Strip the uniform block indentation; never panic on a line
-                // that is shorter than the content indent (blank lines).
-                let stripped = if raw.len() >= content_indent {
-                    raw[raw
-                        .char_indices()
-                        .nth(content_indent)
-                        .map_or(raw.len(), |(i, _)| i)..]
-                        .to_string()
-                } else {
-                    String::new()
-                };
-                b.lines.push(stripped);
-                continue;
-            }
-            // Dedent: the block is finished. Commit it, then fall through to
-            // process `raw` as an ordinary frontmatter line.
-            commit_block(
-                block.take().expect("block present"),
-                &mut pairs,
-                &mut seen,
-                warnings,
-            );
+        if scan.absorb_block_scalar_line(raw) {
+            continue;
         }
-
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         // A bare `- item` line is a YAML block-sequence element belonging to a
-        // preceding `key:` with no inline value (#1917). If a sequence is open
-        // (the preceding line was `key:`), append the item to it so block-style
-        // `aliases:` / `tags:` round-trip exactly as the inline `[a, b]` form
-        // does. A `- item` with NO open sequence (a stray bullet) is still
-        // parse-and-ignored with a warning. A bare `-` (empty element) is a
-        // no-op element.
+        // preceding `key:` with no inline value (#1917).
         if line.starts_with("- ") || line == "-" {
-            if let Some(seq) = pending_seq.as_mut() {
-                let item = strip_yaml_quotes(line.strip_prefix("- ").unwrap_or("").trim());
-                if !item.is_empty() {
-                    seq.items.push(item.to_string());
-                }
-            } else {
-                skipped_array += 1;
-            }
+            scan.absorb_sequence_item(line);
             continue;
         }
         // Any non-sequence line ends an open block-style sequence: commit it
         // before processing this line as an ordinary frontmatter entry.
-        if let Some(seq) = pending_seq.take() {
-            commit_seq!(seq);
+        if let Some(seq) = scan.pending_seq.take() {
+            scan.commit_seq(seq);
         }
-        let Some((key_raw, value_raw)) = line.split_once(':') else {
-            // No colon: not a `key: value` scalar (e.g. a stray scalar or
-            // malformed line). Surface it rather than silently swallow.
-            skipped_invalid += 1;
-            continue;
-        };
-        let key = key_raw.trim();
-        if !is_property_key(key) {
-            skipped_invalid += 1;
-            continue;
-        }
-        if FRONTMATTER_RESERVED_KEYS.contains(&key) {
-            // Exporter-managed key — silently filtered (it is never meant
-            // to round-trip as a user property).
-            continue;
-        }
-        let value_trimmed = value_raw.trim();
-        // Block-scalar indicator (#1590): `key: |`, `key: >`, with optional
-        // chomping (`-`/`+`) and/or a one-digit indentation indicator, e.g.
-        // `|-`, `>+`, `|2`, `>2-`. The subsequent more-indented lines are the
-        // value and must not be mis-counted as invalid. Open a block instead
-        // of treating the (empty) inline value as a scalar.
-        if let Some(spec) = parse_block_scalar_indicator(value_trimmed) {
-            block = Some(BlockScalar {
-                key: key.to_string(),
-                folded: spec.folded,
-                key_indent: frontmatter_indent_of(raw),
-                content_indent: None,
-                lines: Vec::new(),
-            });
-            continue;
-        }
-        // Inline flow-sequence syntax (`[a, b]`) — #1917. The exporter writes
-        // `aliases: [..]` / `tags: [..]` as YAML flow sequences, so dropping
-        // them (the pre-fix behaviour) silently lost every exported alias/tag
-        // on re-import. Parse the flow items and join them into a single
-        // canonical scalar (`a, b`) — the SAME shape a re-export of the
-        // resulting text property would emit — so the value round-trips
-        // through the existing single-value property storage
-        // (`set_property_in_tx` stamps one row per key; duplicate keys would
-        // collapse under its INSERT-OR-REPLACE, so multiple pairs are NOT a
-        // viable representation — one joined value is). A flow MAPPING
-        // (`{a: b}`) has no single sensible scalar projection and stays
-        // skipped-with-warning. The unjoined items are ALSO recorded into
-        // `list_items` (#2829) so a consumer needing exact item boundaries —
-        // an item may itself contain a literal comma, e.g. `["Beta, Inc"]`
-        // — doesn't have to re-split the lossy joined scalar.
-        if value_trimmed.starts_with('[') && value_trimmed.ends_with(']') {
-            let items = parse_flow_sequence_items(value_trimmed);
-            let joined = items.join(", ");
-            if !seen.insert(key.to_string()) {
-                warnings.push(format!(
-                    "frontmatter key '{key}' appears more than once; keeping the first value"
-                ));
-                continue;
-            }
-            if !items.is_empty() {
-                list_items.insert(key.to_string(), items);
-            }
-            pairs.push((key.to_string(), joined));
-            continue;
-        }
-        if value_trimmed.starts_with('{') && value_trimmed.ends_with('}') {
-            skipped_array += 1;
-            continue;
-        }
-
-        let value = strip_yaml_quotes(value_trimmed);
-        // An empty inline value (`key:`) may be the header of a block-style
-        // sequence whose `- item` elements follow on subsequent lines (#1917).
-        // Open a pending sequence keyed on this line; the `- item` branch above
-        // appends to it, and the next non-sequence line (or end of input)
-        // commits it. A `key:` with no following `- item` lines commits as an
-        // empty scalar (unchanged behaviour).
-        if value.is_empty() {
-            // Flush any sequence already open for a *different* key first.
-            if let Some(seq) = pending_seq.take() {
-                commit_seq!(seq);
-            }
-            pending_seq = Some(PendingSeq {
-                key: key.to_string(),
-                items: Vec::new(),
-            });
-            continue;
-        }
-        if !seen.insert(key.to_string()) {
-            warnings.push(format!(
-                "frontmatter key '{key}' appears more than once; keeping the first value"
-            ));
-            continue;
-        }
-        pairs.push((key.to_string(), value.to_string()));
+        scan.parse_entry_line(line, raw);
     }
-
-    // Flush a block scalar still open at end of input.
-    if let Some(b) = block.take() {
-        commit_block(b, &mut pairs, &mut seen, warnings);
-    }
-    // Flush a block-style sequence still open at end of input.
-    if let Some(seq) = pending_seq.take() {
-        commit_seq!(seq);
-    }
-
-    if skipped_array > 0 {
-        warnings.push(format!(
-            "{skipped_array} frontmatter line(s) used array/collection syntax \
-             (not yet supported) and were ignored"
-        ));
-    }
-    if skipped_invalid > 0 {
-        warnings.push(format!(
-            "{skipped_invalid} frontmatter line(s) were not a valid `key: value` scalar \
-             and were ignored"
-        ));
-    }
-    pairs
+    scan.finish()
 }
 
 /// Parsed YAML block-scalar header (#1590): the `|` / `>` indicator after a
@@ -1732,7 +1812,7 @@ mod tests {
 
     /// #2866 — an odd number of ```` ``` ```` delimiters inside a block (an
     /// unbalanced/unterminated fence) must NOT leave the importer's
-    /// document-global `in_fence` flag open past the end of that block: the
+    /// document-global [`FenceState`] open past the end of that block: the
     /// next sibling bullet must still spawn its own block instead of being
     /// folded into the never-closed fence. Mirrors the issue's repro shape
     /// (`["```\nunclosed", "normal"]`).

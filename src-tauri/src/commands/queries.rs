@@ -1169,7 +1169,6 @@ fn property_value_predicate_sql(
 /// invariant #3 / AGENTS.md cursor pagination).
 #[instrument(skip(pool, property_filters, tag_filters), err)]
 #[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn filtered_blocks_query_inner(
     pool: &SqlitePool,
     property_filters: Vec<PropertyFilter>,
@@ -1224,101 +1223,8 @@ pub async fn filtered_blocks_query_inner(
     let mut next_param: usize = 6;
     let mut prop_binds: Vec<String> = Vec::new();
 
-    // One EXISTS per property filter. AND between filters is the
-    // structural conjunction of the EXISTS clauses.
-    for pf in &property_filters {
-        if pf.key.trim().is_empty() {
-            return Err(AppError::validation(
-                "filtered_blocks_query: property filter key must not be empty".into(),
-            ));
-        }
-        // Reserved keys live as columns on `blocks`, not in
-        // `block_properties` — collapse the EXISTS into a direct column
-        // predicate on `b.<col>` so `priority:1` style filters resolve
-        // without a subquery.
-        let reserved_col = if is_reserved_property_key(&pf.key) {
-            match pf.key.as_str() {
-                "todo_state" => Some("todo_state"),
-                "priority" => Some("priority"),
-                "due_date" => Some("due_date"),
-                "scheduled_date" => Some("scheduled_date"),
-                _ => {
-                    return Err(AppError::validation(format!(
-                        "filtered_blocks_query: reserved key '{}' has no column routing",
-                        pf.key
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
-        if let Some(col) = reserved_col {
-            // Direct column predicate. value_text / value_date /
-            // value_text_in / value_date_range all bind to the same
-            // column; we re-use the helper but rebase the alias so the
-            // emitted fragment reads `b.{col}` instead of `bp.value_*`.
-            let n_text = i32::from(pf.value_text.is_some());
-            let n_text_in = i32::from(!pf.value_text_in.is_empty());
-            let n_date = i32::from(pf.value_date.is_some());
-            let n_range = i32::from(pf.value_date_range.is_some());
-            if n_text + n_text_in + n_date + n_range > 1 {
-                return Err(AppError::validation(
-                    "filtered_blocks_query: at most one of value_text, value_text_in, value_date, value_date_range may be supplied per filter".into(),
-                ));
-            }
-            let sql_op = match pf.operator.as_str() {
-                "neq" => "!=",
-                "lt" => "<",
-                "gt" => ">",
-                "lte" => "<=",
-                "gte" => ">=",
-                _ => "=",
-            };
-            sql.push_str(&format!(" AND b.{col} IS NOT NULL"));
-            if let Some(v) = &pf.value_text {
-                let p = next_param;
-                next_param += 1;
-                prop_binds.push(v.clone());
-                sql.push_str(&format!(" AND b.{col} {sql_op} ?{p}"));
-            } else if !pf.value_text_in.is_empty() {
-                let p = next_param;
-                next_param += 1;
-                prop_binds.push(serde_json::to_string(&pf.value_text_in)?);
-                sql.push_str(&format!(
-                    " AND b.{col} IN (SELECT value FROM json_each(?{p}))"
-                ));
-            } else if let Some(v) = &pf.value_date {
-                let p = next_param;
-                next_param += 1;
-                prop_binds.push(v.clone());
-                sql.push_str(&format!(" AND b.{col} {sql_op} ?{p}"));
-            } else if let Some((from, to)) = &pf.value_date_range {
-                let p_from = next_param;
-                next_param += 1;
-                prop_binds.push(from.clone());
-                let p_to = next_param;
-                next_param += 1;
-                prop_binds.push(to.clone());
-                sql.push_str(&format!(" AND b.{col} >= ?{p_from} AND b.{col} < ?{p_to}"));
-            }
-            continue;
-        }
-
-        // Non-reserved: one `AND EXISTS (SELECT 1 FROM block_properties
-        // bp WHERE bp.block_id = b.id AND bp.key = ?N <value preds>)`.
-        let key_param = next_param;
-        next_param += 1;
-        prop_binds.push(pf.key.clone());
-
-        let value_pred = property_value_predicate_sql(pf, "bp", &mut next_param, &mut prop_binds)?;
-
-        sql.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM block_properties bp \
-                          WHERE bp.block_id = b.id \
-                            AND bp.key = ?{key_param}{value_pred})",
-        ));
-    }
+    let property_sql = property_filters_sql(&property_filters, &mut next_param, &mut prop_binds)?;
+    sql.push_str(&property_sql);
 
     // Tag filter — one `AND EXISTS (…)` chain. The inner SQL UNIONs
     // `block_tags`, `block_tag_refs` (always), and `block_tag_inherited`
@@ -1328,59 +1234,7 @@ pub async fn filtered_blocks_query_inner(
     if let Some(tf) = &tag_filters
         && (!tf.tag_ids.is_empty() || !tf.prefixes.is_empty())
     {
-        let mode = tf.mode.to_lowercase();
-        let conjunction = if mode == "and" { " AND " } else { " OR " };
-
-        // Build per-tag/per-prefix subquery fragments.
-        let mut clauses: Vec<String> = Vec::new();
-        for tag_id in &tf.tag_ids {
-            let p = next_param;
-            next_param += 1;
-            tag_binds.push(tag_id.clone());
-            let mut union_arms = vec![
-                format!(
-                    "SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?{p}"
-                ),
-                format!(
-                    "SELECT 1 FROM block_tag_refs btr WHERE btr.source_id = b.id AND btr.tag_id = ?{p}"
-                ),
-            ];
-            if tf.include_inherited {
-                union_arms.push(format!(
-                        "SELECT 1 FROM block_tag_inherited bti WHERE bti.block_id = b.id AND bti.tag_id = ?{p}"
-                    ));
-            }
-            clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
-        }
-        for prefix in &tf.prefixes {
-            let p = next_param;
-            next_param += 1;
-            // LIKE-escape the user-supplied prefix and append `%` —
-            // mirrors `tag_query::resolve_tag_prefix_leaves`.
-            let escaped = format!("{}%", agaric_core::sql_utils::escape_like(prefix));
-            tag_binds.push(escaped);
-            let mut union_arms = vec![
-                format!(
-                    "SELECT 1 FROM tags_cache tc \
-                         JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                         WHERE bt.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                ),
-                format!(
-                    "SELECT 1 FROM tags_cache tc \
-                         JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                         WHERE btr.source_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                ),
-            ];
-            if tf.include_inherited {
-                union_arms.push(format!(
-                    "SELECT 1 FROM tags_cache tc \
-                         JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-                         WHERE bti.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                ));
-            }
-            clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
-        }
-        sql.push_str(&format!(" AND ({})", clauses.join(conjunction)));
+        sql.push_str(&tag_filter_sql(tf, &mut next_param, &mut tag_binds));
     }
 
     sql.push_str(" ORDER BY b.id ASC LIMIT ?3");
@@ -1421,6 +1275,178 @@ pub async fn filtered_blocks_query_inner(
     pagination::build_page_response(rows, page.limit, |last| {
         Cursor::for_id(last.id.clone().into_string())
     })
+}
+
+/// The per-property-filter fragment chain of [`filtered_blocks_query_inner`]:
+/// one predicate per filter, AND-ed together.
+fn property_filters_sql(
+    property_filters: &[PropertyFilter],
+    next_param: &mut usize,
+    binds: &mut Vec<String>,
+) -> Result<String, AppError> {
+    let mut frag = String::new();
+    for pf in property_filters {
+        if pf.key.trim().is_empty() {
+            return Err(AppError::validation(
+                "filtered_blocks_query: property filter key must not be empty".into(),
+            ));
+        }
+        // Reserved keys live as columns on `blocks`, not in
+        // `block_properties` — collapse the EXISTS into a direct column
+        // predicate on `b.<col>` so `priority:1` style filters resolve
+        // without a subquery.
+        let reserved_col = if is_reserved_property_key(&pf.key) {
+            match pf.key.as_str() {
+                "todo_state" => Some("todo_state"),
+                "priority" => Some("priority"),
+                "due_date" => Some("due_date"),
+                "scheduled_date" => Some("scheduled_date"),
+                _ => {
+                    return Err(AppError::validation(format!(
+                        "filtered_blocks_query: reserved key '{}' has no column routing",
+                        pf.key
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(col) = reserved_col {
+            frag.push_str(&reserved_column_predicate_sql(pf, col, next_param, binds)?);
+            continue;
+        }
+
+        // Non-reserved: one `AND EXISTS (SELECT 1 FROM block_properties
+        // bp WHERE bp.block_id = b.id AND bp.key = ?N <value preds>)`.
+        let key_param = *next_param;
+        *next_param += 1;
+        binds.push(pf.key.clone());
+
+        let value_pred = property_value_predicate_sql(pf, "bp", next_param, binds)?;
+
+        frag.push_str(&format!(
+            " AND EXISTS (SELECT 1 FROM block_properties bp \
+                          WHERE bp.block_id = b.id \
+                            AND bp.key = ?{key_param}{value_pred})",
+        ));
+    }
+    Ok(frag)
+}
+
+/// The reserved-key arm of [`property_filters_sql`], emitting a direct
+/// predicate on `b.{col}` instead of a `block_properties` EXISTS.
+fn reserved_column_predicate_sql(
+    pf: &PropertyFilter,
+    col: &str,
+    next_param: &mut usize,
+    binds: &mut Vec<String>,
+) -> Result<String, AppError> {
+    // Direct column predicate. value_text / value_date /
+    // value_text_in / value_date_range all bind to the same
+    // column; we re-use the helper but rebase the alias so the
+    // emitted fragment reads `b.{col}` instead of `bp.value_*`.
+    let n_text = i32::from(pf.value_text.is_some());
+    let n_text_in = i32::from(!pf.value_text_in.is_empty());
+    let n_date = i32::from(pf.value_date.is_some());
+    let n_range = i32::from(pf.value_date_range.is_some());
+    if n_text + n_text_in + n_date + n_range > 1 {
+        return Err(AppError::validation(
+            "filtered_blocks_query: at most one of value_text, value_text_in, value_date, value_date_range may be supplied per filter".into(),
+        ));
+    }
+    let sql_op = match pf.operator.as_str() {
+        "neq" => "!=",
+        "lt" => "<",
+        "gt" => ">",
+        "lte" => "<=",
+        "gte" => ">=",
+        _ => "=",
+    };
+    let mut frag = format!(" AND b.{col} IS NOT NULL");
+    if let Some(v) = &pf.value_text {
+        let p = *next_param;
+        *next_param += 1;
+        binds.push(v.clone());
+        frag.push_str(&format!(" AND b.{col} {sql_op} ?{p}"));
+    } else if !pf.value_text_in.is_empty() {
+        let p = *next_param;
+        *next_param += 1;
+        binds.push(serde_json::to_string(&pf.value_text_in)?);
+        frag.push_str(&format!(
+            " AND b.{col} IN (SELECT value FROM json_each(?{p}))"
+        ));
+    } else if let Some(v) = &pf.value_date {
+        let p = *next_param;
+        *next_param += 1;
+        binds.push(v.clone());
+        frag.push_str(&format!(" AND b.{col} {sql_op} ?{p}"));
+    } else if let Some((from, to)) = &pf.value_date_range {
+        let p_from = *next_param;
+        *next_param += 1;
+        binds.push(from.clone());
+        let p_to = *next_param;
+        *next_param += 1;
+        binds.push(to.clone());
+        frag.push_str(&format!(" AND b.{col} >= ?{p_from} AND b.{col} < ?{p_to}"));
+    }
+    Ok(frag)
+}
+
+/// The tag-filter fragment of [`filtered_blocks_query_inner`]. Callers gate on
+/// a non-empty `tag_ids` / `prefixes` set.
+fn tag_filter_sql(tf: &TagFilterExpr, next_param: &mut usize, binds: &mut Vec<String>) -> String {
+    let mode = tf.mode.to_lowercase();
+    let conjunction = if mode == "and" { " AND " } else { " OR " };
+
+    // Build per-tag/per-prefix subquery fragments.
+    let mut clauses: Vec<String> = Vec::new();
+    for tag_id in &tf.tag_ids {
+        let p = *next_param;
+        *next_param += 1;
+        binds.push(tag_id.clone());
+        let mut union_arms = vec![
+            format!("SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?{p}"),
+            format!(
+                "SELECT 1 FROM block_tag_refs btr WHERE btr.source_id = b.id AND btr.tag_id = ?{p}"
+            ),
+        ];
+        if tf.include_inherited {
+            union_arms.push(format!(
+                    "SELECT 1 FROM block_tag_inherited bti WHERE bti.block_id = b.id AND bti.tag_id = ?{p}"
+                ));
+        }
+        clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+    }
+    for prefix in &tf.prefixes {
+        let p = *next_param;
+        *next_param += 1;
+        // LIKE-escape the user-supplied prefix and append `%` —
+        // mirrors `tag_query::resolve_tag_prefix_leaves`.
+        let escaped = format!("{}%", agaric_core::sql_utils::escape_like(prefix));
+        binds.push(escaped);
+        let mut union_arms = vec![
+            format!(
+                "SELECT 1 FROM tags_cache tc \
+                     JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                     WHERE bt.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+            ),
+            format!(
+                "SELECT 1 FROM tags_cache tc \
+                     JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+                     WHERE btr.source_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+            ),
+        ];
+        if tf.include_inherited {
+            union_arms.push(format!(
+                "SELECT 1 FROM tags_cache tc \
+                     JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+                     WHERE bti.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+            ));
+        }
+        clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+    }
+    format!(" AND ({})", clauses.join(conjunction))
 }
 
 /// Tauri command: AND-intersect property + tag predicates in SQL.

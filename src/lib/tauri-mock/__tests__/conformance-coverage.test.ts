@@ -1389,9 +1389,16 @@ const RUST_COMMANDS_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', '
  * #3892 — the two places `filtered_blocks_query_inner` dispatches on which of
  * a `PropertyFilter`'s four value shapes is supplied. They are separate code,
  * not one helper called twice: a RESERVED key collapses to a direct
- * `b.<col>` predicate inline in the command, everything else goes through the
+ * `b.<col>` predicate, everything else goes through the
  * `EXISTS (… block_properties bp …)` helper. Both are parsed, because a
  * divergence BETWEEN them is itself a bug the single manifest entry would hide.
+ *
+ * #4639 moved the reserved-key arm out of `filtered_blocks_query_inner` into
+ * its own `reserved_column_predicate_sql`, so this parser follows it there.
+ * The chain is not byte-identical — it appends to the helper's local `frag`
+ * rather than to the caller's `sql`. What this guard reads, and what the move
+ * preserved, is the `pf.value_*` dispatch ORDER; the sentinel that ends the
+ * chain changed from the loop's `continue;` to the helper's `Ok(frag)`.
  *
  * Each site is read twice over:
  *
@@ -1413,10 +1420,10 @@ const FBQ_VALUE_DISPATCH_SITES = [
     chainEnd: 'Ok(String::new())',
   },
   {
-    label: 'filtered_blocks_query_inner (reserved key: direct b.<col> predicate)',
-    fnNeedle: 'pub async fn filtered_blocks_query_inner(',
+    label: 'reserved_column_predicate_sql (reserved key: direct b.<col> predicate)',
+    fnNeedle: 'fn reserved_column_predicate_sql(',
     guardEnd: 'let sql_op = match pf.operator',
-    chainEnd: 'continue;',
+    chainEnd: 'Ok(frag)',
   },
 ] as const
 
