@@ -829,6 +829,19 @@ mod tests {
     ///
     /// NON-VACUOUS: omitting either cache hint leaves the corresponding field
     /// as `None`, failing these exact assertions.
+    ///
+    /// The client negotiates over `server/discover`, not `initialize`. rmcp
+    /// 3.2.0's `negotiate_protocol_version` gates the `initialize` path on
+    /// `is_legacy_version` (`version < V_2026_07_28`) and silently downgrades
+    /// anything newer to a legacy version, so `.with_protocol_version(2026)
+    /// .serve(..)` — what this test used through rmcp 3.1.4 — can no longer
+    /// reach the 2026 arm at all, and asserted `None` against `Some(0)`.
+    ///
+    /// That is rmcp implementing the spec, not a regression to work around:
+    /// 2026 is a `discover`-lifecycle version. The guarantee is unchanged and
+    /// still pinned; only the lifecycle that can carry it moved. The shape
+    /// below is the one `rmcp_2026_discover_request_attributes_actor_and_keeps_result_type`
+    /// already uses, which is why that sibling kept passing across the bump.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rmcp_2026_tools_list_advertises_required_cache_hints() {
         let adapter = mk_mock_adapter(McpSurface::ReadOnly);
@@ -838,10 +851,14 @@ mod tests {
             let _ = server.waiting().await;
         });
         let client = make_test_client_info()
-            .with_protocol_version(ProtocolVersion::V_2026_07_28)
-            .serve(client_io)
+            .serve_with_lifecycle(
+                client_io,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            )
             .await
-            .expect("client handshake");
+            .expect("discover client startup");
 
         let result = client
             .list_tools(None)
