@@ -773,10 +773,6 @@ const READ_WRITE_TABLE_PAIRS: Readonly<
     reads: ['list_spaces'],
     writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
   },
-  drafts: {
-    reads: ['list_drafts'],
-    writes: ['save_draft', 'delete_draft', 'flush_draft', 'flush_all_drafts'],
-  },
   'op-log maintenance': {
     reads: ['get_compaction_status'],
     writes: ['compact_op_log_cmd'],

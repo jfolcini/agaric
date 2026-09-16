@@ -2620,6 +2620,11 @@ pub(super) mod reader_delegation_tests {
     // (`commands/pages/aliases.rs`), the latter two `JOIN blocks`. The
     // table's writer is `set_page_aliases`, not a read arm. Writer set
     // unchanged.
+    // #5057 wired `list_drafts`: one `query_as!` SELECT over `block_drafts`
+    // (`draft::get_all_drafts`, reached through `list_drafts_inner`). The
+    // table's writers are `save_draft` / `delete_draft`, the two flush paths
+    // and the hourly orphan sweeper, none a read arm — and the flushes are
+    // command-leg ops here, not query steps. Writer set unchanged.
     const SWEPT_ARM_COUNT: usize = 51;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.

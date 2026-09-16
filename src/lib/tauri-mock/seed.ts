@@ -89,7 +89,9 @@ export interface MockDraftRow {
   content: string
   updated_at: number
   draft_anchor_seq: number
-  draft_anchor_device: string | null
+  /** The column is nullable for rows migration 0092 backfilled; `save_draft` is
+   *  the mock's only writer and always stamps it, so it is never null here. */
+  draft_anchor_device: string
 }
 
 export const blockDrafts = new Map<string, MockDraftRow>()

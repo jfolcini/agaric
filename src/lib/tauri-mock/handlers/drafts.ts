@@ -51,11 +51,10 @@ function liveTarget(blockId: string): Record<string, unknown> | undefined {
  * than regressing the block's content over it.
  */
 function isSuperseded(draft: MockDraftRow): boolean {
-  const device = draft.draft_anchor_device ?? MOCK_LOCAL_DEVICE
   return opLog.some(
     (entry) =>
       (entry.op_type === 'edit_block' || entry.op_type === 'create_block') &&
-      entry.device_id === device &&
+      entry.device_id === draft.draft_anchor_device &&
       entry.seq > draft.draft_anchor_seq &&
       (JSON.parse(entry.payload) as { block_id?: string }).block_id === draft.block_id,
   )
@@ -92,7 +91,7 @@ export const draftsHandlers = {
     const blockId = a['blockId'] as string
     blockDrafts.set(blockId, {
       block_id: blockId,
-      content: (a['content'] as string) ?? '',
+      content: a['content'] as string,
       updated_at: Date.now(),
       draft_anchor_seq: localAnchorSeq(),
       draft_anchor_device: MOCK_LOCAL_DEVICE,
