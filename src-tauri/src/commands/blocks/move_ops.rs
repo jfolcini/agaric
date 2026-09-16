@@ -492,13 +492,15 @@ async fn ordered_live_children(
 /// builds the contiguous run. Each member's slot is derived up-front from the
 /// pre-batch ordering (an immutable snapshot):
 ///
-///   slot_k = p + k + |{ j > k : sel_j is currently a child of the target
-///                              parent and positioned before the anchor }|
+/// ```text
+/// slot_k = p + k + |{ j > k : sel_j is currently a child of the target
+///                            parent and positioned before the anchor }|
 ///
-///     * p     non-selected children before the anchor (fixed — never move),
-///     * k     the already-placed members sel_0..sel_{k-1} (all now before it),
-///     * tail  the not-yet-moved members still in their original pre-anchor
-///             slot (sel_k itself excluded).
+///   * p     non-selected children before the anchor (fixed — never move),
+///   * k     the already-placed members sel_0..sel_{k-1} (all now before it),
+///   * tail  the not-yet-moved members still in their original pre-anchor
+///           slot (sel_k itself excluded).
+/// ```
 ///
 /// When the run appends past the last non-selected child (`p == non_selected`)
 /// there is no anchor: every member is appended to the end in order (still a
