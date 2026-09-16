@@ -611,7 +611,6 @@ pub async fn handle_background_task_metered(
     handle_background_task_inner(pool, task, read_pool, app_data_dir, Some(metrics)).await
 }
 
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn handle_background_task_inner(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -620,15 +619,25 @@ async fn handle_background_task_inner(
     metrics: Option<&crate::materializer::metrics::QueueMetrics>,
 ) -> Result<(), AppError> {
     match task {
-        MaterializeTask::RebuildTagsCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_tags_cache_split,
-                cache::rebuild_tags_cache,
-            )
-            .await
+        MaterializeTask::RebuildTagsCache
+        | MaterializeTask::RebuildBlockTagRefsCache
+        | MaterializeTask::RebuildTagInheritanceCache => {
+            run_tag_cache_rebuild(pool, read_pool, task).await
         }
+        MaterializeTask::RebuildPagesCache
+        | MaterializeTask::RebuildPagesCacheCounts
+        | MaterializeTask::RebuildPageIds
+        | MaterializeTask::RebuildPageLinkCache => {
+            run_page_cache_rebuild(pool, read_pool, task).await
+        }
+        MaterializeTask::RebuildAgendaCache | MaterializeTask::RebuildProjectedAgendaCache => {
+            run_agenda_cache_rebuild(pool, read_pool, task).await
+        }
+        MaterializeTask::UpdateFtsBlock { .. }
+        | MaterializeTask::ReindexFtsReferences { .. }
+        | MaterializeTask::RemoveFtsBlock { .. }
+        | MaterializeTask::RebuildFtsIndex
+        | MaterializeTask::FtsOptimize => run_fts_task(pool, read_pool, task).await,
         MaterializeTask::RefreshTagUsageCount { tag_id } => {
             // #676: scoped single-tag usage_count refresh. Single-pool only —
             // it reads `blocks`/`block_tags`/`block_tag_refs` and writes the
@@ -636,40 +645,6 @@ async fn handle_background_task_inner(
             // reader-snapshot dance buys nothing here (the read is one indexed
             // row, not a full-table stream).
             cache::refresh_tag_usage_count(pool, tag_id).await
-        }
-        MaterializeTask::RebuildBlockTagRefsCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_block_tag_refs_cache_split,
-                cache::rebuild_block_tag_refs_cache,
-            )
-            .await
-        }
-        MaterializeTask::RebuildPagesCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_pages_cache_split,
-                cache::rebuild_pages_cache,
-            )
-            .await
-        }
-        MaterializeTask::RebuildPagesCacheCounts => {
-            // #417: count-only full-table recompute. Single-pool only —
-            // SQLite is one file regardless of split, and the recompute
-            // reads `blocks`/`block_links` and writes `pages_cache` on the
-            // same write tx (no separate reader snapshot needed).
-            cache::rebuild_pages_cache_counts(pool).await
-        }
-        MaterializeTask::RebuildAgendaCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_agenda_cache_split,
-                cache::rebuild_agenda_cache,
-            )
-            .await
         }
         MaterializeTask::ReindexBlockLinks { block_id } => {
             // #2397 LOAD-BEARING: this task is the SOLE writer of the
@@ -698,107 +673,156 @@ async fn handle_background_task_inner(
             run_reindex_block_links(pool, read_pool, block_id, metrics).await
         }
         MaterializeTask::ReindexBlockLinksBatch { block_ids } => {
-            // Every block gets its turn even when one fails: the batch is not
-            // persisted for retry, so an early `?` would drop the tail. The
-            // first error is still returned so the failure is counted.
-            let mut first_err = None;
-            for block_id in block_ids.iter() {
-                if let Err(e) = run_reindex_block_links(pool, read_pool, block_id, metrics).await {
-                    tracing::warn!(error = %e, block_id = %block_id, "ReindexBlockLinksBatch: one block failed — continuing");
-                    first_err.get_or_insert(e);
-                }
-            }
-            first_err.map_or(Ok(()), Err)
+            run_reindex_block_links_batch(pool, read_pool, block_ids, metrics).await
         }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
-            // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND
-            // make the dependent `tags_cache.usage_count` refresh DURABLE and
-            // idempotent.
-            //
-            // #2659 rewrote `block_tag_refs` and refreshed each changed tag's
-            // usage_count inline, but coupled that refresh to the reindex
-            // *diff*: on a retry (WAL contention on a `refresh_tag_usage_count`,
-            // or a crash mid-loop) the `block_tag_refs` table already holds the
-            // new state, so the retry's diff is EMPTY, `changed_tags` is empty,
-            // the refresh loop runs zero times, and `usage_count` stays stale
-            // until an unrelated AddTag/RemoveTag or a full RebuildTagsCache
-            // heals it (#2831 — the "a refresh is owed" signal was transient).
-            //
-            // Fix: seed a durable, tag_id-keyed `RetryKind::RefreshTagUsageCount`
-            // obligation INSIDE the same write transaction that commits the
-            // `block_tag_refs` diff (`*_in_tx` variants). A crash or error
-            // anywhere after that commit leaves a durable row the periodic
-            // sweeper drives to completion, independent of any future (empty)
-            // reindex diff. After the diff + obligations commit, each changed
-            // tag's usage_count is refreshed inline (the #2659 happy path) and
-            // its obligation cleared on success; a failed refresh is swallowed
-            // and left to the sweeper — re-running the whole reindex would only
-            // produce an empty diff, so returning `Err` here would not help the
-            // refresh and would just churn the `ReindexBlockTagRefs` retry row.
-            let mut tx =
-                agaric_store::db::begin_immediate_logged(pool, "reindex_block_tag_refs_2831")
-                    .await?;
-            let changed_tags = match read_pool {
-                Some(rp) => {
-                    cache::reindex_block_tag_refs_split_in_tx(&mut tx, rp, block_id).await?
-                }
-                None => cache::reindex_block_tag_refs_in_tx(&mut tx, block_id).await?,
-            };
-            // Seed one durable obligation per changed tag, atomic with the diff.
-            let mut freshly_seeded = 0usize;
-            for tag_id in &changed_tags {
-                let inserted =
-                    crate::materializer::retry_queue::seed_refresh_tag_usage_count_obligation_tx(
-                        &mut tx, tag_id,
-                    )
-                    .await?;
-                if inserted {
-                    freshly_seeded += 1;
-                }
-            }
-            tx.commit().await?;
-
-            // Gauge accounting only AFTER a successful commit (a bump before
-            // commit would over-count on rollback).
-            if let Some(m) = metrics {
-                for _ in 0..freshly_seeded {
-                    m.note_retry_row_inserted();
-                }
-            }
-
-            // #2659 happy path: refresh each changed tag inline and clear its
-            // now-redundant obligation. A failure leaves the durable row for
-            // the sweeper (which re-enqueues `RefreshTagUsageCount { tag_id }`
-            // and, on durable success, clears it via `clear_on_success`).
-            for tag_id in &changed_tags {
-                match cache::refresh_tag_usage_count(pool, tag_id).await {
-                    Ok(()) => {
-                        if let Err(e) =
-                            crate::materializer::retry_queue::clear_refresh_tag_usage_count_obligation(
-                                pool, tag_id, metrics,
-                            )
-                            .await
-                        {
-                            tracing::warn!(
-                                tag_id = %tag_id,
-                                error = %e,
-                                "#2831: failed to clear usage_count refresh obligation after \
-                                 inline success; sweeper will re-run (idempotent) and re-clear"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            tag_id = %tag_id,
-                            error = %e,
-                            "#2831: inline usage_count refresh failed after reindex; durable \
-                             obligation left for the retry sweeper"
-                        );
-                    }
-                }
-            }
+            run_reindex_block_tag_refs(pool, read_pool, block_id, metrics).await
+        }
+        MaterializeTask::CleanupOrphanedAttachments => {
+            run_cleanup_orphaned_attachments(pool, read_pool, app_data_dir).await
+        }
+        MaterializeTask::SetBlockPageId { block_id } => {
+            run_set_block_page_id(pool, read_pool, block_id, metrics).await
+        }
+        MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
+            reject_apply_op_in_background_queue(record)
+        }
+        MaterializeTask::BatchApplyOps(records) => {
+            reject_batch_apply_ops_in_background_queue(records)
+        }
+        MaterializeTask::Barrier(notify) => {
+            notify.notify_one();
             Ok(())
         }
+    }
+}
+
+/// The whole-vault rebuilds of the tag-derived tables: `tags_cache`,
+/// `block_tag_refs` and the inherited-tag cache.
+async fn run_tag_cache_rebuild(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    task: &MaterializeTask,
+) -> Result<(), AppError> {
+    match task {
+        MaterializeTask::RebuildTagsCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_tags_cache_split,
+                cache::rebuild_tags_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildBlockTagRefsCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_block_tag_refs_cache_split,
+                cache::rebuild_block_tag_refs_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildTagInheritanceCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                tag_inheritance::rebuild_all_split,
+                tag_inheritance::rebuild_all,
+            )
+            .await
+        }
+        other => misrouted_background_task(other, "tag cache rebuild"),
+    }
+}
+
+/// The whole-vault rebuilds of the page-derived tables: `pages_cache` and its
+/// counts, `blocks.page_id` (plus the `space_id` derived from it) and the
+/// `page_link_cache` roll-up.
+async fn run_page_cache_rebuild(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    task: &MaterializeTask,
+) -> Result<(), AppError> {
+    match task {
+        MaterializeTask::RebuildPagesCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_pages_cache_split,
+                cache::rebuild_pages_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildPagesCacheCounts => {
+            // #417: count-only full-table recompute. Single-pool only —
+            // SQLite is one file regardless of split, and the recompute
+            // reads `blocks`/`block_links` and writes `pages_cache` on the
+            // same write tx (no separate reader snapshot needed).
+            cache::rebuild_pages_cache_counts(pool).await
+        }
+        MaterializeTask::RebuildPageIds => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_page_ids_split,
+                cache::rebuild_page_ids,
+            )
+            .await?;
+            // #533: space_id is derived from the freshly rebuilt page_id,
+            // so it reconciles on the same task right after.
+            cache::rebuild_space_ids(pool).await
+        }
+        MaterializeTask::RebuildPageLinkCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_page_link_cache_split,
+                cache::rebuild_page_link_cache,
+            )
+            .await
+        }
+        other => misrouted_background_task(other, "page cache rebuild"),
+    }
+}
+
+/// The whole-vault rebuilds of the agenda caches.
+async fn run_agenda_cache_rebuild(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    task: &MaterializeTask,
+) -> Result<(), AppError> {
+    match task {
+        MaterializeTask::RebuildAgendaCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_agenda_cache_split,
+                cache::rebuild_agenda_cache,
+            )
+            .await
+        }
+        MaterializeTask::RebuildProjectedAgendaCache => {
+            dispatch_split_or_single(
+                pool,
+                read_pool,
+                cache::rebuild_projected_agenda_cache_split,
+                cache::rebuild_projected_agenda_cache,
+            )
+            .await
+        }
+        other => misrouted_background_task(other, "agenda cache rebuild"),
+    }
+}
+
+/// Every FTS task: the per-block index maintenance and the whole-index
+/// rebuild / optimize.
+async fn run_fts_task(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    task: &MaterializeTask,
+) -> Result<(), AppError> {
+    match task {
         MaterializeTask::UpdateFtsBlock { block_id } => {
             // Load tag/page reference maps scoped to THIS block's own refs and
             // feed them into the `_with_maps` variants (which keep the strip
@@ -845,368 +869,483 @@ async fn handle_background_task_inner(
             .await
         }
         MaterializeTask::FtsOptimize => fts::fts_optimize(pool).await,
-        MaterializeTask::CleanupOrphanedAttachments => {
-            if let Some(dir) = app_data_dir {
-                cleanup_orphaned_attachments(pool, read_pool, dir).await
-            } else {
-                // C-3c — without `app_data_dir` we cannot locate the
-                // `attachments/` subtree. This is the expected state in
-                // unit tests that use `Materializer::new(pool)` without
-                // calling `set_app_data_dir`. Production wiring in
-                // `lib.rs` always installs the dir.
-                tracing::debug!(
-                    "CleanupOrphanedAttachments skipped: app_data_dir not set on Materializer"
-                );
-                Ok(())
-            }
+        other => misrouted_background_task(other, "FTS"),
+    }
+}
+
+/// The body of the [`MaterializeTask::ReindexBlockLinksBatch`] arm.
+async fn run_reindex_block_links_batch(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    block_ids: &[std::sync::Arc<str>],
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    // Every block gets its turn even when one fails: the batch is not
+    // persisted for retry, so an early `?` would drop the tail. The
+    // first error is still returned so the failure is counted.
+    let mut first_err = None;
+    for block_id in block_ids.iter() {
+        if let Err(e) = run_reindex_block_links(pool, read_pool, block_id, metrics).await {
+            tracing::warn!(error = %e, block_id = %block_id, "ReindexBlockLinksBatch: one block failed — continuing");
+            first_err.get_or_insert(e);
         }
-        MaterializeTask::RebuildTagInheritanceCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                tag_inheritance::rebuild_all_split,
-                tag_inheritance::rebuild_all,
+    }
+    first_err.map_or(Ok(()), Err)
+}
+
+/// The body of the [`MaterializeTask::ReindexBlockTagRefs`] arm.
+async fn run_reindex_block_tag_refs(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    block_id: &str,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND
+    // make the dependent `tags_cache.usage_count` refresh DURABLE and
+    // idempotent.
+    //
+    // #2659 rewrote `block_tag_refs` and refreshed each changed tag's
+    // usage_count inline, but coupled that refresh to the reindex
+    // *diff*: on a retry (WAL contention on a `refresh_tag_usage_count`,
+    // or a crash mid-loop) the `block_tag_refs` table already holds the
+    // new state, so the retry's diff is EMPTY, `changed_tags` is empty,
+    // the refresh loop runs zero times, and `usage_count` stays stale
+    // until an unrelated AddTag/RemoveTag or a full RebuildTagsCache
+    // heals it (#2831 — the "a refresh is owed" signal was transient).
+    //
+    // Fix: seed a durable, tag_id-keyed `RetryKind::RefreshTagUsageCount`
+    // obligation INSIDE the same write transaction that commits the
+    // `block_tag_refs` diff (`*_in_tx` variants). A crash or error
+    // anywhere after that commit leaves a durable row the periodic
+    // sweeper drives to completion, independent of any future (empty)
+    // reindex diff. After the diff + obligations commit, each changed
+    // tag's usage_count is refreshed inline (the #2659 happy path) and
+    // its obligation cleared on success; a failed refresh is swallowed
+    // and left to the sweeper — re-running the whole reindex would only
+    // produce an empty diff, so returning `Err` here would not help the
+    // refresh and would just churn the `ReindexBlockTagRefs` retry row.
+    let mut tx =
+        agaric_store::db::begin_immediate_logged(pool, "reindex_block_tag_refs_2831").await?;
+    let changed_tags = match read_pool {
+        Some(rp) => cache::reindex_block_tag_refs_split_in_tx(&mut tx, rp, block_id).await?,
+        None => cache::reindex_block_tag_refs_in_tx(&mut tx, block_id).await?,
+    };
+    // Seed one durable obligation per changed tag, atomic with the diff.
+    let mut freshly_seeded = 0usize;
+    for tag_id in &changed_tags {
+        let inserted =
+            crate::materializer::retry_queue::seed_refresh_tag_usage_count_obligation_tx(
+                &mut tx, tag_id,
             )
-            .await
+            .await?;
+        if inserted {
+            freshly_seeded += 1;
         }
-        MaterializeTask::RebuildProjectedAgendaCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_projected_agenda_cache_split,
-                cache::rebuild_projected_agenda_cache,
-            )
-            .await
+    }
+    tx.commit().await?;
+
+    // Gauge accounting only AFTER a successful commit (a bump before
+    // commit would over-count on rollback).
+    if let Some(m) = metrics {
+        for _ in 0..freshly_seeded {
+            m.note_retry_row_inserted();
         }
-        MaterializeTask::SetBlockPageId { block_id } => {
-            // #3842 — the ordering/idempotency rule, and its DURABILITY.
-            //
-            // `page_link_cache` is keyed on `COALESCE(page_id, parent_id,
-            // id)`. When the in-tx create hook could not resolve the owning
-            // page (`resolve_owning_page` → `None`, e.g. the parent row had
-            // not been delivered yet on an out-of-order replay) the block's
-            // `page_id` was still NULL when `ReindexBlockLinks` ran, so its
-            // edges were rolled up under a CONTENT-BLOCK key. Nothing re-ran
-            // the per-block reindex afterwards, leaving a spurious row keyed
-            // on a non-page block AND the correct row missing — and
-            // `list_page_links_inner` reads `src_deleted` off that block, so
-            // the bogus edge is user-visible in the graph.
-            //
-            // The repair is a re-run of the block's `ReindexBlockLinks`: its
-            // stale-key sweep drops the row left under the old key and the
-            // recompute writes the row under the real page. Ordering the two
-            // tasks (`SetBlockPageId` before `ReindexBlockLinks` in
-            // `invalidations_for_op`'s create arm — also done) is NOT
-            // sufficient on its own: a parent delivered in a LATER op batch
-            // changes the key long after the create's fan-out drained.
-            //
-            // This is the #2831 defect class (see the `ReindexBlockTagRefs`
-            // arm above), so it takes the #2831 SHAPE. The `page_id` write
-            // commits on its own; the reindex runs after it. If the reindex
-            // errors (`begin_immediate_logged` can surface `SQLITE_BUSY`
-            // under a sync burst) or the process is killed in between, a
-            // re-run's null-safe guard matches ZERO rows — "the column
-            // changed" is a TRANSIENT signal, exactly like #2659's reindex
-            // diff was — and the repair would be skipped forever. So: seed a
-            // durable, idempotent `ReindexBlockLinks` obligation INSIDE the
-            // same transaction that commits the `page_id` write. After that
-            // commit the repair is owed no matter what happens next, and the
-            // periodic sweeper drives it to completion.
-            let mut tx =
-                agaric_store::db::begin_immediate_logged(pool, "set_block_page_id_3842").await?;
-            let write = cache::set_block_page_id_from_parent_in_tx(&mut tx, block_id).await?;
-            // #3842 P1 → P2 GUARD (executable, not prose).
-            //
-            // The per-block reindex's stale-key sweep covers `{parent_id, own
-            // id}`. That is sufficient ONLY while the key this block vacates is
-            // NULL-derived: `set_block_page_id_from_parent_in_tx` writes the
-            // PARENT's `page_id` onto a block whose own `page_id` was derived
-            // moments earlier by `resolve_owning_page`. A `page_id` move
-            // between two REAL pages (P1 → P2) would strand rows under P1,
-            // which the sweep never visits — reintroducing #3842 silently.
-            // Nothing in the type system pins that, so it is pinned here: loud,
-            // and degraded to a durable full `RebuildPageLinkCache` obligation
-            // rather than a silent strand. Cross-page MOVES do not reach this
-            // arm (they fan out `FULL_CACHE_REBUILD_TASKS`, which already
-            // contains `RebuildPageLinkCache`).
-            //
-            // #3894 — the guard tests BOTH ends, not just `previous`. Two
-            // different transitions vacate a real page key:
-            //
-            //   * `Some(P1) → Some(P2)` — a page-to-page MOVE.
-            //   * `Some(P) → NULL` — a DEMOTION, which #3894 found reachable:
-            //     `resolve_owning_page` stamps `page_id` by walking the
-            //     `parent_id` chain, whereas the write copies only
-            //     `parent.page_id`, so a retried `SetBlockPageId` whose
-            //     parent's own stamp is still pending — or whose parent was
-            //     purged — inherited NULL off a block that already had a real
-            //     page.
-            //
-            // #3908 CLOSED the demotion at the source instead of repairing it
-            // downstream. `set_block_page_id_from_parent_in_tx` now REFUSES to
-            // overwrite a non-NULL `page_id` with NULL: a NULL inherited value
-            // means "the parent cannot tell me the owning page yet", not "this
-            // block has no owning page", and only `rebuild_page_ids`'s
-            // vault-wide re-derivation has the authority to decide the latter.
-            // Seeding a `RebuildPageIds` obligation here would have repaired
-            // the roll-up key eventually while leaving the block DETACHED from
-            // its page in the meantime — wrong for
-            // `pages_cache.inbound_link_count`, for the
-            // `COALESCE(b.space_id, p.space_id)` space resolution, and for
-            // every other `page_id` consumer, none of which the seeded
-            // `RebuildPageLinkCache` touches.
-            //
-            // Consequence for the guard below: a refused demotion reports
-            // `changed: false`, so inside `if vacated_page` the `P1 → P2` shape
-            // is not a narrower case — it is the ONLY surviving way to vacate a
-            // real page key on this path. An earlier draft carried a
-            // `moved_between_pages` log field for it; that field was provably
-            // the constant `true` at its only use site, so it distinguished
-            // nothing and every reader filtering on it would have matched every
-            // vacate event. `previous_page_id` and `current_page_id` already
-            // carry the shape, so the field is gone rather than pinned.
-            //
-            // # #3909 — why this is a LOG and not a `debug_assert!`
-            //
-            // #3894 asserted `!moved_between_pages`, justified by the claim
-            // that `dispatch.rs`'s create arm is the SOLE production enqueue
-            // site, so `Some(P1) → Some(P2)` could only come from a future
-            // second one. There has always been a second one: the retry
-            // sweeper, via `RetryKind::SetBlockPageId.to_task()`
-            // (`retry_queue.rs`). The premise is "the create arm PLUS the retry
-            // sweeper's rehydration", and that changes the conclusion, because
-            // the sweeper re-runs the task against state that has moved on:
-            //
-            //   1. a `SetBlockPageId` fails and seeds a retry row;
-            //   2. the backoff is ≥ 1 minute;
-            //   3. in that window the block's parent moves to another page;
-            //   4. the retry fires and copies the parent's NEW `page_id` over
-            //      the child's OLD one → `Some(P1) → Some(P2)`.
-            //
-            // #3919 closed the one such window we could actually demonstrate
-            // (a move's in-tx `rederive_page_and_space_ids` skipped SOFT-
-            // DELETED descendants, so a tombstoned child kept the pre-move page
-            // while its parent moved on). But "we closed the window we found"
-            // is not "no window exists": the shape is a DATA disagreement
-            // between a parent and its child, not a programming error, and an
-            // assert is the wrong instrument for one. Its cost is a panicking
-            // background worker with a write transaction open — in exactly the
-            // dev and test builds where a transient disagreement is most likely
-            // to be manufactured — while the release build already degrades
-            // correctly through the seeded full `RebuildPageLinkCache` below.
-            // So: log it at ERROR with the same payload (that was the assert's
-            // only job — make a developer notice) and let the durable
-            // obligation do the repair. The enqueue-site set the #3908 guard
-            // depends on is pinned executably instead, by
-            // `set_block_page_id_is_enqueued_only_by_the_create_arm_3920` in
-            // `dispatch.rs` — a test that fails the moment a move- or
-            // delete-path enqueue is added, which is the change that would
-            // genuinely invalidate the reasoning here.
-            let vacated_page = write.changed && write.previous.is_some();
-            let mut seeded_repair = false;
-            let mut seeded_full_rebuild = false;
-            if write.changed {
-                seeded_repair = crate::materializer::retry_queue::seed_obligation_tx(
-                    &mut tx,
-                    &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
-                    block_id,
-                    crate::materializer::retry_queue::SEED_PAGE_LINK_REPAIR_LAST_ERROR,
-                )
-                .await?;
-                if vacated_page {
-                    seeded_full_rebuild = crate::materializer::retry_queue::seed_obligation_tx(
-                        &mut tx,
-                        &crate::materializer::retry_queue::RetryKind::RebuildPageLinkCache,
-                        crate::materializer::retry_queue::GLOBAL_TASK_SENTINEL,
-                        crate::materializer::retry_queue::SEED_PAGE_LINK_FULL_REBUILD_LAST_ERROR,
+    }
+
+    // #2659 happy path: refresh each changed tag inline and clear its
+    // now-redundant obligation. A failure leaves the durable row for
+    // the sweeper (which re-enqueues `RefreshTagUsageCount { tag_id }`
+    // and, on durable success, clears it via `clear_on_success`).
+    for tag_id in &changed_tags {
+        match cache::refresh_tag_usage_count(pool, tag_id).await {
+            Ok(()) => {
+                if let Err(e) =
+                    crate::materializer::retry_queue::clear_refresh_tag_usage_count_obligation(
+                        pool, tag_id, metrics,
                     )
-                    .await?;
-                    tracing::error!(
-                        block_id = %block_id,
-                        previous_page_id = ?write.previous,
-                        current_page_id = ?write.current,
-                        "#3842/#3909: SetBlockPageId moved page_id OFF a real page; the \
-                         per-block stale-key sweep only covers {{parent_id, own id}} and \
-                         cannot reach the vacated key, so a full RebuildPageLinkCache \
-                         obligation was seeded instead. Since #3908 refuses the \
-                         Some(P) → NULL demotion at the write itself, the shape reaching \
-                         this branch is Some(P1) → Some(P2), reachable via the retry \
-                         sweeper's re-enqueue after the parent has moved on (#3909) — it \
-                         is logged, not asserted, because panicking a background worker \
-                         mid-write-tx is a worse answer than the durable rebuild this \
-                         already owes."
+                    .await
+                {
+                    tracing::warn!(
+                        tag_id = %tag_id,
+                        error = %e,
+                        "#2831: failed to clear usage_count refresh obligation after \
+                         inline success; sweeper will re-run (idempotent) and re-clear"
                     );
                 }
             }
-            tx.commit().await?;
+            Err(e) => {
+                tracing::warn!(
+                    tag_id = %tag_id,
+                    error = %e,
+                    "#2831: inline usage_count refresh failed after reindex; durable \
+                     obligation left for the retry sweeper"
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
-            // Gauge accounting only AFTER a successful commit (a bump before
-            // commit would over-count on rollback) — mirrors #2831.
-            if let Some(m) = metrics {
-                for _ in 0..usize::from(seeded_repair) + usize::from(seeded_full_rebuild) {
-                    m.note_retry_row_inserted();
+/// The body of the [`MaterializeTask::CleanupOrphanedAttachments`] arm.
+async fn run_cleanup_orphaned_attachments(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: Option<&Path>,
+) -> Result<(), AppError> {
+    if let Some(dir) = app_data_dir {
+        cleanup_orphaned_attachments(pool, read_pool, dir).await
+    } else {
+        // C-3c — without `app_data_dir` we cannot locate the
+        // `attachments/` subtree. This is the expected state in
+        // unit tests that use `Materializer::new(pool)` without
+        // calling `set_app_data_dir`. Production wiring in
+        // `lib.rs` always installs the dir.
+        tracing::debug!("CleanupOrphanedAttachments skipped: app_data_dir not set on Materializer");
+        Ok(())
+    }
+}
+
+/// The body of the [`MaterializeTask::SetBlockPageId`] arm: commit the
+/// `page_id` (and `space_id`) stamp with its durable repair obligations, then
+/// hand over to `repair_page_links_after_page_id_write`.
+async fn run_set_block_page_id(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    block_id: &str,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    // #3842 — the ordering/idempotency rule, and its DURABILITY.
+    //
+    // `page_link_cache` is keyed on `COALESCE(page_id, parent_id,
+    // id)`. When the in-tx create hook could not resolve the owning
+    // page (`resolve_owning_page` → `None`, e.g. the parent row had
+    // not been delivered yet on an out-of-order replay) the block's
+    // `page_id` was still NULL when `ReindexBlockLinks` ran, so its
+    // edges were rolled up under a CONTENT-BLOCK key. Nothing re-ran
+    // the per-block reindex afterwards, leaving a spurious row keyed
+    // on a non-page block AND the correct row missing — and
+    // `list_page_links_inner` reads `src_deleted` off that block, so
+    // the bogus edge is user-visible in the graph.
+    //
+    // The repair is a re-run of the block's `ReindexBlockLinks`: its
+    // stale-key sweep drops the row left under the old key and the
+    // recompute writes the row under the real page. Ordering the two
+    // tasks (`SetBlockPageId` before `ReindexBlockLinks` in
+    // `invalidations_for_op`'s create arm — also done) is NOT
+    // sufficient on its own: a parent delivered in a LATER op batch
+    // changes the key long after the create's fan-out drained.
+    //
+    // This is the #2831 defect class (see the `ReindexBlockTagRefs`
+    // arm above), so it takes the #2831 SHAPE. The `page_id` write
+    // commits on its own; the reindex runs after it. If the reindex
+    // errors (`begin_immediate_logged` can surface `SQLITE_BUSY`
+    // under a sync burst) or the process is killed in between, a
+    // re-run's null-safe guard matches ZERO rows — "the column
+    // changed" is a TRANSIENT signal, exactly like #2659's reindex
+    // diff was — and the repair would be skipped forever. So: seed a
+    // durable, idempotent `ReindexBlockLinks` obligation INSIDE the
+    // same transaction that commits the `page_id` write. After that
+    // commit the repair is owed no matter what happens next, and the
+    // periodic sweeper drives it to completion.
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "set_block_page_id_3842").await?;
+    let write = cache::set_block_page_id_from_parent_in_tx(&mut tx, block_id).await?;
+    // #3842 P1 → P2 GUARD (executable, not prose).
+    //
+    // The per-block reindex's stale-key sweep covers `{parent_id, own
+    // id}`. That is sufficient ONLY while the key this block vacates is
+    // NULL-derived: `set_block_page_id_from_parent_in_tx` writes the
+    // PARENT's `page_id` onto a block whose own `page_id` was derived
+    // moments earlier by `resolve_owning_page`. A `page_id` move
+    // between two REAL pages (P1 → P2) would strand rows under P1,
+    // which the sweep never visits — reintroducing #3842 silently.
+    // Nothing in the type system pins that, so it is pinned here: loud,
+    // and degraded to a durable full `RebuildPageLinkCache` obligation
+    // rather than a silent strand. Cross-page MOVES do not reach this
+    // arm (they fan out `FULL_CACHE_REBUILD_TASKS`, which already
+    // contains `RebuildPageLinkCache`).
+    //
+    // #3894 — the guard tests BOTH ends, not just `previous`. Two
+    // different transitions vacate a real page key:
+    //
+    //   * `Some(P1) → Some(P2)` — a page-to-page MOVE.
+    //   * `Some(P) → NULL` — a DEMOTION, which #3894 found reachable:
+    //     `resolve_owning_page` stamps `page_id` by walking the
+    //     `parent_id` chain, whereas the write copies only
+    //     `parent.page_id`, so a retried `SetBlockPageId` whose
+    //     parent's own stamp is still pending — or whose parent was
+    //     purged — inherited NULL off a block that already had a real
+    //     page.
+    //
+    // #3908 CLOSED the demotion at the source instead of repairing it
+    // downstream. `set_block_page_id_from_parent_in_tx` now REFUSES to
+    // overwrite a non-NULL `page_id` with NULL: a NULL inherited value
+    // means "the parent cannot tell me the owning page yet", not "this
+    // block has no owning page", and only `rebuild_page_ids`'s
+    // vault-wide re-derivation has the authority to decide the latter.
+    // Seeding a `RebuildPageIds` obligation here would have repaired
+    // the roll-up key eventually while leaving the block DETACHED from
+    // its page in the meantime — wrong for
+    // `pages_cache.inbound_link_count`, for the
+    // `COALESCE(b.space_id, p.space_id)` space resolution, and for
+    // every other `page_id` consumer, none of which the seeded
+    // `RebuildPageLinkCache` touches.
+    //
+    // Consequence for the guard below: a refused demotion reports
+    // `changed: false`, so inside `if vacated_page` the `P1 → P2` shape
+    // is not a narrower case — it is the ONLY surviving way to vacate a
+    // real page key on this path. An earlier draft carried a
+    // `moved_between_pages` log field for it; that field was provably
+    // the constant `true` at its only use site, so it distinguished
+    // nothing and every reader filtering on it would have matched every
+    // vacate event. `previous_page_id` and `current_page_id` already
+    // carry the shape, so the field is gone rather than pinned.
+    //
+    // # #3909 — why this is a LOG and not a `debug_assert!`
+    //
+    // #3894 asserted `!moved_between_pages`, justified by the claim
+    // that `dispatch.rs`'s create arm is the SOLE production enqueue
+    // site, so `Some(P1) → Some(P2)` could only come from a future
+    // second one. There has always been a second one: the retry
+    // sweeper, via `RetryKind::SetBlockPageId.to_task()`
+    // (`retry_queue.rs`). The premise is "the create arm PLUS the retry
+    // sweeper's rehydration", and that changes the conclusion, because
+    // the sweeper re-runs the task against state that has moved on:
+    //
+    //   1. a `SetBlockPageId` fails and seeds a retry row;
+    //   2. the backoff is ≥ 1 minute;
+    //   3. in that window the block's parent moves to another page;
+    //   4. the retry fires and copies the parent's NEW `page_id` over
+    //      the child's OLD one → `Some(P1) → Some(P2)`.
+    //
+    // #3919 closed the one such window we could actually demonstrate
+    // (a move's in-tx `rederive_page_and_space_ids` skipped SOFT-
+    // DELETED descendants, so a tombstoned child kept the pre-move page
+    // while its parent moved on). But "we closed the window we found"
+    // is not "no window exists": the shape is a DATA disagreement
+    // between a parent and its child, not a programming error, and an
+    // assert is the wrong instrument for one. Its cost is a panicking
+    // background worker with a write transaction open — in exactly the
+    // dev and test builds where a transient disagreement is most likely
+    // to be manufactured — while the release build already degrades
+    // correctly through the seeded full `RebuildPageLinkCache` below.
+    // So: log it at ERROR with the same payload (that was the assert's
+    // only job — make a developer notice) and let the durable
+    // obligation do the repair. The enqueue-site set the #3908 guard
+    // depends on is pinned executably instead, by
+    // `set_block_page_id_is_enqueued_only_by_the_create_arm_3920` in
+    // `dispatch.rs` — a test that fails the moment a move- or
+    // delete-path enqueue is added, which is the change that would
+    // genuinely invalidate the reasoning here.
+    let vacated_page = write.changed && write.previous.is_some();
+    let mut seeded_repair = false;
+    let mut seeded_full_rebuild = false;
+    if write.changed {
+        seeded_repair = crate::materializer::retry_queue::seed_obligation_tx(
+            &mut tx,
+            &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
+            block_id,
+            crate::materializer::retry_queue::SEED_PAGE_LINK_REPAIR_LAST_ERROR,
+        )
+        .await?;
+        if vacated_page {
+            seeded_full_rebuild = crate::materializer::retry_queue::seed_obligation_tx(
+                &mut tx,
+                &crate::materializer::retry_queue::RetryKind::RebuildPageLinkCache,
+                crate::materializer::retry_queue::GLOBAL_TASK_SENTINEL,
+                crate::materializer::retry_queue::SEED_PAGE_LINK_FULL_REBUILD_LAST_ERROR,
+            )
+            .await?;
+            tracing::error!(
+                block_id = %block_id,
+                previous_page_id = ?write.previous,
+                current_page_id = ?write.current,
+                "#3842/#3909: SetBlockPageId moved page_id OFF a real page; the \
+                 per-block stale-key sweep only covers {{parent_id, own id}} and \
+                 cannot reach the vacated key, so a full RebuildPageLinkCache \
+                 obligation was seeded instead. Since #3908 refuses the \
+                 Some(P) → NULL demotion at the write itself, the shape reaching \
+                 this branch is Some(P1) → Some(P2), reachable via the retry \
+                 sweeper's re-enqueue after the parent has moved on (#3909) — it \
+                 is logged, not asserted, because panicking a background worker \
+                 mid-write-tx is a worse answer than the durable rebuild this \
+                 already owes."
+            );
+        }
+    }
+    tx.commit().await?;
+
+    // Gauge accounting only AFTER a successful commit (a bump before
+    // commit would over-count on rollback) — mirrors #2831.
+    if let Some(m) = metrics {
+        for _ in 0..usize::from(seeded_repair) + usize::from(seeded_full_rebuild) {
+            m.note_retry_row_inserted();
+        }
+    }
+
+    // #533: space_id rides the same task — a fresh block inherits
+    // its parent's space. Must run after page_id is set.
+    cache::set_block_space_id_from_parent(pool, block_id).await?;
+    repair_page_links_after_page_id_write(pool, read_pool, block_id, write.changed, metrics).await
+}
+
+/// The post-commit half of [`MaterializeTask::SetBlockPageId`]: run the
+/// `page_link_cache` repair the committed obligation owes, inline, and clear
+/// it on success. `changed` is `write.changed` from the `page_id` write.
+async fn repair_page_links_after_page_id_write(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    block_id: &str,
+    changed: bool,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    if changed {
+        // Happy path: run the repair inline and clear its obligation.
+        // A failure is SWALLOWED and left to the sweeper, for #2831's
+        // reason: returning `Err` here would seed a `SetBlockPageId`
+        // retry row whose re-run is a guaranteed no-op (the `page_id`
+        // write already committed, so the guard matches zero rows) —
+        // pure churn. The durable `ReindexBlockLinks` obligation is
+        // the recovery path, and swallowing keeps `SetBlockPageId`
+        // idempotent, which is what `metrics.rs` classifies it as.
+        match run_reindex_block_links(pool, read_pool, block_id, metrics).await {
+            Ok(()) => {
+                if let Err(e) = crate::materializer::retry_queue::clear_obligation(
+                    pool,
+                    &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
+                    block_id,
+                    metrics,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        block_id = %block_id,
+                        error = %e,
+                        "#3842: failed to clear the page_link_cache repair obligation \
+                         after an inline success; the sweeper will re-run the reindex \
+                         (idempotent) and re-clear"
+                    );
                 }
             }
-
-            // #533: space_id rides the same task — a fresh block inherits
-            // its parent's space. Must run after page_id is set.
-            cache::set_block_space_id_from_parent(pool, block_id).await?;
-
-            if write.changed {
-                // Happy path: run the repair inline and clear its obligation.
-                // A failure is SWALLOWED and left to the sweeper, for #2831's
-                // reason: returning `Err` here would seed a `SetBlockPageId`
-                // retry row whose re-run is a guaranteed no-op (the `page_id`
-                // write already committed, so the guard matches zero rows) —
-                // pure churn. The durable `ReindexBlockLinks` obligation is
-                // the recovery path, and swallowing keeps `SetBlockPageId`
-                // idempotent, which is what `metrics.rs` classifies it as.
-                match run_reindex_block_links(pool, read_pool, block_id, metrics).await {
-                    Ok(()) => {
-                        if let Err(e) = crate::materializer::retry_queue::clear_obligation(
-                            pool,
-                            &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
-                            block_id,
-                            metrics,
-                        )
-                        .await
-                        {
-                            tracing::warn!(
-                                block_id = %block_id,
-                                error = %e,
-                                "#3842: failed to clear the page_link_cache repair obligation \
-                                 after an inline success; the sweeper will re-run the reindex \
-                                 (idempotent) and re-clear"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            block_id = %block_id,
-                            error = %e,
-                            "#3842: inline page_link_cache repair failed after the page_id \
-                             write; durable ReindexBlockLinks obligation left for the retry \
-                             sweeper"
-                        );
-                    }
-                }
-            } else if let Err(e) = resolve_referrers_of(pool, read_pool, block_id, metrics).await {
-                // #4118 — the `changed: false` arm, and why it is defence in
-                // depth rather than a demonstrated hole.
-                //
-                // `write.changed` gates the block's OWN reindex, but the
-                // linkability transition #4118 is about on this task is the
-                // SPACE stamp, and `set_block_space_id_from_parent` above runs
-                // UNCONDITIONALLY. So the arm's guard and the arm's linkability
-                // effect are not the same condition, and the referrer repair
-                // was attached to the guard.
-                //
-                // No production trace is claimed for the gap, and the honest
-                // reason is that the cross-space filter's owning-page fallback
-                // (`COALESCE(tgt.space_id, tp.space_id)`, #3894) keeps closing
-                // it: a target that already carries the `page_id` this arm
-                // would have written resolves its space THROUGH that page, so
-                // it was never dropped and there is no unresolved row to
-                // repair. Reaching this branch with a real NULL → stamped
-                // transition needs a block whose `page_id` is unchanged AND
-                // NULL-or-space-less while its PARENT already carries a space —
-                // constructible (`space_id` is inherited from `parent_id`,
-                // `page_id` from the parent's `page_id`, and those are two
-                // different edges), but not observed.
-                //
-                // It is wired anyway, on the same standing as the
-                // `seeded_full_rebuild` fallback above: the cost is one indexed
-                // seek on an arm that is already the rare one, and the failure
-                // mode it covers is the exact permanent loss this issue exists
-                // to end. `set_block_page_id_space_stamp_relinks_referrers_
-                // without_a_page_id_change_4118` pins it executably so it
-                // cannot rot into dead code unnoticed.
-                //
-                // Only the REFERRER half is owed here: a source whose own space
-                // is unstamped resolves `?3 IS NULL`, which passes every
-                // target, so the source side records nothing to repair.
-                //
-                // Swallowed for the same reason the `changed` arm swallows:
-                // failing `SetBlockPageId` would seed a retry whose re-run is a
-                // no-op. Each referrer carries its own durable obligation.
+            Err(e) => {
                 tracing::warn!(
                     block_id = %block_id,
                     error = %e,
-                    "#4118: referrer re-link pass failed after an unchanged-page_id space \
-                     stamp; each referrer's durable ReindexBlockLinks obligation is the \
-                     recovery path"
+                    "#3842: inline page_link_cache repair failed after the page_id \
+                     write; durable ReindexBlockLinks obligation left for the retry \
+                     sweeper"
                 );
             }
-            Ok(())
         }
-        MaterializeTask::RebuildPageIds => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_page_ids_split,
-                cache::rebuild_page_ids,
-            )
-            .await?;
-            // #533: space_id is derived from the freshly rebuilt page_id,
-            // so it reconciles on the same task right after.
-            cache::rebuild_space_ids(pool).await
-        }
-        MaterializeTask::RebuildPageLinkCache => {
-            dispatch_split_or_single(
-                pool,
-                read_pool,
-                cache::rebuild_page_link_cache_split,
-                cache::rebuild_page_link_cache,
-            )
-            .await
-        }
-        MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
-            // (bg mirror): mirror the foreground catch-all — an
-            // `ApplyOp` / `ReplayApplyOp` in the background queue is a dispatch
-            // bug (#2896: both are foreground-only). Promote
-            // to error level and return `Err(Validation)` so the bg
-            // consumer's outcome inspection bumps `bg_errors`.
-            //
-            // Err return + error! log is sufficient — debug_assert
-            // removed because tests assert the Err contract directly.
-            tracing::error!(
-                op_type = %record.op_type,
-                device_id = %record.device_id,
-                seq = record.seq,
-                "unexpected ApplyOp in background queue — misrouted dispatch"
-            );
-            Err(AppError::validation(format!(
-                "unexpected ApplyOp in background queue: device_id={}, seq={}, op_type={}",
-                record.device_id, record.seq, record.op_type
-            )))
-        }
-        MaterializeTask::BatchApplyOps(records) => {
-            // (bg mirror): same rationale as the `ApplyOp` arm above.
-            if let Some(first) = records.first() {
-                tracing::error!(
-                    device_id = %first.device_id,
-                    seq = first.seq,
-                    batch_size = records.len(),
-                    "unexpected BatchApplyOps in background queue — misrouted dispatch"
-                );
-                Err(AppError::validation(format!(
-                    "unexpected BatchApplyOps in background queue: device_id={}, seq={}, batch_size={}",
-                    first.device_id,
-                    first.seq,
-                    records.len()
-                )))
-            } else {
-                tracing::error!(
-                    "unexpected empty BatchApplyOps in background queue — misrouted dispatch"
-                );
-                Err(AppError::validation(
-                    "unexpected empty BatchApplyOps in background queue".into(),
-                ))
-            }
-        }
-        MaterializeTask::Barrier(notify) => {
-            notify.notify_one();
-            Ok(())
-        }
+    } else if let Err(e) = resolve_referrers_of(pool, read_pool, block_id, metrics).await {
+        // #4118 — the `changed: false` arm, and why it is defence in
+        // depth rather than a demonstrated hole.
+        //
+        // `write.changed` gates the block's OWN reindex, but the
+        // linkability transition #4118 is about on this task is the
+        // SPACE stamp, and `set_block_space_id_from_parent` above runs
+        // UNCONDITIONALLY. So the arm's guard and the arm's linkability
+        // effect are not the same condition, and the referrer repair
+        // was attached to the guard.
+        //
+        // No production trace is claimed for the gap, and the honest
+        // reason is that the cross-space filter's owning-page fallback
+        // (`COALESCE(tgt.space_id, tp.space_id)`, #3894) keeps closing
+        // it: a target that already carries the `page_id` this arm
+        // would have written resolves its space THROUGH that page, so
+        // it was never dropped and there is no unresolved row to
+        // repair. Reaching this branch with a real NULL → stamped
+        // transition needs a block whose `page_id` is unchanged AND
+        // NULL-or-space-less while its PARENT already carries a space —
+        // constructible (`space_id` is inherited from `parent_id`,
+        // `page_id` from the parent's `page_id`, and those are two
+        // different edges), but not observed.
+        //
+        // It is wired anyway, on the same standing as the
+        // `seeded_full_rebuild` fallback above: the cost is one indexed
+        // seek on an arm that is already the rare one, and the failure
+        // mode it covers is the exact permanent loss this issue exists
+        // to end. `set_block_page_id_space_stamp_relinks_referrers_
+        // without_a_page_id_change_4118` pins it executably so it
+        // cannot rot into dead code unnoticed.
+        //
+        // Only the REFERRER half is owed here: a source whose own space
+        // is unstamped resolves `?3 IS NULL`, which passes every
+        // target, so the source side records nothing to repair.
+        //
+        // Swallowed for the same reason the `changed` arm swallows:
+        // failing `SetBlockPageId` would seed a retry whose re-run is a
+        // no-op. Each referrer carries its own durable obligation.
+        tracing::warn!(
+            block_id = %block_id,
+            error = %e,
+            "#4118: referrer re-link pass failed after an unchanged-page_id space \
+             stamp; each referrer's durable ReindexBlockLinks obligation is the \
+             recovery path"
+        );
     }
+    Ok(())
+}
+
+/// The body of the background queue's [`MaterializeTask::ApplyOp`] /
+/// [`MaterializeTask::ReplayApplyOp`] arm.
+fn reject_apply_op_in_background_queue(record: &OpRecord) -> Result<(), AppError> {
+    // (bg mirror): mirror the foreground catch-all — an
+    // `ApplyOp` / `ReplayApplyOp` in the background queue is a dispatch
+    // bug (#2896: both are foreground-only). Promote
+    // to error level and return `Err(Validation)` so the bg
+    // consumer's outcome inspection bumps `bg_errors`.
+    //
+    // Err return + error! log is sufficient — debug_assert
+    // removed because tests assert the Err contract directly.
+    tracing::error!(
+        op_type = %record.op_type,
+        device_id = %record.device_id,
+        seq = record.seq,
+        "unexpected ApplyOp in background queue — misrouted dispatch"
+    );
+    Err(AppError::validation(format!(
+        "unexpected ApplyOp in background queue: device_id={}, seq={}, op_type={}",
+        record.device_id, record.seq, record.op_type
+    )))
+}
+
+/// The body of the background queue's [`MaterializeTask::BatchApplyOps`] arm.
+fn reject_batch_apply_ops_in_background_queue(records: &[OpRecord]) -> Result<(), AppError> {
+    // (bg mirror): same rationale as the `ApplyOp` arm above.
+    if let Some(first) = records.first() {
+        tracing::error!(
+            device_id = %first.device_id,
+            seq = first.seq,
+            batch_size = records.len(),
+            "unexpected BatchApplyOps in background queue — misrouted dispatch"
+        );
+        Err(AppError::validation(format!(
+            "unexpected BatchApplyOps in background queue: device_id={}, seq={}, batch_size={}",
+            first.device_id,
+            first.seq,
+            records.len()
+        )))
+    } else {
+        tracing::error!("unexpected empty BatchApplyOps in background queue — misrouted dispatch");
+        Err(AppError::validation(
+            "unexpected empty BatchApplyOps in background queue".into(),
+        ))
+    }
+}
+
+/// A task handed to a family dispatcher that does not own it. Unreachable
+/// through `handle_background_task_inner`'s exhaustive match, which is what
+/// routes each family; it exists because each family dispatcher matches a
+/// SUBSET of `MaterializeTask`. Same contract as the foreground queue's
+/// catch-all: an ERROR log plus `Err(Validation)`, so the consumer's outcome
+/// inspection counts a dispatch bug instead of dropping the task.
+fn misrouted_background_task(task: &MaterializeTask, family: &str) -> Result<(), AppError> {
+    tracing::error!(
+        ?task,
+        family,
+        "unexpected task in background queue — misrouted dispatch"
+    );
+    Err(AppError::validation(format!(
+        "unexpected {family} task in background queue: {task:?}"
+    )))
 }

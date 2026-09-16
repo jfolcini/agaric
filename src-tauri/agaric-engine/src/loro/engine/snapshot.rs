@@ -7,6 +7,11 @@ use super::*;
 
 use loro::Counter;
 
+/// What one captured import yields: the diff the subscription recorded, and the
+/// `(peer, from, to)` spans the payload advanced. Named because the tuple is
+/// past `clippy::type_complexity`'s threshold inline.
+type CapturedImport = (DiffCapture, Vec<(PeerID, Counter, Counter)>);
+
 impl LoroEngine {
     /// A reference-clone of the engine's underlying `LoroDoc`.
     ///
@@ -321,7 +326,6 @@ impl LoroEngine {
     /// the `doc.import*` call is payload-agnostic: the diff capture, the
     /// no-op short-circuit, the legacy-migration fallback and the changed /
     /// purged / tag-scope resolution all read post-import engine state.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn import_payload_with_changed_purged_tagscope(
         &mut self,
         payload: ImportPayload<'_>,
@@ -329,57 +333,7 @@ impl LoroEngine {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
-        // Subscribe to the root so the import's diff is captured. The callback
-        // only records owned diff metadata (container ids, paths, tree items);
-        // block-id resolution happens after the import, against post-import
-        // engine state.
-        let capture = std::sync::Arc::new(std::sync::Mutex::new(DiffCapture::default()));
-        let subscription = {
-            let capture = std::sync::Arc::clone(&capture);
-            self.doc
-                .subscribe_root(std::sync::Arc::new(move |ev: loro::event::DiffEvent| {
-                    let mut cap = capture.lock().expect("diff capture mutex poisoned");
-                    for cd in &ev.events {
-                        classify_import_diff(cd, &mut cap);
-                    }
-                }))
-        };
-
-        let import_result = match payload {
-            ImportPayload::Single(bytes) => self.doc.import(bytes),
-            // #3164: one detached append per blob, ONE re-attach ⇒ ONE diff
-            // event for the whole batch (see the fn docs for the citation).
-            ImportPayload::Batch(blobs) => self.doc.import_batch(blobs),
-        };
-        // Flush so the import diff is delivered to the subscriber, then
-        // unsubscribe before any local migration ops below.
-        self.doc.commit();
-        drop(subscription);
-        let status = import_result
-            .map_err(|e| AppError::validation(format!("loro: import_with_changed_blocks: {e}")))?;
-        // #3194: loro reports changes it could not apply (missing deps) in
-        // `ImportStatus::pending` and returns `Ok` regardless. This wrapper used
-        // to discard the status, so a caller could not tell a fully-committed
-        // import from one whose payload is still buffered outside the op-log.
-        // Carry it on every return path below.
-        let pending: Vec<(PeerID, Counter, Counter)> = status
-            .pending
-            .as_ref()
-            .map(|range| {
-                range
-                    .iter()
-                    .map(|(peer, (start, end))| (*peer, *start, *end))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !pending.is_empty() {
-            tracing::warn!(
-                pending = ?pending,
-                "loro: import left changes buffered in pending_changes (deps not \
-                 satisfied by this payload); they are NOT in the op-log and were \
-                 NOT projected (#3194)"
-            );
-        }
+        let (cap, pending) = self.import_payload_capturing_diff(payload)?;
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
@@ -404,8 +358,6 @@ impl LoroEngine {
         // missed.
         self.migrate_legacy_sibling_order_best_effort();
         let migrated = self.doc.oplog_frontiers() != after_import_frontiers;
-
-        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
 
         // #2036 follow-up: `rebuild_index` (an O(N_live) tree meta-walk) and the
         // two index-key clones for the purged delta are needed ONLY when the
@@ -463,6 +415,74 @@ impl LoroEngine {
             tag_scope,
             pending,
         })
+    }
+
+    /// Imports `payload` and returns the two things the caller needs from it:
+    /// the classified diff of the ops it appended, and the changes loro
+    /// buffered as `pending` because this payload did not carry their
+    /// dependencies.
+    ///
+    /// The subscription is dropped before the capture is taken, so the returned
+    /// `DiffCapture` is final: ops appended afterwards (the #400 sibling-order
+    /// migration) cannot add to it, which is why that migration has to force the
+    /// brute-force fallback itself.
+    fn import_payload_capturing_diff(
+        &mut self,
+        payload: ImportPayload<'_>,
+    ) -> Result<CapturedImport, AppError> {
+        // Subscribe to the root so the import's diff is captured. The callback
+        // only records owned diff metadata (container ids, paths, tree items);
+        // block-id resolution happens after the import, against post-import
+        // engine state.
+        let capture = std::sync::Arc::new(std::sync::Mutex::new(DiffCapture::default()));
+        let subscription = {
+            let capture = std::sync::Arc::clone(&capture);
+            self.doc
+                .subscribe_root(std::sync::Arc::new(move |ev: loro::event::DiffEvent| {
+                    let mut cap = capture.lock().expect("diff capture mutex poisoned");
+                    for cd in &ev.events {
+                        classify_import_diff(cd, &mut cap);
+                    }
+                }))
+        };
+
+        let import_result = match payload {
+            ImportPayload::Single(bytes) => self.doc.import(bytes),
+            // #3164: one detached append per blob, ONE re-attach ⇒ ONE diff
+            // event for the whole batch (see the fn docs for the citation).
+            ImportPayload::Batch(blobs) => self.doc.import_batch(blobs),
+        };
+        // Flush so the import diff is delivered to the subscriber, then
+        // unsubscribe before any local migration ops below.
+        self.doc.commit();
+        drop(subscription);
+        let status = import_result
+            .map_err(|e| AppError::validation(format!("loro: import_with_changed_blocks: {e}")))?;
+        // #3194: loro reports changes it could not apply (missing deps) in
+        // `ImportStatus::pending` and returns `Ok` regardless. This wrapper used
+        // to discard the status, so a caller could not tell a fully-committed
+        // import from one whose payload is still buffered outside the op-log.
+        // Carry it on every return path below.
+        let pending: Vec<(PeerID, Counter, Counter)> = status
+            .pending
+            .as_ref()
+            .map(|range| {
+                range
+                    .iter()
+                    .map(|(peer, (start, end))| (*peer, *start, *end))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !pending.is_empty() {
+            tracing::warn!(
+                pending = ?pending,
+                "loro: import left changes buffered in pending_changes (deps not \
+                 satisfied by this payload); they are NOT in the op-log and were \
+                 NOT projected (#3194)"
+            );
+        }
+        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
+        Ok((cap, pending))
     }
 
     /// Full live-tree enumeration in parent-before-child pre-order, exposed

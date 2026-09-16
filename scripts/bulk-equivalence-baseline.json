@@ -20,6 +20,20 @@
     "pin": "NOT bulk-named (no batch/bulk/by_ids segment), so the name heuristic cannot see it — the batch-vs-fold pass lives in its last two statements while the function is named for the cohort fan-out around them. Pinned by exact key, the same way `fetch_prior_text_fallback_only` above is, so deleting it fails the guard as a stale entry instead of vanishing silently. It became visible only when #4639 split it out of `handle_batch_apply_ops`'s un-inventoried match arm"
   },
   {
+    "fn": "src-tauri/agaric-engine/src/materializer/handlers/task_handlers.rs::reject_batch_apply_ops_in_background_queue",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out at all: it logs and returns `Err(AppError::validation(..))` for a `BatchApplyOps` task that reached the BACKGROUND queue, which is a dispatch bug rather than a runtime condition (the foreground queue owns those). It reads `records.first()` and `records.len()` only to name the offender in the message; it applies nothing. Caught by the name heuristic. Extracted verbatim from `handle_background_task_inner` by #4639.",
+    "test": null
+  },
+  {
+    "fn": "src-tauri/agaric-engine/src/materializer/handlers/task_handlers.rs::run_reindex_block_links_batch",
+    "kind": "read-only",
+    "status": "converged",
+    "test": null,
+    "reason": "IS the fold, not an optimisation of it: the body is a `for block_id in block_ids` loop calling the single-block `run_reindex_block_links`, so every block reaches the same code path a single-block task reaches and there is no set-based shortcut that could disagree. Extracted verbatim from `handle_background_task_inner`'s `ReindexBlockLinksBatch` arm by #4639; it existed as that arm before, below the name heuristic's reach. The one thing that is not a plain fold — it keeps going after a per-block failure and returns the FIRST error rather than short-circuiting — is deliberate and pre-existing: the batch is not persisted for retry, so an early `?` would silently drop the tail."
+  },
+  {
     "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::compute_reverse_batch",
     "kind": "read-only",
     "status": "covered",

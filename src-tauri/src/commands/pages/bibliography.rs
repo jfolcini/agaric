@@ -224,6 +224,513 @@ async fn declare_bib_property_defs(
     Ok(())
 }
 
+/// The per-import constants every entry write needs: the device appending the
+/// ops, the target space, and the materializer whose Loro state the engine
+/// applies ride on.
+struct BibImportCtx<'a> {
+    device_id: &'a str,
+    space_id: &'a str,
+    materializer: &'a Materializer,
+}
+
+/// Resolve the declared bibliography `format`, or auto-detect it from the
+/// content when the caller declared none.
+fn resolve_bibliography_format(
+    format: Option<&str>,
+    content: &str,
+) -> Result<BibliographyFormat, AppError> {
+    let format = match format {
+        Some("bibtex") => BibliographyFormat::Bibtex,
+        Some("csl-json") => BibliographyFormat::CslJson,
+        Some(other) => {
+            return Err(AppError::validation(format!(
+                "unknown bibliography format '{other}': must be 'bibtex' or 'csl-json'"
+            )));
+        }
+        None => bibliography::detect_bibliography_format(content)?,
+    };
+    Ok(format)
+}
+
+/// Dedup pre-query (ONE batched query, not per-entry): every live page's
+/// `citation-key` / `doi` text value in the target space. The caller keeps
+/// accumulating the keys/DOIs written by the import into the two sets so
+/// duplicates within the file dedup identically.
+async fn fetch_existing_citation_keys_and_dois(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<(HashSet<String>, HashSet<String>), AppError> {
+    let mut existing_keys: HashSet<String> = HashSet::new();
+    let mut existing_dois: HashSet<String> = HashSet::new();
+    {
+        let rows = sqlx::query!(
+            r#"SELECT p.key AS "key!: String", p.value_text AS "value_text!: String"
+               FROM block_properties p
+               JOIN blocks b ON b.id = p.block_id
+               WHERE b.deleted_at IS NULL
+                 AND b.space_id = ?1
+                 AND p.key IN ('citation-key', 'doi')
+                 AND p.value_text IS NOT NULL"#,
+            space_id,
+        )
+        .fetch_all(&mut ***tx)
+        .await?;
+        for row in rows {
+            if row.key == "citation-key" {
+                existing_keys.insert(row.value_text);
+            } else {
+                existing_dois.insert(row.value_text);
+            }
+        }
+    }
+    Ok((existing_keys, existing_dois))
+}
+
+/// Title-collision pre-query (ONE batched `json_each` lookup, the established
+/// import idiom): which candidate titles — base display name or its
+/// `(citation-key)`-suffixed variant — already exist as live page titles in
+/// this space. The caller then also accumulates the titles assigned during the
+/// import so within-import collisions disambiguate.
+async fn fetch_taken_page_titles(
+    tx: &mut CommandTx,
+    space_id: &str,
+    entries: &[BibEntry],
+) -> Result<HashSet<String>, AppError> {
+    let used_titles: HashSet<String> = {
+        let candidates: BTreeSet<String> = entries
+            .iter()
+            .flat_map(|e| {
+                let base = citation_display_name(e);
+                let suffixed = format!("{base} ({})", e.citation_key);
+                [base, suffixed]
+            })
+            .collect();
+        let candidates: Vec<&String> = candidates.iter().collect();
+        let names_json = serde_json::to_string(&candidates)?;
+        let rows = sqlx::query!(
+            r#"SELECT content AS "content!: String"
+               FROM blocks
+               WHERE block_type = 'page'
+                 AND deleted_at IS NULL
+                 AND space_id = ?1
+                 AND content IN (SELECT value FROM json_each(?2))"#,
+            space_id,
+            names_json,
+        )
+        .fetch_all(&mut ***tx)
+        .await?;
+        rows.into_iter().map(|r| r.content).collect()
+    };
+    Ok(used_titles)
+}
+
+/// Batched property-declaration lookup (#1921 idiom): every import key's
+/// winning `(value_type, options)` in one round-trip, so the entry loop drives
+/// `set_property_in_tx_with_declaration` from the map instead of paying a
+/// per-key lookup for every entry.
+///
+/// #4382: this doubles as the pre-flight input for `declare_bib_property_defs`,
+/// which runs in the SAME transaction and adds the definitions it decides are
+/// safe to create back into the map.
+async fn fetch_bib_property_declarations(
+    tx: &mut CommandTx,
+) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
+    let decls: HashMap<String, (String, Option<String>)> = {
+        let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
+        let keys_json = serde_json::to_string(&keys)?;
+        let rows = sqlx::query!(
+            r#"SELECT key AS "key!", value_type, options
+               FROM property_definitions
+               WHERE key IN (SELECT value FROM json_each(?1))"#,
+            keys_json,
+        )
+        .fetch_all(&mut ***tx)
+        .await?;
+        rows.into_iter()
+            .map(|r| (r.key, (r.value_type, r.options)))
+            .collect()
+    };
+    Ok(decls)
+}
+
+/// Commit the open chunk and open the next one (#662 / #2470 writer-lock
+/// contract). Called only BETWEEN entries, so an entry's page and properties
+/// always share one transaction; chunks already committed stay durable when a
+/// later one fails.
+async fn flush_bib_chunk(
+    tx: CommandTx,
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    chunks_committed: u64,
+    pages_created: u64,
+) -> Result<CommandTx, AppError> {
+    tx.commit_and_dispatch(materializer).await.map_err(|e| {
+        tracing::error!(
+            chunks_committed,
+            pages_created,
+            error = %e,
+            "import: bibliography chunk commit failed; committed chunks remain durable"
+        );
+        AppError::from(e)
+    })?;
+    let mut next = CommandTx::begin_immediate(pool, "import_bibliography").await?;
+    // #2604 — re-arm rollback for the new per-chunk tx.
+    next.arm_engine_rollback(materializer.loro_state());
+    Ok(next)
+}
+
+/// The entry's DOI, trimmed, or `None` when it is absent or blank.
+fn normalized_doi(entry: &BibEntry) -> Option<&str> {
+    entry
+        .doi
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+}
+
+/// The skip warning for an entry whose citation key — or, fallback, non-empty
+/// DOI — is already present (a pre-existing page, or an earlier entry of this
+/// same import), or `None` when the entry is new.
+fn duplicate_entry_warning(
+    entry: &BibEntry,
+    entry_doi: Option<&str>,
+    existing_keys: &HashSet<String>,
+    existing_dois: &HashSet<String>,
+) -> Option<String> {
+    if existing_keys.contains(&entry.citation_key) {
+        return Some(format!(
+            "entry '{}' skipped: a page in this space already carries this citation-key",
+            entry.citation_key
+        ));
+    }
+    if let Some(doi) = entry_doi
+        && existing_dois.contains(doi)
+    {
+        return Some(format!(
+            "entry '{}' skipped: a page in this space already carries doi '{doi}'",
+            entry.citation_key
+        ));
+    }
+    None
+}
+
+/// Page title = citation display name, disambiguated with the citation key on
+/// a collision with a title already taken in this space or by this import.
+fn disambiguated_page_title(
+    entry: &BibEntry,
+    used_titles: &HashSet<String>,
+    warnings: &mut Vec<String>,
+) -> String {
+    let base_title = citation_display_name(entry);
+    if used_titles.contains(&base_title) {
+        let disambiguated = format!("{base_title} ({})", entry.citation_key);
+        warnings.push(format!(
+            "entry '{}': page title '{base_title}' already exists; \
+             using '{disambiguated}'",
+            entry.citation_key
+        ));
+        disambiguated
+    } else {
+        base_title
+    }
+}
+
+/// Create one entry's reference page and stamp its `space` ref property inside
+/// the caller's chunk transaction, returning the new page id.
+///
+/// `Ok(None)` means the entry was skipped with a warning: a per-entry
+/// Validation rejection (e.g. an absurdly long title exceeding the content cap)
+/// degrades to skip-and-warn — mirroring the #1918 recoverable-failure contract
+/// — instead of aborting the whole import. No writes have landed for the entry
+/// at that point.
+async fn create_reference_page_in_tx(
+    tx: &mut CommandTx,
+    ctx: &BibImportCtx<'_>,
+    entry: &BibEntry,
+    title: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Option<String>, AppError> {
+    let (page, page_op) = match create_block_in_tx(
+        tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        "page".into(),
+        title.to_string(),
+        None,
+        None,
+        // #2849 PR2: server-generated id.
+        None,
+    )
+    .await
+    {
+        Ok(created) => created,
+        Err(AppError::Validation { message, .. }) => {
+            warnings.push(format!(
+                "entry '{}' skipped: could not create page ({message})",
+                entry.citation_key
+            ));
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    };
+    tx.enqueue_background(page_op);
+    let page_id = page.id.clone().into_string();
+
+    // Stamp the `space` ref property — same op order as
+    // `create_page_in_space_inner` (create → set) so a sync peer never
+    // observes the page without its space membership.
+    let (_page_block, space_op) = set_property_in_tx(
+        tx,
+        ctx.materializer.loro_state(),
+        ctx.device_id,
+        page_id.clone(),
+        "space",
+        None,
+        None,
+        None,
+        Some(ctx.space_id.to_string()),
+        None,
+    )
+    .await?;
+    tx.enqueue_background(space_op);
+    Ok(Some(page_id))
+}
+
+/// The typed properties one entry contributes, as flat `(key, value)` strings.
+fn entry_property_values(entry: &BibEntry) -> Vec<(&'static str, String)> {
+    let mut props: Vec<(&str, String)> = vec![
+        ("citation-key", entry.citation_key.clone()),
+        ("reference-type", entry.entry_type.clone()),
+    ];
+    if !entry.authors.is_empty() {
+        props.push(("authors", entry.authors.join("; ")));
+    }
+    if let Some(year) = entry.year {
+        props.push(("year", year.to_string()));
+    }
+    for (key, value) in [
+        ("doi", &entry.doi),
+        ("url", &entry.url),
+        ("journal", &entry.journal),
+        ("abstract", &entry.abstract_text),
+    ] {
+        if let Some(v) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            props.push((key, v.to_string()));
+        }
+    }
+    props
+}
+
+/// Write one entry's typed properties, returning how many landed.
+///
+/// Values are flat strings; the coercion into the right `block_properties`
+/// column follows the WINNING declaration in `decls`
+/// (`typed_property_args_for_registry_value`), so a pre-existing user
+/// declaration (e.g. `year` as text) still imports cleanly instead of failing
+/// validation — and so does a key `declare_bib_property_defs` left deliberately
+/// undeclared (#4382), which has no entry in `decls` and routes to `value_text`.
+async fn set_entry_properties_in_tx(
+    tx: &mut CommandTx,
+    ctx: &BibImportCtx<'_>,
+    entry: &BibEntry,
+    page_id: &str,
+    decls: &HashMap<String, (String, Option<String>)>,
+    warnings: &mut Vec<String>,
+) -> Result<u64, AppError> {
+    let mut properties_set: u64 = 0;
+    let props = entry_property_values(entry);
+    for (key, value) in props {
+        let (value_type, options) = match decls.get(key) {
+            Some((t, o)) => (Some(t.clone()), o.clone()),
+            None => (None, None),
+        };
+        let (value_text, value_num, value_date, value_ref, value_bool) =
+            agaric_engine::block_ops::typed_property_args_for_registry_value(
+                key,
+                value,
+                value_type.as_deref(),
+            );
+        let declaration = value_type.map(|vt| agaric_engine::block_ops::PropertyDeclaration {
+            value_type: vt,
+            options,
+        });
+        match agaric_engine::block_ops::set_property_in_tx_with_declaration(
+            tx,
+            ctx.materializer.loro_state(),
+            ctx.device_id,
+            page_id.to_string(),
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+            declaration,
+        )
+        .await
+        {
+            Ok((_block, prop_op)) => {
+                tx.enqueue_background(prop_op);
+                properties_set += 1;
+            }
+            // A value the (possibly user-owned) declaration rejects —
+            // e.g. a select-typed key whose options exclude the value —
+            // skips THIS property with a warning rather than aborting
+            // the import. `validate_property_value` runs before any
+            // write, so the tx is untouched by the rejection.
+            Err(AppError::Validation { message, .. }) => {
+                warnings.push(format!(
+                    "entry '{}': property '{key}' was rejected ({message}); skipped",
+                    entry.citation_key
+                ));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(properties_set)
+}
+
+/// Log the import's diagnostics and totals, and build its result.
+fn bib_import_result(
+    pages_created: u64,
+    entries_skipped: u64,
+    properties_set: u64,
+    chunks_committed: u64,
+    warnings: Vec<String>,
+) -> ImportBibliographyResult {
+    if !warnings.is_empty() {
+        tracing::warn!(
+            count = warnings.len(),
+            warnings = ?warnings,
+            "bibliography import produced diagnostics"
+        );
+    }
+    tracing::info!(
+        pages_created,
+        entries_skipped,
+        properties_set,
+        warnings = warnings.len(),
+        chunks_committed = chunks_committed + 1,
+        "import: completed bibliography import"
+    );
+
+    ImportBibliographyResult {
+        pages_created,
+        entries_skipped,
+        properties_set,
+        warnings,
+    }
+}
+
+/// Write every parsed entry as a reference page, in the chunked IMMEDIATE
+/// transactions the #662 / #2470 writer-lock contract asks for.
+async fn import_bib_entries(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    entries: &[BibEntry],
+    space_id: &str,
+    mut warnings: Vec<String>,
+) -> Result<ImportBibliographyResult, AppError> {
+    // --- Chunked IMMEDIATE transactions (#662 pattern) ---
+    let mut tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
+    // chunk by `flush_bib_chunk`.
+    tx.arm_engine_rollback(materializer.loro_state());
+
+    crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
+
+    let (mut existing_keys, mut existing_dois) =
+        fetch_existing_citation_keys_and_dois(&mut tx, space_id).await?;
+    let mut used_titles = fetch_taken_page_titles(&mut tx, space_id, entries).await?;
+    let mut decls = fetch_bib_property_declarations(&mut tx).await?;
+
+    // #4382 — declare the import's typed property definitions, but only for
+    // keys the vault has no shape for yet. In the same transaction as the
+    // read above, so the check and the write cannot be split.
+    declare_bib_property_defs(&mut tx, &mut decls, &mut warnings).await?;
+
+    // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
+    // `decls` is read once, in this first chunk, and a SKIPPED key stays
+    // absent from it for the whole import. A `create_property_def` for that
+    // key landing between two chunk commits would therefore leave the later
+    // chunks passing `declaration: None` — skipping validation and writing
+    // `value_text` under, say, a fresh `number` declaration. Needs a
+    // >`IMPORT_BIB_CHUNK_ENTRIES` import racing an explicit declaration, so
+    // it is narrow; not re-reading `decls` per chunk is deliberate (#1921's
+    // one-lookup idiom).
+    //
+    // It is also not worth fixing independently, because its
+    // precondition IS the gap this PR does not close: a key is absent from
+    // `decls` only when it was skipped, and it is skipped only when it is
+    // already in use — so the racing `create_property_def` is itself
+    // declaring a type over in-use values, the very #4382 trap, on a path
+    // that still has no guard. Giving `create_property_def_inner` the same
+    // in-use probe closes this window as a side effect, since the racing
+    // declaration would then be refused for exactly the keys that can be
+    // missing from `decls`. Tracked in #4399, not separately.
+
+    let ctx = BibImportCtx {
+        device_id,
+        space_id,
+        materializer,
+    };
+    let mut pages_created: u64 = 0;
+    let mut entries_skipped: u64 = 0;
+    let mut properties_set: u64 = 0;
+    let mut chunk_entries: usize = 0;
+    let mut chunks_committed: u64 = 0;
+
+    for entry in entries {
+        // #662-style chunk flush — only ever BETWEEN entries, so an entry's
+        // page + properties always share one transaction.
+        if chunk_entries >= IMPORT_BIB_CHUNK_ENTRIES {
+            tx = flush_bib_chunk(tx, pool, materializer, chunks_committed, pages_created).await?;
+            chunks_committed += 1;
+            chunk_entries = 0;
+        }
+
+        let entry_doi = normalized_doi(entry);
+        if let Some(warning) =
+            duplicate_entry_warning(entry, entry_doi, &existing_keys, &existing_dois)
+        {
+            entries_skipped += 1;
+            warnings.push(warning);
+            continue;
+        }
+
+        let title = disambiguated_page_title(entry, &used_titles, &mut warnings);
+        let Some(page_id) =
+            create_reference_page_in_tx(&mut tx, &ctx, entry, &title, &mut warnings).await?
+        else {
+            entries_skipped += 1;
+            continue;
+        };
+        used_titles.insert(title);
+
+        properties_set +=
+            set_entry_properties_in_tx(&mut tx, &ctx, entry, &page_id, &decls, &mut warnings)
+                .await?;
+
+        existing_keys.insert(entry.citation_key.clone());
+        if let Some(doi) = entry_doi {
+            existing_dois.insert(doi.to_string());
+        }
+        pages_created += 1;
+        chunk_entries += 1;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(bib_import_result(
+        pages_created,
+        entries_skipped,
+        properties_set,
+        chunks_committed,
+        warnings,
+    ))
+}
+
 /// Import a bibliography file as reference pages with typed properties.
 ///
 /// `format` is `"bibtex"`, `"csl-json"`, or `None` to auto-detect from the
@@ -254,7 +761,6 @@ async fn declare_bib_property_defs(
 /// of complete reference pages; imports of ≤ one chunk keep whole-file
 /// atomicity.
 #[instrument(skip(pool, device_id, materializer, content), fields(space = %space_id), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn import_bibliography_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -268,16 +774,7 @@ pub async fn import_bibliography_inner(
     // scripted imports must never land a case-mismatched space ref).
     let space_id = space_id.to_ascii_uppercase();
 
-    let format = match format.as_deref() {
-        Some("bibtex") => BibliographyFormat::Bibtex,
-        Some("csl-json") => BibliographyFormat::CslJson,
-        Some(other) => {
-            return Err(AppError::validation(format!(
-                "unknown bibliography format '{other}': must be 'bibtex' or 'csl-json'"
-            )));
-        }
-        None => bibliography::detect_bibliography_format(&content)?,
-    };
+    let format = resolve_bibliography_format(format.as_deref(), &content)?;
     let parsed = bibliography::parse_bibliography(&content, format)?;
     let mut warnings = parsed.warnings;
     let entries = parsed.entries;
@@ -306,350 +803,7 @@ pub async fn import_bibliography_inner(
     // by `key` alone), so the decision needs the same transaction as the
     // check that guards it — see `declare_bib_property_defs`, called from
     // inside the first chunk's `BEGIN IMMEDIATE` below.
-
-    // --- Chunked IMMEDIATE transactions (#662 pattern) ---
-    let mut tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
-    // chunk at the re-open below.
-    tx.arm_engine_rollback(materializer.loro_state());
-
-    crate::commands::spaces::require_live_space_in_tx(&mut tx, &space_id).await?;
-
-    // Dedup pre-query (ONE batched query, not per-entry): every live page's
-    // `citation-key` / `doi` text value in the target space. The two sets
-    // also accumulate the keys/DOIs written by THIS import so duplicates
-    // within the file dedup identically.
-    let mut existing_keys: HashSet<String> = HashSet::new();
-    let mut existing_dois: HashSet<String> = HashSet::new();
-    {
-        let rows = sqlx::query!(
-            r#"SELECT p.key AS "key!: String", p.value_text AS "value_text!: String"
-               FROM block_properties p
-               JOIN blocks b ON b.id = p.block_id
-               WHERE b.deleted_at IS NULL
-                 AND b.space_id = ?1
-                 AND p.key IN ('citation-key', 'doi')
-                 AND p.value_text IS NOT NULL"#,
-            space_id,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        for row in rows {
-            if row.key == "citation-key" {
-                existing_keys.insert(row.value_text);
-            } else {
-                existing_dois.insert(row.value_text);
-            }
-        }
-    }
-
-    // Title-collision pre-query (ONE batched `json_each` lookup, the
-    // established import idiom): which candidate titles — base display name
-    // or its `(citation-key)`-suffixed variant — already exist as live page
-    // titles in this space. `used_titles` then also accumulates the titles
-    // assigned during this import so within-import collisions disambiguate.
-    let mut used_titles: HashSet<String> = {
-        let candidates: BTreeSet<String> = entries
-            .iter()
-            .flat_map(|e| {
-                let base = citation_display_name(e);
-                let suffixed = format!("{base} ({})", e.citation_key);
-                [base, suffixed]
-            })
-            .collect();
-        let candidates: Vec<&String> = candidates.iter().collect();
-        let names_json = serde_json::to_string(&candidates)?;
-        let rows = sqlx::query!(
-            r#"SELECT content AS "content!: String"
-               FROM blocks
-               WHERE block_type = 'page'
-                 AND deleted_at IS NULL
-                 AND space_id = ?1
-                 AND content IN (SELECT value FROM json_each(?2))"#,
-            space_id,
-            names_json,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        rows.into_iter().map(|r| r.content).collect()
-    };
-
-    // Batched property-declaration lookup (#1921 idiom): fetch every import
-    // key's winning `(value_type, options)` once and drive the loop from the
-    // map via `set_property_in_tx_with_declaration`, instead of a per-key
-    // round-trip inside `set_property_in_tx` for every entry.
-    //
-    // #4382: this doubles as the pre-flight input for
-    // `declare_bib_property_defs`, which runs in this SAME transaction and
-    // adds the definitions it decides are safe to create back into the map.
-    let mut decls: HashMap<String, (String, Option<String>)> = {
-        let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
-        let keys_json = serde_json::to_string(&keys)?;
-        let rows = sqlx::query!(
-            r#"SELECT key AS "key!", value_type, options
-               FROM property_definitions
-               WHERE key IN (SELECT value FROM json_each(?1))"#,
-            keys_json,
-        )
-        .fetch_all(&mut **tx)
-        .await?;
-        rows.into_iter()
-            .map(|r| (r.key, (r.value_type, r.options)))
-            .collect()
-    };
-
-    // #4382 — declare the import's typed property definitions, but only for
-    // keys the vault has no shape for yet. In the same transaction as the
-    // read above, so the check and the write cannot be split.
-    declare_bib_property_defs(&mut tx, &mut decls, &mut warnings).await?;
-
-    // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
-    // `decls` is read once, in this first chunk, and a SKIPPED key stays
-    // absent from it for the whole import. A `create_property_def` for that
-    // key landing between two chunk commits would therefore leave the later
-    // chunks passing `declaration: None` — skipping validation and writing
-    // `value_text` under, say, a fresh `number` declaration. Needs a
-    // >`IMPORT_BIB_CHUNK_ENTRIES` import racing an explicit declaration, so
-    // it is narrow; not re-reading `decls` per chunk is deliberate (#1921's
-    // one-lookup idiom).
-    //
-    // It is also not worth fixing independently, because its
-    // precondition IS the gap this PR does not close: a key is absent from
-    // `decls` only when it was skipped, and it is skipped only when it is
-    // already in use — so the racing `create_property_def` is itself
-    // declaring a type over in-use values, the very #4382 trap, on a path
-    // that still has no guard. Giving `create_property_def_inner` the same
-    // in-use probe closes this window as a side effect, since the racing
-    // declaration would then be refused for exactly the keys that can be
-    // missing from `decls`. Tracked in #4399, not separately.
-
-    let mut pages_created: u64 = 0;
-    let mut entries_skipped: u64 = 0;
-    let mut properties_set: u64 = 0;
-    let mut chunk_entries: usize = 0;
-    let mut chunks_committed: u64 = 0;
-
-    for entry in &entries {
-        // #662-style chunk flush — only ever BETWEEN entries, so an entry's
-        // page + properties always share one transaction.
-        if chunk_entries >= IMPORT_BIB_CHUNK_ENTRIES {
-            tx.commit_and_dispatch(materializer).await.map_err(|e| {
-                tracing::error!(
-                    chunks_committed,
-                    pages_created,
-                    error = %e,
-                    "import: bibliography chunk commit failed; committed chunks remain durable"
-                );
-                AppError::from(e)
-            })?;
-            chunks_committed += 1;
-            tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
-            // #2604 — re-arm rollback for the new per-chunk tx.
-            tx.arm_engine_rollback(materializer.loro_state());
-            chunk_entries = 0;
-        }
-
-        // Dedup/idempotence: skip when the citation key — or, fallback, the
-        // non-empty DOI — is already present (pre-existing page or an
-        // earlier entry of this same import).
-        if existing_keys.contains(&entry.citation_key) {
-            entries_skipped += 1;
-            warnings.push(format!(
-                "entry '{}' skipped: a page in this space already carries this citation-key",
-                entry.citation_key
-            ));
-            continue;
-        }
-        let entry_doi = entry
-            .doi
-            .as_deref()
-            .map(str::trim)
-            .filter(|d| !d.is_empty());
-        if let Some(doi) = entry_doi
-            && existing_dois.contains(doi)
-        {
-            entries_skipped += 1;
-            warnings.push(format!(
-                "entry '{}' skipped: a page in this space already carries doi '{doi}'",
-                entry.citation_key
-            ));
-            continue;
-        }
-
-        // Page title = citation display name, disambiguated on collision.
-        let base_title = citation_display_name(entry);
-        let title = if used_titles.contains(&base_title) {
-            let disambiguated = format!("{base_title} ({})", entry.citation_key);
-            warnings.push(format!(
-                "entry '{}': page title '{base_title}' already exists; \
-                 using '{disambiguated}'",
-                entry.citation_key
-            ));
-            disambiguated
-        } else {
-            base_title
-        };
-
-        // Create the reference page inside the current chunk's transaction.
-        // A per-entry Validation rejection (e.g. an absurdly long title
-        // exceeding the content cap) degrades to skip-and-warn — mirroring
-        // the #1918 recoverable-failure contract — instead of aborting the
-        // whole import. No writes have landed for the entry at that point.
-        let (page, page_op) = match create_block_in_tx(
-            &mut tx,
-            materializer.loro_state(),
-            device_id,
-            "page".into(),
-            title.clone(),
-            None,
-            None,
-            // #2849 PR2: server-generated id.
-            None,
-        )
-        .await
-        {
-            Ok(created) => created,
-            Err(AppError::Validation { message, .. }) => {
-                entries_skipped += 1;
-                warnings.push(format!(
-                    "entry '{}' skipped: could not create page ({message})",
-                    entry.citation_key
-                ));
-                continue;
-            }
-            Err(e) => return Err(e),
-        };
-        tx.enqueue_background(page_op);
-        let page_id = page.id.clone().into_string();
-        used_titles.insert(title);
-
-        // Stamp the `space` ref property — same op order as
-        // `create_page_in_space_inner` (create → set) so a sync peer never
-        // observes the page without its space membership.
-        let (_page_block, space_op) = set_property_in_tx(
-            &mut tx,
-            materializer.loro_state(),
-            device_id,
-            page_id.clone(),
-            "space",
-            None,
-            None,
-            None,
-            Some(space_id.clone()),
-            None,
-        )
-        .await?;
-        tx.enqueue_background(space_op);
-
-        // Typed entry properties. Values are flat strings; the coercion into
-        // the right `block_properties` column follows the WINNING declaration
-        // in `decls` (`typed_property_args_for_registry_value`), so a
-        // pre-existing user declaration (e.g. `year` as text) still imports
-        // cleanly instead of failing validation — and so does a key
-        // `declare_bib_property_defs` left deliberately undeclared (#4382),
-        // which has no entry in `decls` and routes to `value_text`.
-        let mut props: Vec<(&str, String)> = vec![
-            ("citation-key", entry.citation_key.clone()),
-            ("reference-type", entry.entry_type.clone()),
-        ];
-        if !entry.authors.is_empty() {
-            props.push(("authors", entry.authors.join("; ")));
-        }
-        if let Some(year) = entry.year {
-            props.push(("year", year.to_string()));
-        }
-        for (key, value) in [
-            ("doi", &entry.doi),
-            ("url", &entry.url),
-            ("journal", &entry.journal),
-            ("abstract", &entry.abstract_text),
-        ] {
-            if let Some(v) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                props.push((key, v.to_string()));
-            }
-        }
-
-        for (key, value) in props {
-            let (value_type, options) = match decls.get(key) {
-                Some((t, o)) => (Some(t.clone()), o.clone()),
-                None => (None, None),
-            };
-            let (value_text, value_num, value_date, value_ref, value_bool) =
-                agaric_engine::block_ops::typed_property_args_for_registry_value(
-                    key,
-                    value,
-                    value_type.as_deref(),
-                );
-            let declaration = value_type.map(|vt| agaric_engine::block_ops::PropertyDeclaration {
-                value_type: vt,
-                options,
-            });
-            match agaric_engine::block_ops::set_property_in_tx_with_declaration(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                page_id.clone(),
-                key,
-                value_text,
-                value_num,
-                value_date,
-                value_ref,
-                value_bool,
-                declaration,
-            )
-            .await
-            {
-                Ok((_block, prop_op)) => {
-                    tx.enqueue_background(prop_op);
-                    properties_set += 1;
-                }
-                // A value the (possibly user-owned) declaration rejects —
-                // e.g. a select-typed key whose options exclude the value —
-                // skips THIS property with a warning rather than aborting
-                // the import. `validate_property_value` runs before any
-                // write, so the tx is untouched by the rejection.
-                Err(AppError::Validation { message, .. }) => {
-                    warnings.push(format!(
-                        "entry '{}': property '{key}' was rejected ({message}); skipped",
-                        entry.citation_key
-                    ));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        existing_keys.insert(entry.citation_key.clone());
-        if let Some(doi) = entry_doi {
-            existing_dois.insert(doi.to_string());
-        }
-        pages_created += 1;
-        chunk_entries += 1;
-    }
-
-    tx.commit_and_dispatch(materializer).await?;
-
-    if !warnings.is_empty() {
-        tracing::warn!(
-            count = warnings.len(),
-            warnings = ?warnings,
-            "bibliography import produced diagnostics"
-        );
-    }
-    tracing::info!(
-        pages_created,
-        entries_skipped,
-        properties_set,
-        warnings = warnings.len(),
-        chunks_committed = chunks_committed + 1,
-        "import: completed bibliography import"
-    );
-
-    Ok(ImportBibliographyResult {
-        pages_created,
-        entries_skipped,
-        properties_set,
-        warnings,
-    })
+    import_bib_entries(pool, device_id, materializer, &entries, &space_id, warnings).await
 }
 
 /// Tauri command: import a BibTeX / CSL-JSON bibliography into `space_id`

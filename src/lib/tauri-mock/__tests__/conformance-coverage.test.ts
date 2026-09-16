@@ -669,8 +669,8 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
  * name: a read whose table has a MUTATING counterpart sitting in
  * `NOT_YET_PINNED_MUTATING` is debt, not a blocker. If the snapshot can widen
  * to pin `create_space`, it can carry spaces, so `list_spaces` can be pinned
- * with it. That test is what moved four commands out of this bucket; #5056
- * tracks making it a guard rather than a paragraph.
+ * with it. That test is what moved four commands out of this bucket, and it is
+ * a guard rather than a paragraph — see the #5056 test below.
  */
 const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   // Selected by an op-log coordinate each stack generates independently, so no

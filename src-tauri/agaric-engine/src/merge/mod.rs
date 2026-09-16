@@ -50,7 +50,6 @@ pub(crate) mod divergence;
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn engine_apply(
     op_id: &str,
     op: &agaric_store::op::OpPayload,
@@ -85,12 +84,40 @@ pub fn engine_apply(
     };
     let engine = guard.engine_mut();
 
-    // Dispatch on op_type. Covers ten op types (CreateBlock /
-    // EditBlock / DeleteBlock / MoveBlock / SetProperty / AddTag /
-    // RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
-    // AddAttachment / DeleteAttachment log+skip — those are file-blob
-    // ops and the file lives outside the CRDT state.
-    let dispatch_result: Result<(), agaric_core::error::AppError> = match op {
+    let Some(dispatch_result) = dispatch_engine_op(engine, op_id, op, op_created_at) else {
+        return;
+    };
+
+    if let Err(e) = dispatch_result {
+        tracing::warn!(
+            op_id,
+            op_type = %op.op_type_str(),
+            error = %e,
+            "engine_apply: engine apply failed; skipping",
+        );
+        // #1571: the SQL apply tx already committed by the time the
+        // post-commit cohort fan-out reaches here, so a swallowed engine
+        // apply failure leaves the per-space LoroDoc diverged from the
+        // op-log / SQL source of truth with no rollback possible. Emit a
+        // durable, machine-detectable signal (counter + stable marker) so
+        // a health check can observe the drift, not just a free-text warn.
+        divergence::record(op_id, op.op_type_str(), &e.to_string());
+    }
+}
+
+/// Dispatch on op_type. Covers ten op types (CreateBlock /
+/// EditBlock / DeleteBlock / MoveBlock / SetProperty / AddTag /
+/// RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
+/// AddAttachment / DeleteAttachment log+skip — those are file-blob
+/// ops and the file lives outside the CRDT state, so they return `None`:
+/// nothing reached the engine.
+fn dispatch_engine_op(
+    engine: &mut crate::loro::engine::LoroEngine,
+    op_id: &str,
+    op: &agaric_store::op::OpPayload,
+    op_created_at: &str,
+) -> Option<Result<(), agaric_core::error::AppError>> {
+    Some(match op {
         agaric_store::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
             // #400/#603/#4688: the same routing `apply_create_block_via_loro`
@@ -122,63 +149,7 @@ pub fn engine_apply(
             }
         }
         agaric_store::op::OpPayload::SetProperty(p) => {
-            // Store the value with its NATIVE type so the
-            // engine is type-lossless. This must mirror
-            // `materializer::handlers::apply_set_property_via_loro` exactly
-            // (#603 — the in-tx via-loro path is the production apply; any
-            // payload routed through this dispatcher must produce the same
-            // engine mutation). A divergent (e.g. stringified) encoding here
-            // would silently overwrite the native value, defeating the
-            // lossless engine→SQL re-projection (Phase 4).
-            // `value_num`→`Num`, `value_bool`→`Bool`; text/date/ref are
-            // strings (disambiguated at projection by
-            // `property_definitions.value_type`); no field set ⇒ explicit
-            // clear (`Null`).
-            use crate::loro::engine::PropertyValue;
-            // #2026 — observability for a malformed multi-value SetProperty
-            // that slipped through ingest. The local append path and (since
-            // #2026) `dag::insert_remote_op` both run SetProperty payloads
-            // through `validate_set_property`, which rejects more than one
-            // set value field. A payload that reaches this dispatcher with
-            // multiple value fields therefore indicates an op that bypassed
-            // validation (e.g. a pre-fix legacy row already on disk, or a
-            // future ingest path that forgets the check). The coercion below
-            // resolves it deterministically by precedence
-            // (text→num→date→ref→bool), silently dropping the extra fields.
-            // Emit a warn + the durable divergence signal BEFORE coercing so
-            // the silent drop is observable; the coercion RESULT is
-            // intentionally left unchanged.
-            let value_field_count = [
-                p.value_text.is_some(),
-                p.value_num.is_some(),
-                p.value_date.is_some(),
-                p.value_ref.is_some(),
-                p.value_bool.is_some(),
-            ]
-            .iter()
-            .filter(|&&set| set)
-            .count();
-            if value_field_count > 1 {
-                tracing::warn!(
-                    op_id,
-                    op_type = %op.op_type_str(),
-                    key = %p.key,
-                    value_field_count,
-                    "engine_apply: SetProperty has more than one value field set; \
-                     coercing by precedence and dropping the extras",
-                );
-                divergence::record(
-                    op_id,
-                    op.op_type_str(),
-                    &format!(
-                        "SetProperty multi-value (key={}, value_field_count={value_field_count}); \
-                         coercing by precedence",
-                        p.key
-                    ),
-                );
-            }
-            let value = PropertyValue::from(p);
-            engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
+            apply_set_property_op(engine, op_id, op.op_type_str(), p)
         }
         agaric_store::op::OpPayload::AddTag(p) => {
             engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
@@ -203,23 +174,72 @@ pub fn engine_apply(
                 op_type = %other.op_type_str(),
                 "engine_apply: op type out of scope (attachment file-blob); skipping",
             );
-            return;
+            return None;
         }
-    };
+    })
+}
 
-    if let Err(e) = dispatch_result {
+/// Store the value with its NATIVE type so the
+/// engine is type-lossless. This must mirror
+/// `materializer::handlers::apply_set_property_via_loro` exactly
+/// (#603 — the in-tx via-loro path is the production apply; any
+/// payload routed through this dispatcher must produce the same
+/// engine mutation). A divergent (e.g. stringified) encoding here
+/// would silently overwrite the native value, defeating the
+/// lossless engine→SQL re-projection (Phase 4).
+/// `value_num`→`Num`, `value_bool`→`Bool`; text/date/ref are
+/// strings (disambiguated at projection by
+/// `property_definitions.value_type`); no field set ⇒ explicit
+/// clear (`Null`).
+fn apply_set_property_op(
+    engine: &mut crate::loro::engine::LoroEngine,
+    op_id: &str,
+    op_type: &str,
+    p: &agaric_store::op::SetPropertyPayload,
+) -> Result<(), agaric_core::error::AppError> {
+    use crate::loro::engine::PropertyValue;
+    // #2026 — observability for a malformed multi-value SetProperty
+    // that slipped through ingest. The local append path and (since
+    // #2026) `dag::insert_remote_op` both run SetProperty payloads
+    // through `validate_set_property`, which rejects more than one
+    // set value field. A payload that reaches this dispatcher with
+    // multiple value fields therefore indicates an op that bypassed
+    // validation (e.g. a pre-fix legacy row already on disk, or a
+    // future ingest path that forgets the check). The coercion below
+    // resolves it deterministically by precedence
+    // (text→num→date→ref→bool), silently dropping the extra fields.
+    // Emit a warn + the durable divergence signal BEFORE coercing so
+    // the silent drop is observable; the coercion RESULT is
+    // intentionally left unchanged.
+    let value_field_count = [
+        p.value_text.is_some(),
+        p.value_num.is_some(),
+        p.value_date.is_some(),
+        p.value_ref.is_some(),
+        p.value_bool.is_some(),
+    ]
+    .iter()
+    .filter(|&&set| set)
+    .count();
+    if value_field_count > 1 {
         tracing::warn!(
             op_id,
-            op_type = %op.op_type_str(),
-            error = %e,
-            "engine_apply: engine apply failed; skipping",
+            op_type,
+            key = %p.key,
+            value_field_count,
+            "engine_apply: SetProperty has more than one value field set; \
+             coercing by precedence and dropping the extras",
         );
-        // #1571: the SQL apply tx already committed by the time the
-        // post-commit cohort fan-out reaches here, so a swallowed engine
-        // apply failure leaves the per-space LoroDoc diverged from the
-        // op-log / SQL source of truth with no rollback possible. Emit a
-        // durable, machine-detectable signal (counter + stable marker) so
-        // a health check can observe the drift, not just a free-text warn.
-        divergence::record(op_id, op.op_type_str(), &e.to_string());
+        divergence::record(
+            op_id,
+            op_type,
+            &format!(
+                "SetProperty multi-value (key={}, value_field_count={value_field_count}); \
+                 coercing by precedence",
+                p.key
+            ),
+        );
     }
+    let value = PropertyValue::from(p);
+    engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
 }

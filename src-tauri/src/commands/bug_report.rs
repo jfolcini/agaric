@@ -1819,30 +1819,41 @@ fn home_dir_string() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Core implementation shared between the Tauri command and its tests.
+/// Recency order of two log FILE NAMES, newest first.
 ///
-/// Enumerates matching files under `log_dir`, reads each one with a byte
-/// cap, optionally applies redaction, and returns them sorted by filename
-/// (which — thanks to the `YYYY-MM-DD` suffix — sorts chronologically).
-///
-/// H-9a — `peer_device_ids` extends the redaction allow-list with a PII
-/// vector that crosses the trust boundary when a bug-report ZIP is
-/// uploaded to a public GitHub issue. It is only consulted when
-/// `redact == true`; pass `&[]` if the value is unknown (e.g. the user
-/// has no paired peers) and the scrub gracefully degrades to a noop.
-#[tracing::instrument(skip(log_dir, home, device_id, peer_device_ids), err)]
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-pub fn read_logs_for_report_inner(
-    log_dir: &Path,
-    redact: bool,
-    home: Option<&str>,
-    device_id: Option<&str>,
-    peer_device_ids: &[String],
-) -> Result<Vec<LogFileEntry>, AppError> {
-    if !log_dir.is_dir() {
-        return Ok(Vec::new());
+/// `agaric.log` (today, no date suffix) is treated as unconditionally newest,
+/// but that name is never actually produced by the production appender — see
+/// `recent_errors_from_log_dir` for why the live "today" file is always
+/// `agaric.log.YYYY-MM-DD`. That arm is a defensive/legacy allowance for
+/// hand-written test fixtures and a possible future rotation-policy change,
+/// not a description of production sort order. Rolled `agaric.log.YYYY-MM-DD`
+/// files sort by descending date (newer date before older).
+fn log_recency_order(an: &str, bn: &str) -> std::cmp::Ordering {
+    // Defensive/legacy allowance, not production behavior — see the
+    // comment above and `recent_errors_from_log_dir`.
+    let a_today = an == "agaric.log";
+    let b_today = bn == "agaric.log";
+    match (a_today, b_today) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        // Reverse-alphabetic on dated suffixes ≡ newer date first
+        // because the `YYYY-MM-DD` shape sorts naturally.
+        (false, false) => bn.cmp(an),
     }
+}
 
+/// Enumerate the in-window log files under `log_dir` and read each one with
+/// the byte cap, NEWEST FIRST — the order the bundle-size cap walk in
+/// `apply_bundle_cap` needs so that trimming drops the OLDEST files.
+///
+/// Per-file silent-drop sites are traced at warn level so a bug report missing
+/// log files for unexpected reasons (permission denied, invalid UTF-8 in name,
+/// non-file entry under a corrupted log dir) leaves a breadcrumb in the daily
+/// log itself rather than failing silently. Whatever survived is returned —
+/// partial coverage beats no coverage when the user is already submitting a
+/// bug report.
+fn read_log_files_newest_first(log_dir: &Path) -> Result<Vec<(PathBuf, String)>, AppError> {
     let today = chrono::Utc::now().date_naive();
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
 
@@ -1898,85 +1909,39 @@ pub fn read_logs_for_report_inner(
         };
         entries.push((path, contents));
     }
-
-    // Sort newest-first so the bundle-size cap walk in
-    // [`apply_bundle_cap`] drops the OLDEST files when the running total
-    // exceeds [`MAX_BUNDLE_BYTES`]. `agaric.log` (today, no date suffix)
-    // is treated as unconditionally newest here, but that name is never
-    // actually produced by the production appender — see
-    // `recent_errors_from_log_dir` for why the live "today" file is always
-    // `agaric.log.YYYY-MM-DD`. This arm is a defensive/legacy allowance for
-    // hand-written test fixtures and a possible future rotation-policy
-    // change, not a description of production sort order. Rolled
-    // `agaric.log.YYYY-MM-DD` files sort by descending date (newer date
-    // before older). This also matches the existing comment's "today
-    // first, then reverse-chrono" intent — the previous plain alphabetic
-    // sort accidentally produced chronological-ascending order on the
-    // dated suffixes (oldest dated first).
     entries.sort_by(|a, b| {
         let an = a.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let bn = b.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        // Defensive/legacy allowance, not production behavior — see the
-        // comment above and `recent_errors_from_log_dir`.
-        let a_today = an == "agaric.log";
-        let b_today = bn == "agaric.log";
-        match (a_today, b_today) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            // Reverse-alphabetic on dated suffixes ≡ newer date first
-            // because the `YYYY-MM-DD` shape sorts naturally.
-            (false, false) => bn.cmp(an),
-        }
+        log_recency_order(an, bn)
     });
+    Ok(entries)
+}
 
-    let mut out = Vec::with_capacity(entries.len());
-    for (path, contents) in entries {
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("agaric.log")
-            .to_string();
-        let final_contents = if redact {
-            // Bundle the optional inputs into a
-            // single RedactionContext so future allow-list extensions
-            // don't grow the parameter list of every redaction helper.
-            let ctx = RedactionContext {
-                home,
-                device_id,
-                peer_device_ids,
-            };
-            redact_log(&contents, &ctx, LineFormat::TracingLog)
-        } else {
-            contents
-        };
-        out.push(LogFileEntry {
-            name,
-            contents: final_contents,
-        });
-    }
-
-    // #2110 (M7) — fold the live OpenTelemetry signal files into the bundle.
-    // Each of `traces/`, `otel-logs/`, `metrics/` is a daily-rotated sink
-    // mirroring `agaric.log`; we take the newest (live tail) file from each
-    // and run it through the SAME `read_capped_file` + `redact_log` pipeline.
-    //
-    // #3317 — these lines are NOT PII-safe by construction, and this comment
-    // used to claim they were. They are tab-separated `key=value` records whose
-    // attribute values are whatever the instrumentation site attached: the
-    // import span really did carry the user's page title, and every `tracing`
-    // event bridged into `otel-logs/` carries its fields verbatim. Because the
-    // old dispatch keyed on "is this line JSON?", they took the weak allow-list
-    // branch and were bundled unredacted. They now declare their format
-    // (`LineFormat::OtelSignal`) and take the deny-by-default `key=value` path,
-    // which is where the guarantee this comment asserts actually comes from.
-    //
-    // Ordering: these entries are appended AFTER the `agaric.log` block so the
-    // newest-first [`apply_bundle_cap`] walk prioritises `agaric.log` — if the
-    // 10 MiB cap trims anything, the OTel files (the supplementary signal) are
-    // dropped before the primary log tail. Observability is off by default, so
-    // a missing/empty subdir is the common case and [`newest_otel_file`] skips
-    // it without error.
+/// #2110 (M7) — the live OpenTelemetry signal files folded into the bug-report
+/// bundle. Each of `traces/`, `otel-logs/`, `metrics/` is a daily-rotated sink
+/// mirroring `agaric.log`; we take the newest (live tail) file from each and run
+/// it through the SAME `read_capped_file` + `redact_log` pipeline, naming it
+/// `<subdir>/<filename>` so the OTel files are distinguishable from the
+/// top-level `agaric.log*` entries in the bundle listing.
+///
+/// #3317 — these lines are NOT PII-safe by construction, and this comment used
+/// to claim they were. They are tab-separated `key=value` records whose
+/// attribute values are whatever the instrumentation site attached: the import
+/// span really did carry the user's page title, and every `tracing` event
+/// bridged into `otel-logs/` carries its fields verbatim. Because the old
+/// dispatch keyed on "is this line JSON?", they took the weak allow-list branch
+/// and were bundled unredacted. They now declare their format
+/// (`LineFormat::OtelSignal`) and take the deny-by-default `key=value` path,
+/// which is where the guarantee this comment asserts actually comes from.
+///
+/// Observability is off by default, so a missing/empty subdir is the common case
+/// and `newest_otel_file` skips it without error.
+fn otel_signal_entries(
+    log_dir: &Path,
+    redact: bool,
+    ctx: &RedactionContext<'_>,
+) -> Vec<LogFileEntry> {
+    let mut out = Vec::new();
     for subdir in OTEL_SUBDIRS {
         let dir = log_dir.join(subdir);
         // #4283 — the same escape one level up. `newest_otel_file` already
@@ -2022,20 +1987,13 @@ pub fn read_logs_for_report_inner(
             }
         };
         let final_contents = if redact {
-            let ctx = RedactionContext {
-                home,
-                device_id,
-                peer_device_ids,
-            };
-            redact_log(&contents, &ctx, LineFormat::OtelSignal)
+            redact_log(&contents, ctx, LineFormat::OtelSignal)
         } else {
             contents
         };
-        // Name as `<subdir>/<filename>` so the OTel files are distinguishable
-        // from the top-level `agaric.log*` entries in the bundle listing. The
-        // filename falls back to the subdir basename only if the OS path has
-        // no final component (it always does here — `newest_otel_file` returns
-        // a real file path).
+        // The filename falls back to the subdir basename only if the OS path
+        // has no final component (it always does here — `newest_otel_file`
+        // returns a real file path).
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -2046,6 +2004,66 @@ pub fn read_logs_for_report_inner(
             contents: final_contents,
         });
     }
+    out
+}
+
+/// Core implementation shared between the Tauri command and its tests.
+///
+/// Enumerates matching files under `log_dir`, reads each one with a byte
+/// cap, optionally applies redaction, and returns them newest-first (the
+/// order `apply_bundle_cap` needs to trim the oldest first).
+///
+/// H-9a — `peer_device_ids` extends the redaction allow-list with a PII
+/// vector that crosses the trust boundary when a bug-report ZIP is
+/// uploaded to a public GitHub issue. It is only consulted when
+/// `redact == true`; pass `&[]` if the value is unknown (e.g. the user
+/// has no paired peers) and the scrub gracefully degrades to a noop.
+#[tracing::instrument(skip(log_dir, home, device_id, peer_device_ids), err)]
+pub fn read_logs_for_report_inner(
+    log_dir: &Path,
+    redact: bool,
+    home: Option<&str>,
+    device_id: Option<&str>,
+    peer_device_ids: &[String],
+) -> Result<Vec<LogFileEntry>, AppError> {
+    if !log_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    // Bundle the optional inputs into a single RedactionContext so future
+    // allow-list extensions don't grow the parameter list of every redaction
+    // helper. Built once and shared by both redaction passes below.
+    let ctx = RedactionContext {
+        home,
+        device_id,
+        peer_device_ids,
+    };
+
+    let entries = read_log_files_newest_first(log_dir)?;
+    let mut out = Vec::with_capacity(entries.len());
+    for (path, contents) in entries {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("agaric.log")
+            .to_string();
+        let final_contents = if redact {
+            redact_log(&contents, &ctx, LineFormat::TracingLog)
+        } else {
+            contents
+        };
+        out.push(LogFileEntry {
+            name,
+            contents: final_contents,
+        });
+    }
+
+    // #2110 (M7) — the live OpenTelemetry signal files ride in the same bundle,
+    // appended AFTER the `agaric.log` block so the newest-first
+    // `apply_bundle_cap` walk prioritises `agaric.log`: if the 10 MiB cap trims
+    // anything, the OTel files (the supplementary signal) are dropped before the
+    // primary log tail.
+    out.extend(otel_signal_entries(log_dir, redact, &ctx));
 
     Ok(apply_bundle_cap(out))
 }
