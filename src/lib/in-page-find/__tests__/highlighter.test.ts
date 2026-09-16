@@ -42,19 +42,32 @@ interface Globals {
 
 let registry: Registry
 let attachedHosts: HTMLElement[] = []
+let cssDescriptor: PropertyDescriptor | undefined
 
 beforeEach(() => {
   registry = new Map()
   const g = globalThis as unknown as Globals
-  // happy-dom provides `CSS` (an object) but not `.highlights`; assign a fake.
-  g.CSS = { ...g.CSS, highlights: registry }
+  // happy-dom provides `CSS` (an object) but not `.highlights`, so the fake has
+  // to be installed rather than mutated. `defineProperty`, not assignment:
+  // happy-dom exposes `CSS` as a getter-only accessor on `GlobalWindow` (no
+  // setter), so `g.CSS = ...` throws `Cannot set property CSS ... which has
+  // only a getter`. The accessor is `configurable`, so redefining it as a data
+  // property works and the original descriptor is restored in `afterEach`.
+  cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'CSS')
+  Object.defineProperty(globalThis, 'CSS', {
+    value: { ...g.CSS, highlights: registry },
+    configurable: true,
+    writable: true,
+  })
   g.Highlight = FakeHighlight
   attachedHosts = []
 })
 
 afterEach(() => {
   const g = globalThis as unknown as Globals
-  if (g.CSS) delete g.CSS.highlights
+  if (cssDescriptor) Object.defineProperty(globalThis, 'CSS', cssDescriptor)
+  else delete (globalThis as unknown as Record<string, unknown>)['CSS']
+  cssDescriptor = undefined
   delete g.Highlight
   for (const el of attachedHosts) el.remove()
   attachedHosts = []
