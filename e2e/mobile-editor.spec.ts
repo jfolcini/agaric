@@ -157,11 +157,15 @@ function reactNodeViewWrapper(page: Page) {
  * view was on screen.
  *
  * The two predicates are transcribed from `@tiptap/core`'s `isiOS.ts` /
- * `isAndroid.ts` (3.30.2) — they cannot be imported into `page.evaluate`. The
- * transcription is not the only evidence the gate is armed: the mermaid test at
- * the bottom of this file goes RED under this same `test.use()` block when its
- * `ignoreMutation` override is removed, which is a live demonstration that the
- * branch really does fire on this user agent.
+ * `isAndroid.ts` — they cannot be imported into `page.evaluate`.
+ *
+ * This block used to add that the mermaid test below goes RED when its
+ * `ignoreMutation` override is removed, offered as a live demonstration that
+ * the branch fires on this user agent. That claim is retired rather than
+ * restated: @tiptap/core 3.31.3 narrowed the branch to
+ * `this.contentDOM.contains(target)`, so React chrome no longer reaches it and
+ * the demonstration is at best unverified on the current line. Whether the
+ * override still earns its place is #5059.
  *
  * `editor.isFocused` is `view.hasFocus()`, i.e. the ProseMirror contenteditable
  * owns the document's active element — which is what is checked here.

@@ -326,13 +326,19 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   // block — typed as ```␣, inserted from the slash menu, or picked in the
   // language selector — locked the app until it was killed.
   //
-  // The UA gate is @tiptap/core's default `NodeView.ignoreMutation` (#4315
+  // The UA gate WAS @tiptap/core's default `NodeView.ignoreMutation` (#4315
   // located it): on iOS/Android with the editor focused, a childList mutation
-  // ANYWHERE inside the node view's `dom` is *not* ignored as long as every
-  // added/removed node is contentEditable — so React's own writes are read back
-  // as user edits. Desktop skips that branch and ignores everything outside
-  // `contentDOM`, which is why desktop never spun. Mermaid keeps its React node
-  // view and overrides `ignoreMutation` to the desktop rule (see below).
+  // ANYWHERE inside the node view's `dom` was *not* ignored as long as every
+  // added/removed node was contentEditable — so React's own writes were read
+  // back as user edits. Desktop skipped that branch and ignored everything
+  // outside `contentDOM`, which is why desktop never spun.
+  //
+  // FIXED UPSTREAM in @tiptap/core 3.31.3, which narrowed that branch to
+  // `this.contentDOM.contains(target)`. React chrome is inside `dom` and
+  // outside `contentDOM`, so it no longer reaches the branch at all. Mermaid
+  // still overrides `ignoreMutation` (see below), but on 3.31.3 that override
+  // answers what the narrowed default already answers — it is kept pending the
+  // decision in #5059, not because it is known to be load-bearing.
   //
   // Non-mermaid therefore uses a plain DOM node view, built from the node SPEC
   // rather than hand-copied from `renderHTML` (#4316 — see `renderFromSpec`).
