@@ -1,0 +1,360 @@
+{
+  "description": "#5057 \u2014 the trash-lifecycle batch trio (`delete_blocks_by_ids`, `restore_blocks_by_ids`, `purge_blocks_by_ids`) driven through the command leg. What separates these from their single-block siblings is the COHORT: each acts on and reports every block the cascade reached, not the ids the caller listed. The fixture drives a delete that cascades DOWN a 3-level subtree, a restore that must bring back that exact cohort, a restore that must walk UP a tombstoned ancestor chain, a purge that must cascade to descendants while appending one op per ROOT, and every refusal the three share.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha grandchild",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gamma",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gamma child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B8",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "purge_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_alpha_and_beta",
+      "returns": ["delete_blocks_by_ids#deleted_count=4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_nested_page",
+      "returns": ["delete_blocks_by_ids#deleted_count=2", "affected_page_ids->B6"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_skips_an_already_deleted_id",
+      "returns": ["delete_blocks_by_ids#deleted_count=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "restore_alpha_brings_back_its_cohort",
+      "returns": ["restore_blocks_by_ids#affected_count=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "restore_walks_up_the_tombstoned_ancestor_chain",
+      "returns": ["restore_blocks_by_ids#affected_count=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "purge_nested_page_cascades_to_descendants",
+      "returns": ["purge_blocks_by_ids#affected_count=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "purge_beta_appends_an_op",
+      "returns": ["purge_blocks_by_ids#affected_count=1"]
+    },
+    {
+      "code": null,
+      "error": "invalid_operation",
+      "name": "purge_refuses_a_live_block",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "purge_refuses_an_empty_list",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "restore_refuses_an_empty_list",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "delete_refuses_an_empty_list",
+      "returns": []
+    }
+  ],
+  "name": "batch_trash_lifecycle",
+  "ops": [
+    {
+      "args": {
+        "blockIds": ["S2", "S5"]
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "Two roots, one carrying a 2-level subtree. `deleted_count` is the whole cohort (S2+S3+S4, plus S5), not the two ids listed \u2014 that difference is the entire point of the batch variant.",
+      "name": "delete_alpha_and_beta",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S6"]
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "A page root, so `affected_page_ids` is non-empty. Its child rides the cascade without being listed, and is a content block so it does not join that list.",
+      "name": "delete_nested_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S5", "S8"]
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "S5 is already soft-deleted, so it is not in the cohort and not counted; only S8's cohort is. A skipped id is absent from `affected_page_ids` too.",
+      "name": "delete_skips_an_already_deleted_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S2"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "Restoring the ROOT alone must bring back S3 and S4 with it \u2014 the exact cohort the delete tombstoned \u2014 and unlike the ancestors in the next op, a cohort member IS counted. A handler that only clears `deleted_at` on the listed id answers 1 here instead of 3.",
+      "name": "restore_alpha_brings_back_its_cohort",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S9"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "S9's parent S8 is still tombstoned, so restoring S9 alone would leave a live block under a dead parent. The restore revives the ancestor chain too \u2014 S8 is live in the settled snapshot \u2014 while `affected_count` stays 1. Count and effect deliberately disagree here: the number reports the requested roots' cohort, not the ancestors dragged back with it. The op above pins the other half of that rule, where the cohort IS counted.",
+      "name": "restore_walks_up_the_tombstoned_ancestor_chain",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S6"]
+      },
+      "command": "purge_blocks_by_ids",
+      "comment": "One root listed, two rows destroyed: the physical cascade reaches S7. `affected_count` counts rows, while the op log records one `purge_block` per ROOT \u2014 the two numbers are deliberately different and both are pinned here.",
+      "name": "purge_nested_page_cascades_to_descendants",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S5"]
+      },
+      "command": "purge_blocks_by_ids",
+      "comment": "A purge is the one destructive write that still records itself, so the op-log digest moves. A handler that purges silently leaves the digest behind.",
+      "name": "purge_beta_appends_an_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"]
+      },
+      "command": "purge_blocks_by_ids",
+      "comment": "S1 is live. The batch path refuses rather than silently skipping, because its physical cascade is seeded from the raw input list: hard-deleting a live subtree with no op is unsynced data loss no peer ever hears about (#3819).",
+      "expect_error": "invalid_operation",
+      "name": "purge_refuses_a_live_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": []
+      },
+      "command": "purge_blocks_by_ids",
+      "comment": "An empty batch is a caller bug, not a no-op.",
+      "expect_error": "validation",
+      "name": "purge_refuses_an_empty_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": []
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "The same guard on the restore path.",
+      "expect_error": "validation",
+      "name": "restore_refuses_an_empty_list",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": []
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "The same guard on the delete path.",
+      "expect_error": "validation",
+      "name": "delete_refuses_an_empty_list",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha child",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha grandchild",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "beta",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Nested Page",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "nested child",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "gamma",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "gamma child",
+        "id": "S9",
+        "parent_id": "S8",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -72,6 +72,28 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("delete_draft", HEADED_ID_KEY, &[], &[]),
     ("flush_draft", HEADED_ID_KEY, &[], &[]),
     ("flush_all_drafts", HEADED_ID_KEY, &["flushed"], &[]),
+    // #5057 — the trash-lifecycle batch trio answers with a COUNT envelope and
+    // no row identity, so each is headed by its own command name. The counts
+    // are what separates them from their single-block siblings: they report
+    // the whole cohort the cascade reached, not the ids the caller listed.
+    (
+        "delete_blocks_by_ids",
+        HEADED_ID_KEY,
+        &["deleted_count"],
+        &["affected_page_ids"],
+    ),
+    (
+        "restore_blocks_by_ids",
+        HEADED_ID_KEY,
+        &["affected_count"],
+        &[],
+    ),
+    (
+        "purge_blocks_by_ids",
+        HEADED_ID_KEY,
+        &["affected_count"],
+        &[],
+    ),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -96,6 +118,22 @@ pub(super) async fn apply_op_via_command(
             .map(|l| resolve_op_arg_id(l, created_ids))
     };
     let block_id = || BlockId::from(arg_label_id("blockId").expect("blockId").as_str());
+    // A batch command's `blockIds` is a LIST of the same labels `blockId`
+    // takes, each expanded through `resolve_op_arg_id`, so a fixture names
+    // seed rows and op-created blocks in a batch exactly as it does singly.
+    let block_ids = || {
+        arg("blockIds")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'blockIds'"))
+            .iter()
+            .map(|l| {
+                let label = l.as_str().unwrap_or_else(|| {
+                    panic!("conformance op '{command}': blockIds entry is not a string")
+                });
+                BlockId::from(resolve_op_arg_id(label, created_ids).as_str())
+            })
+            .collect::<Vec<_>>()
+    };
     // String args take no label expansion: a `property_definitions` key is
     // the user's own text, not a seed id.
     let opt_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
@@ -129,6 +167,15 @@ pub(super) async fn apply_op_via_command(
         }
         "flush_draft" => to_json(flush_draft_inner(pool, DEV, block_id(), mat).await),
         "flush_all_drafts" => to_json(flush_all_drafts_inner(pool, DEV, mat).await),
+        "delete_blocks_by_ids" => {
+            to_json(delete_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
+        }
+        "restore_blocks_by_ids" => {
+            to_json(restore_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
+        }
+        "purge_blocks_by_ids" => {
+            to_json(purge_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
+        }
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -441,7 +488,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 8;
+    const MUTATING_ARM_COUNT: usize = 11;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

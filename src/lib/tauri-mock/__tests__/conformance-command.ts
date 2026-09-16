@@ -73,6 +73,17 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   delete_draft: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   flush_draft: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   flush_all_drafts: { idKey: HEADED_ID_KEY, attrs: ['flushed'], lists: [] },
+  // #5057 — the trash-lifecycle batch trio answers with a COUNT envelope and
+  // no row identity, so each is headed by its own command name. The counts are
+  // what separates them from their single-block siblings: they report the whole
+  // cohort the cascade reached, not the ids the caller listed.
+  delete_blocks_by_ids: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['deleted_count'],
+    lists: ['affected_page_ids'],
+  },
+  restore_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
+  purge_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
