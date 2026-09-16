@@ -134,8 +134,8 @@
 //!
 //! Two of the maintenance arms are deliberately DEFERRED in production:
 //!
-//! * `maintain_pages_cache_counts_after_op` returns early for
-//!   `PreOpState::{Cohort, RestoreCohortAndAncestors, Purge}` (#2042) and
+//! * `maintain_pages_cache_counts_after_op` adds nothing to its affected set for
+//!   `PreOpState::Deferred` (#2042) and
 //!   `materializer::dispatch` enqueues `MaterializeTask::RebuildPagesCacheCounts`
 //!   instead;
 //! * `delete_attachment_inner` / the purge paths never unlink bytes or prune

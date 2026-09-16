@@ -129,7 +129,7 @@ pub async fn recompute_pages_cache_counts_for_pages(
 /// and return the unique target ids. Mirrors the regex used by
 /// `cache::reindex_block_links` so the materialised counts and the
 /// `block_links` table see the same edge set.
-pub fn parse_link_targets_from_content(content: &str) -> Vec<String> {
+fn parse_link_targets_from_content(content: &str) -> Vec<String> {
     use std::collections::HashSet;
     let mut out: HashSet<String> = HashSet::new();
     for cap in agaric_store::cache::ULID_LINK_RE.captures_iter(content) {
@@ -143,7 +143,7 @@ pub fn parse_link_targets_from_content(content: &str) -> Vec<String> {
 /// Resolved as the distinct `page_id` of every `bl.target_id` where
 /// `bl.source_id = block_id`. NULL page ids (e.g., orphan targets) are
 /// filtered out.
-pub async fn outbound_target_pages_for_block(
+async fn outbound_target_pages_for_block(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
@@ -164,7 +164,7 @@ pub async fn outbound_target_pages_for_block(
 /// itself a page the value equals its own id; if the target is a content
 /// block, the value is its owning page; if the row is missing (dangling
 /// token) the target is dropped.
-pub async fn target_pages_for_block_ids(
+async fn target_pages_for_block_ids(
     conn: &mut sqlx::SqliteConnection,
     target_ids: &[String],
 ) -> Result<Vec<String>, AppError> {
@@ -232,9 +232,7 @@ pub async fn maintain_pages_cache_counts_after_op(
         // single-block ops above keep the synchronous in-tx recompute — #1548
         // requires their counts to be correct immediately and their affected
         // set is tiny. Pinned by `cohort_ops_defer_the_count_recompute_2042`.
-        PreOpState::Cohort(_)
-        | PreOpState::RestoreCohortAndAncestors { .. }
-        | PreOpState::Purge => {}
+        PreOpState::Deferred => {}
         PreOpState::Move {
             block_id,
             src_page,
@@ -666,12 +664,16 @@ pub async fn refresh_inbound_counts_after_reindex(
 /// Per-op state captured BEFORE projection mutates `blocks` so the
 /// post-projection recompute knows exactly which page rows to refresh.
 ///
-/// Each variant carries exactly the data its op type needs; the empty
-/// `None` variant covers op types that don't touch the cache counts
-/// (tag / property / attachment). `apply_op_tx` constructs one variant
-/// per arm and `maintain_pages_cache_counts_after_op` matches on it, so
-/// the op→fields coupling is exhaustive-match-checked rather than an
-/// unchecked runtime convention.
+/// Each variant carries exactly the data its op type needs. Two carry nothing,
+/// and they mean opposite things: `None` is "this op cannot move either count"
+/// (tag / property / attachment), `Deferred` is "it moves them, and the
+/// background `RebuildPagesCacheCounts` task owns the recompute" (#2042). Both
+/// reach the same empty arm, by different arguments.
+///
+/// `apply_op_tx` constructs one variant per arm and
+/// `maintain_pages_cache_counts_after_op` matches on it, so the op→fields
+/// coupling is exhaustive-match-checked rather than an unchecked runtime
+/// convention.
 pub enum PreOpState {
     /// Op types that cannot affect either cache count.
     None,
@@ -686,25 +688,17 @@ pub enum PreOpState {
     },
     /// EditBlock: the edited block + its new text (for link-token parsing).
     Edit { block_id: String, to_text: String },
-    /// DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`), captured
-    /// BEFORE the UPDATE. The count hook does no in-tx work for it: #2042 leaves
-    /// the page-wide recompute to the background `RebuildPagesCacheCounts` task
-    /// rather than hold the apply lock across the descendant walk.
-    Cohort(Vec<String>),
-    /// #2017: RestoreBlock cohort PLUS the contiguous soft-deleted ancestor
-    /// chain the restore un-deleted UPWARD (the #1884 live-orphan fix). Like
-    /// [`PreOpState::Cohort`], the count hook defers both halves to the
-    /// background task, so neither field is read today — the post-commit
-    /// fan-out takes its copies from [`ApplyEffects`], not from here.
-    RestoreCohortAndAncestors {
-        cohort: Vec<String>,
-        ancestors: Vec<String>,
-    },
-    /// PurgeBlock. #2183: carries no data — the page-wide count recompute is
-    /// deferred to the background `RebuildPagesCacheCounts` task, so the former
-    /// pre-cascade affected-pages snapshot is no longer captured (its
-    /// `collect_purge_affected_pages` walk was discarded unused).
-    Purge,
+    /// DeleteBlock / RestoreBlock / PurgeBlock: the count hook does no in-tx
+    /// work. #2042 leaves the page-wide recompute to the background
+    /// `RebuildPagesCacheCounts` task rather than hold the single-writer apply
+    /// lock across an arbitrarily large descendant walk.
+    ///
+    /// Payload-free on purpose. The three used to carry a cohort, a cohort plus
+    /// the #2017 restored-ancestor chain, and nothing — three shapes for one
+    /// behaviour, and the two with fields cloned a whole `Vec<String>` per op for
+    /// a value the hook never read. The post-commit fan-out takes its copies from
+    /// [`ApplyEffects`], which is the only consumer those cohorts ever had.
+    Deferred,
     /// MoveBlock (E4). Captured BEFORE the projection reparents the block
     /// so the count hook can refresh BOTH the source page (the block's
     /// `page_id` at move time) and the destination page (derived post-move
