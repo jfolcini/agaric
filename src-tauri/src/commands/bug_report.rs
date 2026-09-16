@@ -1857,13 +1857,6 @@ fn read_log_files_newest_first(log_dir: &Path) -> Result<Vec<(PathBuf, String)>,
     let today = chrono::Utc::now().date_naive();
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
 
-    // Per-file silent-drop sites are now traced at warn level so a
-    // bug report missing log files for unexpected reasons (permission
-    // denied, invalid UTF-8 in name, non-file entry under a corrupted
-    // log dir) leaves a breadcrumb in the daily log itself rather than
-    // failing silently. The function still returns `Ok(_)` with whatever
-    // survived — partial coverage beats no coverage when the user is
-    // already submitting a bug report.
     for entry in fs::read_dir(log_dir)? {
         let entry = entry?;
         let name_os = entry.file_name();

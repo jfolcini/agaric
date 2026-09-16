@@ -84,11 +84,7 @@ pub fn engine_apply(
     };
     let engine = guard.engine_mut();
 
-    let Some(dispatch_result) = dispatch_engine_op(engine, op_id, op, op_created_at) else {
-        return;
-    };
-
-    if let Err(e) = dispatch_result {
+    if let Err(e) = dispatch_engine_op(engine, op_id, op, op_created_at) {
         tracing::warn!(
             op_id,
             op_type = %op.op_type_str(),
@@ -108,16 +104,15 @@ pub fn engine_apply(
 /// Dispatch on op_type. Covers ten op types (CreateBlock /
 /// EditBlock / DeleteBlock / MoveBlock / SetProperty / AddTag /
 /// RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
-/// AddAttachment / DeleteAttachment log+skip — those are file-blob
-/// ops and the file lives outside the CRDT state, so they return `None`:
-/// nothing reached the engine.
+/// AddAttachment / DeleteAttachment log+skip — those are file-blob ops and
+/// the file lives outside the CRDT state, so nothing reaches the engine.
 fn dispatch_engine_op(
     engine: &mut crate::loro::engine::LoroEngine,
     op_id: &str,
     op: &agaric_store::op::OpPayload,
     op_created_at: &str,
-) -> Option<Result<(), agaric_core::error::AppError>> {
-    Some(match op {
+) -> Result<(), agaric_core::error::AppError> {
+    match op {
         agaric_store::op::OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
             // #400/#603/#4688: the same routing `apply_create_block_via_loro`
@@ -174,9 +169,9 @@ fn dispatch_engine_op(
                 op_type = %other.op_type_str(),
                 "engine_apply: op type out of scope (attachment file-blob); skipping",
             );
-            return None;
+            Ok(())
         }
-    })
+    }
 }
 
 /// Store the value with its NATIVE type so the

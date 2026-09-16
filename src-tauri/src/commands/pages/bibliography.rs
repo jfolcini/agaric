@@ -239,7 +239,7 @@ fn resolve_bibliography_format(
     format: Option<&str>,
     content: &str,
 ) -> Result<BibliographyFormat, AppError> {
-    let format = match format {
+    Ok(match format {
         Some("bibtex") => BibliographyFormat::Bibtex,
         Some("csl-json") => BibliographyFormat::CslJson,
         Some(other) => {
@@ -248,8 +248,7 @@ fn resolve_bibliography_format(
             )));
         }
         None => bibliography::detect_bibliography_format(content)?,
-    };
-    Ok(format)
+    })
 }
 
 /// Dedup pre-query (ONE batched query, not per-entry): every live page's
@@ -296,7 +295,7 @@ async fn fetch_taken_page_titles(
     space_id: &str,
     entries: &[BibEntry],
 ) -> Result<HashSet<String>, AppError> {
-    let used_titles: HashSet<String> = {
+    Ok({
         let candidates: BTreeSet<String> = entries
             .iter()
             .flat_map(|e| {
@@ -320,8 +319,7 @@ async fn fetch_taken_page_titles(
         .fetch_all(&mut ***tx)
         .await?;
         rows.into_iter().map(|r| r.content).collect()
-    };
-    Ok(used_titles)
+    })
 }
 
 /// Batched property-declaration lookup (#1921 idiom): every import key's
@@ -335,7 +333,7 @@ async fn fetch_taken_page_titles(
 async fn fetch_bib_property_declarations(
     tx: &mut CommandTx,
 ) -> Result<HashMap<String, (String, Option<String>)>, AppError> {
-    let decls: HashMap<String, (String, Option<String>)> = {
+    Ok({
         let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
         let keys_json = serde_json::to_string(&keys)?;
         let rows = sqlx::query!(
@@ -349,8 +347,7 @@ async fn fetch_bib_property_declarations(
         rows.into_iter()
             .map(|r| (r.key, (r.value_type, r.options)))
             .collect()
-    };
-    Ok(decls)
+    })
 }
 
 /// Commit the open chunk and open the next one (#662 / #2470 writer-lock
@@ -802,7 +799,7 @@ pub async fn import_bibliography_inner(
     // Declaring a key is globally visible (`property_definitions` is keyed
     // by `key` alone), so the decision needs the same transaction as the
     // check that guards it — see `declare_bib_property_defs`, called from
-    // inside the first chunk's `BEGIN IMMEDIATE` below.
+    // inside the first chunk's `BEGIN IMMEDIATE` in `import_bib_entries`.
     import_bib_entries(pool, device_id, materializer, &entries, &space_id, warnings).await
 }
 
