@@ -74,7 +74,6 @@ use agaric_engine::spaces::{
 /// Any database error is propagated. Bootstrap failure is boot-fatal: the
 /// app cannot honour the "every page belongs to a space" invariant
 /// without completing this step.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn bootstrap_spaces(
     pool: &SqlitePool,
     device_id: &str,
@@ -102,69 +101,14 @@ pub async fn bootstrap_spaces(
     tx.arm_engine_rollback(state);
     let mut records: Vec<OpRecord> = Vec::new();
 
-    let (
-        personal_created,
-        personal_is_space_set,
-        personal_accent_set,
-        work_created,
-        work_is_space_set,
-        work_accent_set,
-    ) = if seeded_blocks_already_done {
+    let (spaces_created, is_space_props_set, accent_props_set) = if seeded_blocks_already_done {
         tracing::debug!(
             "spaces bootstrap: seeded-space blocks already in place; \
              skipping is_space/accent op emission and only running pages_without_space backfill"
         );
-        (false, false, false, false, false, false)
+        (0, 0, 0)
     } else {
-        let personal_created = ensure_space_block(
-            &mut tx,
-            device_id,
-            SPACE_PERSONAL_ULID,
-            "Personal",
-            &mut records,
-        )
-        .await?;
-        let personal_is_space_set =
-            ensure_is_space_property(&mut tx, state, device_id, SPACE_PERSONAL_ULID, &mut records)
-                .await?;
-        // Seed the default `accent_color` for Personal. The
-        // helper short-circuits when the property already exists so a
-        // re-run / partial-resume never piles up duplicate ops.
-        let personal_accent_set = ensure_accent_color_property(
-            &mut tx,
-            state,
-            device_id,
-            SPACE_PERSONAL_ULID,
-            SPACE_PERSONAL_DEFAULT_ACCENT,
-            &mut records,
-        )
-        .await?;
-
-        let work_created =
-            ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work", &mut records).await?;
-        let work_is_space_set =
-            ensure_is_space_property(&mut tx, state, device_id, SPACE_WORK_ULID, &mut records)
-                .await?;
-        // Seed the default `accent_color` for Work. Same
-        // idempotency guard as Personal above.
-        let work_accent_set = ensure_accent_color_property(
-            &mut tx,
-            state,
-            device_id,
-            SPACE_WORK_ULID,
-            SPACE_WORK_DEFAULT_ACCENT,
-            &mut records,
-        )
-        .await?;
-
-        (
-            personal_created,
-            personal_is_space_set,
-            personal_accent_set,
-            work_created,
-            work_is_space_set,
-            work_accent_set,
-        )
+        ensure_seeded_space_blocks(&mut tx, state, device_id, &mut records).await?
     };
 
     // Always run, even when the seeded-block fast-path skipped above; the
@@ -198,9 +142,6 @@ pub async fn bootstrap_spaces(
 
     enqueue_tag_ref_rebuilds(materializer, tags_migrated + tags_repaired);
 
-    let spaces_created = i32::from(personal_created) + i32::from(work_created);
-    let is_space_props_set = i32::from(personal_is_space_set) + i32::from(work_is_space_set);
-    let accent_props_set = i32::from(personal_accent_set) + i32::from(work_accent_set);
     tracing::info!(
         spaces_created,
         is_space_props_set,
@@ -212,6 +153,51 @@ pub async fn bootstrap_spaces(
         "spaces bootstrap complete"
     );
     Ok(())
+}
+
+/// The two seeded space blocks plus their `is_space` and `accent_color`
+/// properties. Each writer short-circuits when its row already exists, so a
+/// re-run / partial-resume never piles up duplicate ops.
+///
+/// Returns `(spaces_created, is_space_props_set, accent_props_set)`.
+async fn ensure_seeded_space_blocks(
+    tx: &mut CommandTx,
+    state: &std::sync::Arc<agaric_engine::loro::shared::LoroState>,
+    device_id: &str,
+    records: &mut Vec<OpRecord>,
+) -> Result<(i32, i32, i32), AppError> {
+    let personal_created =
+        ensure_space_block(tx, device_id, SPACE_PERSONAL_ULID, "Personal", records).await?;
+    let personal_is_space_set =
+        ensure_is_space_property(tx, state, device_id, SPACE_PERSONAL_ULID, records).await?;
+    let personal_accent_set = ensure_accent_color_property(
+        tx,
+        state,
+        device_id,
+        SPACE_PERSONAL_ULID,
+        SPACE_PERSONAL_DEFAULT_ACCENT,
+        records,
+    )
+    .await?;
+
+    let work_created = ensure_space_block(tx, device_id, SPACE_WORK_ULID, "Work", records).await?;
+    let work_is_space_set =
+        ensure_is_space_property(tx, state, device_id, SPACE_WORK_ULID, records).await?;
+    let work_accent_set = ensure_accent_color_property(
+        tx,
+        state,
+        device_id,
+        SPACE_WORK_ULID,
+        SPACE_WORK_DEFAULT_ACCENT,
+        records,
+    )
+    .await?;
+
+    Ok((
+        i32::from(personal_created) + i32::from(work_created),
+        i32::from(personal_is_space_set) + i32::from(work_is_space_set),
+        i32::from(personal_accent_set) + i32::from(work_accent_set),
+    ))
 }
 
 /// #4775: every user-created space's own block lives in the space's doc, which
