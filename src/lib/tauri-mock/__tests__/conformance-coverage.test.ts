@@ -769,8 +769,10 @@ const NOT_YET_PINNED_READ: readonly string[] = [
  * cannot be in different halves. If `create_space` is debt, the snapshot can
  * widen to carry spaces, and `list_spaces` is debt too.
  *
- * Fail-closed in both directions: every command named below must still exist in
- * `bindings.ts`, so a rename disables the pairing loudly rather than silently.
+ * A rename needs no check here: every name below is a key of
+ * `NO_FIXTURE_ALLOWLIST` or `READ_NO_QUERY_ALLOWLIST`, and both already assert
+ * their keys exist in `bindings.ts`, so a rename reds there first and nearer
+ * the stale entry.
  */
 const READ_WRITE_TABLE_PAIRS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly writes: readonly string[] }>
@@ -2807,12 +2809,8 @@ describe('#3083 conformance-coverage ratchet', () => {
   it('#5056 a read is not "permanently blocked" while its table\'s writes are debt', () => {
     const mutatingDebt = new Set(NOT_YET_PINNED_MUTATING)
     const contradictions: string[] = []
-    const unknown: string[] = []
 
     for (const [table, { reads, writes }] of Object.entries(READ_WRITE_TABLE_PAIRS)) {
-      for (const cmd of [...reads, ...writes]) {
-        if (!bindingsCommands.includes(cmd)) unknown.push(`${table}: ${cmd}`)
-      }
       const debtWrites = writes.filter((w) => mutatingDebt.has(w))
       if (debtWrites.length === 0) continue
       for (const read of reads.filter((r) => PINNING_BLOCKED_READ.has(r))) {
@@ -2823,14 +2821,6 @@ describe('#3083 conformance-coverage ratchet', () => {
         )
       }
     }
-
-    // Fail closed: a renamed command must break this loudly, not quietly stop
-    // pairing anything.
-    expect(
-      unknown,
-      `READ_WRITE_TABLE_PAIRS names commands absent from bindings.ts ` +
-        `${JSON.stringify(unknown)}. Update the map; do not delete the pair.`,
-    ).toEqual([])
 
     expect(contradictions, contradictions.join('\n')).toEqual([])
   })
