@@ -395,7 +395,6 @@ impl SortKeyset {
     /// positional binding stays aligned regardless of how many filter
     /// binds preceded it. With no filters, `base = 1` reproduces the old
     /// `?2 ..` numbering exactly.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn apply<'a>(
         self,
         sql: &mut String,
@@ -403,112 +402,163 @@ impl SortKeyset {
         limit_plus_one: i64,
         base: usize,
     ) -> Vec<SqlBind<'a>> {
-        let mut binds: Vec<SqlBind<'a>> = Vec::new();
-        // Placeholder positions, computed from the running `base`. Named
-        // for readability so the SQL templates read like the originals.
-        let p1 = base + 1;
-        let p2 = base + 2;
-        let p3 = base + 3;
-        let p4 = base + 4;
-        match (self, cursor) {
-            // ── StringAsc: (key, id) ASC ──────────────────────────
-            (SortKeyset::StringAsc { key_expr }, Some(c)) => {
-                let last_key = c.deleted_at.clone().unwrap_or_default();
-                // Binds: last_key, last_id, limit.
-                sql.push_str(&format!(
-                    " AND ( {key_expr} > ?{p1} \
+        match self {
+            SortKeyset::StringAsc { key_expr } => {
+                push_string_asc_keyset(sql, key_expr, cursor, limit_plus_one, base)
+            }
+            SortKeyset::StringDescNullCoalesced {
+                key_expr_template,
+                null_sentinel,
+            } => push_null_coalesced_desc_keyset(
+                sql,
+                key_expr_template,
+                null_sentinel,
+                cursor,
+                limit_plus_one,
+                base,
+            ),
+            SortKeyset::I64Desc { key_expr } => {
+                push_i64_desc_keyset(sql, key_expr, cursor, limit_plus_one, base)
+            }
+            SortKeyset::IdOnly => push_id_only_keyset(sql, cursor, limit_plus_one, base),
+        }
+    }
+}
+
+/// `(key_expr, id) ASC` keyset for [`SortKeyset::StringAsc`]: appends the
+/// predicate, ORDER BY and LIMIT to `sql` and returns the binds in
+/// placeholder order. Placeholders are numbered from `base + 1` (see
+/// [`SortKeyset::apply`] for the offset contract).
+fn push_string_asc_keyset<'a>(
+    sql: &mut String,
+    key_expr: &str,
+    cursor: Option<&'a Cursor>,
+    limit_plus_one: i64,
+    base: usize,
+) -> Vec<SqlBind<'a>> {
+    let (p1, p2, p3) = (base + 1, base + 2, base + 3);
+    let mut binds: Vec<SqlBind<'a>> = Vec::new();
+    if let Some(c) = cursor {
+        let last_key = c.deleted_at.clone().unwrap_or_default();
+        // Binds: last_key, last_id, limit.
+        sql.push_str(&format!(
+            " AND ( {key_expr} > ?{p1} \
                             OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
                        ORDER BY {key_expr} ASC, b.id ASC \
                        LIMIT ?{p3}"
-                ));
-                binds.push(SqlBind::OwnedStr(last_key));
-                binds.push(SqlBind::Str(c.id.as_str()));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            (SortKeyset::StringAsc { key_expr }, None) => {
-                // Binds: limit.
-                sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?{p1}"));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            // ── StringDescNullCoalesced: (key, id) DESC + sentinel ─
-            (
-                SortKeyset::StringDescNullCoalesced {
-                    key_expr_template,
-                    null_sentinel,
-                },
-                Some(c),
-            ) => {
-                // #109 Phase 2: the keyset value is INTEGER epoch-ms. The
-                // cursor stashes it in the `deleted_at` string slot (opaque
-                // wire format), so parse it back to i64, defaulting to the
-                // integer null sentinel for a NULL/legacy cursor value.
-                let last_key = c
-                    .deleted_at
-                    .as_deref()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(null_sentinel);
-                // Sentinel lives at p4; cursor binds are p1=last_key,
-                // p2=last_id, p3=limit. The template references the
-                // sentinel via `{S}` so we substitute the literal
-                // bind position before pushing.
-                let key_expr = key_expr_template.replace("{S}", &p4.to_string());
-                sql.push_str(&format!(
-                    " AND ( {key_expr} < ?{p1} \
+        ));
+        binds.push(SqlBind::OwnedStr(last_key));
+        binds.push(SqlBind::Str(c.id.as_str()));
+        binds.push(SqlBind::I64(limit_plus_one));
+    } else {
+        // Binds: limit.
+        sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?{p1}"));
+        binds.push(SqlBind::I64(limit_plus_one));
+    }
+    binds
+}
+
+/// `(key_expr, id) DESC` keyset for [`SortKeyset::StringDescNullCoalesced`].
+/// The key expression is a template whose `{S}` marks the NULL-sentinel bind
+/// slot, so the sentinel's placeholder position is substituted in before the
+/// fragment is appended.
+fn push_null_coalesced_desc_keyset<'a>(
+    sql: &mut String,
+    key_expr_template: &str,
+    null_sentinel: i64,
+    cursor: Option<&'a Cursor>,
+    limit_plus_one: i64,
+    base: usize,
+) -> Vec<SqlBind<'a>> {
+    let (p1, p2, p3, p4) = (base + 1, base + 2, base + 3, base + 4);
+    let mut binds: Vec<SqlBind<'a>> = Vec::new();
+    if let Some(c) = cursor {
+        // #109 Phase 2: the keyset value is INTEGER epoch-ms. The
+        // cursor stashes it in the `deleted_at` string slot (opaque
+        // wire format), so parse it back to i64, defaulting to the
+        // integer null sentinel for a NULL/legacy cursor value.
+        let last_key = c
+            .deleted_at
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(null_sentinel);
+        // Sentinel lives at p4; cursor binds are p1=last_key,
+        // p2=last_id, p3=limit. The template references the
+        // sentinel via `{S}` so we substitute the literal
+        // bind position before pushing.
+        let key_expr = key_expr_template.replace("{S}", &p4.to_string());
+        sql.push_str(&format!(
+            " AND ( {key_expr} < ?{p1} \
                             OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
                        ORDER BY {key_expr} DESC, b.id ASC \
                        LIMIT ?{p3}"
-                ));
-                binds.push(SqlBind::I64(last_key));
-                binds.push(SqlBind::Str(c.id.as_str()));
-                binds.push(SqlBind::I64(limit_plus_one));
-                binds.push(SqlBind::I64(null_sentinel));
-            }
-            (
-                SortKeyset::StringDescNullCoalesced {
-                    key_expr_template,
-                    null_sentinel,
-                },
-                None,
-            ) => {
-                // Sentinel at p1; limit at p2.
-                let key_expr = key_expr_template.replace("{S}", &p1.to_string());
-                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p2}"));
-                binds.push(SqlBind::I64(null_sentinel));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            // ── I64Desc: (key, id) DESC over an i64 column ────────
-            (SortKeyset::I64Desc { key_expr }, Some(c)) => {
-                let last_count = c.seq.unwrap_or(0);
-                // Binds: last_count, last_id, limit.
-                sql.push_str(&format!(
-                    " AND ( {key_expr} < ?{p1} \
+        ));
+        binds.push(SqlBind::I64(last_key));
+        binds.push(SqlBind::Str(c.id.as_str()));
+        binds.push(SqlBind::I64(limit_plus_one));
+        binds.push(SqlBind::I64(null_sentinel));
+    } else {
+        // Sentinel at p1; limit at p2.
+        let key_expr = key_expr_template.replace("{S}", &p1.to_string());
+        sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p2}"));
+        binds.push(SqlBind::I64(null_sentinel));
+        binds.push(SqlBind::I64(limit_plus_one));
+    }
+    binds
+}
+
+/// `(key_expr, id) DESC` keyset over an i64 column, for
+/// [`SortKeyset::I64Desc`]. The cursor carries the last row's count in its
+/// `seq` slot.
+fn push_i64_desc_keyset<'a>(
+    sql: &mut String,
+    key_expr: &str,
+    cursor: Option<&'a Cursor>,
+    limit_plus_one: i64,
+    base: usize,
+) -> Vec<SqlBind<'a>> {
+    let (p1, p2, p3) = (base + 1, base + 2, base + 3);
+    let mut binds: Vec<SqlBind<'a>> = Vec::new();
+    if let Some(c) = cursor {
+        let last_count = c.seq.unwrap_or(0);
+        // Binds: last_count, last_id, limit.
+        sql.push_str(&format!(
+            " AND ( {key_expr} < ?{p1} \
                             OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
                        ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p3}"
-                ));
-                binds.push(SqlBind::I64(last_count));
-                binds.push(SqlBind::Str(c.id.as_str()));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            (SortKeyset::I64Desc { key_expr }, None) => {
-                // Binds: limit.
-                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p1}"));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            // ── IdOnly: id ASC only (Default sort) ────────────────
-            (SortKeyset::IdOnly, Some(c)) => {
-                // Binds: last_id, limit.
-                sql.push_str(&format!(" AND b.id > ?{p1} ORDER BY b.id ASC LIMIT ?{p2}"));
-                binds.push(SqlBind::Str(c.id.as_str()));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-            (SortKeyset::IdOnly, None) => {
-                // Binds: limit.
-                sql.push_str(&format!(" ORDER BY b.id ASC LIMIT ?{p1}"));
-                binds.push(SqlBind::I64(limit_plus_one));
-            }
-        }
-        binds
+        ));
+        binds.push(SqlBind::I64(last_count));
+        binds.push(SqlBind::Str(c.id.as_str()));
+        binds.push(SqlBind::I64(limit_plus_one));
+    } else {
+        // Binds: limit.
+        sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p1}"));
+        binds.push(SqlBind::I64(limit_plus_one));
     }
+    binds
+}
+
+/// `b.id ASC` keyset for [`SortKeyset::IdOnly`] (the `Default` sort): no
+/// sort-key slot, just the id tiebreaker.
+fn push_id_only_keyset<'a>(
+    sql: &mut String,
+    cursor: Option<&'a Cursor>,
+    limit_plus_one: i64,
+    base: usize,
+) -> Vec<SqlBind<'a>> {
+    let (p1, p2) = (base + 1, base + 2);
+    let mut binds: Vec<SqlBind<'a>> = Vec::new();
+    if let Some(c) = cursor {
+        // Binds: last_id, limit.
+        sql.push_str(&format!(" AND b.id > ?{p1} ORDER BY b.id ASC LIMIT ?{p2}"));
+        binds.push(SqlBind::Str(c.id.as_str()));
+        binds.push(SqlBind::I64(limit_plus_one));
+    } else {
+        // Binds: limit.
+        sql.push_str(&format!(" ORDER BY b.id ASC LIMIT ?{p1}"));
+        binds.push(SqlBind::I64(limit_plus_one));
+    }
+    binds
 }
 
 /// Phase 3 — compile the compound-filter primitives for the Pages
@@ -519,7 +569,7 @@ impl SortKeyset {
 /// after the base WHERE and `binds` are the bind values in the SAME
 /// left-to-right order their `?` placeholders appear in the fragment.
 ///
-/// Steps (mirrors primitive contract" / §Performance):
+/// Steps:
 ///
 /// 1. **Allowed-keys gate** — reject any primitive whose token is not in
 ///    [`PagesProjection::allowed_keys`] with [`AppError::Validation`]
@@ -542,7 +592,6 @@ impl SortKeyset {
 ///    AND-joined (exclude) into ONE multi-`?` fragment built from
 ///    per-pattern `PagesProjection::compile_path_glob` sub-selects, so the
 ///    Pages surface now shares Search's `LOWER(title) GLOB ?` dialect.
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn compile_pages_filters(
     filters: &[FilterPrimitive],
 ) -> Result<(String, Vec<SqlBind<'static>>), AppError> {
@@ -550,25 +599,7 @@ fn compile_pages_filters(
         return Ok((String::new(), Vec::new()));
     }
 
-    let allowed = PagesProjection::allowed_keys();
-    // Allowed-keys gate first — fail loudly before compiling anything.
-    for prim in filters {
-        let key = prim.allowed_key();
-        if !allowed.contains(key) {
-            return Err(AppError::validation_coded(
-                ValidationCode::InvalidFilter,
-                format!("`{key}` is not a valid filter on the Pages surface"),
-            ));
-        }
-    }
-
-    // Validate `LastEdited::Range` date bounds before they reach the
-    // compiler, which panics on a malformed bound (#383).
-    for prim in filters {
-        if let FilterPrimitive::LastEdited { spec } = prim {
-            spec.validate()?;
-        }
-    }
+    validate_pages_filters(filters)?;
 
     // Cost-order: stable sort by cost_hint keeps equal-cost primitives in
     // their request order while floating index-backed clauses first.
@@ -588,47 +619,13 @@ fn compile_pages_filters(
     // the placeholder numbers are unambiguous regardless of compose order.
     let mut next_pos = 2; // ?1 is space_id
     for prim in ordered {
-        // #1320-A — `PathGlob` no longer compiles via `proj.compile`: the
-        // Pages surface now uses the SAME `LOWER(title) GLOB ?` dialect as
-        // Search (`GLOB` + brace + `[class]`), so the raw user pattern must
-        // first be run through `prepare_globs` (brace-expanded,
-        // substring-wrapped, ASCII-lowercased — the SAME preprocessing the
-        // Search path does upstream). One raw pattern can expand into MANY
-        // prepared patterns (`{a,b}/*` → two), so we build ONE fragment that
-        // OR-joins (include) / AND-joins (exclude) a per-pattern
-        // `PagesProjection::compile_path_glob` sub-select. The SELECT body is
-        // single-sourced through that method so the two surfaces stay in
-        // lockstep on everything but the `b.id` vs `b.page_id` alias.
         let wc = if let FilterPrimitive::PathGlob { pattern, exclude } = prim {
-            let prepared =
-                agaric_store::fts::glob_filter::prepare_globs(std::slice::from_ref(pattern))?;
-            if prepared.is_empty() {
+            match compile_path_glob_clause(&proj, std::slice::from_ref(pattern), *exclude)? {
+                Some(wc) => wc,
                 // Whitespace-only / fully-stripped pattern → no rows to
                 // constrain; emit NO clause for this primitive (skip).
-                continue;
+                None => continue,
             }
-            // Join op between per-pattern fragments: include = OR (set
-            // union — a page matches if its title matches ANY pattern);
-            // exclude = AND (set difference — the page must fall outside
-            // EVERY per-pattern set, i.e. match NONE).
-            let joiner = if *exclude { " AND " } else { " OR " };
-            let mut frag = String::new();
-            let mut frag_binds: Vec<agaric_store::filters::primitive::Bind> = Vec::new();
-            frag.push('(');
-            for (i, pat) in prepared.iter().enumerate() {
-                if i > 0 {
-                    frag.push_str(joiner);
-                }
-                let inner = proj.compile_path_glob(
-                    pat,
-                    *exclude,
-                    agaric_store::filters::primitive::DEFAULT_ROW_ALIAS,
-                );
-                frag.push_str(&inner.sql);
-                frag_binds.extend(inner.binds);
-            }
-            frag.push(')');
-            WhereClause::new(frag, frag_binds)
         } else {
             proj.compile(prim)
         };
@@ -676,6 +673,80 @@ fn compile_pages_filters(
     }
     let fragment = format!(" AND {}", clauses.join(" AND "));
     Ok((fragment, binds))
+}
+
+/// Steps 1-2 of [`compile_pages_filters`] — everything that rejects a
+/// primitive before anything compiles. The allowed-keys gate is
+/// defence-in-depth against a non-Pages token arriving on the wire; the
+/// `LastEdited::Range` bounds are checked here because the compiler panics on
+/// a malformed bound (#383).
+fn validate_pages_filters(filters: &[FilterPrimitive]) -> Result<(), AppError> {
+    let allowed = PagesProjection::allowed_keys();
+    for prim in filters {
+        let key = prim.allowed_key();
+        if !allowed.contains(key) {
+            return Err(AppError::validation_coded(
+                ValidationCode::InvalidFilter,
+                format!("`{key}` is not a valid filter on the Pages surface"),
+            ));
+        }
+    }
+    for prim in filters {
+        if let FilterPrimitive::LastEdited { spec } = prim {
+            spec.validate()?;
+        }
+    }
+    Ok(())
+}
+
+/// Compile ONE `PathGlob` primitive into a single multi-`?` fragment.
+///
+/// #1320-A — `PathGlob` no longer compiles via `proj.compile`: the
+/// Pages surface now uses the SAME `LOWER(title) GLOB ?` dialect as
+/// Search (`GLOB` + brace + `[class]`), so the raw user pattern must
+/// first be run through `prepare_globs` (brace-expanded,
+/// substring-wrapped, ASCII-lowercased — the SAME preprocessing the
+/// Search path does upstream). One raw pattern can expand into MANY
+/// prepared patterns (`{a,b}/*` → two), so we build ONE fragment that
+/// OR-joins (include) / AND-joins (exclude) a per-pattern
+/// `PagesProjection::compile_path_glob` sub-select. The SELECT body is
+/// single-sourced through that method so the two surfaces stay in
+/// lockstep on everything but the `b.id` vs `b.page_id` alias.
+///
+/// `None` means the raw pattern reduced to zero prepared globs
+/// (whitespace-only / fully stripped), so it constrains no rows and
+/// contributes no clause.
+fn compile_path_glob_clause(
+    proj: &PagesProjection,
+    raw_patterns: &[String],
+    exclude: bool,
+) -> Result<Option<WhereClause>, AppError> {
+    let prepared = agaric_store::fts::glob_filter::prepare_globs(raw_patterns)?;
+    if prepared.is_empty() {
+        return Ok(None);
+    }
+    // Join op between per-pattern fragments: include = OR (set
+    // union — a page matches if its title matches ANY pattern);
+    // exclude = AND (set difference — the page must fall outside
+    // EVERY per-pattern set, i.e. match NONE).
+    let joiner = if exclude { " AND " } else { " OR " };
+    let mut frag = String::new();
+    let mut frag_binds: Vec<agaric_store::filters::primitive::Bind> = Vec::new();
+    frag.push('(');
+    for (i, pat) in prepared.iter().enumerate() {
+        if i > 0 {
+            frag.push_str(joiner);
+        }
+        let inner = proj.compile_path_glob(
+            pat,
+            exclude,
+            agaric_store::filters::primitive::DEFAULT_ROW_ALIAS,
+        );
+        frag.push_str(&inner.sql);
+        frag_binds.extend(inner.binds);
+    }
+    frag.push(')');
+    Ok(Some(WhereClause::new(frag, frag_binds)))
 }
 
 /// The base SELECT for `list_pages_with_metadata_inner` (everything up to
