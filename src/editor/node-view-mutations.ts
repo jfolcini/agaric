@@ -1,11 +1,19 @@
 /**
  * The `ignoreMutation` policy shared by every React node view (#4315, #4353).
  *
- * ## The hazard
+ * ## The hazard — FIXED UPSTREAM in `@tiptap/core@3.31.3`
  *
- * `@tiptap/core`'s default `NodeView.ignoreMutation` carries a mobile-only
- * branch (`@tiptap/core@3.30.2`, its own upstream NodeView.ts — not a path
- * in this repo; the shipped copy we actually run is the bundled dist):
+ * Read the whole of this section in the past tense. 3.31.3 narrowed the branch
+ * below from `this.dom.contains(target)` to `this.contentDOM.contains(target)`,
+ * in both `NodeView` and `MarkView`. React chrome lives inside `dom` and
+ * outside `contentDOM`, so it no longer reaches the branch and the cycle
+ * described here can no longer start. What follows is why this module exists,
+ * not what it is currently preventing; see "## The fix" for where that leaves
+ * the override.
+ *
+ * `@tiptap/core`'s default `NodeView.ignoreMutation` carried a mobile-only
+ * branch (upstream NodeView.ts — not a path in this repo; the shipped copy we
+ * actually run is the bundled dist):
  *
  * ```js
  * if (this.dom.contains(mutation.target) && mutation.type === 'childList'
@@ -24,13 +32,20 @@
  * Desktop never reaches the branch and ignores everything outside `contentDOM`,
  * which is exactly why the bug was user-agent-gated and invisible locally.
  *
- * ## The fix
+ * ## The fix — and what it is now
  *
  * Supplying an `ignoreMutation` option short-circuits **before** that branch
  * (tiptap consults `this.options.ignoreMutation` first), restoring the desktop
  * rule on every user agent: mutations inside `contentDOM` are real content edits
  * and must be read; everything else is the React component's own chrome and is
  * ignored.
+ *
+ * Since 3.31.3 that is no longer compensating for an upstream defect: for every
+ * shape `node-view-mobile-freeze.test.ts` covers, this override returns what
+ * the narrowed default already returns. It is kept, not because it is known to
+ * be load-bearing, but because removing it is a decision about the mobile
+ * editor path rather than a side effect of a dependency bump. Do not re-derive
+ * it as load-bearing from the hazard section above.
  *
  * What that gives up is tiptap's mobile-IME workaround for text typed *outside*
  * `contentDOM`. No node view here has editable text outside its content hole, so
