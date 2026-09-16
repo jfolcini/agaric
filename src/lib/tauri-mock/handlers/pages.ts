@@ -446,6 +446,11 @@ export const pagesHandlers = {
       block_type: 'page',
       position,
     })
+    // #5057 — the backend sets the page's space through `set_property` inside
+    // the SAME transaction, so its op log carries two ops, not one. The mock
+    // appended only the `create_block` until a conformance fixture compared
+    // the two digests.
+    if (spaceId) pushOp('set_property', { block_id: id, key: 'space', from_value: null })
     return id
   },
 

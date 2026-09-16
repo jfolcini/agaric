@@ -81,7 +81,24 @@ describe('tauri-mock page-title uniqueness (#4723)', () => {
     expect(id).not.toBe(HOME_A)
     expect(blocks.get(id)?.['content']).toBe('Home')
     expect(properties.get(id)?.get('space')?.['value_ref']).toBe(SPACE_B)
-    expect(opLog.map((o) => o.op_type)).toEqual(['create_block'])
+    expect(opLog.map((o) => o.op_type)).toEqual(['create_block', 'set_property'])
+  })
+
+  // #5057 — `create_page_in_space_inner` creates the block and then sets its
+  // `space` in ONE transaction, so the backend's op log carries both ops. The
+  // mock appended only the `create_block`, which left an e2e undo of "new page
+  // in space" unable to reach the membership write.
+  it('create_page_in_space appends the create_block AND the space set_property', () => {
+    const id = dispatch('create_page_in_space', {
+      parentId: null,
+      content: 'Fresh',
+      spaceId: SPACE_A,
+    }) as string
+
+    expect(opLog.map((o) => o.op_type)).toEqual(['create_block', 'set_property'])
+    const spaceOp = opLog[1]
+    expect(spaceOp).toBeDefined()
+    expect(JSON.parse(spaceOp?.payload ?? '{}')).toMatchObject({ block_id: id, key: 'space' })
   })
 
   it('edit_block refuses a page rename to a title held in the same space, coded DuplicatePageTitle', () => {
