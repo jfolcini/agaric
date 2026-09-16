@@ -42,22 +42,28 @@ interface Globals {
 
 let registry: Registry
 let attachedHosts: HTMLElement[] = []
-let cssDescriptor: PropertyDescriptor | undefined
+
+/**
+ * `defineProperty`, not assignment: happy-dom's `CSS` is an accessor that
+ * rejects a plain write (`Cannot set property CSS ... which has only a
+ * getter`), but it is `configurable`, so it can be redefined and restored.
+ *
+ * Captured once, at module scope, because it is happy-dom's own and does not
+ * change between tests. The throw is the fail-closed half: if a future
+ * happy-dom stops defining `CSS` on the global, this suite's premise is gone
+ * and it should say so rather than silently stub a property nothing reads.
+ */
+const CSS_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis, 'CSS')
+if (!CSS_DESCRIPTOR) {
+  throw new Error('happy-dom no longer defines `CSS` on the global; this suite stubs it')
+}
 
 beforeEach(() => {
   registry = new Map()
   const g = globalThis as unknown as Globals
-  // happy-dom provides `CSS` (an object) but not `.highlights`, so the fake has
-  // to be installed rather than mutated. `defineProperty`, not assignment:
-  // happy-dom exposes `CSS` as a getter-only accessor on `GlobalWindow` (no
-  // setter), so `g.CSS = ...` throws `Cannot set property CSS ... which has
-  // only a getter`. The accessor is `configurable`, so redefining it as a data
-  // property works and the original descriptor is restored in `afterEach`.
-  cssDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'CSS')
   Object.defineProperty(globalThis, 'CSS', {
     value: { ...g.CSS, highlights: registry },
     configurable: true,
-    writable: true,
   })
   g.Highlight = FakeHighlight
   attachedHosts = []
@@ -65,9 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
   const g = globalThis as unknown as Globals
-  if (cssDescriptor) Object.defineProperty(globalThis, 'CSS', cssDescriptor)
-  else delete (globalThis as unknown as Record<string, unknown>)['CSS']
-  cssDescriptor = undefined
+  Object.defineProperty(globalThis, 'CSS', CSS_DESCRIPTOR)
   delete g.Highlight
   for (const el of attachedHosts) el.remove()
   attachedHosts = []

@@ -510,7 +510,7 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
 
   it('DOES consult options.ignoreMutation for an exposed view, before the mobile branch', () => {
     useMobileUserAgent()
-    const { dom, contentHost, chrome } = buildNodeViewDom()
+    const { dom, contentHost } = buildNodeViewDom()
     const override = vi.fn(() => true)
     const self: IgnoreMutationSelf = {
       dom,
@@ -520,7 +520,11 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
       editor: { isFocused: true },
     }
 
-    expect(defaultIgnoreMutation.call(self, childListMutation(chrome))).toBe(true)
+    // Targeted at the CONTENT host so the VALUE pins the ordering too. With a
+    // chrome target the default answers `true` whether or not the option is
+    // consulted, leaving `toHaveBeenCalledTimes` to carry the test alone; a
+    // contentDOM target answers `false` unconsulted and `true` consulted.
+    expect(defaultIgnoreMutation.call(self, childListMutation(contentHost))).toBe(true)
     expect(override).toHaveBeenCalledTimes(1)
   })
 
@@ -832,7 +836,7 @@ describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored con
 
   it('consults options.ignoreMutation, so an override is the only protection a mark view has', () => {
     useMobileUserAgent()
-    const { dom, contentHost, chrome } = buildMarkViewDom()
+    const { dom, contentHost } = buildMarkViewDom()
     const override = vi.fn(() => true)
     const self: MarkIgnoreMutationSelf = {
       dom,
@@ -841,7 +845,9 @@ describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored con
       editor: { isFocused: true },
     }
 
-    expect(defaultMarkIgnoreMutation.call(self, childListMutation(chrome))).toBe(true)
+    // Content host, not chrome, for the reason given on the NodeView twin: it
+    // makes the returned value discriminate instead of only the call count.
+    expect(defaultMarkIgnoreMutation.call(self, childListMutation(contentHost))).toBe(true)
     expect(override).toHaveBeenCalledTimes(1)
   })
 

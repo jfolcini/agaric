@@ -1347,8 +1347,9 @@ jobs:
         # `--reporter=blob` records this shard's results and raw v8 coverage
         # to `.vitest-reports/blob-${{ matrix.shard }}-2.json`, named
         # EXPLICITLY rather than left to the reporter's default: vitest 5 moved
-        # that default to `.vitest/blob`, which silently emptied this upload and
-        # made the merge below fail with `ENOENT scandir .vitest/blob`. The
+        # that default to `.vitest/blob`. That emptied this upload — loudly,
+        # since `if-no-files-found: error` fails the step — and made the merge
+        # below fail with `ENOENT scandir .vitest/blob`. The
         # `vitest-coverage` job replays both with `--mergeReports`. The blob
         # name carries the shard index, so the two never collide.
         #
