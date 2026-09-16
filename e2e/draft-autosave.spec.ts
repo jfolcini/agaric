@@ -217,11 +217,11 @@ test.describe('Draft autosave', () => {
   })
 
   // #2813 (#2786 fix) — Enter caret-splitting a block must not strand the
-  // departed block's pre-existing draft row. `list_drafts` / `save_draft` /
-  // `flush_draft` / `delete_draft` are all pure no-op stubs in the mock
-  // (src/lib/tauri-mock/handlers.ts, grepped: `returnNull` / `returnEmptyArray`
-  // / `{ flushed: 0 }` — no in-memory drafts map at all), so there is no
-  // observable draft ROW to assert absent, and a `page.reload()` cannot
+  // departed block's pre-existing draft row. The five draft commands were pure
+  // no-op stubs when this spec was written; #5057 gave the mock a real
+  // `blockDrafts` store, so a draft ROW is observable now and this assertion
+  // could be tightened to read it back. It still asserts on the outgoing IPC,
+  // as the rest of this file does, and a `page.reload()` cannot
   // distinguish fixed-vs-buggy behaviour either: nothing the mock ever
   // "persists" survives a reload regardless of which code path ran (see
   // this file's own header — `setupMock()` wipes all module-scoped mock

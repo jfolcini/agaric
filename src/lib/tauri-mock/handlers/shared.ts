@@ -275,9 +275,9 @@ export type TagExprNode =
   | { type: 'Not'; value: TagExprNode }
 
 // Stub return shapes used by handlers that don't need behaviour beyond a
-// type-correct empty payload. `list_projected_agenda` is cursor-paginated
-// And returns a `PageResponse<T>` shape, NOT a bare array — using
-// `returnEmptyArray` for it crashes consumers that read `response.items`.
+// type-correct empty payload. `list_projected_agenda` is cursor-paginated and
+// returns a `PageResponse<T>` shape, NOT a bare array, so it takes
+// `returnEmptyPage`: a bare `[]` crashes consumers that read `response.items`.
 export const returnNull: Handler = () => null
 export const returnUndefined: Handler = () => undefined
 
@@ -294,11 +294,10 @@ export const clipboardWriteText: Handler = (args) => {
   return null
 }
 export const clipboardReadText: Handler = () => mockClipboardText
-// Not annotated `: Handler` — the precise inferred return types (an array /
-// a full page envelope) must flow through so the `satisfies TypedHandlers`
-// contract on HANDLERS can verify them for array- and page-returning commands
-// (#2241). Both remain assignable to `Handler` where used for other commands.
-export const returnEmptyArray = (): unknown[] => []
+// Not annotated `: Handler` — the precise inferred return type (a full page
+// envelope) must flow through so the `satisfies TypedHandlers` contract on
+// HANDLERS can verify it for page-returning commands (#2241). It remains
+// assignable to `Handler` where used for other commands.
 export const returnEmptyPage = () => ({
   items: [],
   next_cursor: null,
