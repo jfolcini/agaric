@@ -160,20 +160,21 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
 /// yet its `mcp:activity` entry (and the `blocks:changed` refresh event that
 /// entry carries) is never emitted.
 ///
-/// This guard closes that gap. It is constructed INSIDE the `LAST_APPEND`
-/// task-local scope, immediately before the (cancellable) `call_tool` await,
-/// and disarmed on the normal path right after the op refs are captured — at
-/// which point the outer scope emits the full entry (real summary + result)
-/// itself. If instead the future is dropped before it can disarm, the guard's
+/// This guard closes that gap. It is built by the caller and MOVED into the
+/// `LAST_APPEND` task-local scope, where it lives across the (cancellable)
+/// `call_tool` await, and disarmed on the normal path right after the op refs
+/// are captured — at which point the outer scope emits the full entry (real
+/// summary + result) itself. If instead the future is dropped before it can disarm, the guard's
 /// `Drop` drains whatever op refs the RW handler already recorded into
 /// `LAST_APPEND` (recorded by `append_local_op_in_tx` INSIDE the tx, i.e.
 /// before the commit await) and emits the completion entry so the mutation is
 /// never silently missing from the feed.
 ///
-/// Draining the task-local from `Drop` is sound: tokio drops a
+/// Draining the task-local from `Drop` is sound, and it is the DROP point that
+/// makes it so, not where the guard was built: tokio drops a
 /// `TaskLocalFuture`'s inner future WITH the task-local still set
-/// (`task_local.rs::PinnedDrop`), so `take_appends()` observes the correct
-/// slot here.
+/// (`task_local.rs::PinnedDrop`), and the guard is owned by that inner future,
+/// so `take_appends()` observes the correct slot here.
 struct ToolCompletionGuard {
     activity_ctx: ActivityContext,
     tool_name: String,
@@ -287,6 +288,95 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         }
     }
 
+    /// Run the tool inside the two task-local scopes, with #2954's drop-safe
+    /// emission guard armed for the cancellable window.
+    ///
+    /// Two scopes, following the same pattern as the hand-rolled server:
+    ///  - ACTOR so `current_actor()` reads the agent name in every downstream
+    ///    `*_inner` handler.
+    ///  - LAST_APPEND so any RW tool's `record_append` landings are harvested
+    ///    for the activity entry.
+    ///
+    /// Everything is `move`d in so `registry` and the args land on the spawned
+    /// future rather than on the enclosing handler, which is why this takes
+    /// owned values and not `&self`.
+    async fn call_in_task_local_scopes(
+        registry: Arc<R>,
+        name: String,
+        args: Value,
+        actor_ctx: ActorContext,
+        mut guard: Option<ToolCompletionGuard>,
+    ) -> (Result<Value, AppError>, Vec<agaric_store::op::OpRef>) {
+        // Two copies needed: one moves into `ACTOR.scope`, one is borrowed by
+        // the explicit-parameter path of [`ToolRegistry::call_tool`].
+        let call_ctx = actor_ctx.clone();
+        ACTOR
+            .scope(actor_ctx, async move {
+                agaric_store::task_locals::LAST_APPEND
+                    .scope(std::cell::RefCell::new(Vec::new()), async move {
+                        // #2954 — the guard is armed for the duration of the
+                        // (cancellable) call. It is `None` on the read-only
+                        // surface, where there is no activity context to emit
+                        // into.
+                        let r = registry.call_tool(&name, args, &call_ctx).await;
+                        // The commit (if any) is now durable and past its only
+                        // cancellation window. Capture the op refs and disarm
+                        // the guard: the caller's emission is henceforth the
+                        // authoritative one, so the guard must not double-emit.
+                        let captured = agaric_store::task_locals::take_appends();
+                        if let Some(g) = guard.as_mut() {
+                            g.disarm();
+                        }
+                        drop(guard);
+                        (r, captured)
+                    })
+                    .await
+            })
+            .await
+    }
+
+    /// The emission point.
+    ///
+    /// The success branch routes through the field-filtering summariser; the
+    /// error branch clips at `ERROR_CLIP_CAP` chars before pushing.
+    fn emit_completion(
+        &self,
+        name: &str,
+        agent_name: String,
+        args_for_summary: &Value,
+        result: &Result<Value, AppError>,
+        op_refs: Vec<agaric_store::op::OpRef>,
+    ) {
+        let (summary, result_variant) = match result {
+            Ok(value) => (
+                super::summarise::summarise(name, args_for_summary, value),
+                ActivityResult::Ok,
+            ),
+            Err(err) => {
+                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
+                (name.to_owned(), ActivityResult::Err(short))
+            }
+        };
+        let mut iter = op_refs.into_iter();
+        let op_ref = iter.next();
+        let additional_op_refs: Vec<agaric_store::op::OpRef> = iter.collect();
+        if let Some(ref ctx) = self.activity_ctx {
+            emit_tool_completion(
+                ctx,
+                ToolCompletionEvent {
+                    tool_name: name,
+                    summary: &summary,
+                    actor_kind: ActorKind::Agent,
+                    agent_name: Some(agent_name),
+                    result: result_variant,
+                    session_id: &self.session_id,
+                    op_ref,
+                    additional_op_refs,
+                },
+            );
+        }
+    }
+
     /// Core tool dispatch shared by the `ServerHandler::call_tool` trait
     /// method (which only adds the rmcp request/context plumbing on top).
     ///
@@ -301,7 +391,6 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
     ///
     /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
     /// trait method does that at the trust boundary before calling here.
-    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     async fn dispatch_tool_call(
         &self,
         name: String,
@@ -322,96 +411,31 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             },
             request_id: Ulid::generate().to_string(),
         };
-        // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
-        // by the explicit-parameter path of [`ToolRegistry::call_tool`].
-        let scoped_ctx = actor_ctx.clone();
-        let call_ctx = actor_ctx;
-
         let args_for_summary = args.clone();
 
-        let registry = self.registry.clone();
-        let name_for_call = name.clone();
+        // #2954 — the drop-safe emission guard, built here so the values it
+        // needs can move into the scoped future alongside `registry`/`args`
+        // while the `self`-borrowed fields stay available to the emission
+        // below. `None` on the read-only surface, which has no activity
+        // context to emit into.
+        let guard = self.activity_ctx.clone().map(|ctx| ToolCompletionGuard {
+            activity_ctx: ctx,
+            tool_name: name.clone(),
+            agent_name: agent_name.clone(),
+            session_id: self.session_id.clone(),
+            armed: true,
+        });
 
-        // #2954 — values the drop-safe emission guard needs if this connection
-        // future is cancelled mid-commit. Cloned out here so they can move into
-        // the `move` scope alongside `registry`/`args`, while the outer
-        // `self`-borrowed fields stay available to the normal emission below.
-        let guard_ctx = self.activity_ctx.clone();
-        let guard_session_id = self.session_id.clone();
-        let guard_tool_name = name.clone();
-        let guard_agent_name = agent_name.clone();
+        let (result, op_refs) = Self::call_in_task_local_scopes(
+            self.registry.clone(),
+            name.clone(),
+            args,
+            actor_ctx,
+            guard,
+        )
+        .await;
 
-        // Two task-local scopes, following the same pattern as the
-        // hand-rolled server:
-        //  - ACTOR scope so `current_actor()` reads the agent name in
-        //    every downstream `*_inner` handler.
-        //  - LAST_APPEND scope so any RW tool's `record_append`
-        //    landings are harvested for the activity entry.
-        //
-        // The whole block is `move` so `registry` and the args land
-        // on the spawned future, not on the enclosing handler.
-        let (result, op_refs) = ACTOR
-            .scope(scoped_ctx, async move {
-                agaric_store::task_locals::LAST_APPEND
-                    .scope(std::cell::RefCell::new(Vec::new()), async move {
-                        // #2954 — arm the drop-safe emission guard for the
-                        // duration of the (cancellable) call. Only meaningful
-                        // when there is an activity context to emit into (the
-                        // RW surface); `None` on the read-only surface.
-                        let mut completion_guard = guard_ctx.map(|ctx| ToolCompletionGuard {
-                            activity_ctx: ctx,
-                            tool_name: guard_tool_name,
-                            agent_name: guard_agent_name,
-                            session_id: guard_session_id,
-                            armed: true,
-                        });
-                        let r = registry.call_tool(&name_for_call, args, &call_ctx).await;
-                        // The commit (if any) is now durable and past its only
-                        // cancellation window. Capture the op refs and disarm
-                        // the guard: the normal emission below is henceforth the
-                        // authoritative one, so the guard must not double-emit.
-                        let captured = agaric_store::task_locals::take_appends();
-                        if let Some(g) = completion_guard.as_mut() {
-                            g.disarm();
-                        }
-                        drop(completion_guard);
-                        (r, captured)
-                    })
-                    .await
-            })
-            .await;
-
-        // Emission point.
-        // The success branch routes through the field-filtering summariser;
-        // the error branch clips at ERROR_CLIP_CAP chars before pushing.
-        let (summary, result_variant) = match &result {
-            Ok(value) => (
-                super::summarise::summarise(&name, &args_for_summary, value),
-                ActivityResult::Ok,
-            ),
-            Err(err) => {
-                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
-                (name.clone(), ActivityResult::Err(short))
-            }
-        };
-        let mut iter = op_refs.into_iter();
-        let op_ref = iter.next();
-        let additional_op_refs: Vec<agaric_store::op::OpRef> = iter.collect();
-        if let Some(ref ctx) = self.activity_ctx {
-            emit_tool_completion(
-                ctx,
-                ToolCompletionEvent {
-                    tool_name: &name,
-                    summary: &summary,
-                    actor_kind: ActorKind::Agent,
-                    agent_name: Some(agent_name),
-                    result: result_variant,
-                    session_id: &self.session_id,
-                    op_ref,
-                    additional_op_refs,
-                },
-            );
-        }
+        self.emit_completion(&name, agent_name, &args_for_summary, &result, op_refs);
 
         match result {
             // `CallToolResult::structured` produces the MCP wire shape
@@ -805,6 +829,19 @@ mod tests {
     ///
     /// NON-VACUOUS: omitting either cache hint leaves the corresponding field
     /// as `None`, failing these exact assertions.
+    ///
+    /// The client negotiates over `server/discover`, not `initialize`. rmcp
+    /// 3.2.0's `negotiate_protocol_version` gates the `initialize` path on
+    /// `is_legacy_version` (`version < V_2026_07_28`) and silently downgrades
+    /// anything newer to a legacy version, so `.with_protocol_version(2026)
+    /// .serve(..)` — what this test used through rmcp 3.1.4 — can no longer
+    /// reach the 2026 arm at all, and asserted `None` against `Some(0)`.
+    ///
+    /// That is rmcp implementing the spec, not a regression to work around:
+    /// 2026 is a `discover`-lifecycle version. The guarantee is unchanged and
+    /// still pinned; only the lifecycle that can carry it moved. The shape
+    /// below is the one `rmcp_2026_discover_request_attributes_actor_and_keeps_result_type`
+    /// already uses, which is why that sibling kept passing across the bump.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rmcp_2026_tools_list_advertises_required_cache_hints() {
         let adapter = mk_mock_adapter(McpSurface::ReadOnly);
@@ -814,10 +851,14 @@ mod tests {
             let _ = server.waiting().await;
         });
         let client = make_test_client_info()
-            .with_protocol_version(ProtocolVersion::V_2026_07_28)
-            .serve(client_io)
+            .serve_with_lifecycle(
+                client_io,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            )
             .await
-            .expect("client handshake");
+            .expect("discover client startup");
 
         let result = client
             .list_tools(None)

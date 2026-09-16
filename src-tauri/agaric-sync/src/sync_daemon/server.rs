@@ -365,7 +365,6 @@ async fn reject(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 /// #800's surviving guarantee, as a decision rather than an expression buried in the
 /// session's tail.
 ///
@@ -426,125 +425,108 @@ pub(crate) fn peer_is_bound_to_another_key(
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-async fn handle_incoming_sync_inner(
-    mut session: InboundSession,
-    pool: sqlx::SqlitePool,
-    device_id: String,
-    materializer: Arc<dyn ApplyHost>,
-    scheduler: Arc<SyncScheduler>,
-    event_sink: Arc<dyn SyncEventSink>,
-    cancel: Arc<AtomicBool>,
-) -> Result<(), AppError> {
-    let endpoint_id = session.remote;
-    let endpoint_id_str = endpoint_id.to_string();
-    let limits = SessionLimits::default();
-    tracing::info!(
-        %endpoint_id,
-        "incoming sync connection received, starting responder session"
-    );
+/// The per-session facts every phase below needs, all settled before the peer
+/// says anything. One reference per helper instead of five arguments.
+struct ResponderCtx<'a> {
+    pool: &'a sqlx::SqlitePool,
+    /// This device's own id.
+    device_id: &'a str,
+    endpoint_id: iroh::EndpointId,
+    /// `endpoint_id.to_string()` — also the `peer_refs.endpoint_id` spelling
+    /// and the per-peer lock key.
+    endpoint_id_str: String,
+    event_sink: &'a Arc<dyn SyncEventSink>,
+    limits: SessionLimits,
+}
 
-    // #2537: mirror the initiator's cancel ownership (see
-    // `session_supervisor::CancelGuard`). Once identity checks pass and the per-peer
-    // lock is held, THIS responder session is a legitimate consumer of a user cancel —
-    // and therefore also its resetter. Rejection paths leave `owns == false` and
-    // preserve a pending flag for its real target, exactly like the initiator's
-    // early-exit paths (#637).
-    let mut cancel_guard = super::session_supervisor::CancelGuard {
-        cancel: &cancel,
-        owns: false,
-    };
-    // #2537: live-session marker for `SyncScheduler::request_cancel`; armed together
-    // with `owns` below. Declared after `cancel_guard` so the activity count drops
-    // before the flag is cleared on unwind.
-    let mut _session_activity = None;
+impl<'a> ResponderCtx<'a> {
+    fn new(
+        pool: &'a sqlx::SqlitePool,
+        device_id: &'a str,
+        endpoint_id: iroh::EndpointId,
+        event_sink: &'a Arc<dyn SyncEventSink>,
+    ) -> Self {
+        Self {
+            pool,
+            device_id,
+            endpoint_id,
+            endpoint_id_str: endpoint_id.to_string(),
+            event_sink,
+            limits: SessionLimits::default(),
+        }
+    }
+}
 
-    let pool_ref = pool.clone();
-    let event_sink_box: Box<dyn SyncEventSink> =
-        Box::new(super::SharedEventSink(Arc::clone(&event_sink)));
+/// What the opening `HeadExchange` carries that this session reads, copied out
+/// of the frame at the boundary.
+///
+/// All four are copied rather than borrowed because `opening` is moved into the
+/// driver and everything between now and then needs `&mut session`.
+///
+/// #4298: `device_name` is clamped as it is copied out, at the boundary rather
+/// than at the write site further down. It is the first thing this process does
+/// with an untrusted string from the wire, so there is no window in which an
+/// unbounded value exists in a variable something else could pick up.
+///
+/// #4380: `sender_device_id` is normalised here for the same reason — it is
+/// untrusted wire text that ends up as a `peer_refs.peer_id`, and
+/// `accept_stated_device_id` REJECTS rather than truncates, so an unusable
+/// value becomes `None` at the boundary and every reader below sees one answer
+/// to "did this peer identify itself".
+struct OpeningParts {
+    heads: Vec<crate::sync_protocol::DeviceHead>,
+    offered_proof: Option<String>,
+    offered_device_name: Option<String>,
+    stated_device_id: Option<String>,
+}
 
-    // ── The opening frame ─────────────────────────────────────────────────────
-    //
-    // Bounded explicitly. The old transport applied `SyncConnection::RECV_TIMEOUT` to
-    // every receive, so there is no timeout at this call site to port — which is
-    // exactly why it is the kind of bound a transport swap drops in silence. The
-    // service's `FIRST_FRAME_TIMEOUT` bounds `accept_bi`, which resolves when the peer
-    // *starts* speaking; this bounds it finishing.
-    let opening = recv_sync_message_within(&mut session.recv, RECV_TIMEOUT).await?;
+/// #4380: whether the heads ALONE identify the joiner, for the peers too old to
+/// state an id.
+///
+/// They do not once the peer holds more than one foreign frontier: picking one is
+/// picking by sort order, and there is nothing in the frame that says which is
+/// right. Read at the bind, which is the write that cannot be undone —
+/// `bind_endpoint_id` refuses to re-point a key afterwards, and nothing in the
+/// codebase notices that the row names the wrong device.
+///
+/// Deliberately NOT extended to "one non-self head" (the pre-#4380 case that is
+/// also wrong: a peer that has replicated one device's ops and authored none of its
+/// own advertises exactly one head, its peer's). That case is indistinguishable
+/// from the overwhelmingly common correct one — the ordinary two-device first pair,
+/// where the single non-self head IS the joiner — and refusing it would change the
+/// first-pair flow for every peer predating this field to close a corner of it.
+/// The residual is bounded and shrinking: it needs a joiner on a pre-#4380 build
+/// that has never authored an op, and the stated id closes it outright for any
+/// build that has the field.
+fn heads_are_ambiguous(
+    heads: &[crate::sync_protocol::DeviceHead],
+    local_device_id: &str,
+    stated_device_id: Option<&str>,
+) -> bool {
+    stated_device_id.is_none()
+        && heads
+            .iter()
+            .filter(|h| h.device_id != local_device_id)
+            .map(|h| &h.device_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 1
+}
 
-    // ── The first frame must be a HeadExchange ────────────────────────────────
-    //
-    // Under the old stack this was #3324's fix and it was an *authorization* gate: a
-    // non-`HeadExchange` first message fell through to the orchestrator with no
-    // per-peer lock and no identity check, and a single `ResetRequired` frame reached
-    // `try_offer_loro_snapshot_catchup`, which exports every registered space's full
-    // `LoroDoc`.
-    //
-    // It is no longer load-bearing for that, twice over: nothing here dispatches
-    // anything until the checks below have run, and the driver cannot dispatch a frame
-    // this function did not hand it. It is kept because it is still load-bearing for
-    // something else — the #855 proof rides inside `HeadExchange`, so a peer that opens
-    // with any other variant has no way to present one, and admitting it during the
-    // pairing window would be #3324 wearing different clothes. Rejecting the variant
-    // here says that once, rather than leaving it to be re-derived from the shape of
-    // the `Option` below.
-    //
-    // All three fields are copied out of the frame here rather than borrowed from it,
-    // because `opening` is moved into the driver below and everything between now and
-    // then needs `&mut session`.
-    //
-    // #4298: `device_name` is clamped as it is copied out, at the boundary rather than
-    // at the write site further down. It is the first thing this process does with an
-    // untrusted string from the wire, so there is no window in which an unbounded value
-    // exists in a variable something else could pick up.
-    //
-    // #4380: `sender_device_id` is normalised here for the same reason — it is
-    // untrusted wire text that ends up as a `peer_refs.peer_id`, and
-    // `accept_stated_device_id` REJECTS rather than truncates, so an unusable
-    // value becomes `None` at the boundary and every reader below sees one
-    // answer to "did this peer identify itself".
-    let opening_parts = match &opening {
-        SyncMessage::HeadExchange {
-            heads,
-            pairing_proof,
-            device_name,
-            sender_device_id,
-            ..
-        } => Some((
-            heads.clone(),
-            pairing_proof.clone(),
-            device_name.as_deref().and_then(clamp_device_name),
-            sender_device_id
-                .as_deref()
-                .and_then(crate::sync_protocol::accept_stated_device_id),
-        )),
-        _ => None,
-    };
-    let Some((heads, offered_proof, offered_device_name, stated_device_id)) = opening_parts else {
-        // Log the variant name only (`variant_name`, the convention in
-        // `session_state_machine::handle_message`) — never the payload.
-        tracing::warn!(
-            %endpoint_id,
-            msg = opening.variant_name(),
-            "rejecting sync: first message was not a HeadExchange"
-        );
-        return reject(
-            &mut session,
-            &Rejection::NotHeadExchange,
-            &endpoint_id_str,
-            &event_sink,
-            limits,
-        )
-        .await;
-    };
-
-    // ── S-1: is this key allowed to sync with us? ─────────────────────────────
-    //
+/// S-1 and #855: may this key sync with us, and under what identity?
+///
+/// `Ok(None)` means the session was rejected and the rejection already sent —
+/// the caller returns without opening a session.
+async fn admit_peer(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    parts: &OpeningParts,
+) -> Result<Option<(String, bool)>, AppError> {
     // The lookup is by the handshake-authenticated key, not by anything the peer said.
     // `get_peer_ref_by_endpoint_id` refuses to resolve a key bound to two peers rather
     // than picking one, because this is the lookup that decides whose vault a
     // connection may touch.
-    let bound = peer_refs::get_peer_ref_by_endpoint_id(&pool_ref, &endpoint_id_str).await?;
+    let bound = peer_refs::get_peer_ref_by_endpoint_id(ctx.pool, &ctx.endpoint_id_str).await?;
 
     // The identity the peer *claims*. #778: heads are sync state, not identity — a
     // fresh device (empty op_log) has no head of its own, so this can legitimately be
@@ -563,40 +545,15 @@ async fn handle_incoming_sync_inner(
     // used to make the coin flip permanent.
     //
     // #4451: and it goes through the SAME normaliser as the stated id.
-    // `accept_stated_device_id` was applied above and not here, so the value
-    // that reaches `bind_endpoint_id` — which validates only `is_empty()` —
+    // `accept_stated_device_id` was applied in `opening_parts` and not here, so the
+    // value that reaches `bind_endpoint_id` — which validates only `is_empty()` —
     // could still be arbitrarily long or display-hostile wire text, on a row
     // that is permanent and in a device list the user acts on. One function,
     // called from both interpreters (this one and the FSM's), so the two
     // cannot drift on what counts as a usable id.
-    let heads_derived_id = crate::sync_protocol::heads_derived_device_id(&heads, &device_id);
-    // #4380: whether the heads ALONE identify the joiner, for the peers too old to
-    // state an id. They do not once the peer holds more than one foreign frontier:
-    // picking one is picking by sort order, and there is nothing in the frame that
-    // says which is right. Read at the bind, which is the write that cannot be undone
-    // — `bind_endpoint_id` refuses to re-point a key afterwards, and nothing in the
-    // codebase notices that the row names the wrong device.
-    //
-    // Deliberately NOT extended to "one non-self head" (the pre-#4380 case that is
-    // also wrong: a peer that has replicated one device's ops and authored none of its
-    // own advertises exactly one head, its peer's). That case is indistinguishable
-    // from the overwhelmingly common correct one — the ordinary two-device first pair,
-    // where the single non-self head IS the joiner — and refusing it would change the
-    // first-pair flow for every peer predating this field to close a corner of it.
-    // The residual is bounded and shrinking: it needs a joiner on a pre-#4380 build
-    // that has never authored an op, and the stated id closes it outright for any
-    // build that has the field.
-    let heads_are_ambiguous = stated_device_id.is_none()
-        && heads
-            .iter()
-            .filter(|h| h.device_id != device_id)
-            .map(|h| &h.device_id)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            > 1;
-    // Computed after `heads_are_ambiguous` because that is the last reader of
-    // `stated_device_id` as an `Option`; this consumes it.
-    let claimed_id = stated_device_id.unwrap_or(heads_derived_id);
+    let heads_derived_id =
+        crate::sync_protocol::heads_derived_device_id(&parts.heads, ctx.device_id);
+    let claimed_id = parts.stated_device_id.clone().unwrap_or(heads_derived_id);
 
     let (remote_id, pairing_pending) = match bound {
         // A bound key. This is the authoritative identity, and the one the orchestrator
@@ -609,23 +566,23 @@ async fn handle_incoming_sync_inner(
             // and the joiner's real identity is unknown until it connects. Without an
             // exception here, S-1 rejects that very first post-pair connection before
             // any binding can happen, and neither device can complete a first sync.
-            let Some(expected_proof) = peer_refs::get_pending_pairing_proof(&pool_ref).await?
-            else {
+            let Some(expected_proof) = peer_refs::get_pending_pairing_proof(ctx.pool).await? else {
                 tracing::warn!(
-                    %endpoint_id,
+                    endpoint_id = %ctx.endpoint_id,
                     "rejecting sync from an unpaired device: no pairing is in progress"
                 );
                 // The authenticated key, not `claimed_id`: inside this branch no
                 // `peer_refs` row binds the caller, so its self-reported device id is
                 // an unverified claim. The key is what actually dialled.
-                return reject(
-                    &mut session,
+                reject(
+                    session,
                     &Rejection::Unpaired,
-                    &endpoint_id_str,
-                    &event_sink,
-                    limits,
+                    &ctx.endpoint_id_str,
+                    ctx.event_sink,
+                    ctx.limits,
                 )
-                .await;
+                .await?;
+                return Ok(None);
             };
 
             // #855: admit an unpaired device during the pairing window ONLY if it
@@ -641,12 +598,12 @@ async fn handle_incoming_sync_inner(
             // Constant-time compare so a wrong guess leaks no timing signal (the
             // bounded window and attempt cap already make guessing impractical; this is
             // defence in depth).
-            let proof_ok = offered_proof.as_deref().is_some_and(|offered| {
+            let proof_ok = parts.offered_proof.as_deref().is_some_and(|offered| {
                 agaric_core::hash::constant_time_eq(offered.as_bytes(), expected_proof.as_bytes())
             });
             if !proof_ok {
                 tracing::warn!(
-                    %endpoint_id,
+                    endpoint_id = %ctx.endpoint_id,
                     "rejecting first sync from unpaired device: missing/mismatched pairing \
                      passphrase proof (#855)"
                 );
@@ -656,256 +613,180 @@ async fn handle_incoming_sync_inner(
                 // `endpoint_id_str` for the same reason as the S-1 branch above: a
                 // peer that just failed the proof has not earned the right to name
                 // itself, and the frontend keys on `message` regardless.
-                return reject(
-                    &mut session,
+                reject(
+                    session,
                     &Rejection::PairingProofMissing,
-                    &endpoint_id_str,
-                    &event_sink,
-                    limits,
+                    &ctx.endpoint_id_str,
+                    ctx.event_sink,
+                    ctx.limits,
                 )
-                .await;
+                .await?;
+                return Ok(None);
             }
             tracing::info!(
-                %endpoint_id,
+                endpoint_id = %ctx.endpoint_id,
                 "accepting first sync from unpaired device: pairing passphrase proof \
                  verified (#1519, #855)"
             );
-            (claimed_id.clone(), true)
+            (claimed_id, true)
         }
     };
 
-    if !remote_id.is_empty() && remote_id == device_id {
-        tracing::warn!(%endpoint_id, "rejecting sync with self");
-        return reject(
-            &mut session,
+    if !remote_id.is_empty() && remote_id == ctx.device_id {
+        tracing::warn!(endpoint_id = %ctx.endpoint_id, "rejecting sync with self");
+        reject(
+            session,
             &Rejection::Self_,
             &remote_id,
-            &event_sink,
-            limits,
+            ctx.event_sink,
+            ctx.limits,
         )
-        .await;
+        .await?;
+        return Ok(None);
     }
 
-    // ── S-5: per-peer mutual exclusion ────────────────────────────────────────
-    //
-    // The key is the handshake-authenticated endpoint id, which is also what
-    // `session_supervisor::try_sync_with_peer` locks on — see [`peer_lock_key`] for why
-    // that identifier and not the device id. The lock only does its job if both roles
-    // on THIS device agree on the spelling, and this is the only identifier both of
-    // them hold unconditionally: we have it here before the peer has said anything at
-    // all, and the initiator has it before it can dial.
-    //
-    // It is deliberately NOT `remote_id`. That is empty for a fresh joiner with an
-    // empty `op_log` — the pairing window — and the endpoint-id fallback the old code
-    // used there disagreed with the initiator's device-id key, so an inbound and an
-    // outbound session with one physical peer could overlap in exactly the window where
-    // both ends arm a dial. `remote_id` stays the *reported* identity below; it is no
-    // longer the lock's spelling.
-    let lock_key = super::peer_lock_key(endpoint_id);
-    let Some(_peer_guard) = scheduler.try_lock_peer(&lock_key) else {
-        tracing::info!(
-            %endpoint_id,
-            peer_id = %remote_id,
-            "rejecting incoming sync: already syncing with this peer"
-        );
-        return reject(
-            &mut session,
-            &Rejection::Busy,
-            &remote_id,
-            &event_sink,
-            limits,
-        )
-        .await;
-    };
-    tracing::info!(%endpoint_id, peer_id = %remote_id, "responder locked peer for sync");
+    Ok(Some((remote_id, pairing_pending)))
+}
 
-    // #2537: identity checks passed and the per-peer lock is held — this session is now
-    // committed. Take cancel ownership (the guard's Drop becomes the legitimate
-    // post-run reset) and register live-session activity so `cancel_sync`
-    // latches the flag.
-    cancel_guard.owns = true;
-    _session_activity = Some(scheduler.begin_session_activity());
-
-    // Build the orchestrator now that identity is settled. `expected_remote_id` is set
-    // only from a *bound* row: it is authoritative there, and the FSM takes it verbatim
-    // in preference to the id it would otherwise derive from the peer's advertised
-    // heads. It does NOT reject a disagreeing `HeadExchange` — the advertised heads are
-    // never compared against it, precisely because #2481 frontier advertisement makes
-    // the first non-self head an unreliable identity and a mismatch would false-fail a
-    // legitimate multi-device peer. It is deliberately NOT set from `claimed_id` for the
-    // same reason; with it unset the FSM derives the same value this function did, by
-    // the same #4380 precedence — the peer's stated `sender_device_id` first, the
-    // first non-self head only for a peer too old to state one. The two must agree,
-    // because `heads_are_ambiguous` above is computed from THIS frame and gates the
-    // bind on `settled_remote_id`, which is the FSM's answer.
-    // #3328: the orchestrator takes ownership of the host, but the file-transfer
-    // phase below still needs it to resolve the attachment root. An `Arc` clone
-    // is a refcount bump — the host itself is not duplicated.
-    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), Arc::clone(&materializer))
-        .with_event_sink(event_sink_box);
-    if !pairing_pending && !remote_id.is_empty() {
-        orch = orch.with_expected_remote_id(remote_id.clone());
-    } else if pairing_pending {
-        // #4230: and because it is deliberately unset here, the id this session
-        // ends up keyed on is whatever the peer advertised. That is fine for
-        // *naming* the session — the bind below is what decides whether the name
-        // sticks — but the session also writes `streamed_at` and
-        // `loro_vv_bytes` under it, and those writes run BEFORE the bind check.
-        // Arming the guard with the authenticated key makes
-        // `peer_is_bound_to_another_key` cover them too, so a passphrase-holder
-        // cannot poison an already-bound peer's export floor on the way past.
-        orch = orch
-            .with_unverified_claim_guard(endpoint_id_str.clone())
-            .await;
-    }
-
-    // ── The session ───────────────────────────────────────────────────────────
-    //
-    // The opening frame goes in as data. That is the barrier: the driver dispatches
-    // what it is given and never reads an opening frame of its own, so there is no path
-    // by which a frame reaches `handle_message` without having passed everything above.
-    let end = match run_session(
-        Role::Responder { opening },
-        &mut orch,
+/// Loro-snapshot-driven catch-up (post-`ResetRequired`, #2503).
+///
+/// `ResetRequired` is terminal for the FSM and simultaneously where the real work
+/// starts: we told the initiator its Loro version vector is unreachable from ours,
+/// so we stream our per-space snapshots (engine truth) for it to MERGE, preserving
+/// its unsynced local content.
+///
+/// Returns whether this side now OWES THE SHUTDOWN WAIT — not whether it spoke
+/// last. The two differ on the error path, which returns `false` while
+/// `end.spoke_last` may already be `true` (the responder did reply
+/// `ResetRequired`). The caller must therefore `||` this in, never assign it:
+/// `spoke_last = offer_snapshot_catchup(..).await` would clear a wait that is
+/// still owed and truncate the tail. It is spelled as an `&&` short-circuit at
+/// the call site for exactly that reason.
+///
+/// A completed offer does owe the wait. The offering side writes last: the Loro
+/// catch-up ends with `LoroSync { is_last: true }` (or `SyncComplete` for an
+/// empty registry) and the receiver answers nothing. So this side is a round
+/// trip ahead of the peer's read, and closing without waiting is what would
+/// truncate a catch-up at the tail — silently, since the peer's error would be
+/// "connection lost".
+///
+/// Nothing pins that; see [`finish_responder`] for why the harness cannot.
+async fn offer_snapshot_catchup(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    orch: &SyncOrchestrator,
+) -> bool {
+    let remote_device_id = orch.session().remote_device_id.clone();
+    let loro_state = orch.loro_state();
+    match super::snapshot_transfer::try_offer_loro_snapshot_catchup(
         &mut session.send,
         &mut session.recv,
-        Some(&cancel),
-        limits,
+        ctx.pool,
+        &loro_state.registry,
+        ctx.event_sink,
+        ctx.device_id,
+        &remote_device_id,
     )
     .await
     {
-        Ok(end) => end,
-        Err(e) => {
-            // Every failure path out of `run_session` leaves the connection open and
-            // `send` unfinished. Closing here is what releases the peer promptly rather
-            // than leaving it to QUIC's idle timeout — and a failure is exactly when
-            // the permit and the per-peer lock are worth giving back quickly.
-            if let Err(close_err) =
-                finish_session(false, &mut session.send, &session.conn, limits).await
-            {
-                tracing::debug!(error = %close_err, "failed to close a failed responder session");
-            }
-            return Err(e);
+        Ok(outcome) => {
+            tracing::info!(
+                peer_id = %remote_device_id,
+                outcome = ?outcome,
+                "responder Loro-snapshot catch-up sub-flow complete (#2503)"
+            );
+            true
         }
-    };
-
-    // Who owes the shutdown wait, tracked across the two post-loop phases.
-    //
-    // Keyed on who spoke last, never on the role — the protocol says `SyncComplete` is
-    // "sent once by the puller … in the normal flow that is the initiator; in the
-    // empty-registry short-circuit the responder sends it directly because it had
-    // nothing to stream". Both phases below move the answer, which is why it is a
-    // variable rather than a field read at the end.
-    let mut spoke_last = end.spoke_last;
-
-    // ── Loro-snapshot-driven catch-up (post-ResetRequired, #2503) ─────────────
-    //
-    // `ResetRequired` is terminal for the FSM and simultaneously where the real work
-    // starts: we told the initiator its Loro version vector is unreachable from ours,
-    // so we stream our per-space snapshots (engine truth) for it to MERGE, preserving
-    // its unsynced local content.
-    if end.needs_snapshot_catchup() {
-        let remote_device_id = orch.session().remote_device_id.clone();
-        let loro_state = orch.loro_state();
-        match super::snapshot_transfer::try_offer_loro_snapshot_catchup(
-            &mut session.send,
-            &mut session.recv,
-            &pool_ref,
-            &loro_state.registry,
-            &event_sink,
-            &device_id,
-            &remote_device_id,
-        )
-        .await
-        {
-            Ok(outcome) => {
-                // The offering side writes last: the Loro catch-up ends with
-                // `LoroSync { is_last: true }` (or `SyncComplete` for an empty
-                // registry) and the receiver answers nothing. So this side is a
-                // round trip ahead of the peer's read, and closing without
-                // waiting is what would truncate a catch-up at the tail — silently,
-                // since the peer's error would be "connection lost".
-                spoke_last = true;
-                tracing::info!(
-                    peer_id = %remote_device_id,
-                    outcome = ?outcome,
-                    "responder Loro-snapshot catch-up sub-flow complete (#2503)"
-                );
-            }
-            Err(e) => tracing::warn!(
+        Err(e) => {
+            tracing::warn!(
                 peer_id = %remote_device_id,
                 error = %e,
                 "responder Loro-snapshot catch-up sub-flow failed (non-fatal)"
-            ),
+            );
+            false
         }
     }
+}
 
-    // ── File transfer phase (F-14) ────────────────────────────────────────────
-    //
-    // #1605: the daemon's REAL shared cancel flag is threaded through, so a shutdown or
-    // user-cancel aborts a multi-gigabyte transfer between files rather than running it
-    // to completion.
-    if orch.is_succeeded() {
-        // #3328: the attachment root comes from the app-side host, with the
-        // DB-path derivation only as a fallback — so files received here land
-        // in the same tree the app's attachment GC reconciles.
-        match crate::sync_files::attachment_root(materializer.as_ref(), &pool_ref).await {
-            Ok(app_data_dir) => {
-                // `None` progress: the responder is the *incoming* side, so no
-                // `start_sync` command on this device has set up a `Channel` for file
-                // progress. The active `Channel` lives on the initiator's device.
-                match crate::sync_files::run_file_transfer_responder(
-                    &mut session.send,
-                    &mut session.recv,
-                    &pool_ref,
-                    &app_data_dir,
-                    &cancel,
-                    None,
-                )
-                .await
-                {
-                    Ok(stats) => {
-                        if stats.files_received > 0 || stats.files_sent > 0 {
-                            tracing::info!(
-                                files_rx = stats.files_received,
-                                files_tx = stats.files_sent,
-                                "responder file transfer complete"
-                            );
-                        }
-                    }
-                    // File transfer failure must not abort the sync.
-                    Err(e) => {
-                        tracing::warn!(error = %e, "responder file transfer failed (non-fatal)");
-                    }
-                }
-                // The responder's file-transfer phases are the initiator's in the
-                // opposite order, so this side ends by *receiving* a
-                // `FileTransferComplete` rather than sending one. `session_supervisor`
-                // sets this to `true` for exactly that reason — if both sides waited,
-                // every session would pay a `close_wait` before ending.
-                spoke_last = false;
+/// File transfer phase (F-14).
+///
+/// #1605: the daemon's REAL shared cancel flag is threaded through, so a shutdown or
+/// user-cancel aborts a multi-gigabyte transfer between files rather than running it
+/// to completion.
+///
+/// Returns whether the phase ran. The responder's file-transfer phases are the
+/// initiator's in the opposite order, so this side ends by *receiving* a
+/// `FileTransferComplete` rather than sending one — `session_supervisor` sets
+/// `spoke_last` to `true` for exactly that reason, and a phase that ran makes it
+/// `false` here. If both sides waited, every session would pay a `close_wait`
+/// before ending.
+async fn run_file_transfer_phase(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    materializer: &dyn ApplyHost,
+    cancel: &AtomicBool,
+) -> bool {
+    // #3328: the attachment root comes from the app-side host, with the
+    // DB-path derivation only as a fallback — so files received here land
+    // in the same tree the app's attachment GC reconciles.
+    let Ok(app_data_dir) = crate::sync_files::attachment_root(materializer, ctx.pool).await else {
+        tracing::warn!("could not determine app_data_dir, skipping file transfer");
+        return false;
+    };
+    // `None` progress: the responder is the *incoming* side, so no
+    // `start_sync` command on this device has set up a `Channel` for file
+    // progress. The active `Channel` lives on the initiator's device.
+    match crate::sync_files::run_file_transfer_responder(
+        &mut session.send,
+        &mut session.recv,
+        ctx.pool,
+        &app_data_dir,
+        cancel,
+        None,
+    )
+    .await
+    {
+        Ok(stats) => {
+            if stats.files_received > 0 || stats.files_sent > 0 {
+                tracing::info!(
+                    files_rx = stats.files_received,
+                    files_tx = stats.files_sent,
+                    "responder file transfer complete"
+                );
             }
-            _ => tracing::warn!("could not determine app_data_dir, skipping file transfer"),
         }
+        // File transfer failure must not abort the sync.
+        Err(e) => tracing::warn!(error = %e, "responder file transfer failed (non-fatal)"),
     }
+    true
+}
 
-    // ── Bind the key to the peer (TOFU), now that the session named it ────────
-    //
-    // Deliberately after the session rather than before it. The peer's device id is not
-    // knowable up front for an unpaired device with an empty op log — the frontier it
-    // advertises contains no head of its own — and binding a key to the wrong id is the
-    // one write here that is expensive to undo, since `bind_endpoint_id` then refuses to
-    // re-point it.
-    //
-    // #4380: which is why this block asks TWO questions, not one. `already_bound_elsewhere`
-    // asks whether the row is somebody else's; `heads_are_ambiguous` asks whether we
-    // actually know whose row it is. The second is new, and it is the one that fires
-    // with no attacker present.
-    //
-    // `bind_endpoint_id` is an `ON CONFLICT(peer_id) DO UPDATE` touching only its own
-    // column, so re-binding a peer preserves its version vectors and sync state; a
-    // device that merely re-paired must not be reset.
-    let settled_remote_id = orch.session().remote_device_id.clone();
+/// Bind the key to the peer (TOFU), now that the session has named it.
+///
+/// Deliberately after the session rather than before it. The peer's device id is not
+/// knowable up front for an unpaired device with an empty op log — the frontier it
+/// advertises contains no head of its own — and binding a key to the wrong id is the
+/// one write here that is expensive to undo, since `bind_endpoint_id` then refuses to
+/// re-point it.
+///
+/// #4380: which is why this asks TWO questions, not one. `already_bound_elsewhere`
+/// asks whether the row is somebody else's; `heads_are_ambiguous` asks whether we
+/// actually know whose row it is. The second is new, and it is the one that fires
+/// with no attacker present.
+///
+/// `bind_endpoint_id` is an `ON CONFLICT(peer_id) DO UPDATE` touching only its own
+/// column, so re-binding a peer preserves its version vectors and sync state; a
+/// device that merely re-paired must not be reset.
+///
+/// Returns whether this session ESTABLISHED that `settled_remote_id` is the device
+/// behind the key the handshake authenticated — i.e. the bind returned `Ok(())`, so
+/// the row that id names now carries this key.
+async fn bind_peer_to_key(
+    ctx: &ResponderCtx<'_>,
+    settled_remote_id: &str,
+    pairing_pending: bool,
+    heads_ambiguous: bool,
+) -> bool {
     // #800's surviving guarantee; see `peer_is_bound_to_another_key` for what it holds
     // and why a failed read denies rather than assumes.
     //
@@ -915,23 +796,20 @@ async fn handle_incoming_sync_inner(
     // device that legitimately changed keys goes through `delete_peer_ref` first, which
     // is a deliberate act rather than a side effect of one session.
     let already_bound_elsewhere = peer_is_bound_to_another_key(
-        peer_refs::list_peer_refs(&pool_ref).await,
-        &settled_remote_id,
-        &endpoint_id_str,
+        peer_refs::list_peer_refs(ctx.pool).await,
+        settled_remote_id,
+        &ctx.endpoint_id_str,
     );
-    // Set only where this session ESTABLISHED that `settled_remote_id` is the device
-    // behind the key the handshake authenticated — i.e. the TOFU bind below returned
-    // `Ok(())`, so the row that id names now carries this key. Read by the #4298 name
-    // write, which must not run on an id this session merely heard claimed.
-    let mut bound_to_this_key = false;
     if already_bound_elsewhere {
         tracing::warn!(
             peer_id = %settled_remote_id,
-            %endpoint_id,
+            endpoint_id = %ctx.endpoint_id,
             "refusing to re-bind an already-bound peer to a different key; the device id \
              came from the peer's advertised heads, which is a claim (#800)"
         );
-    } else if pairing_pending && heads_are_ambiguous {
+        return false;
+    }
+    if pairing_pending && heads_ambiguous {
         // #4380: the peer did not state an id and its heads name more than one
         // candidate, so `settled_remote_id` is whichever sorted lowest. Refuse.
         //
@@ -967,108 +845,293 @@ async fn handle_incoming_sync_inner(
         // none.
         tracing::warn!(
             peer_id = %settled_remote_id,
-            %endpoint_id,
+            endpoint_id = %ctx.endpoint_id,
             "refusing to bind a pairing peer that did not state its own device id and \
              advertised more than one foreign frontier: the id would be whichever \
              sorted lowest, not the joiner's (#4380). Leaving it unbound for its own \
              initiator pass to bind."
         );
-    } else if !settled_remote_id.is_empty() && settled_remote_id != device_id {
-        match peer_refs::bind_endpoint_id(&pool_ref, &settled_remote_id, &endpoint_id_str).await {
-            Ok(()) => {
-                bound_to_this_key = true;
-                // #1519: a binding now exists, so the pending-pairing bridge that
-                // admitted this connection has done its job. Clear the marker so the
-                // daemon stops advertising "accepting pairing" and a later unpaired
-                // device cannot ride the same open window. Best-effort: a failure only
-                // leaves the marker to expire on its TTL.
-                if pairing_pending && let Err(e) = peer_refs::clear_pending_pairing(&pool_ref).await
-                {
-                    tracing::warn!(
-                        peer_id = %settled_remote_id,
-                        error = %e,
-                        "failed to clear the pending-pairing marker after binding (#1519)"
-                    );
-                }
+        return false;
+    }
+    if settled_remote_id.is_empty() || settled_remote_id == ctx.device_id {
+        if pairing_pending {
+            tracing::info!(
+                endpoint_id = %ctx.endpoint_id,
+                "pairing peer did not identify itself in this session; leaving it unbound \
+                 for its own initiator pass to bind"
+            );
+        }
+        return false;
+    }
+    match peer_refs::bind_endpoint_id(ctx.pool, settled_remote_id, &ctx.endpoint_id_str).await {
+        Ok(()) => {
+            // #1519: a binding now exists, so the pending-pairing bridge that
+            // admitted this connection has done its job. Clear the marker so the
+            // daemon stops advertising "accepting pairing" and a later unpaired
+            // device cannot ride the same open window. Best-effort: a failure only
+            // leaves the marker to expire on its TTL.
+            if pairing_pending && let Err(e) = peer_refs::clear_pending_pairing(ctx.pool).await {
+                tracing::warn!(
+                    peer_id = %settled_remote_id,
+                    error = %e,
+                    "failed to clear the pending-pairing marker after binding (#1519)"
+                );
             }
-            Err(e) => tracing::warn!(
+            true
+        }
+        Err(e) => {
+            tracing::warn!(
                 peer_id = %settled_remote_id,
-                %endpoint_id,
+                endpoint_id = %ctx.endpoint_id,
                 error = %e,
                 "failed to bind the peer's endpoint id"
-            ),
+            );
+            false
         }
-    } else if pairing_pending {
-        tracing::info!(
-            %endpoint_id,
-            "pairing peer did not identify itself in this session; leaving it unbound \
-             for its own initiator pass to bind"
-        );
     }
+}
 
-    // ── Record what the peer calls itself (#4298) ─────────────────────────────
-    //
-    // Here, and not earlier, for the same reason the bind is here: this is the first
-    // point at which the authoritative peer id is known. A name is worthless without an
-    // id to hang it on, and the id an unpaired device advertises up front is not one
-    // (an empty op log advertises no head of its own).
-    //
-    // Gated on this session having AUTHENTICATED the peer as `settled_remote_id`, which
-    // is exactly the two outcomes above where the id and the handshake key are known to
-    // belong together:
-    //
-    // * `!pairing_pending` — S-1 resolved the row from the key the QUIC handshake
-    //   proved, and that row's id went to the FSM as `expected_remote_id`, which it
-    //   takes verbatim in preference to the advertised heads. The id is our store's,
-    //   not the peer's word.
-    // * `bound_to_this_key` — the TOFU bind just accepted this key for this id, so from
-    //   the next session on the peer resolves through the first bullet.
-    //
-    // What that deliberately excludes is the `already_bound_elsewhere` refusal, and the
-    // earlier shape of this block — outside the branches, "a peer whose bind was refused
-    // still gets its name refreshed if we already hold a row for it" — inverted the
-    // guard it sat under. `peer_is_bound_to_another_key` exists precisely because "a
-    // device that changed keys" and "an impostor claiming that device's id" are
-    // indistinguishable at this point: the id is derived from advertised heads, which is
-    // a claim, and the row it names is pinned to somebody else's key. Writing a name
-    // there lets an unbound passphrase-holder relabel an already-paired device in the
-    // user's device list — and in the sync-failure toast, the unpair dialog and the
-    // rename/address labels — wherever no local `device_name` override exists, which is
-    // the default state this feature exists to improve. It is #4230's invariant applied
-    // to one more column: a session keyed on a CLAIMED device id writes nothing to the
-    // row that id names. A device that legitimately changed keys is re-paired through
-    // `delete_peer_ref`, and its name arrives with the bind that follows.
-    //
-    // Nothing is lost on the honest paths: `update_remote_device_name` is a
-    // `WHERE peer_id = ?`, so a stranger with no row still records nothing, and the
-    // joiner that just paired binds first and is named in the same pass. The value was
-    // clamped at the frame boundary; the store write is conditional on an actual change,
-    // so a steady-state session costs one read and no write.
-    //
-    // Best-effort: a failure here loses a display nicety for one session and the next
-    // one re-sends the name. It must not fail a session that has already moved data.
-    let authenticated_as_settled_id = !pairing_pending || bound_to_this_key;
-    if authenticated_as_settled_id
-        && !settled_remote_id.is_empty()
-        && settled_remote_id != device_id
-        && let Some(name) = offered_device_name.as_deref()
+/// Record what the peer calls itself (#4298).
+///
+/// Here, and not earlier, for the same reason the bind is here: this is the first
+/// point at which the authoritative peer id is known. A name is worthless without an
+/// id to hang it on, and the id an unpaired device advertises up front is not one
+/// (an empty op log advertises no head of its own).
+///
+/// `authenticated_as_settled_id` is exactly the two outcomes where the id and the
+/// handshake key are known to belong together:
+///
+/// * `!pairing_pending` — S-1 resolved the row from the key the QUIC handshake
+///   proved, and that row's id went to the FSM as `expected_remote_id`, which it
+///   takes verbatim in preference to the advertised heads. The id is our store's,
+///   not the peer's word.
+/// * `bound_to_this_key` — the TOFU bind just accepted this key for this id, so from
+///   the next session on the peer resolves through the first bullet.
+///
+/// What that deliberately excludes is the `already_bound_elsewhere` refusal, and the
+/// earlier shape of this block — outside the branches, "a peer whose bind was refused
+/// still gets its name refreshed if we already hold a row for it" — inverted the
+/// guard it sat under. `peer_is_bound_to_another_key` exists precisely because "a
+/// device that changed keys" and "an impostor claiming that device's id" are
+/// indistinguishable at this point: the id is derived from advertised heads, which is
+/// a claim, and the row it names is pinned to somebody else's key. Writing a name
+/// there lets an unbound passphrase-holder relabel an already-paired device in the
+/// user's device list — and in the sync-failure toast, the unpair dialog and the
+/// rename/address labels — wherever no local `device_name` override exists, which is
+/// the default state this feature exists to improve. It is #4230's invariant applied
+/// to one more column: a session keyed on a CLAIMED device id writes nothing to the
+/// row that id names. A device that legitimately changed keys is re-paired through
+/// `delete_peer_ref`, and its name arrives with the bind that follows.
+///
+/// Nothing is lost on the honest paths: `update_remote_device_name` is a
+/// `WHERE peer_id = ?`, so a stranger with no row still records nothing, and the
+/// joiner that just paired binds first and is named in the same pass. The value was
+/// clamped at the frame boundary; the store write is conditional on an actual change,
+/// so a steady-state session costs one read and no write.
+///
+/// Best-effort: a failure here loses a display nicety for one session and the next
+/// one re-sends the name. It must not fail a session that has already moved data.
+async fn record_advertised_name(
+    ctx: &ResponderCtx<'_>,
+    settled_remote_id: &str,
+    authenticated_as_settled_id: bool,
+    offered_device_name: Option<&str>,
+) {
+    if !authenticated_as_settled_id
+        || settled_remote_id.is_empty()
+        || settled_remote_id == ctx.device_id
     {
-        match peer_refs::update_remote_device_name(&pool_ref, &settled_remote_id, Some(name)).await
-        {
-            Ok(true) => tracing::info!(
-                peer_id = %settled_remote_id,
-                "recorded the name this peer advertises for itself (#4298)"
-            ),
-            Ok(false) => {}
-            Err(e) => tracing::warn!(
-                peer_id = %settled_remote_id,
-                error = %e,
-                "failed to record the peer's advertised device name (#4298); the device \
-                 list keeps whatever name it already had"
-            ),
+        return;
+    }
+    let Some(name) = offered_device_name else {
+        return;
+    };
+    match peer_refs::update_remote_device_name(ctx.pool, settled_remote_id, Some(name)).await {
+        Ok(true) => tracing::info!(
+            peer_id = %settled_remote_id,
+            "recorded the name this peer advertises for itself (#4298)"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(
+            peer_id = %settled_remote_id,
+            error = %e,
+            "failed to record the peer's advertised device name (#4298); the device \
+             list keeps whatever name it already had"
+        ),
+    }
+}
+
+/// Receive and screen the opening frame.
+///
+/// Bounded explicitly. The old transport applied `SyncConnection::RECV_TIMEOUT` to
+/// every receive, so there is no timeout at this call site to port — which is
+/// exactly why it is the kind of bound a transport swap drops in silence. The
+/// service's `FIRST_FRAME_TIMEOUT` bounds `accept_bi`, which resolves when the peer
+/// *starts* speaking; this bounds it finishing.
+///
+/// `Ok(None)` means the frame was not a `HeadExchange` and the rejection has been
+/// sent. The frame itself comes back alongside its parts because the driver takes
+/// it by value as the session's first piece of data.
+async fn recv_opening(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+) -> Result<Option<(SyncMessage, OpeningParts)>, AppError> {
+    let opening = recv_sync_message_within(&mut session.recv, RECV_TIMEOUT).await?;
+    let parts = match &opening {
+        SyncMessage::HeadExchange {
+            heads,
+            pairing_proof,
+            device_name,
+            sender_device_id,
+            ..
+        } => OpeningParts {
+            heads: heads.clone(),
+            offered_proof: pairing_proof.clone(),
+            offered_device_name: device_name.as_deref().and_then(clamp_device_name),
+            stated_device_id: sender_device_id
+                .as_deref()
+                .and_then(crate::sync_protocol::accept_stated_device_id),
+        },
+        // Under the old stack this was #3324's fix and it was an *authorization*
+        // gate: a non-`HeadExchange` first message fell through to the
+        // orchestrator with no per-peer lock and no identity check, and a single
+        // `ResetRequired` frame reached `try_offer_loro_snapshot_catchup`, which
+        // exports every registered space's full `LoroDoc`.
+        //
+        // It is no longer load-bearing for that, twice over: nothing dispatches
+        // anything until the checks below have run, and the driver cannot
+        // dispatch a frame this function did not hand it. It is kept because it
+        // is still load-bearing for something else — the #855 proof rides inside
+        // `HeadExchange`, so a peer that opens with any other variant has no way
+        // to present one, and admitting it during the pairing window would be
+        // #3324 wearing different clothes.
+        other => {
+            // Log the variant name only (`variant_name`, the convention in
+            // `session_state_machine::handle_message`) — never the payload.
+            tracing::warn!(
+                endpoint_id = %ctx.endpoint_id,
+                msg = other.variant_name(),
+                "rejecting sync: first message was not a HeadExchange"
+            );
+            reject(
+                session,
+                &Rejection::NotHeadExchange,
+                &ctx.endpoint_id_str,
+                ctx.event_sink,
+                ctx.limits,
+            )
+            .await?;
+            return Ok(None);
+        }
+    };
+    Ok(Some((opening, parts)))
+}
+
+/// Build the orchestrator now that identity is settled.
+///
+/// `expected_remote_id` is set only from a *bound* row: it is authoritative there,
+/// and the FSM takes it verbatim in preference to the id it would otherwise derive
+/// from the peer's advertised heads. It does NOT reject a disagreeing `HeadExchange`
+/// — the advertised heads are never compared against it, precisely because #2481
+/// frontier advertisement makes the first non-self head an unreliable identity and a
+/// mismatch would false-fail a legitimate multi-device peer. It is deliberately NOT
+/// set from the claimed id for the same reason; with it unset the FSM derives the
+/// same value [`admit_peer`] did, by the same #4380 precedence — the peer's stated
+/// `sender_device_id` first, the first non-self head only for a peer too old to state
+/// one. The two must agree, because the caller's `heads_ambiguous` is computed from
+/// the opening frame and gates the bind on `settled_remote_id`, which is the FSM's
+/// answer.
+async fn build_orchestrator(
+    pool: sqlx::SqlitePool,
+    ctx: &ResponderCtx<'_>,
+    materializer: &Arc<dyn ApplyHost>,
+    event_sink_box: Box<dyn SyncEventSink>,
+    remote_id: &str,
+    pairing_pending: bool,
+) -> SyncOrchestrator {
+    // #3328: the orchestrator takes ownership of the host, but the file-transfer
+    // phase still needs it to resolve the attachment root. An `Arc` clone is a
+    // refcount bump — the host itself is not duplicated.
+    let orch = SyncOrchestrator::new(pool, ctx.device_id.to_owned(), Arc::clone(materializer))
+        .with_event_sink(event_sink_box);
+    if !pairing_pending && !remote_id.is_empty() {
+        return orch.with_expected_remote_id(remote_id.to_owned());
+    }
+    if pairing_pending {
+        // #4230: and because `expected_remote_id` is deliberately unset here, the id
+        // this session ends up keyed on is whatever the peer advertised. That is fine
+        // for *naming* the session — the bind later is what decides whether the name
+        // sticks — but the session also writes `streamed_at` and `loro_vv_bytes`
+        // under it, and those writes run BEFORE the bind check. Arming the guard with
+        // the authenticated key makes `peer_is_bound_to_another_key` cover them too,
+        // so a passphrase-holder cannot poison an already-bound peer's export floor
+        // on the way past.
+        return orch
+            .with_unverified_claim_guard(ctx.endpoint_id_str.clone())
+            .await;
+    }
+    orch
+}
+
+/// Run the session itself.
+///
+/// The opening frame goes in as data. That is the barrier: the driver dispatches
+/// what it is given and never reads an opening frame of its own, so there is no path
+/// by which a frame reaches `handle_message` without having passed every check the
+/// caller ran first.
+async fn drive_responder_session(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    orch: &mut SyncOrchestrator,
+    opening: SyncMessage,
+    cancel: &AtomicBool,
+) -> Result<crate::transport::driver::SessionEnd, AppError> {
+    match run_session(
+        Role::Responder { opening },
+        orch,
+        &mut session.send,
+        &mut session.recv,
+        Some(cancel),
+        ctx.limits,
+    )
+    .await
+    {
+        Ok(end) => Ok(end),
+        Err(e) => {
+            // Every failure path out of `run_session` leaves the connection open and
+            // `send` unfinished. Closing here is what releases the peer promptly rather
+            // than leaving it to QUIC's idle timeout — and a failure is exactly when
+            // the permit and the per-peer lock are worth giving back quickly.
+            if let Err(close_err) =
+                finish_session(false, &mut session.send, &session.conn, ctx.limits).await
+            {
+                tracing::debug!(error = %close_err, "failed to close a failed responder session");
+            }
+            Err(e)
         }
     }
+}
 
+/// The session's closing log line and protocol shutdown.
+///
+/// Shutdown is a protocol step, not cleanup: the side that spoke last is a round trip
+/// ahead of the peer's read, and the peer's close is the only evidence its final
+/// frame landed.
+///
+/// `spoke_last` is not pinned by any test in this crate, and cannot be as the harness
+/// stands. `finish_session` returns `Shutdown::Clean` on BOTH branches in the happy
+/// path — directly when the peer spoke last, and from `classify_close` of the peer's
+/// own application close when we did — so the decision leaves no trace the caller or
+/// the log can tell apart. The only difference is a race: a wrong `false` makes this
+/// side `conn.close()` while its final frame is still undelivered, which QUIC lets
+/// the peer discard, and an in-process `quic_pair` has already read it. Mutating
+/// either phase's report to the wrong value leaves all 968 tests green (#4639).
+async fn finish_responder(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    orch: &SyncOrchestrator,
+    spoke_last: bool,
+) {
     let session_state = orch.session();
     tracing::info!(
         ops_rx = session_state.ops_received,
@@ -1076,14 +1139,163 @@ async fn handle_incoming_sync_inner(
         state = ?session_state.state,
         "responder sync session finished"
     );
-
-    // Shutdown is a protocol step, not cleanup: the side that spoke last is a round trip
-    // ahead of the peer's read, and the peer's close is the only evidence its final
-    // frame landed.
-    match finish_session(spoke_last, &mut session.send, &session.conn, limits).await {
+    match finish_session(spoke_last, &mut session.send, &session.conn, ctx.limits).await {
         Ok(shutdown) => tracing::debug!(?shutdown, "responder connection shut down"),
         Err(e) => tracing::debug!(error = %e, "failed to close responder connection"),
     }
+}
+
+/// S-5: per-peer mutual exclusion.
+///
+/// The key is the handshake-authenticated endpoint id, which is also what
+/// `session_supervisor::try_sync_with_peer` locks on — see [`peer_lock_key`] for why
+/// that identifier and not the device id. The lock only does its job if both roles
+/// on THIS device agree on the spelling, and this is the only identifier both of
+/// them hold unconditionally: we have it before the peer has said anything at all,
+/// and the initiator has it before it can dial.
+///
+/// It is deliberately NOT `remote_id`. That is empty for a fresh joiner with an
+/// empty `op_log` — the pairing window — and the endpoint-id fallback the old code
+/// used there disagreed with the initiator's device-id key, so an inbound and an
+/// outbound session with one physical peer could overlap in exactly the window where
+/// both ends arm a dial. `remote_id` stays the *reported* identity; it is no longer
+/// the lock's spelling.
+///
+/// `Ok(None)` means another session already holds this peer and the rejection has
+/// been sent.
+async fn lock_peer_or_reject(
+    ctx: &ResponderCtx<'_>,
+    session: &mut InboundSession,
+    scheduler: &SyncScheduler,
+    remote_id: &str,
+) -> Result<Option<crate::sync_scheduler::PeerSyncGuard>, AppError> {
+    let Some(guard) = scheduler.try_lock_peer(&super::peer_lock_key(ctx.endpoint_id)) else {
+        tracing::info!(
+            endpoint_id = %ctx.endpoint_id,
+            peer_id = %remote_id,
+            "rejecting incoming sync: already syncing with this peer"
+        );
+        reject(
+            session,
+            &Rejection::Busy,
+            remote_id,
+            ctx.event_sink,
+            ctx.limits,
+        )
+        .await?;
+        return Ok(None);
+    };
+    tracing::info!(
+        endpoint_id = %ctx.endpoint_id,
+        peer_id = %remote_id,
+        "responder locked peer for sync"
+    );
+    Ok(Some(guard))
+}
+
+async fn handle_incoming_sync_inner(
+    mut session: InboundSession,
+    pool: sqlx::SqlitePool,
+    device_id: String,
+    materializer: Arc<dyn ApplyHost>,
+    scheduler: Arc<SyncScheduler>,
+    event_sink: Arc<dyn SyncEventSink>,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), AppError> {
+    let endpoint_id = session.remote;
+    let pool_ref = pool.clone();
+    let ctx = ResponderCtx::new(&pool_ref, &device_id, endpoint_id, &event_sink);
+    tracing::info!(
+        %endpoint_id,
+        "incoming sync connection received, starting responder session"
+    );
+
+    // #2537: mirror the initiator's cancel ownership (see
+    // `session_supervisor::CancelGuard`). Once identity checks pass and the per-peer
+    // lock is held, THIS responder session is a legitimate consumer of a user cancel —
+    // and therefore also its resetter. Rejection paths leave `owns == false` and
+    // preserve a pending flag for its real target, exactly like the initiator's
+    // early-exit paths (#637).
+    let mut cancel_guard = super::session_supervisor::CancelGuard {
+        cancel: &cancel,
+        owns: false,
+    };
+    // #2537: live-session marker for `SyncScheduler::request_cancel`; armed together
+    // with `owns` below. Declared after `cancel_guard` so the activity count drops
+    // before the flag is cleared on unwind.
+    let mut _session_activity = None;
+
+    let event_sink_box: Box<dyn SyncEventSink> =
+        Box::new(super::SharedEventSink(Arc::clone(&event_sink)));
+
+    let Some((opening, parts)) = recv_opening(&ctx, &mut session).await? else {
+        return Ok(());
+    };
+
+    // Computed from THIS frame, and read at the bind after the session — which is why
+    // it is a value taken here rather than a question asked there.
+    let heads_ambiguous =
+        heads_are_ambiguous(&parts.heads, &device_id, parts.stated_device_id.as_deref());
+
+    let Some((remote_id, pairing_pending)) = admit_peer(&ctx, &mut session, &parts).await? else {
+        return Ok(());
+    };
+
+    let Some(_peer_guard) = lock_peer_or_reject(&ctx, &mut session, &scheduler, &remote_id).await?
+    else {
+        return Ok(());
+    };
+
+    // #2537: identity checks passed and the per-peer lock is held — this session is now
+    // committed. Take cancel ownership (the guard's Drop becomes the legitimate
+    // post-run reset) and register live-session activity so `cancel_sync`
+    // latches the flag.
+    cancel_guard.owns = true;
+    _session_activity = Some(scheduler.begin_session_activity());
+
+    let mut orch = build_orchestrator(
+        pool,
+        &ctx,
+        &materializer,
+        event_sink_box,
+        &remote_id,
+        pairing_pending,
+    )
+    .await;
+
+    let end = drive_responder_session(&ctx, &mut session, &mut orch, opening, &cancel).await?;
+
+    // Who owes the shutdown wait, tracked across the two post-loop phases.
+    //
+    // Keyed on who spoke last, never on the role — the protocol says `SyncComplete` is
+    // "sent once by the puller … in the normal flow that is the initiator; in the
+    // empty-registry short-circuit the responder sends it directly because it had
+    // nothing to stream". Both phases below move the answer, which is why it is a
+    // variable rather than a field read at the end.
+    let mut spoke_last = end.spoke_last;
+
+    if end.needs_snapshot_catchup() && offer_snapshot_catchup(&ctx, &mut session, &orch).await {
+        spoke_last = true;
+    }
+
+    if orch.is_succeeded()
+        && run_file_transfer_phase(&ctx, &mut session, materializer.as_ref(), &cancel).await
+    {
+        spoke_last = false;
+    }
+
+    let settled_remote_id = orch.session().remote_device_id.clone();
+    let bound_to_this_key =
+        bind_peer_to_key(&ctx, &settled_remote_id, pairing_pending, heads_ambiguous).await;
+    record_advertised_name(
+        &ctx,
+        &settled_remote_id,
+        !pairing_pending || bound_to_this_key,
+        parts.offered_device_name.as_deref(),
+    )
+    .await;
+
+    finish_responder(&ctx, &mut session, &orch, spoke_last).await;
 
     Ok(())
 }

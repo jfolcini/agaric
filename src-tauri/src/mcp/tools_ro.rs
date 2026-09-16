@@ -575,7 +575,78 @@ fn tool_desc_get_page() -> ToolDescription {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+/// The `filter` sub-schema of the `search` tool: the MCP-facing mirror of the
+/// user-facing `SearchFilter` (`agaric-store`'s `search_types.rs`).
+///
+/// Its own function because it is two thirds of `tool_desc_search`, and because
+/// a new filter dimension is a change to this shape and nothing else.
+fn search_filter_schema() -> serde_json::Value {
+    json!({
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
+            "properties": {
+                "include_page_globs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
+                },
+                "exclude_page_globs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Page-name glob exclude list.",
+                },
+                "case_sensitive": { "type": "boolean" },
+                "whole_word": { "type": "boolean" },
+                "is_regex": { "type": "boolean", "description": "Treat `query` as a regex (FTS5 bypassed)." },
+                "block_type_filter": { "type": "string", "description": "Restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
+                "state_filter": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
+                },
+                "priority_filter": { "type": "array", "items": { "type": "string" } },
+                "excluded_state_filter": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Adding literal `'none'` excludes the NULL bucket too, AND-joining to `(todo_state IS NOT NULL AND todo_state NOT IN (...))`; `'none'` alone emits `todo_state IS NOT NULL`.",
+                },
+                "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
+                "due_filter": {
+                    "type": "object",
+                    "description": "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
+                },
+                "scheduled_filter": {
+                    "type": "object",
+                    "description": "Same shape as `due_filter` but on `blocks.scheduled_date`.",
+                },
+                "property_filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": { "type": "string" },
+                            "value": { "type": "string" },
+                        },
+                        "required": ["key", "value"],
+                    },
+                    "description": "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
+                },
+                "excluded_property_filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": { "type": "string" },
+                            "value": { "type": "string" },
+                        },
+                        "required": ["key", "value"],
+                    },
+                },
+            },
+    })
+}
+
 fn tool_desc_search() -> ToolDescription {
     ToolDescription {
         name: TOOL_SEARCH.to_string(),
@@ -608,70 +679,7 @@ fn tool_desc_search() -> ToolDescription {
                     "type": "string",
                     "description": "ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`.",
                 },
-                "filter": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
-                    "properties": {
-                        "include_page_globs": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
-                        },
-                        "exclude_page_globs": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Page-name glob exclude list.",
-                        },
-                        "case_sensitive": { "type": "boolean" },
-                        "whole_word": { "type": "boolean" },
-                        "is_regex": { "type": "boolean", "description": "Treat `query` as a regex (FTS5 bypassed)." },
-                        "block_type_filter": { "type": "string", "description": "Restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
-                        "state_filter": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
-                        },
-                        "priority_filter": { "type": "array", "items": { "type": "string" } },
-                        "excluded_state_filter": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Adding literal `'none'` excludes the NULL bucket too, AND-joining to `(todo_state IS NOT NULL AND todo_state NOT IN (...))`; `'none'` alone emits `todo_state IS NOT NULL`.",
-                        },
-                        "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
-                        "due_filter": {
-                            "type": "object",
-                            "description": "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
-                        },
-                        "scheduled_filter": {
-                            "type": "object",
-                            "description": "Same shape as `due_filter` but on `blocks.scheduled_date`.",
-                        },
-                        "property_filters": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": { "type": "string" },
-                                    "value": { "type": "string" },
-                                },
-                                "required": ["key", "value"],
-                            },
-                            "description": "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
-                        },
-                        "excluded_property_filters": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": { "type": "string" },
-                                    "value": { "type": "string" },
-                                },
-                                "required": ["key", "value"],
-                            },
-                        },
-                    },
-                },
+                "filter": search_filter_schema(),
             },
         }),
     }
@@ -909,8 +917,8 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     to_tool_result(&resp)
 }
 
-#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
-fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
+/// The SQLite bind-parameter budget: `tag_ids` plus every filter vector.
+fn validate_search_term_count(args: &SearchArgs) -> Result<(), AppError> {
     let f = args.filter.as_ref();
     let total = args.tag_ids.as_ref().map_or(0, Vec::len)
         + f.map_or(0, |f| {
@@ -929,20 +937,24 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
              max {SEARCH_FILTER_TERMS_CAP} (SQLite bind-parameter limit)"
         )));
     }
+    Ok(())
+}
 
-    // #1607 — the count cap above bounds how *many* terms arrive but not
-    // how *large* each is. Cap every free-text term string by bytes (and
-    // their combined size) so a handful of multi-megabyte strings can't
-    // slip under the count cap and force huge allocations / expensive
-    // glob / regex / SQL matching. `tag_ids`, `parent_id` and `space_id`
-    // are ULID tokens, parsed strictly just below, but the
-    // state/priority/block-type filter strings are NOT enum-validated —
-    // `prepare_metadata_with_today` clones them verbatim and binds them
-    // into the `IN (…)` predicate (`metadata_filter.rs`), so a single
-    // multi-MB entry would otherwise sail past every cap. Cover the
-    // `query`, both glob lists, the property-filter keys/values, the
-    // block-type filter, the four state/priority vectors, and the
-    // due/scheduled date strings.
+/// #1607 — the count cap bounds how *many* terms arrive but not
+/// how *large* each is. Cap every free-text term string by bytes (and
+/// their combined size) so a handful of multi-megabyte strings can't
+/// slip under the count cap and force huge allocations / expensive
+/// glob / regex / SQL matching. `tag_ids`, `parent_id` and `space_id`
+/// are ULID tokens, parsed strictly by the caller, but the
+/// state/priority/block-type filter strings are NOT enum-validated —
+/// `prepare_metadata_with_today` clones them verbatim and binds them
+/// into the `IN (…)` predicate (`metadata_filter.rs`), so a single
+/// multi-MB entry would otherwise sail past every cap. Cover the
+/// `query`, both glob lists, the property-filter keys/values, the
+/// block-type filter, the four state/priority vectors, and the
+/// due/scheduled date strings.
+fn validate_search_term_bytes(args: &SearchArgs) -> Result<(), AppError> {
+    let f = args.filter.as_ref();
     let mut aggregate = 0usize;
     let mut check = |dimension: &str, s: &str| -> Result<(), AppError> {
         let len = s.len();
@@ -1009,15 +1021,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
-    // #699 — bound the input vectors before they reach SQL.
-    validate_search_term_budget(&args)?;
+    // #699 — bound the input vectors before they reach SQL. Two budgets,
+    // because neither bounds the other: how MANY terms arrived, and how LARGE
+    // each of them is.
+    validate_search_term_count(&args)?;
+    validate_search_term_bytes(&args)?;
     // #3301 — PARSE the ULID-shaped ids, as `space_id` has always done: a
     // malformed or truncated one must error rather than bind a string that
     // matches nothing, which an agent reads as "no block carries that tag"
     // and does not retry. No normalise step ahead of this — `canonical_ulid`
     // compares against the uppercased input, so `from_string` already accepts
-    // any case. Runs after `validate_search_term_budget` so an oversized
-    // vector still gets its own actionable message.
+    // any case. Runs after the two budget checks so an oversized vector still
+    // gets its own actionable message.
     let parent_id = args
         .parent_id
         .as_deref()
