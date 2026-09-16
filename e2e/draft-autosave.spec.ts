@@ -61,20 +61,20 @@
  * This cannot be simulated against the current mock for TWO independent,
  * compounding reasons:
  *
- *   1. `save_draft` / `flush_draft` / `delete_draft` / `list_drafts` /
- *      `flush_all_drafts` (src/lib/tauri-mock/handlers.ts:4510-4519) are
- *      pure stateless stubs — `flush_all_drafts` hardcodes
- *      `{ flushed: 0 }` unconditionally, `list_drafts` always returns
- *      `[]`. Even a debounced `save_draft` that lands right before a
- *      `page.reload()` is never recorded anywhere the boot-time flush
- *      could read back.
- *   2. Even if (1) were fixed with an in-memory `drafts` map, it would
- *      not survive the reload needed to re-trigger
+ *   1. RESOLVED by #5057: the five commands were pure stateless stubs
+ *      (`flush_all_drafts` hardcoding `{ flushed: 0 }`, `list_drafts`
+ *      always `[]`), so a debounced `save_draft` landing before a
+ *      `page.reload()` was never recorded anywhere the boot-time flush
+ *      could read back. `src/lib/tauri-mock/handlers/drafts.ts` now
+ *      keeps a real `blockDrafts` store and the draft IS recorded.
+ *   2. This one still blocks the spec on its own. An in-memory drafts
+ *      map does not survive the reload needed to re-trigger
  *      `useAppBootRecovery`'s mount effect: `setupMock()`
  *      (src/lib/tauri-mock/index.ts:66) unconditionally calls
  *      `seedBlocks()` on every fresh page load, wiping ALL module-scoped
- *      mock state — including any drafts map — before `App.tsx` ever
- *      mounts and calls `flushAllDrafts()`. There is no
+ *      mock state — `blockDrafts` included, which `seedBlocks` now
+ *      clears — before `App.tsx` ever mounts and calls
+ *      `flushAllDrafts()`. There is no
  *      localStorage/IndexedDB-backed persistence layer under the mock
  *      that could survive a full navigation, so a genuine crash → reload
  *      → recover round trip has no substrate to run on in Playwright.
@@ -217,18 +217,14 @@ test.describe('Draft autosave', () => {
   })
 
   // #2813 (#2786 fix) — Enter caret-splitting a block must not strand the
-  // departed block's pre-existing draft row. `list_drafts` / `save_draft` /
-  // `flush_draft` / `delete_draft` are all pure no-op stubs in the mock
-  // (src/lib/tauri-mock/handlers.ts, grepped: `returnNull` / `returnEmptyArray`
-  // / `{ flushed: 0 }` — no in-memory drafts map at all), so there is no
-  // observable draft ROW to assert absent, and a `page.reload()` cannot
-  // distinguish fixed-vs-buggy behaviour either: nothing the mock ever
-  // "persists" survives a reload regardless of which code path ran (see
-  // this file's own header — `setupMock()` wipes all module-scoped mock
-  // state on every fresh load). The only substrate that actually
-  // discriminates the fix is the OUTGOING IPC call the discard makes,
-  // which is exactly what every other test in this file already asserts
-  // on — so this test follows suit instead of reaching for a reload.
+  // departed block's pre-existing draft row. The five draft commands were pure
+  // no-op stubs when this spec was written, so the outgoing IPC was the only
+  // substrate that could discriminate the fix. #5057 gave the mock a real
+  // `blockDrafts` store, so the test now re-queries `list_drafts` and asserts
+  // the row is GONE — the durable effect testing invariant 1 asks for, with the
+  // IPC assertion kept as the "discarded, not flushed" half. The header's
+  // reload caveat still stands and does not apply here: this reads the store
+  // in-page, without a navigation to wipe it.
   test("Enter caret-splits a block: the departed block's pre-existing draft is discarded via delete_draft, not flushed (#2786)", async ({
     page,
   }) => {
@@ -289,5 +285,21 @@ test.describe('Draft autosave', () => {
     // would append a second edit_block that clobbers the split just made.
     const flushedIds = (await getInvokeCalls(page, 'flush_draft')).map((c) => c['blockId'])
     expect(flushedIds).not.toContain(blockId)
+
+    // #5057 — the durable effect, not just the call. The discard has already
+    // been observed above, so this reads settled state: re-query the store and
+    // assert the departed block holds no draft row. Asserting the response is
+    // an array first keeps a broken IPC from passing as "no draft".
+    const draftIds = await page.evaluate(async () => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const rows = await internals?.invoke('list_drafts', {})
+      return Array.isArray(rows) ? rows.map((r: { block_id: string }) => r.block_id) : null
+    })
+    expect(draftIds).not.toBeNull()
+    expect(draftIds).not.toContain(blockId)
   })
 })

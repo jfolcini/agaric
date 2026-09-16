@@ -75,6 +75,27 @@ export const linkMetadata = new Map<string, Record<string, unknown>>()
 // proof comparison to fail against.
 export const peerRefs = new Map<string, Record<string, unknown>>()
 
+/**
+ * `block_drafts` rows: block_id → the row. The table is the autosave staging
+ * area — a draft is UNCOMMITTED text that no op has been appended for, which is
+ * why `save_draft` writes here and nowhere else.
+ *
+ * `updated_at` is epoch-ms despite migration 0082 being named
+ * `..._updated_at_ms.sql`: the cutover changed the column's TYPE (TEXT → INTEGER)
+ * and kept its NAME, so there is no `updated_at_ms` column to grep for.
+ */
+export interface MockDraftRow {
+  block_id: string
+  content: string
+  updated_at: number
+  draft_anchor_seq: number
+  /** The column is nullable for rows migration 0092 backfilled; `save_draft` is
+   *  the mock's only writer and always stamps it, so it is never null here. */
+  draft_anchor_device: string
+}
+
+export const blockDrafts = new Map<string, MockDraftRow>()
+
 // Device-local `app_settings` rows: key → value, both TEXT as in the table.
 // `get_reminder_settings` / `set_reminder_settings` read and write the two
 // `reminders.*` keys through it the way `reminders::get_settings` /
@@ -315,6 +336,7 @@ export function seedBlocks(): void {
   peerRefs.clear()
   pairingPeerReveal.readsRemaining = 0
   appSettings.clear()
+  blockDrafts.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0

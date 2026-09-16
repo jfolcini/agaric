@@ -216,10 +216,13 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  *     restored the target row alone while the backend restored the entire
  *     cohort, and every time-travel command sat behind a `covered by
  *     revert.test.ts` waiver that read like coverage.
- *   - `<X> outside the conformance snapshot scope` — mutates state (drafts,
- *     attachments, spaces, property_definitions) that the blocks/properties/
+ *   - `<X> outside the conformance snapshot scope` — mutates state
+ *     (attachments, spaces, property_definitions) that the blocks/properties/
  *     tags/op_log snapshot in `conformance-snapshot.ts` does not model. A
- *     future snapshot extension would move these to fixtures.
+ *     future snapshot extension would move these to fixtures. Drafts left this
+ *     category in #5057 without any such extension: `list_drafts` observes the
+ *     rows through the QUERY leg, so the writers are pinned by what the read
+ *     answers afterwards rather than by a widened snapshot.
  *   - `fixture candidate: <why not yet>` — as in the read allowlist: nothing
  *     structural blocks a fixture, it simply is not written. A write whose
  *     table a `seed` section expresses and whose reader carries a query step
@@ -290,12 +293,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'NOT cross-checked; the mock handler is a CONSTANT STUB returning zeroed counters ' +
     '(handlers/history.ts), so no mock-level test guards a behaviour it does not have (#3964)',
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
-
-  // ── Draft staging (drafts table, outside the conformance snapshot scope) ──
-  save_draft: 'draft staging table outside the conformance snapshot scope',
-  delete_draft: 'draft staging table outside the conformance snapshot scope',
-  flush_draft: 'draft staging table outside the conformance snapshot scope',
-  flush_all_drafts: 'draft staging table outside the conformance snapshot scope',
 
   // ── Attachments (blob store, outside the conformance snapshot scope) ──
   add_attachment_with_bytes: 'attachments blob store outside the conformance snapshot scope',
@@ -378,7 +375,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
  *     step; it simply is not written. This is the honest majority. Every entry
  *     in this category is a to-do, not a verdict.
  *   - `<X> outside the conformance snapshot scope` — reads state the fixture
- *     seed cannot express (drafts, spaces).
+ *     seed cannot express (spaces).
  *   - `<return shape>` — the response carries no row identity the query
  *     projection can bind: a bare scalar, a rendered string, a keyed count
  *     map, or a multi-partition envelope. `conformance-query.ts` projects one
@@ -513,7 +510,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 
   // ── Registries outside the conformance snapshot scope ──
   list_spaces: 'space registry outside the single-space conformance snapshot scope',
-  list_drafts: 'draft staging table outside the conformance snapshot scope',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -705,12 +701,9 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'create_space',
   'delete_attachment',
   'delete_blocks_by_ids',
-  'delete_draft',
   'delete_peer_ref',
   'delete_property_def',
   'fetch_link_metadata',
-  'flush_all_drafts',
-  'flush_draft',
   'import_bibliography',
   'import_markdown',
   'move_blocks_batch',
@@ -722,7 +715,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'restore_blocks_by_ids',
   'restore_page_to_op',
   'revert_ops',
-  'save_draft',
   'set_page_aliases',
   'set_peer_address',
   'set_property_batch',
@@ -740,18 +732,18 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
  * snapshot or the query harness is too narrow, which a widening fixes — and
  * each has a mutating counterpart already counted as debt above:
  * `list_spaces` against `create_space` / `create_page_in_space` /
- * `move_blocks_to_space`, `list_drafts` against the four draft writers,
- * `get_compaction_status` against `compact_op_log_cmd`, and
- * `export_page_markdown` against `import_markdown` / `import_bibliography`
+ * `move_blocks_to_space`, `get_compaction_status` against `compact_op_log_cmd`,
+ * and `export_page_markdown` against `import_markdown` / `import_bibliography`
  * (the query projection binds row sets and cannot compare a rendered `String`).
  *
  * Pinning the write is most of the work for the read, so #5057 burns these down
- * by table rather than by command.
+ * by table rather than by command. Drafts came off this list that way: one
+ * fixture drives all five commands, the four writers through the command leg
+ * and `list_drafts` as the read that observes what they left behind.
  */
 const NOT_YET_PINNED_READ: readonly string[] = [
   'export_page_markdown',
   'get_compaction_status',
-  'list_drafts',
   'list_spaces',
 ]
 
@@ -780,10 +772,6 @@ const READ_WRITE_TABLE_PAIRS: Readonly<
   spaces: {
     reads: ['list_spaces'],
     writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
-  },
-  drafts: {
-    reads: ['list_drafts'],
-    writes: ['save_draft', 'delete_draft', 'flush_draft', 'flush_all_drafts'],
   },
   'op-log maintenance': {
     reads: ['get_compaction_status'],

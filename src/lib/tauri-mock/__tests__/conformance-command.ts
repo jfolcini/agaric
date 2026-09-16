@@ -45,6 +45,14 @@ interface ReturnShape {
   lists: readonly string[]
 }
 
+/**
+ * `idKey` for a response carrying no row identity of its own — a unit return,
+ * or an envelope that is only a count. The token head is the COMMAND NAME and
+ * each `attrs` entry is read off the response, mirroring the query leg's
+ * `headed` token kind. MUST match `HEADED_ID_KEY` in the Rust twin.
+ */
+const HEADED_ID_KEY = '<headed>'
+
 /** MUST match `RETURN_SHAPE` in the Rust twin. */
 const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   delete_block: {
@@ -57,6 +65,14 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
   update_property_def_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  // #5057 — the draft writers answer with `()`, so their whole record is the
+  // refusal declaration plus a head naming which one ran. `flush_all_drafts`
+  // adds the one field a caller can see: how many rows it CONSUMED, which
+  // counts a draft dropped by a guard as well as one actually flushed.
+  save_draft: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  delete_draft: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  flush_draft: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  flush_all_drafts: { idKey: HEADED_ID_KEY, attrs: ['flushed'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
@@ -68,7 +84,10 @@ export function projectReturn(command: string, response: unknown): string[] {
         `and the matching arm in conformance_command.rs)`,
     )
   }
-  const row = (response ?? {}) as Record<string, unknown>
+  // A headed shape has no id column: the head is the command name and the
+  // attributes are read off the response beside it.
+  const raw = (response ?? {}) as Record<string, unknown>
+  const row = shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
   const out = [idToken(row, shape.idKey, shape.attrs)]
   for (const field of shape.lists) {
     const ids = row[field]

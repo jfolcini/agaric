@@ -1,0 +1,497 @@
+{
+  "description": "#5057 — the `block_drafts` staging table end to end, all five commands through the command leg (`via: \"command\"`) plus a `list_drafts` read. A draft is UNCOMMITTED text: `save_draft` writes a row and appends NO op, so the op digest stays silent until a flush. `flush_draft` does NOT create a block — it converts the staged text into an `edit_block` against a block that already exists, so its whole visible effect is that op plus the block's new content. Three guards decide a flush: the target must be live (H-12a), the draft must not be superseded by a newer local `edit_block`/`create_block` (migration 0092's anchor), and the content must be within `MAX_CONTENT_LENGTH` (H-12b). This fixture drives the first two and the happy path; the oversized arm is not fixture-expressible, since a 256 KiB op arg would dominate the file, and the mock therefore does not model that refusal at all rather than carry parity code no test could redden. The supersession case is pinned by OUTCOME rather than by the anchor's value, which each stack mints for itself: a newer local `edit_block` lands past the draft's anchor, so the flush discards the draft instead of regressing the block over it. BOTH arms of that comparison are driven — S7 is superseded by a newer edit, S8 is NOT superseded by an older one — because pinning only the first leaves a mock that ignores the anchor entirely and discards every draft for an edited block. `flush_all_drafts` reports how many rows it CONSUMED, which counts a guard-dropped draft as well as a flushed one — S5 below is dropped as an orphan and still counted. Only `block_id` and `content` are compared on a draft row: `updated_at` is a wall clock and the two anchor columns carry an op-log `(device_id, seq)` coordinate each stack mints for itself. Also pins the `ON DELETE CASCADE` from `blocks` to `block_drafts` (migration 0038): purging S9 takes its staged draft, which the mock's `purgeCohortAndSatellites` did not sweep until this fixture counted it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "four edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "five",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "six",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "seven typed directly",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "eight from the draft",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_two",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_three",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_four",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_five",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "discard_three",
+      "returns": ["delete_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "discard_three_again_is_idempotent",
+      "returns": ["delete_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush_two",
+      "returns": ["flush_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush_absent_draft_is_a_no_op",
+      "returns": ["flush_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_eight_after_the_edit",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush_eight_is_not_superseded",
+      "returns": ["flush_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_seven",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush_superseded_seven",
+      "returns": ["flush_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_nine",
+      "returns": ["save_draft"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "flush_all",
+      "returns": ["flush_all_drafts#flushed=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stage_six_after_the_batch",
+      "returns": ["save_draft"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "drafts_after_the_batch",
+      "rows": ["B6#content=six edited"],
+      "total_count": null
+    }
+  ],
+  "name": "drafts_lifecycle",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "content": "two edited"
+      },
+      "command": "save_draft",
+      "comment": "A staged draft appends no op — the op digest stays empty until the flush below.",
+      "name": "stage_two",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "content": "three edited"
+      },
+      "command": "save_draft",
+      "name": "stage_three",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "content": "four edited"
+      },
+      "command": "save_draft",
+      "name": "stage_four",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "content": "five edited"
+      },
+      "command": "save_draft",
+      "name": "stage_five",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_draft",
+      "comment": "S3 keeps its seeded content: a discarded draft never reaches the block.",
+      "name": "discard_three",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_draft",
+      "comment": "Deleting an absent draft is not an error.",
+      "name": "discard_three_again_is_idempotent",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "flush_draft",
+      "comment": "The happy path: one `edit_block` op, S2's content replaced, the row gone.",
+      "name": "flush_two",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6"
+      },
+      "command": "flush_draft",
+      "comment": "S6 never staged anything. Flushing on blur must not invent an op.",
+      "name": "flush_absent_draft_is_a_no_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "eight typed first"
+      },
+      "command": "edit_block",
+      "comment": "An edit BEFORE the draft is staged, so it sits at or below the anchor the next op captures."
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "content": "eight from the draft"
+      },
+      "command": "save_draft",
+      "name": "stage_eight_after_the_edit",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8"
+      },
+      "command": "flush_draft",
+      "comment": "The other arm of the anchor comparison: an edit OLDER than the anchor must NOT supersede, so this draft flushes and its text wins. Pinning only the newer-edit arm leaves a mock that discards every draft for an edited block passing.",
+      "name": "flush_eight_is_not_superseded",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "content": "seven from the draft"
+      },
+      "command": "save_draft",
+      "comment": "Anchored at this device's op-log high-water (migration 0092).",
+      "name": "stage_seven",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "toText": "seven typed directly"
+      },
+      "command": "edit_block",
+      "comment": "A newer local edit to the same block, past the draft's anchor seq."
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "flush_draft",
+      "comment": "The anchor is stale, so the draft is DISCARDED, not applied: S7 keeps the directly-typed text and the flush appends no op. Without this guard the stale draft would silently regress the newer edit.",
+      "name": "flush_superseded_seven",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "content": "nine from the draft"
+      },
+      "command": "save_draft",
+      "name": "stage_nine",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S9"
+      },
+      "command": "purge_block",
+      "comment": "`block_drafts.block_id` REFERENCES blocks(id) ON DELETE CASCADE (migration 0038), so the purge takes S9's staged draft with it. A mock that skips that cascade keeps the row and `flush_all_drafts` below counts it, answering 3 where the backend answers 2."
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block",
+      "comment": "Soft-delete S5 out from under its staged draft, arming the H-12a orphan guard below."
+    },
+    {
+      "args": {},
+      "command": "flush_all_drafts",
+      "comment": "S4 flushes (an `edit_block`); S5 is dropped as an orphan with NO op. `flushed` is 2 — the count is rows consumed, not ops appended.",
+      "name": "flush_all",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "content": "six edited"
+      },
+      "command": "save_draft",
+      "comment": "Survives to the read phase, so `list_drafts` pins a non-empty answer.",
+      "name": "stage_six_after_the_batch",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_drafts",
+      "comment": "Only S6 is left: S2, S4 and S8 flushed, S3 was discarded, S5 was reaped as an orphan, S7 was superseded and S9 went with its purged block. One row, so no order to pin — a second surviving draft would need an `unordered` opt-out, since `ORDER BY updated_at ASC` has no tiebreaker and both stacks stamp that column from a wall clock.",
+      "name": "drafts_after_the_batch"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "three",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "four",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "five",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "six",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "seven",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "eight",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "nine",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 8
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -576,6 +576,17 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // #5057 — bare `Vec<Draft>`. Only `block_id` and `content` are comparable:
+  // `updated_at` is a wall clock and the two anchor columns carry an op-log
+  // `(device_id, seq)` coordinate each stack mints for itself. Their SEMANTICS
+  // are pinned by outcome instead — a superseded draft leaves no row and
+  // appends no op.
+  list_drafts: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'block_id', attrKeys: ['content'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
   list_all_pages_in_space: {
     rows: { kind: 'bare-array' },
     token: ID_TOKEN,

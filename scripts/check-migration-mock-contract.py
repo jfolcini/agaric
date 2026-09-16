@@ -115,6 +115,10 @@ CONTRACT: dict[str, dict[str, object]] = {
         "store": "blocks",
         "files": ["seed.ts", "handlers/blocks.ts"],
     },
+    "block_drafts": {
+        "store": "blockDrafts",
+        "files": ["seed.ts", "handlers/drafts.ts"],
+    },
     "block_properties": {
         "store": "properties",
         "files": ["seed.ts", "handlers/properties.ts"],
@@ -216,10 +220,6 @@ CONTRACT: dict[str, dict[str, object]] = {
 # moves to CONTRACT, it is not amended.
 # ---------------------------------------------------------------------------
 UNMODELED: dict[str, str] = {
-    "block_drafts": (
-        "no drafts store; save_draft/flush_draft/delete_draft return null and "
-        "list_drafts returns [] (handlers/system.ts)"
-    ),
     "block_links_unresolved": (
         "no mock reference; the mock derives link edges live from block "
         "content (link-scan.ts) and keeps no unresolved-target bookkeeping"

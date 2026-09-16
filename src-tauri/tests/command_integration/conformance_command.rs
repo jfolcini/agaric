@@ -37,6 +37,12 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// `id key` for a response carrying no row identity of its own — a unit return,
+/// or an envelope that is only a count. The token head is the COMMAND NAME and
+/// each `attrs` entry is read off the response, mirroring the query leg's
+/// `headed` token kind. MUST match the TS twin's constant.
+const HEADED_ID_KEY: &str = "<headed>";
+
 /// `(command, id key, attributes, list-valued fields)` — how each mutating
 /// command's response becomes tokens. MUST match `RETURN_SHAPE` in the TS
 /// twin, which reads the mock's response through the same keys.
@@ -58,6 +64,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         PROPERTY_DEF_ATTRS,
         &[],
     ),
+    // #5057 — the draft writers answer with `()`, so their whole record is the
+    // refusal declaration plus a head naming which one ran. `flush_all_drafts`
+    // adds the one field a caller can see: how many rows it CONSUMED, which
+    // counts a draft dropped by a guard as well as one actually flushed.
+    ("save_draft", HEADED_ID_KEY, &[], &[]),
+    ("delete_draft", HEADED_ID_KEY, &[], &[]),
+    ("flush_draft", HEADED_ID_KEY, &[], &[]),
+    ("flush_all_drafts", HEADED_ID_KEY, &["flushed"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -104,6 +118,17 @@ pub(super) async fn apply_op_via_command(
         "update_property_def_options" => to_json(
             update_property_def_options_inner(pool, req_str("key"), req_str("options")).await,
         ),
+        // `save_draft` and `delete_draft` have no `*_inner`: their wrappers are
+        // the thin layer over these engine functions directly.
+        "save_draft" => to_json(
+            agaric_engine::draft::save_draft(pool, DEV, block_id().as_str(), &req_str("content"))
+                .await,
+        ),
+        "delete_draft" => {
+            to_json(agaric_engine::draft::delete_draft(pool, block_id().as_str()).await)
+        }
+        "flush_draft" => to_json(flush_draft_inner(pool, DEV, block_id(), mat).await),
+        "flush_all_drafts" => to_json(flush_all_drafts_inner(pool, DEV, mat).await),
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -116,7 +141,18 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         .iter()
         .find(|(c, ..)| *c == command)
         .unwrap_or_else(|| panic!("conformance op '{command}' has no RETURN_SHAPE entry"));
-    let mut out = vec![row_token(response, id_key, attrs)];
+    // A headed shape has no id column: the head is the command name and the
+    // attributes are read off the response beside it.
+    let headed;
+    let row = if *id_key == HEADED_ID_KEY {
+        let mut obj = response.as_object().cloned().unwrap_or_default();
+        obj.insert(HEADED_ID_KEY.to_owned(), json!(command));
+        headed = Value::Object(obj);
+        &headed
+    } else {
+        response
+    };
+    let mut out = vec![row_token(row, id_key, attrs)];
     for field in *lists {
         for id in response
             .get(*field)
@@ -405,7 +441,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 4;
+    const MUTATING_ARM_COUNT: usize = 8;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
