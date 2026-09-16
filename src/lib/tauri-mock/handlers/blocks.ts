@@ -29,6 +29,7 @@ import {
 import {
   attachmentBytes,
   attachments,
+  blockDrafts,
   blockTagRefs,
   blockTags,
   blocks,
@@ -65,6 +66,10 @@ const PURGE_DEPTH_SATURATION = 99
  *     no-op that leaked every row and its bytes; delete rows whose `block_id`
  *     is in the cohort instead.
  *   - `page_aliases` (page_id side).
+ *   - `block_drafts` (block_id side, migration 0038; the backend pins it in
+ *     `hard_delete_block_cascades_to_block_drafts_m93`). Invisible until #5057
+ *     gave the mock a real drafts store — before that `list_drafts` was
+ *     hardcoded to `[]`, so a leaked row had nothing to leak into.
  */
 function purgeCohortAndSatellites(cohort: Iterable<string>): void {
   const ids = cohort instanceof Set ? cohort : new Set(cohort)
@@ -74,6 +79,7 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
     blockTags.delete(id)
     blockTagRefs.delete(id)
     pageAliases.delete(id)
+    blockDrafts.delete(id)
   }
   // tag_id side: a purged block used AS a tag on a SURVIVING block leaves a
   // dangling association/reference the backend FK-cascades. Sweep every set.
