@@ -9,7 +9,7 @@
  * store.
  */
 
-import { type TypedHandlers, returnEmptyArray, returnNull } from '@/lib/tauri-mock/handlers/shared'
+import { type TypedHandlers, returnNull } from '@/lib/tauri-mock/handlers/shared'
 import { blocks } from '@/lib/tauri-mock/seed'
 
 export const systemHandlers = {
@@ -100,17 +100,6 @@ export const systemHandlers = {
   // ---------------------------------------------------------------------------
   // Op log compaction commands
   // ---------------------------------------------------------------------------
-
-  save_draft: returnNull,
-  flush_draft: returnNull,
-  delete_draft: returnNull,
-
-  list_drafts: returnEmptyArray,
-
-  // Boot recovery uses a single IPC. The mock has
-  // no in-memory drafts map (existing `list_drafts: returnEmptyArray`
-  // is the canonical source-of-truth shape), so `flushed` is always 0.
-  flush_all_drafts: () => ({ flushed: 0 }),
 } satisfies Pick<
   TypedHandlers,
   | 'ingest_otel_spans'
@@ -122,9 +111,4 @@ export const systemHandlers = {
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'compute_reconciliation_report'
-  | 'save_draft'
-  | 'flush_draft'
-  | 'delete_draft'
-  | 'list_drafts'
-  | 'flush_all_drafts'
 >

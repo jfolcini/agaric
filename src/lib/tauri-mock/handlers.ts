@@ -42,6 +42,7 @@
 import { logger } from '@/lib/logger'
 import { attachmentsHandlers } from '@/lib/tauri-mock/handlers/attachments'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
+import { draftsHandlers } from '@/lib/tauri-mock/handlers/drafts'
 import { historyHandlers } from '@/lib/tauri-mock/handlers/history'
 import { linksHandlers } from '@/lib/tauri-mock/handlers/links'
 import { pagesHandlers } from '@/lib/tauri-mock/handlers/pages'
@@ -82,6 +83,7 @@ const HANDLERS_TYPED = {
   ...syncHandlers,
   ...attachmentsHandlers,
   ...systemHandlers,
+  ...draftsHandlers,
 } satisfies TypedHandlers
 
 /**

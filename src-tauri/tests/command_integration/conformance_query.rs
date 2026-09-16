@@ -1318,6 +1318,30 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let rows = list_template_page_ids_in_space_inner(pool, space_id.as_str()).await?;
             bare_scalars(&rows)
         }
+        // #5057 — bare `Vec<Draft>`. Only `block_id` and `content` are
+        // comparable: `updated_at` is a wall clock, and the two anchor columns
+        // carry an op-log `(device_id, seq)` coordinate each stack mints for
+        // itself. Their SEMANTICS are pinned by outcome instead — a superseded
+        // draft leaves no row and appends no op. Read-phase purity: this
+        // delegates to `draft::get_all_drafts`, a lone SELECT, so it adds no
+        // table to `derived_cache_digest`.
+        "list_drafts" => {
+            let rows = list_drafts_inner(pool).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<Draft>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| row_token(r, "block_id", &["content"]))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Tag and property listings (#3827, the four listing commands) ──
         "list_all_tags_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
@@ -2596,7 +2620,7 @@ pub(super) mod reader_delegation_tests {
     // (`commands/pages/aliases.rs`), the latter two `JOIN blocks`. The
     // table's writer is `set_page_aliases`, not a read arm. Writer set
     // unchanged.
-    const SWEPT_ARM_COUNT: usize = 50;
+    const SWEPT_ARM_COUNT: usize = 51;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
