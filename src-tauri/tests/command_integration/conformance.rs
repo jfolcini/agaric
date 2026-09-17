@@ -1094,7 +1094,7 @@ pub struct FixtureReplay {
 /// snapshot.
 pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
     let name = name.to_owned();
-    let (pool, _dir) = test_pool().await;
+    let (pool, app_data_dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
     // #2249: every fresh Materializer owns a fresh per-instance LoroState. The
@@ -1403,7 +1403,9 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             // op that ran; the engine-parity guard after them stays
             // unconditional, which is what proves the refusal was atomic.
             let applied = if via_command {
-                let record = run_command_op(&pool, &mat, &name, &op, &created_ids).await;
+                let record =
+                    run_command_op(&pool, &mat, app_data_dir.path(), &name, &op, &created_ids)
+                        .await;
                 settle(&mat).await;
                 let op_name = record["name"].as_str().expect("record name").to_owned();
                 assert!(
@@ -1483,7 +1485,7 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
         pool,
         op_records,
         _mat: mat,
-        _dir,
+        _dir: app_data_dir,
     }
 }
 

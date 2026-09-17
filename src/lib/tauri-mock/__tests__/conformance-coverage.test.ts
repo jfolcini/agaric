@@ -284,10 +284,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     '(handlers/history.ts), so no mock-level test guards a behaviour it does not have (#3964)',
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
-  // ── Attachments (blob store, outside the conformance snapshot scope) ──
-  add_attachment_with_bytes: 'attachments blob store outside the conformance snapshot scope',
-  delete_attachment: 'attachments blob store outside the conformance snapshot scope',
-  rename_attachment: 'attachments blob store outside the conformance snapshot scope',
+  // ── Attachments ──
+  add_attachment_with_bytes:
+    'the BLOB is the blocker, not the scope: `attachment_writes.json` pins its two siblings ' +
+    'through `seed.attachments` + `list_attachments`, but this one writes bytes to disk and ' +
+    'answers with a stack-local `fs_path` (a fresh ULID) and a real blake3 `content_hash`, ' +
+    'neither of which the mock can reproduce, so it needs a narrower return shape first',
 
   // ── Pages / spaces / property definitions ──
   create_page_in_space:
@@ -680,14 +682,12 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'confirm_pairing',
   'create_page_in_space',
   'create_space',
-  'delete_attachment',
   'fetch_link_metadata',
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
   'quick_capture_block',
   'redo_page_op',
-  'rename_attachment',
   'restore_page_to_op',
   'revert_ops',
   'set_page_aliases',

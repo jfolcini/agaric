@@ -1,0 +1,275 @@
+{
+  "description": "#5057 — `delete_attachment` and `rename_attachment`. `attachments` is not one of the snapshot's five arrays, so the `list_attachments` step is what observes the writes. Both commands DO append an op, unlike the other outside-the-snapshot writers pinned so far, so the op-log digest moves too — which is the half a mock that mutates its map silently gets wrong. `add_attachment_with_bytes` is deliberately absent: it writes bytes to disk and answers with a stack-local `fs_path` and a real blake3 `content_hash`, neither of which the mock can reproduce, so it needs a narrower return shape than this fixture would imply.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Files",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "three attachments",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "delete_attachment"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_an_attachment",
+      "returns": ["rename_attachment"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "rename_refuses_a_path_separator",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "rename_refuses_an_empty_name",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "rename_an_unknown_attachment_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_an_attachment",
+      "returns": ["delete_attachment"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "delete_an_unknown_attachment_is_not_found",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "attachments_after_writes",
+      "rows": [
+        "ATT4#block_id=B2#filename=early.png#mime_type=image/png#size_bytes=10#fs_path=attachments/ATT4.png#created_at=900#content_hash=blake3-of-early",
+        "ATT1#block_id=B2#filename=renamed.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "attachment_writes",
+  "ops": [
+    {
+      "args": {
+        "attachmentId": "ATT1",
+        "newFilename": "renamed.pdf"
+      },
+      "command": "rename_attachment",
+      "comment": "The row keeps its id, mime type, size and fs_path — only `filename` moves.",
+      "name": "rename_an_attachment",
+      "via": "command"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT1",
+        "newFilename": "../../evil.sh"
+      },
+      "command": "rename_attachment",
+      "comment": "#2989 — a filename is a NAME, not a path. A separator is refused so a rename cannot walk the attachment out of its directory. The mock accepted this.",
+      "expect_error": "validation",
+      "name": "rename_refuses_a_path_separator",
+      "via": "command"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT1",
+        "newFilename": "   "
+      },
+      "command": "rename_attachment",
+      "comment": "Whitespace-only is empty.",
+      "expect_error": "validation",
+      "name": "rename_refuses_an_empty_name",
+      "via": "command"
+    },
+    {
+      "args": {
+        "attachmentId": "ATTGHOST",
+        "newFilename": "x.txt"
+      },
+      "command": "rename_attachment",
+      "comment": "Checked BEFORE the filename validation above, so an unknown id with a bad name is this refusal rather than that one.",
+      "expect_error": "not_found",
+      "name": "rename_an_unknown_attachment_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT2"
+      },
+      "command": "delete_attachment",
+      "comment": "The row goes and an op records it. The BYTES are deliberately left for the GC pass (#1993), which is why this command no longer needs its app-data dir.",
+      "name": "delete_an_attachment",
+      "via": "command"
+    },
+    {
+      "args": {
+        "attachmentId": "ATT2"
+      },
+      "command": "delete_attachment",
+      "comment": "ATT2 was just deleted, so the second call finds nothing.",
+      "expect_error": "not_found",
+      "name": "delete_an_unknown_attachment_is_not_found",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_attachments",
+      "comment": "The observation: ATT1 under its new name, and ATT2 gone.",
+      "name": "attachments_after_writes"
+    }
+  ],
+  "seed": {
+    "attachments": [
+      {
+        "block_id": "S3",
+        "content_hash": null,
+        "created_at": 500,
+        "filename": "notes.txt",
+        "fs_path": "attachments/ATT3.txt",
+        "id": "ATT3",
+        "mime_type": "text/plain",
+        "size_bytes": 12
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-photo",
+        "created_at": 1000,
+        "filename": "photo.png",
+        "fs_path": "attachments/ATT2.png",
+        "id": "ATT2",
+        "mime_type": "image/png",
+        "size_bytes": 2048
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-scan",
+        "created_at": 1000,
+        "filename": "scan.pdf",
+        "fs_path": "attachments/ATT1.pdf",
+        "id": "ATT1",
+        "mime_type": "application/pdf",
+        "size_bytes": 4096
+      },
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-early",
+        "created_at": 900,
+        "filename": "early.png",
+        "fs_path": "attachments/ATT4.png",
+        "id": "ATT4",
+        "mime_type": "image/png",
+        "size_bytes": 10
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Files",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "three attachments",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

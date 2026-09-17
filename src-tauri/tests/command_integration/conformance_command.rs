@@ -32,7 +32,7 @@
 use super::common::*;
 use super::conformance::resolve_op_arg_id;
 use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
-use agaric_core::ulid::BlockId;
+use agaric_core::ulid::{AttachmentId, BlockId};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -127,6 +127,11 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("set_peer_address", HEADED_ID_KEY, &[], &[]),
     ("set_reminder_settings", HEADED_ID_KEY, &[], &[]),
     ("delete_property_def", HEADED_ID_KEY, &[], &[]),
+    // #5057 — the two attachment writers that need no blob. Both answer `()`,
+    // and `attachments` is outside the snapshot's five arrays, so the
+    // `list_attachments` step is what observes them.
+    ("delete_attachment", HEADED_ID_KEY, &[], &[]),
+    ("rename_attachment", HEADED_ID_KEY, &[], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -139,6 +144,12 @@ fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError
 pub(super) async fn apply_op_via_command(
     pool: &SqlitePool,
     mat: &Materializer,
+    // The fixture's own `TempDir`. Threaded rather than faked because the
+    // attachment commands take it by signature; `delete_attachment_inner`
+    // ignores it (#1993 moved byte reclamation to the GC pass) but
+    // `add_attachment_with_bytes_inner` writes into it, so a placeholder here
+    // would work today and silently write somewhere real tomorrow.
+    app_data_dir: &std::path::Path,
     op: &Value,
     created_ids: &[String],
 ) -> Result<Value, AppError> {
@@ -290,6 +301,28 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
+        // An attachment id is the fixture's own short label (`ATT1`), inserted
+        // verbatim by the seed loader, so it takes no expansion.
+        "delete_attachment" => to_json(
+            delete_attachment_inner(
+                pool,
+                DEV,
+                mat,
+                app_data_dir,
+                AttachmentId::from(req_str("attachmentId").as_str()),
+            )
+            .await,
+        ),
+        "rename_attachment" => to_json(
+            rename_attachment_inner(
+                pool,
+                DEV,
+                mat,
+                AttachmentId::from(req_str("attachmentId").as_str()),
+                req_str("newFilename"),
+            )
+            .await,
+        ),
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
@@ -436,6 +469,7 @@ pub(super) fn check_declaration(
 pub(super) async fn run_command_op(
     pool: &SqlitePool,
     mat: &Materializer,
+    app_data_dir: &std::path::Path,
     fixture_name: &str,
     op: &Value,
     created_ids: &[String],
@@ -448,18 +482,19 @@ pub(super) async fn run_command_op(
         )
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
-    let (returns, error, code) = match apply_op_via_command(pool, mat, op, created_ids).await {
-        Ok(response) => (
-            PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
-            Value::Null,
-            Value::Null,
-        ),
-        Err(e) => (
-            Vec::new(),
-            serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
-            serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
-        ),
-    };
+    let (returns, error, code) =
+        match apply_op_via_command(pool, mat, app_data_dir, op, created_ids).await {
+            Ok(response) => (
+                PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
+                Value::Null,
+                Value::Null,
+            ),
+            Err(e) => (
+                Vec::new(),
+                serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
+                serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
+            ),
+        };
     check_declaration(
         &at,
         declared(&at, op, "expect_error").as_deref(),
@@ -644,7 +679,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 21;
+    const MUTATING_ARM_COUNT: usize = 23;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

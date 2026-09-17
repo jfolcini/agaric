@@ -303,6 +303,13 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       "snapshot's five arrays, so no op sequence can move it; the " +
       '`get_reminder_settings` step carries the claim',
   ],
+  [
+    'attachment_writes',
+    'the two writers touch `attachments` only, which is not one of the ' +
+      "snapshot's five arrays, so no op sequence can move the DOMAIN half; " +
+      'the ops they append still move `op_log_digest`, which this guard ' +
+      'deliberately excludes, and the `list_attachments` step carries the rest',
+  ],
 ])
 
 /**

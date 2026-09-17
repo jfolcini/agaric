@@ -113,6 +113,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   set_peer_address: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   set_reminder_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5057 — the two attachment writers that need no blob. `attachments` is
+  // outside the snapshot's five arrays, so `list_attachments` observes them.
+  delete_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  rename_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
