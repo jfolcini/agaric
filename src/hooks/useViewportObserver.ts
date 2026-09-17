@@ -34,7 +34,7 @@
  *   </div>
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export interface ViewportObserver {
   /**
@@ -79,6 +79,27 @@ export interface ViewportObserver {
   getWindowVersion: () => number
 }
 
+/**
+ * The nearest scrollable ancestor of `el`, or `null` when the viewport scrolls
+ * it (in which case the viewport is already the observer's implicit root).
+ *
+ * #5066 — an IntersectionObserver's `rootMargin` expands the ROOT's rect and
+ * nothing else: an intermediate `overflow` ancestor still clips with no margin
+ * at all. The block list lives inside a `ScrollArea`, so with the implicit
+ * (viewport) root the documented 200px buffer was inert and a row was
+ * virtualized away the instant it crossed the container edge — measured at 31px
+ * out, after Enter scrolled the pane 55px to follow the new block. The row it
+ * left behind is a bare placeholder, so the block the user had just edited read
+ * as gone until they scrolled back.
+ */
+function scrollParentOf(el: HTMLElement): HTMLElement | null {
+  for (let cur = el.parentElement; cur; cur = cur.parentElement) {
+    const { overflowY } = getComputedStyle(cur)
+    if (overflowY === 'auto' || overflowY === 'scroll') return cur
+  }
+  return null
+}
+
 export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver {
   /**
    * #1067 — off-screen membership is held in a ref, NOT React state, so it
@@ -87,6 +108,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * notified individually, so a single block's flip re-renders only that row.
    */
   const offscreenIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * The scroll container the observer uses as its root, discovered from the
+   * first row attached (see `scrollParentOf`). Re-probed only while it is unset
+   * or has detached, so the `getComputedStyle` walk costs one pass per
+   * container rather than one per row.
+   */
+  const rootElRef = useRef<HTMLElement | null>(null)
+  /** Bumped when `rootElRef` adopts a container, to rebuild the observer. */
+  const [rootEpoch, setRootEpoch] = useState(0)
   const heightsRef = useRef<Map<string, number>>(new Map())
   const observerRef = useRef<IntersectionObserver | null>(null)
   /** id → currently-observed element. Lets the null-transition unobserve precisely. */
@@ -162,7 +192,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           }
         }
       },
-      { rootMargin },
+      { root: rootElRef.current, rootMargin },
     )
 
     // Ref callbacks run during commit, *before* this passive effect, so
@@ -181,7 +211,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
       // maps go with it; no microtask needs to fire after unmount.
       pendingPrune.clear()
     }
-  }, [rootMargin, notify])
+  }, [rootMargin, notify, rootEpoch])
 
   const createObserveRef = useCallback(
     (id: string) => {
@@ -204,6 +234,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
             observerRef.current?.unobserve(previous)
           }
           elementsByIdRef.current.set(id, el)
+          if (rootElRef.current === null || !rootElRef.current.isConnected) {
+            const root = scrollParentOf(el)
+            if (root !== null) {
+              rootElRef.current = root
+              // Rebuilds the observer against the real root; a no-op after the
+              // first row, since the guard above stops probing once it is set.
+              setRootEpoch((epoch) => epoch + 1)
+            }
+          }
           observerRef.current?.observe(el)
         } else if (previous) {
           observerRef.current?.unobserve(previous)
