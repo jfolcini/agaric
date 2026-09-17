@@ -29,7 +29,7 @@ vi.mock('@/lib/logger', () => ({
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
-import { blocks, opLog } from '@/lib/tauri-mock/seed'
+import { blocks, opLog, peerRefs } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -2784,9 +2784,14 @@ describe('list_peer_refs', () => {
 })
 
 describe('delete_peer_ref', () => {
-  it('returns undefined', () => {
-    const result = invoke('delete_peer_ref', { peerId: 'any-id' })
-    expect(result).toBeUndefined()
+  it('removes the row, and refuses a peer it cannot find', () => {
+    peerRefs.set('peer-123', { peer_id: 'peer-123', device_name: 'Laptop' })
+    invoke('delete_peer_ref', { peerId: 'peer-123' })
+    expect(invoke('list_peer_refs')).toEqual([])
+    // #5057 — the durable effect, not the return: the command answers `()`, so
+    // asserting what it returned proved only that a handler existed. A missing
+    // peer is NotFound on all three writers rather than a silent no-op.
+    expect(() => invoke('delete_peer_ref', { peerId: 'peer-123' })).toThrow(/peer_refs/)
   })
 })
 
@@ -2989,12 +2994,19 @@ describe('delete_draft', () => {
 // ---------------------------------------------------------------------------
 
 describe('set_peer_address', () => {
-  it('returns null', () => {
-    const result = invoke('set_peer_address', {
-      peerId: 'peer-123',
-      address: '192.168.1.1:8765',
-    })
-    expect(result).toBeNull()
+  it('stores a valid host:port, and refuses a malformed one', () => {
+    peerRefs.set('peer-123', { peer_id: 'peer-123', last_address: null })
+    invoke('set_peer_address', { peerId: 'peer-123', address: '192.168.1.1:8765' })
+    expect(peerRefs.get('peer-123')?.['last_address']).toBe('192.168.1.1:8765')
+    // Shape only — nothing resolves the host. The port must be a non-zero u16
+    // and the host non-empty, and the row is untouched when either fails.
+    for (const bad of ['nohost', 'host:0', ':8765']) {
+      expect(() => invoke('set_peer_address', { peerId: 'peer-123', address: bad })).toThrow()
+    }
+    expect(peerRefs.get('peer-123')?.['last_address']).toBe('192.168.1.1:8765')
+    expect(() => invoke('set_peer_address', { peerId: 'ghost', address: '10.0.0.1:1' })).toThrow(
+      /peer_refs/,
+    )
   })
 })
 
@@ -3003,9 +3015,23 @@ describe('set_peer_address', () => {
 // ---------------------------------------------------------------------------
 
 describe('update_peer_name', () => {
-  it('returns undefined', () => {
-    const result = invoke('update_peer_name', { peerId: 'peer-123', name: 'My Laptop' })
-    expect(result).toBeUndefined()
+  it('sets and clears the local override without touching the remote name', () => {
+    peerRefs.set('peer-123', {
+      peer_id: 'peer-123',
+      device_name: null,
+      remote_device_name: 'Phone',
+    })
+    invoke('update_peer_name', { peerId: 'peer-123', deviceName: 'My Laptop' })
+    expect(peerRefs.get('peer-123')?.['device_name']).toBe('My Laptop')
+    // `remote_device_name` is what the peer calls itself; the two columns are
+    // deliberately separate, and a null name CLEARS rather than blanks.
+    expect(peerRefs.get('peer-123')?.['remote_device_name']).toBe('Phone')
+    invoke('update_peer_name', { peerId: 'peer-123', deviceName: null })
+    expect(peerRefs.get('peer-123')?.['device_name']).toBeNull()
+    expect(peerRefs.get('peer-123')?.['remote_device_name']).toBe('Phone')
+    expect(() => invoke('update_peer_name', { peerId: 'ghost', deviceName: 'x' })).toThrow(
+      /peer_refs/,
+    )
   })
 })
 
