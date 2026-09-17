@@ -81,7 +81,13 @@ async fn apply_agenda_diff(
 /// Sources, in order (first-wins on PK `(date, block_id)` after
 /// the sort-merge dedup pass — M-19b):
 /// 1. `block_properties` rows with a non-null `value_date` →
-///    `source = 'property:<key>'`, `prio = 0`.
+///    `source = 'property:<key>'`, `prio = 0`. The lifecycle timestamps
+///    `created_at` / `completed_at` / `repeat-until` are excluded (#5074):
+///    they record when a task changed state, not when it is due, and
+///    projecting them pinned every task to its creation and completion
+///    days. The set is the date-valued subset of `is_builtin_property_key`
+///    (`agaric-store/src/op.rs`), spelled as a literal because the SQL is
+///    a `&str` constant.
 /// 2. `block_tags` referencing tag blocks whose name matches
 ///    `date/YYYY-MM-DD` (exactly 15 chars) →
 ///    `source = 'tag:<tag_id>'`, `prio = 1`.
@@ -647,6 +653,31 @@ mod tests {
         assert_eq!(
             actual, expected,
             "sort-merge output must match the canonical desired set"
+        );
+    }
+
+    /// #5074: a task's lifecycle timestamps are not agenda dates. One block
+    /// carrying every date-valued lifecycle key plus a real `due` property
+    /// projects exactly the `due` row; only that key reaches the cache.
+    #[tokio::test]
+    async fn lifecycle_timestamps_are_not_agenda_sources_5074() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "LIFE01", "content", "task").await;
+        set_property(&pool, "LIFE01", "created_at", "2026-04-15").await;
+        set_property(&pool, "LIFE01", "completed_at", "2026-04-20").await;
+        set_property(&pool, "LIFE01", "repeat-until", "2026-12-31").await;
+        set_property(&pool, "LIFE01", "due", "2026-05-01").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![(
+                "2026-05-01".to_owned(),
+                "LIFE01".to_owned(),
+                "property:due".to_owned()
+            )],
+            "created_at / completed_at / repeat-until must not project"
         );
     }
 

@@ -242,12 +242,12 @@ async fn write_todo_timestamp_transitions_in_tx(
     prev_state: Option<&str>,
     new_state: Option<&str>,
 ) -> Result<(), AppError> {
-    // Auto-populate timestamps based on state transitions
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
+    // `created_at`: stamped when a block becomes an open task, cleared when
+    // it stops being a task at all.
     match (prev_state, new_state) {
-        // null → TODO/DOING: set created_at
-        (None, Some("TODO" | "DOING")) => {
+        (None | Some("DONE"), Some("TODO" | "DOING")) => {
             let (_, op) = set_property_in_tx(
                 &mut *tx,
                 state,
@@ -256,60 +256,46 @@ async fn write_todo_timestamp_transitions_in_tx(
                 "created_at",
                 None,
                 None,
-                Some(today),
+                Some(today.clone()),
                 None,
                 None,
             )
             .await?;
             tx.enqueue_background(op);
         }
-        // DONE → TODO/DOING: set created_at, clear completed_at
-        (Some("DONE"), Some("TODO" | "DOING")) => {
-            let (_, op) = set_property_in_tx(
-                &mut *tx,
-                state,
-                device_id,
-                block_id.to_owned(),
-                "created_at",
-                None,
-                None,
-                Some(today),
-                None,
-                None,
-            )
-            .await?;
-            tx.enqueue_background(op);
-            let op =
-                delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
-            tx.enqueue_background(op);
-        }
-        // TODO/DOING → DONE: set completed_at
-        (Some("TODO" | "DOING"), Some("DONE")) => {
-            let (_, op) = set_property_in_tx(
-                &mut *tx,
-                state,
-                device_id,
-                block_id.to_owned(),
-                "completed_at",
-                None,
-                None,
-                Some(today),
-                None,
-                None,
-            )
-            .await?;
-            tx.enqueue_background(op);
-        }
-        // Any → null (un-tasking): clear both
         (Some(_), None) => {
             let op =
                 delete_property_in_tx(&mut *tx, state, device_id, block_id, "created_at").await?;
             tx.enqueue_background(op);
-            let op =
-                delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
-            tx.enqueue_background(op);
         }
-        _ => {} // Same state or other transitions — no timestamp changes
+        _ => {}
+    }
+
+    // `completed_at` is present iff `todo_state = 'DONE'` (#5074): written on
+    // every edge into DONE, cleared on every edge out of it, whatever the
+    // other end. `repair::completed_at` backfills the rows written before
+    // this held, and relies on it holding from here on.
+    let was_done = prev_state == Some("DONE");
+    let is_done = new_state == Some("DONE");
+    if is_done && !was_done {
+        let (_, op) = set_property_in_tx(
+            &mut *tx,
+            state,
+            device_id,
+            block_id.to_owned(),
+            "completed_at",
+            None,
+            None,
+            Some(today),
+            None,
+            None,
+        )
+        .await?;
+        tx.enqueue_background(op);
+    } else if was_done && !is_done {
+        let op =
+            delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
+        tx.enqueue_background(op);
     }
     Ok(())
 }

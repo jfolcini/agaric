@@ -1,20 +1,21 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
 //! engine rollback armed (#2604), so a failure in one — a busy
 //! writer, one block whose apply refuses — rolls that repair back whole,
-//! logs, and leaves the other and the boot itself untouched; the next
+//! logs, and leaves the others and the boot itself untouched; the next
 //! boot retries the same population. `bootstrap_spaces` is boot-fatal by
 //! design; sharing its transaction would have made a repair boot-fatal too.
 //!
 //! The engine side emits the ops and applies them in the transaction; this
 //! side owns what only the app crate can do — the post-commit dispatch that
 //! the interactive commands run: plain background dispatch for the
-//! `Unreachable` page's create + space stamp (as `create_page_in_space_inner`),
-//! the move fan-out with `same_page = false` (`move_block_inner`), and for a
-//! delete the content-narrowed lifecycle rebuild plus the engine cohort
-//! fan-out (`delete_block_inner`).
+//! `Unreachable` page's create + space stamp (as `create_page_in_space_inner`)
+//! and the `completed_at` backfill (as `set_todo_state_inner`), the move
+//! fan-out with `same_page = false` (`move_block_inner`), and for a delete the
+//! content-narrowed lifecycle rebuild plus the engine cohort fan-out
+//! (`delete_block_inner`).
 
 use std::sync::Arc;
 
@@ -25,25 +26,28 @@ use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::repair::RepairOp;
+use agaric_engine::repair::completed_at::repair_completed_at;
 use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
 use agaric_engine::repair::orphans::repair_orphans;
 use agaric_store::op_log::OpRecord;
 
-/// The repairs, in the order they run. Each is independent of the other; the
+/// The repairs, in the order they run. Each is independent of the others; the
 /// order is only the order the issues were filed in.
 #[derive(Debug, Clone, Copy)]
 enum Repair {
     Orphans,
     JournalDuplicates,
+    CompletedAt,
 }
 
 impl Repair {
-    const ALL: [Self; 2] = [Self::Orphans, Self::JournalDuplicates];
+    const ALL: [Self; 3] = [Self::Orphans, Self::JournalDuplicates, Self::CompletedAt];
 
     fn label(self) -> &'static str {
         match self {
             Self::Orphans => "repair_orphans",
             Self::JournalDuplicates => "repair_journal_duplicates",
+            Self::CompletedAt => "repair_completed_at",
         }
     }
 }
@@ -61,7 +65,7 @@ pub async fn repair_unreachable_content_at_boot(
                 error = %e,
                 repair = repair.label(),
                 "content repair failed — boot continues; the next boot retries it \
-                 (#4728 / #4715)"
+                 (#4728 / #4715 / #5074)"
             );
         }
     }
@@ -95,6 +99,10 @@ async fn run(
                 r.dates_merged, r.pages_merged, r.children_moved
             );
             (r.ops, summary)
+        }
+        Repair::CompletedAt => {
+            let r = repair_completed_at(&mut tx, state, device_id).await?;
+            (r.ops, format!("backfilled = {}", r.backfilled))
         }
     };
     let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();
@@ -215,6 +223,34 @@ mod tests {
         (keeper, dup, dup_children)
     }
 
+    /// A DONE task on `page` with no `completed_at` — the #5074 population.
+    async fn insert_done_task(pool: &SqlitePool, page: &str) -> String {
+        let id = fresh_id();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id, todo_state) \
+             VALUES (?, 'content', 'done', ?, 9, ?, ?, 'DONE')",
+        )
+        .bind(&id)
+        .bind(page)
+        .bind(page)
+        .bind(SPACE_WORK_ULID)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn completed_at(pool: &SqlitePool, id: &str) -> Option<String> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .flatten()
+    }
+
     async fn parent_of(pool: &SqlitePool, id: &str) -> Option<String> {
         sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
             .bind(id)
@@ -269,6 +305,7 @@ mod tests {
         bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
         let orphan = insert_orphan(&pool, "[Add sqlfluff to the pipeline](case/1232544)").await;
         let (keeper, dup, dup_children) = insert_duplicate_date(&pool, "2026-05-05").await;
+        let done = insert_done_task(&pool, &keeper).await;
 
         // Phase 1 — fail the orphan repair at its first move (inside the
         // transaction, after the candidate query ran). The journal repair
@@ -307,6 +344,10 @@ mod tests {
                 Some(keeper.as_str())
             );
         }
+        assert!(
+            completed_at(&pool, &done).await.is_some(),
+            "the completed_at repair ran in its own transaction too"
+        );
 
         // Phase 2.
         sqlx::query("DROP TRIGGER fail_repair")
@@ -324,10 +365,10 @@ mod tests {
         );
 
         // Phase 3 — the ops exist (create + stamp + move on the page's side,
-        // two moves + a delete on the journal side), satisfy every other
-        // positional filter, and are the newest thing in the log; only
-        // `origin` keeps them out of Ctrl+Z.
-        assert_eq!(housekeeping_ops(&pool).await, 6);
+        // two moves + a delete on the journal side, one set_property for the
+        // DONE task), satisfy every other positional filter, and are the
+        // newest thing in the log; only `origin` keeps them out of Ctrl+Z.
+        assert_eq!(housekeeping_ops(&pool).await, 7);
         let undone = undo_page_group_inner(&pool, DEV, &mat, page.clone(), 0, 10_000)
             .await
             .expect("an empty group is Ok(vec![]), not an error");
@@ -340,6 +381,7 @@ mod tests {
             .unwrap();
         assert!(undone.is_empty(), "nothing on the keeper is undoable");
         mat.shutdown();
+        assert!(completed_at(&pool, &done).await.is_some());
         assert_eq!(
             parent_of(&pool, &orphan).await.as_deref(),
             Some(page.as_str())

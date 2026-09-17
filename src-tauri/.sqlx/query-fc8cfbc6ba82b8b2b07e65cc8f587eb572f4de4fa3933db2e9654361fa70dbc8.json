@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_date",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "fc8cfbc6ba82b8b2b07e65cc8f587eb572f4de4fa3933db2e9654361fa70dbc8"
+}

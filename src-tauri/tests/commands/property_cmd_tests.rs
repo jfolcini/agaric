@@ -2969,6 +2969,73 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
     mat.shutdown();
 }
 
+/// #5074: `completed_at` is present iff `todo_state = 'DONE'`. Every edge
+/// into DONE writes it — `CANCELLED → DONE` and `null → DONE` used to fall
+/// through — and every edge out of DONE clears it — `DONE → CANCELLED` used
+/// to leave it behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_at_is_present_iff_done_on_every_edge_5074() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    async fn completed_at(pool: &SqlitePool, id: &str) -> Option<String> {
+        get_properties_inner(pool, id.into())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|p| p.key == "completed_at")
+            .map(|p| p.value_date.expect("completed_at is a date"))
+    }
+
+    for other in [None, Some("TODO"), Some("DOING"), Some("CANCELLED")] {
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("edge {other:?}"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let id = block.id.as_str();
+
+        // other → DONE
+        if let Some(state) = other {
+            set_todo_state_inner(&pool, DEV, &mat, id.into(), Some(state.into()))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            completed_at(&pool, id).await,
+            None,
+            "{other:?} carries no completed_at"
+        );
+        set_todo_state_inner(&pool, DEV, &mat, id.into(), Some("DONE".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            completed_at(&pool, id).await.as_deref(),
+            Some(today.as_str()),
+            "{other:?} → DONE writes completed_at"
+        );
+
+        // DONE → other
+        set_todo_state_inner(&pool, DEV, &mat, id.into(), other.map(str::to_owned))
+            .await
+            .unwrap();
+        assert_eq!(
+            completed_at(&pool, id).await,
+            None,
+            "DONE → {other:?} clears completed_at"
+        );
+    }
+
+    mat.shutdown();
+}
+
 // ====================================================================
 // Recurrence on DONE transition tests (#595)
 // ====================================================================
