@@ -65,30 +65,18 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         PROPERTY_DEF_ATTRS,
         &[],
     ),
-    // #5057 — the draft writers answer with `()`, so their whole record is the
-    // refusal declaration plus a head naming which one ran. `flush_all_drafts`
-    // adds the one field a caller can see: how many rows it CONSUMED, which
-    // counts a draft dropped by a guard as well as one actually flushed.
-    // #5057 — `UndoResult` carries two `OpRef`s, and the two runners' device
-    // ids differ, so the shape names only the two op_type fields. Naming them
-    // is what pins the reversal: the type of the op undone and the type of the
-    // reverse op appended in its place.
-    (
-        "undo_page_op",
-        HEADED_ID_KEY,
-        &["reversed_op_type", "new_op_type", "is_redo"],
-        &[],
-    ),
-    // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in
-    // the order the group reversed them. That ORDER is the point — a group
-    // undo that reversed the right ops in the wrong sequence would pass a
-    // set-wise check and fail this one.
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.
     // `is_redo` is what tells a redo's result from an undo's; on a redo,
     // `reversed_op_type` names the UNDO ROW it was handed, not the op it
     // re-applies.
+    (
+        "undo_page_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
     (
         "undo_op",
         HEADED_ID_KEY,
@@ -122,12 +110,20 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["ops_reverted", "non_reversible_skipped"],
         &[],
     ),
+    // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in
+    // the order the group reversed them. That ORDER is the point — a group
+    // undo that reversed the right ops in the wrong sequence would pass a
+    // set-wise check and fail this one.
     (
         "undo_page_group",
         HEADED_ID_KEY,
         &["reversed_op_type", "new_op_type", "is_redo"],
         &[],
     ),
+    // #5057 — the draft writers answer with `()`, so their whole record is the
+    // refusal declaration plus a head naming which one ran. `flush_all_drafts`
+    // adds the one field a caller can see: how many rows it CONSUMED, which
+    // counts a draft dropped by a guard as well as one actually flushed.
     ("save_draft", HEADED_ID_KEY, &[], &[]),
     ("delete_draft", HEADED_ID_KEY, &[], &[]),
     ("flush_draft", HEADED_ID_KEY, &[], &[]),

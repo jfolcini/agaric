@@ -40,7 +40,7 @@ function byCreatedAtThenId(a: Record<string, unknown>, b: Record<string, unknown
 const MAX_ATTACHMENT_FILENAME_BYTES = 255
 
 function validateAttachmentFilename(filename: string): string {
-  const trimmed = (filename ?? '').trim()
+  const trimmed = filename.trim()
   if (trimmed === '') throw validationRejection('attachment filename may not be empty')
   if (new TextEncoder().encode(trimmed).length > MAX_ATTACHMENT_FILENAME_BYTES) {
     throw validationRejection('attachment filename is too long')
@@ -49,11 +49,10 @@ function validateAttachmentFilename(filename: string): string {
     throw validationRejection('attachment filename may not contain a path separator')
   }
   // `char::is_control` on the Rust side, which is Unicode's definition: C0
-  // (U+0000-U+001F), DEL, and C1 (U+0080-U+009F). Spelled as a codepoint test
-  // rather than a regex so it needs no lint suppression to say the same thing.
-  // Indexed rather than spread or a regex: every control character is below
-  // the surrogate range, so UTF-16 units decide this correctly, and neither
-  // `no-misused-spread` nor `no-control-regex` has to be suppressed to say it.
+  // (U+0000-U+001F), DEL, and C1 (U+0080-U+009F). Indexed rather than spread or
+  // a regex: every control character is below the surrogate range, so UTF-16
+  // units decide this correctly, and neither `no-misused-spread` nor
+  // `no-control-regex` has to be suppressed to say it.
   let hasControl = false
   for (let i = 0; i < trimmed.length; i += 1) {
     const c = trimmed.charCodeAt(i)

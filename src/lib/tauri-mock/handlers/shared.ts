@@ -1553,8 +1553,10 @@ export function reverseOpTypeFor(op: MockOpLogEntry): string {
       return 'add_tag'
     }
     default: {
-      // edit_block / move_block / set_property / the task-column setters all
-      // reverse to an op of their own type.
+      // edit_block / move_block / the task-column setters all reverse to an op
+      // of their own type. `set_property` does NOT — it short-circuits above,
+      // because whether its reverse is a set or a delete depends on the prior
+      // value, not on the type.
       return opType
     }
   }
@@ -1575,7 +1577,7 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
 }
 
 /**
- * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target.op_type)`:
+ * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target)`:
  * what the backend's reverse row carries, in place of the bookkeeping stash
  * (`{ reversed }` / `{ re_applied }` / `{ reverted }`) the mock used to write.
  * The stash rides along on top of it — `redo_page_op` and
