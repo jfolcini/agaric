@@ -104,6 +104,15 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['new_parent_id', 'new_position'],
     lists: [],
   },
+  // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
+  // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
+  // pinned by the read that follows them in the same fixture rather than by the
+  // settled state. Each answers with `()`.
+  delete_peer_ref: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  update_peer_name: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  set_peer_address: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  set_reminder_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
@@ -125,13 +134,13 @@ export function projectReturn(command: string, response: unknown): string[] {
   // object has no such field — `null` (a `()` return) declares no attributes
   // and renders as the bare head, while a bare COUNT is the whole return
   // value, so the shape's single attribute names it.
-  const scalar = response !== null && typeof response === 'object'
-  const raw: Record<string, unknown> = scalar
+  const isObject = response !== null && typeof response === 'object'
+  const raw: Record<string, unknown> = isObject
     ? (response as Record<string, unknown>)
     : shape.attrs[0] !== undefined
       ? { [shape.attrs[0]]: response }
       : {}
-  if (!scalar && shape.attrs.length > 1) {
+  if (!isObject && shape.attrs.length > 1) {
     throw new Error(
       `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
         `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,

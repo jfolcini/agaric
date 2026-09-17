@@ -83,7 +83,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 8,
+      "count": 11,
       "ops": [
         {
           "op_type": "delete_block"
@@ -108,6 +108,15 @@
         },
         {
           "op_type": "purge_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        },
+        {
+          "op_type": "restore_block"
         }
       ]
     },
@@ -162,6 +171,18 @@
       "error": null,
       "name": "purge_beta_appends_an_op",
       "returns": ["purge_blocks_by_ids#affected_count=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_gamma_again_for_the_overlap_arm",
+      "returns": ["delete_blocks_by_ids#deleted_count=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "restore_counts_one_op_per_root_even_when_they_overlap",
+      "returns": ["restore_blocks_by_ids#affected_count=2"]
     },
     {
       "code": null,
@@ -261,6 +282,24 @@
       "command": "purge_blocks_by_ids",
       "comment": "A purge is the one destructive write that still records itself, so the op-log digest moves. A handler that purges silently leaves the digest behind.",
       "name": "purge_beta_appends_an_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S8"]
+      },
+      "command": "delete_blocks_by_ids",
+      "comment": "Re-tombstones S8 and its child S9 so the op below can list BOTH as roots.",
+      "name": "delete_gamma_again_for_the_overlap_arm",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S8", "S9"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "S9 sits inside S8's delete cohort, so restoring S8 revives S9 on the way. Both are still ROOTS the caller named: the op log carries one `restore_block` per resolved root, not one per row that was still tombstoned by the time its turn came. A handler that re-reads `deleted_at` in a second pass skips S9 and appends one op where the backend appends two — visible only in the digest, since the settled state is identical either way.",
+      "name": "restore_counts_one_op_per_root_even_when_they_overlap",
       "via": "command"
     },
     {

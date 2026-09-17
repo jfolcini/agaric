@@ -234,8 +234,6 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  * later gains a fixture (delete the redundant entry) or leaves `bindings.ts`.
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
-  // ── Batch / bulk variants (per-item logic pinned by the single-op fixture) ──
-
   // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
   // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
   // conformance runner replays raw `OpPayload`s, so no fixture can drive an
@@ -301,9 +299,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
     'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
     'write; none does yet',
-  delete_property_def:
-    "returns `Result<(), AppError>`; the command leg's `RETURN_SHAPE` assumes an id-bearing " +
-    'response on both stacks, so it needs a unit-return shape first (#3830)',
 
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
@@ -336,10 +331,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // #4998 put `peer_refs` and `app_settings` on both stacks and pinned
   // `list_peer_refs` / `get_reminder_settings` with query steps, so these four
   // are debt, not scope.
-  set_peer_address: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  update_peer_name: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  delete_peer_ref: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  set_reminder_settings: 'fixture candidate: ops-then-query over `seed.app_settings` (#4998)',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
@@ -690,8 +681,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'create_page_in_space',
   'create_space',
   'delete_attachment',
-  'delete_peer_ref',
-  'delete_property_def',
   'fetch_link_metadata',
   'import_bibliography',
   'import_markdown',
@@ -702,13 +691,10 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'restore_page_to_op',
   'revert_ops',
   'set_page_aliases',
-  'set_peer_address',
-  'set_reminder_settings',
   'undo_op',
   'undo_ops',
   'undo_page_group',
   'undo_page_op',
-  'update_peer_name',
 ]
 
 /**

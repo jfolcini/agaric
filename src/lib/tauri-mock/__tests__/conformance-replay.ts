@@ -47,6 +47,7 @@ import {
   peerRefs,
   properties,
   propertyDefs,
+  pushOp,
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
 
@@ -194,6 +195,13 @@ function loadSeedProperty(p: Record<string, unknown>): void {
     value_ref: v['value_ref'] == null ? null : seedLabelToId(v['value_ref'] as string),
     value_bool: v['value_bool'] == null ? null : (v['value_bool'] as boolean) ? 1 : 0,
   })
+  // #5057 — a seeded PROPERTY is not a raw insert on the backend: its seed
+  // loader calls `set_property_inner`, the real command, which appends an op.
+  // Seeded BLOCKS are inserted raw and append nothing, which is why the two
+  // halves of this loader differ. Without this the mock starts every fixture
+  // that seeds a property one op behind, and `property_def_writes` is the
+  // first fixture that ever did.
+  pushOp('set_property', { block_id: blockId, key, from_value: null })
 }
 
 /** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */

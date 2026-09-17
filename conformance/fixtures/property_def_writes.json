@@ -18,11 +18,23 @@
       }
     ],
     "op_log_digest": {
-      "count": 0,
-      "ops": []
+      "count": 1,
+      "ops": [
+        {
+          "key": "note",
+          "op_type": "set_property"
+        }
+      ]
     },
     "page_links": [],
-    "properties": []
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "note",
+        "value": "pinned",
+        "value_type": "Text"
+      }
+    ]
   },
   "expected_ops": [
     {
@@ -72,6 +84,30 @@
       "error": "not_found",
       "name": "update_options_unknown_key_rejects",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "delete_an_unknown_def_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "delete_a_builtin_def_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "delete_a_def_with_live_rows_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_an_unused_def",
+      "returns": ["delete_property_def"]
     }
   ],
   "expected_queries": [
@@ -80,18 +116,15 @@
       "error": null,
       "has_more": false,
       "name": "registry_after_writes",
-      "rows": [
-        "note#value_type=text#options=null",
-        "priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]"
-      ],
+      "rows": ["note#value_type=text#options=null"],
       "total_count": null
     },
     {
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "priority_level_after_writes",
-      "rows": ["priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]"],
+      "name": "note_after_writes",
+      "rows": ["note#value_type=text#options=null"],
       "total_count": null
     }
   ],
@@ -185,22 +218,61 @@
       "expect_error": "not_found",
       "name": "update_options_unknown_key_rejects",
       "via": "command"
+    },
+    {
+      "args": {
+        "key": "no_such_key"
+      },
+      "command": "delete_property_def",
+      "comment": "#5057 — the command leg gained a unit-return shape in #5064, which is what this waiver said it was waiting for. A missing key is NotFound.",
+      "expect_error": "not_found",
+      "name": "delete_an_unknown_def_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "todo_state"
+      },
+      "command": "delete_property_def",
+      "comment": "A built-in reserved key is not the user's to remove.",
+      "expect_error": "validation",
+      "name": "delete_a_builtin_def_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "note"
+      },
+      "command": "delete_property_def",
+      "comment": "S1 carries a `note` property, so the definition is still in use. Refused rather than orphaning the rows — this is why the seed grows one property.",
+      "expect_error": "validation",
+      "name": "delete_a_def_with_live_rows_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "priority_level"
+      },
+      "command": "delete_property_def",
+      "comment": "The happy path: `priority_level` was created by an op above and nothing references it, so it goes. The `list_property_defs` step below is what observes the removal, since `property_definitions` is outside the snapshot.",
+      "name": "delete_an_unused_def",
+      "via": "command"
     }
   ],
   "queries": [
     {
       "args": {},
       "command": "list_property_defs",
-      "comment": "The whole registry after the ops: `note` (untouched, text) and `priority_level` (select, three options), in the backend's `key ASC` order.",
+      "comment": "The whole registry after the ops: `note` survives (its delete was refused for the live row) and `priority_level` is gone.",
       "name": "registry_after_writes"
     },
     {
       "args": {
-        "key": "priority_level"
+        "key": "note"
       },
       "command": "get_property_def",
-      "comment": "The point lookup the refusals above must have left alone.",
-      "name": "priority_level_after_writes"
+      "comment": "The point lookup on the definition the refusals left alone.",
+      "name": "note_after_writes"
     }
   ],
   "seed": {
@@ -213,7 +285,15 @@
         "position": 1
       }
     ],
-    "properties": [],
+    "properties": [
+      {
+        "block_id": "S1",
+        "key": "note",
+        "value": {
+          "value_text": "pinned"
+        }
+      }
+    ],
     "property_defs": [
       {
         "key": "note",

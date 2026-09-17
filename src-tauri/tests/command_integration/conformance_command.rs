@@ -117,6 +117,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["new_parent_id", "new_position"],
         &[],
     ),
+    // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
+    // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
+    // is pinned by the read that follows them in the same fixture rather than
+    // by the settled state. Each answers with `()`, so the record is the
+    // refusal declaration plus a head naming which one ran.
+    ("delete_peer_ref", HEADED_ID_KEY, &[], &[]),
+    ("update_peer_name", HEADED_ID_KEY, &[], &[]),
+    ("set_peer_address", HEADED_ID_KEY, &[], &[]),
+    ("set_reminder_settings", HEADED_ID_KEY, &[], &[]),
+    ("delete_property_def", HEADED_ID_KEY, &[], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -252,6 +262,34 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        "delete_peer_ref" => to_json(delete_peer_ref_inner(pool, req_str("peerId")).await),
+        "update_peer_name" => {
+            to_json(update_peer_name_inner(pool, req_str("peerId"), opt_str("deviceName")).await)
+        }
+        "set_peer_address" => {
+            to_json(set_peer_address_inner(pool, req_str("peerId"), req_str("address")).await)
+        }
+        // No `*_inner`: the wrapper is the thin layer over this directly.
+        "set_reminder_settings" => to_json(
+            agaric_lib::reminders::set_settings(
+                pool,
+                // The IPC arg is the whole `ReminderSettings` under `settings`,
+                // so the fixture spells it nested exactly as a caller does.
+                &agaric_lib::reminders::ReminderSettings {
+                    enabled: args["settings"]["enabled"].as_bool().unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'settings.enabled'")
+                    }),
+                    time: args["settings"]["time"]
+                        .as_str()
+                        .unwrap_or_else(|| {
+                            panic!("conformance op '{command}' is missing arg 'settings.time'")
+                        })
+                        .to_owned(),
+                },
+            )
+            .await,
+        ),
+        "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
@@ -606,7 +644,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 16;
+    const MUTATING_ARM_COUNT: usize = 21;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

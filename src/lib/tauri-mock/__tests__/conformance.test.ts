@@ -291,6 +291,18 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       'projected snapshot (#3830), so no op sequence can move it; the returns ' +
       'and query steps carry the claim',
   ],
+  [
+    'peer_ref_writes',
+    'the three writers touch `peer_refs` only, which is not one of the ' +
+      "snapshot's five arrays, so no op sequence can move it; the " +
+      '`list_peer_refs` step carries the claim',
+  ],
+  [
+    'reminder_settings_writes',
+    'the writer touches `app_settings` only, which is not one of the ' +
+      "snapshot's five arrays, so no op sequence can move it; the " +
+      '`get_reminder_settings` step carries the claim',
+  ],
 ])
 
 /**
