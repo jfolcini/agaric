@@ -304,6 +304,12 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       '`get_reminder_settings` step carries the claim',
   ],
   [
+    'page_alias_writes',
+    'the writer touches `page_aliases` only, which is not one of the ' +
+      "snapshot's five arrays, so no op sequence can move it; the " +
+      '`get_page_aliases` / `resolve_page_by_alias` steps carry the claim',
+  ],
+  [
     'attachment_writes',
     'the two writers touch `attachments` only, which is not one of the ' +
       "snapshot's five arrays, so no op sequence can move the DOMAIN half; " +
