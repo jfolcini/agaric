@@ -397,6 +397,16 @@ const REMINDER_SETTINGS_TOKEN = {
   attrKeys: ['enabled', 'time'],
 } as const
 
+/** The `CompactionStatus` struct (#5057): no id, so a fixed head.
+ *  `oldest_op_date` is deliberately absent — it is `MIN(op_log.created_at)`,
+ *  a clock read during the replay. MUST match the `get_compaction_status` arm
+ *  in the Rust twin. */
+const COMPACTION_STATUS_TOKEN = {
+  kind: 'headed',
+  head: 'compaction_status',
+  attrKeys: ['total_ops', 'eligible_ops', 'retention_days'],
+} as const
+
 /** `resolve_page_by_alias`'s `(page_id, title)` hit (#3830). */
 const PAGE_ALIAS_HIT_TOKEN = { kind: 'tuple', names: ['page_id', 'title'] } as const
 /** `list_page_aliases_by_prefix`'s `(page_id, alias, title)` rows (#3830). */
@@ -699,6 +709,19 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   list_peer_refs: {
     rows: { kind: 'bare-array' },
     token: PEER_REF_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+
+  // ── Op-log maintenance counters (#5057) ──
+  //
+  // The op-log digest already compares the log itself across the stacks, so
+  // the counters over it are comparable too — which is what lifted the "not
+  // projected block state" waiver on this one and on `compact_op_log_cmd`
+  // beside it.
+  get_compaction_status: {
+    rows: { kind: 'bare-row' },
+    token: COMPACTION_STATUS_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },

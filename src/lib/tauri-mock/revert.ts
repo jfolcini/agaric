@@ -13,7 +13,7 @@
  */
 
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
-import type { MockOpLogEntry } from '@/lib/tauri-mock/seed'
+import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
 type Blocks = Map<string, BlockRow>
@@ -133,7 +133,7 @@ function insertAtSlotIn(
 export interface RevertState {
   properties?: Properties
   blockTags?: BlockTags
-  /** #5057 — the attachments map, for the `rename_attachment` reverse. */
+  /** #5057 — the attachments map, for the three attachment reverses. */
   attachments?: Map<string, Record<string, unknown>>
 }
 
@@ -309,6 +309,38 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
   }
 }
 
+/**
+ * Put back the row a `delete_attachment` took away, as
+ * `reverse_delete_attachment` does: the immutable half
+ * (`block_id`, `mime_type`, `size_bytes`) is rebuilt from the original
+ * `add_attachment` op, and `fs_path` / `filename` are adopted from the DELETE
+ * payload, which captured them live — the two fields a repoint or a rename can
+ * have moved since the add.
+ *
+ * No original op means nothing to rebuild from and the reverse is a no-op,
+ * which is where a seeded attachment lands: it was never added by an op.
+ */
+function revertDeleteAttachment(payload: Record<string, unknown>, state: RevertState): void {
+  const attachmentId = payload['attachment_id'] as string
+  const original = opLog.find(
+    (o) =>
+      o.op_type === 'add_attachment' &&
+      (JSON.parse(o.payload) as Record<string, unknown>)['attachment_id'] === attachmentId,
+  )
+  if (!original) return
+  const add = JSON.parse(original.payload) as Record<string, unknown>
+  state.attachments?.set(attachmentId, {
+    id: attachmentId,
+    block_id: add['block_id'],
+    mime_type: add['mime_type'],
+    filename: payload['filename'] ?? add['filename'],
+    size_bytes: add['size_bytes'],
+    fs_path: payload['fs_path'] ?? add['fs_path'],
+    created_at: Date.now(),
+    content_hash: null,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -330,18 +362,22 @@ export function applyRevertForOp(
 ): void {
   const payload = JSON.parse(target.payload) as Record<string, unknown>
 
-  // #5057 — `reverse_rename_attachment` swaps the two filenames back
-  // (agaric-engine `reverse/attachment_ops.rs`). Handled before the block-row
-  // lookup below because an attachment op carries no `block_id`.
-  //
-  // `delete_attachment` has no arm here on purpose: `reverse_delete_attachment`
-  // rebuilds an `AddAttachmentPayload` from the original `add_attachment` op,
-  // and the mock's `add_attachment_with_bytes` appends no op to rebuild from.
-  // Giving it one is part of pinning that command, which is still open in
-  // #5057 — so the arm arrives with it rather than guessing a row shape now.
+  // #5057 — the three attachment reverses (agaric-engine
+  // `reverse/attachment_ops.rs`). Handled before the block-row lookup below
+  // because an attachment op carries no `block_id`.
   if (target.op_type === 'rename_attachment') {
     const row = state.attachments?.get(payload['attachment_id'] as string)
     if (row) row['filename'] = payload['old_filename']
+    return
+  }
+  // The BYTES stay: a real `delete_attachment` leaves them for the GC pass
+  // (#1993), and so must the synthetic one this mints.
+  if (target.op_type === 'add_attachment') {
+    state.attachments?.delete(payload['attachment_id'] as string)
+    return
+  }
+  if (target.op_type === 'delete_attachment') {
+    revertDeleteAttachment(payload, state)
     return
   }
 

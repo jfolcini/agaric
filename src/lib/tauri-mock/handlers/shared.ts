@@ -1566,6 +1566,16 @@ export function reverseOpTypeFor(op: MockOpLogEntry): string {
     case 'remove_tag': {
       return 'add_tag'
     }
+    // #5057 — the attachment add/delete pair reverses into each other, which
+    // is what makes an undone add redoable. Without these arms both fell to
+    // `default:` and each reverse row claimed to be a second op of its own
+    // type, so a REDO of an undone add deleted the row it was re-adding.
+    case 'add_attachment': {
+      return 'delete_attachment'
+    }
+    case 'delete_attachment': {
+      return 'add_attachment'
+    }
     default: {
       // edit_block / move_block / the task-column setters all reverse to an op
       // of their own type. `set_property` does NOT — it short-circuits above,
@@ -1587,6 +1597,49 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
     value_date: (row['value_date'] as string | null) ?? null,
     value_ref: (row['value_ref'] as string | null) ?? null,
     value_bool: (row['value_bool'] as number | null) ?? null,
+  }
+}
+
+/**
+ * The `DeleteAttachmentPayload` that undoes an `add_attachment`, as
+ * `build_reverse_add_attachment` builds it: the LIVE row's path and name where
+ * the row still stands — a repoint or a rename since the add is what the
+ * reverse must name — and the add payload's own where it is already gone.
+ */
+function syntheticDeleteAttachment(addPayload: Record<string, unknown>): Record<string, unknown> {
+  const live = attachments.get(addPayload['attachment_id'] as string)
+  return {
+    attachment_id: addPayload['attachment_id'],
+    fs_path: live?.['fs_path'] ?? addPayload['fs_path'],
+    filename: live?.['filename'] ?? addPayload['filename'],
+  }
+}
+
+/**
+ * The `AddAttachmentPayload` that undoes a `delete_attachment`, as
+ * `reverse_delete_attachment` builds it: the immutable half from the original
+ * `add_attachment` op, and `fs_path` / `filename` adopted from the DELETE's own
+ * payload, which captured them live — the two fields a repoint or a rename can
+ * have moved since. `revertDeleteAttachment` (`revert.ts`) reads the same two
+ * sources to rebuild the ROW.
+ */
+function reconstructedAddAttachment(
+  deletePayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const attachmentId = deletePayload['attachment_id'] as string
+  const original = opLog.find(
+    (o) =>
+      o.op_type === 'add_attachment' &&
+      (JSON.parse(o.payload) as Record<string, unknown>)['attachment_id'] === attachmentId,
+  )
+  const add = (original ? JSON.parse(original.payload) : {}) as Record<string, unknown>
+  return {
+    attachment_id: attachmentId,
+    block_id: add['block_id'] ?? null,
+    mime_type: add['mime_type'] ?? null,
+    filename: deletePayload['filename'] ?? add['filename'] ?? null,
+    size_bytes: add['size_bytes'] ?? 0,
+    fs_path: deletePayload['fs_path'] ?? add['fs_path'] ?? null,
   }
 }
 
@@ -1656,6 +1709,12 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
         old_filename: p['new_filename'],
         new_filename: p['old_filename'],
       }
+    }
+    case 'add_attachment': {
+      return syntheticDeleteAttachment(p)
+    }
+    case 'delete_attachment': {
+      return reconstructedAddAttachment(p)
     }
     case 'add_tag':
     case 'remove_tag': {

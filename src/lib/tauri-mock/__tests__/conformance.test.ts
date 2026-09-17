@@ -316,6 +316,13 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       'the ops they append still move `op_log_digest`, which this guard ' +
       'deliberately excludes, and the `list_attachments` step carries the rest',
   ],
+  [
+    'pairing_confirm',
+    'the writer touches `peer_refs` and `app_settings` only, neither of them ' +
+      "one of the snapshot's five arrays, and it appends no op either, so " +
+      'nothing it does is expressible there; the `list_peer_refs` step carries ' +
+      'the claim',
+  ],
 ])
 
 /**

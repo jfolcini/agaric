@@ -86,6 +86,10 @@ function effectiveUndoTarget(entry: MockOpLogEntry): MockOpLogEntry {
  *  rather than one page's subtree (`pagination::list_page_history`). */
 const GLOBAL_HISTORY_PAGE_ID = '__all__'
 
+/** `commands::compaction::MIN_RETENTION_DAYS` — the smallest retention window
+ *  `compact_op_log_cmd` accepts. */
+const MIN_RETENTION_DAYS = 7
+
 /**
  * The `op_log.block_id` COLUMN the backend fills from `OpPayload::block_id()`
  * (migration 0030). The mock has no such column, so it reads the same value
@@ -137,9 +141,12 @@ function opInPageScope(entry: MockOpLogEntry, scope: Set<string> | null): boolea
  * it this way either: `delete_attachment_inner` hard-DELETEs the row in the
  * transaction that appends the op, so the live-`attachments` probe is false
  * from that instant. Its second disjunct reaches the owner through the paired
- * `add_attachment` op-log row (history.rs, #4247), and the mock's
- * `add_attachment_with_bytes` appends no op to pair with — the same gap that
- * defers the `delete_attachment` revert arm.
+ * `add_attachment` op-log row (history.rs, #4247), which the mock now appends
+ * (#5057) — so this arm is writable. It stays unwritten because no fixture can
+ * drive it: reaching it needs a POSITIONAL undo over a page holding a
+ * `delete_attachment` op, and deleting an attachment an op created means naming
+ * it, which needs a label convention fixtures do not have (`Cn` names a created
+ * block, `On` an appended op, nothing names a created attachment).
  */
 function attachmentOwnerBlockId(entry: MockOpLogEntry): string | null {
   if (entry.op_type !== 'rename_attachment') return null
@@ -644,14 +651,35 @@ export const historyHandlers = {
   // Property definition commands
   // ---------------------------------------------------------------------------
 
+  // `MIN(op_log.created_at)` in epoch ms, the two things the old expression got
+  // wrong: it answered `opLog[0].created_at`, an ISO STRING (the mock's own
+  // column type) at the position the first op was PUSHED — and the seed pushes
+  // older ops after newer ones (`stampPageLastEdited`), so that is not the
+  // minimum. `CompactionStatus.oldest_op_date` is `number | null`, which
+  // `CompactionCard` hands to `new Date(...)`.
+  //
+  // `eligible_ops` and the compaction below stay zero: the cutoff is `now()`
+  // minus a window floored at seven days, and nothing here mints an op at a
+  // date the mock's own clock has not reached.
   get_compaction_status: () => ({
     total_ops: opLog.length,
-    oldest_op_date: opLog.length > 0 ? (opLog[0]?.created_at ?? null) : null,
+    oldest_op_date:
+      opLog.length > 0 ? Math.min(...opLog.map((op) => new Date(op.created_at).getTime())) : null,
     eligible_ops: 0,
     retention_days: 90,
   }),
 
-  compact_op_log_cmd: () => ({ ops_deleted: 0 }),
+  // A hard floor at the IPC boundary — a window under seven days is refused
+  // before any work, so the op log cannot be purged to the snapshot frontier
+  // in one call. The mock answered success for every window, including the `0`
+  // that guard exists for.
+  compact_op_log_cmd: (args) => {
+    const retentionDays = (args as Record<string, unknown>)['retentionDays'] as number
+    if (retentionDays < MIN_RETENTION_DAYS) {
+      throw validationRejection('retention_days.too_small')
+    }
+    return { ops_deleted: 0 }
+  },
 
   // ---------------------------------------------------------------------------
   // Point-in-time restore

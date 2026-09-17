@@ -1490,6 +1490,34 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Op-log maintenance counters (#5057) ──
+        //
+        // Waived as "not projected block state" until the op-log digest made
+        // the point moot: the snapshot already compares the op log across the
+        // stacks, so the counters over it are comparable too.
+        //
+        // `oldest_op_date` is deliberately NOT projected. It is
+        // `MIN(op_log.created_at)` — a clock reading taken while the fixture
+        // replays — so a recorded value would bind to the millisecond it was
+        // authored on. The other three are functions of the seeded state: the
+        // op count, how many of those ops fall before a `now()`-relative
+        // cutoff (zero, for ops minted during the run), and the constant
+        // window the status reports.
+        "get_compaction_status" => {
+            let status = get_compaction_status_inner(pool).await?;
+            let v = serde_json::to_value(&status).expect("serialize CompactionStatus");
+            RawResult {
+                rows: vec![format!(
+                    "compaction_status#total_ops={}#eligible_ops={}#retention_days={}",
+                    attr_value("total_ops", v.get("total_ops")),
+                    attr_value("eligible_ops", v.get("eligible_ops")),
+                    attr_value("retention_days", v.get("retention_days")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         "list_peer_refs" => {
             let rows = list_peer_refs_inner(pool).await?;
             // `ORDER BY synced_at DESC`, NULLs last: the ordered comparison
@@ -2632,7 +2660,11 @@ pub(super) mod reader_delegation_tests {
     // table's writers are `save_draft` / `delete_draft`, the two flush paths
     // and the hourly orphan sweeper, none a read arm — and the flushes are
     // command-leg ops here, not query steps. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 51;
+    // #5057 wired `get_compaction_status`: three `query_scalar!` SELECTs over
+    // `op_log` (`commands/compaction.rs`). The table's writers are
+    // `append_local_op_in_tx` on every command path and `compact_op_log_cmd`,
+    // neither a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 52;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
