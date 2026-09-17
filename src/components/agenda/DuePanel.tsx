@@ -2,7 +2,7 @@
  * DuePanel -- shows blocks due on a given date, grouped by todo_state.
  *
  * Renders on JournalPage. Groups blocks by todo_state in order:
- * DOING > TODO > CANCELLED > null (Other). Within each group, sorts by
+ * DOING > TODO > DONE > CANCELLED > null (Other). Within each group, sorts by
  * the configurable priority rank (`priorityRank` from
  * `@/lib/priority-levels`) so the order follows the user's configured
  * levels, with null/unknown sorting last. Uses cursor-based pagination
@@ -62,10 +62,14 @@ export interface DuePanelProps {
 // Every state a visible block can carry needs a group here, or it would be
 // hidden from the list while still counting in `visibleBlocks` — the header
 // saying "3 due" over 2 rows that #738 sub-1 fixed by adding CANCELLED.
-// #5074 drops DONE from the other side: `useDuePanelData` filters DONE out
-// of the fetched blocks (DonePanel owns completed tasks), so a DONE group
-// here could only ever render empty.
-const GROUP_ORDER = [...TASK_STATE_SORT_ORDER.filter((state) => state !== 'DONE'), null] as const
+//
+// DONE stays even though #5074 keeps completed tasks out of the agenda fetch
+// entirely: the header counts `visibleBlocks.length` while the rows come from
+// this list, so dropping a state here makes the two agree only for as long as
+// some filter elsewhere holds. An always-empty group costs one unused label
+// and is dropped by the `items.length > 0` filter below; a missing one brings
+// the #738 desync back silently.
+const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
 
 interface ProjectedEntryContentProps {
   content: string
@@ -321,6 +325,7 @@ export function DuePanel({
     const groupLabels: Record<string, string> = {
       DOING: t('duePanel.groupDoing'),
       TODO: t('duePanel.groupTodo'),
+      DONE: t('duePanel.groupDone'),
       CANCELLED: t('duePanel.groupCancelled'),
     }
     return GROUP_ORDER.map((state) => {
