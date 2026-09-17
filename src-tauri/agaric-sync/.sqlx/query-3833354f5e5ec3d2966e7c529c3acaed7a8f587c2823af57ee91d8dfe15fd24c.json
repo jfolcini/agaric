@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\", c.value_date AS created_at\n           FROM blocks b\n           LEFT JOIN block_properties c ON c.block_id = b.id AND c.key = 'created_at'\n           WHERE b.todo_state = 'DONE'\n             AND b.deleted_at IS NULL\n             AND NOT EXISTS (\n                 SELECT 1 FROM block_properties p\n                 WHERE p.block_id = b.id AND p.key = 'completed_at'\n             )\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "3833354f5e5ec3d2966e7c529c3acaed7a8f587c2823af57ee91d8dfe15fd24c"
+}

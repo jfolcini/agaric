@@ -1,8 +1,7 @@
-//! Boot-time repairs that make historically-unreachable content reachable
-//! again (#4728, #4715).
+//! Boot-time repairs of damage a since-closed write-side defect left behind
+//! (#4728, #4715, #5074).
 //!
-//! Two populations were measured on a real vault, each left behind by a
-//! write-side defect that is itself already closed:
+//! Three populations were measured on a real vault:
 //!
 //! * [`orphans`](crate::repair::orphans) — live `content` blocks with neither a parent nor a page,
 //!   promoted to top level by the recovery orphan cleanup (#4728). They are in
@@ -12,6 +11,11 @@
 //!   space, minted while the journal lookup could not see a space-less page
 //!   (#4715). Their children are folded onto the oldest page and the emptied
 //!   duplicates are soft-deleted.
+//! * [`completed_at`](crate::repair::completed_at) — blocks on the wrong side
+//!   of "`completed_at` present iff DONE", left there by an edge the
+//!   timestamp writer did not cover (#5074). A DONE task with no stamp gets
+//!   its `created_at`, or the day its ULID was minted; a block that is not
+//!   DONE loses the stamp it kept.
 //!
 //! # Every change is an op
 //!
@@ -33,10 +37,10 @@
 //!
 //! # Idempotent by construction
 //!
-//! Neither repair needs a marker: a re-homed orphan has a `page_id` and a
-//! merged duplicate is tombstoned, so each selection query returns nothing
-//! the second time, and each is an indexed probe over a population that is
-//! small by construction. The app's `repair` module owns the transaction
+//! No repair needs a marker: a re-homed orphan has a `page_id`, a merged
+//! duplicate is tombstoned and a task's `completed_at` matches its
+//! `todo_state`, so each selection query returns nothing the second time, and each is an
+//! indexed probe over a population that is small by construction. The app's `repair` module owns the transaction
 //! boundary and the never-boot-fatal contract.
 
 use agaric_core::error::AppError;
@@ -51,6 +55,7 @@ use crate::block_ops::{create_block_in_tx, set_property_in_tx};
 use crate::loro::shared::LoroState;
 use crate::spaces::SPACE_PERSONAL_ULID;
 
+pub mod completed_at;
 pub mod journal_duplicates;
 pub mod orphans;
 
@@ -64,8 +69,10 @@ pub const UNREACHABLE_PAGE_TITLE: &str = "Unreachable";
 /// enqueue → commit → fan-out sequence; this is the hand-off.
 #[derive(Debug)]
 pub enum RepairOp {
-    /// `CreateBlock` / `SetProperty` for the `Unreachable` page — plain
-    /// background dispatch, as `create_page_in_space_inner` does.
+    /// `CreateBlock` / `SetProperty` for the `Unreachable` page, or the
+    /// `SetProperty` / `DeleteProperty` on `completed_at` — plain background
+    /// dispatch, as `create_page_in_space_inner` and `set_todo_state_inner`
+    /// do.
     Plain(OpRecord),
     /// A `MoveBlock`. Never a same-page move (the subject left a page it did
     /// not have, or a duplicate page), so the driver passes `same_page =

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id: agaric_core::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: agaric_core::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: agaric_core::ulid::BlockId\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n           AND (?6 IS NULL OR b.space_id = ?6)\n         ORDER BY b.id ASC\n         LIMIT ?5",
+  "query": "SELECT b.id as \"id: agaric_core::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: agaric_core::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: agaric_core::ulid::BlockId\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n           AND (?6 IS NULL OR b.space_id = ?6)\n           AND (?7 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?7)))\n         ORDER BY b.id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 7
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "e90554c815cc2ff735e2d22a50f290fe763368fe97fb5bce25c4ed0e7510d8ea"
+  "hash": "8681bc66e6a7ca4969e4da332ce0ccfea3218125396066d3112edb1f5c8decd7"
 }

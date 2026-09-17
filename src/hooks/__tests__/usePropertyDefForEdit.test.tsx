@@ -137,6 +137,7 @@ describe('usePropertyDefForEdit', () => {
         date: null,
         dateRange: null,
         source: null,
+        excludeTodoStates: null,
         cursor: null,
         limit: null,
       },

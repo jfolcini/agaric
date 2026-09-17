@@ -80,11 +80,17 @@ pub struct RawOp {
 impl RawOp {
     /// Canonicalize a raw op_log row into a digest entry, applying the shared
     /// normalization rules. Returns `None` for ops that are dropped from the
-    /// digest (auto-derived timestamp property writes).
+    /// digest (auto-derived timestamp property writes and their clears).
     pub fn canonicalize(op_type: &str, key: Option<&str>) -> Option<Self> {
-        // Auto-derived timestamp property writes — the mock never models these,
-        // and they carry today's date. Drop from the digest.
-        if op_type == "set_property" && matches!(key, Some("created_at" | "completed_at")) {
+        // Auto-derived timestamp property ops — the mock never models these,
+        // and they carry today's date. Drop from the digest, in BOTH
+        // directions: `write_todo_timestamp_transitions_in_tx` emits a
+        // `DeleteProperty` on the edges that clear `created_at` /
+        // `completed_at`, so dropping only the writes would leave a
+        // backend-only op in the digest the mock can never match (#5074).
+        if matches!(op_type, "set_property" | "delete_property")
+            && matches!(key, Some("created_at" | "completed_at"))
+        {
             return None;
         }
         // Reserved-key set_property ops are emitted by the backend as

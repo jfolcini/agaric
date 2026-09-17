@@ -296,6 +296,7 @@ export function SpaceManageDialog({
                   date: null,
                   dateRange: null,
                   source: null,
+                  excludeTodoStates: null,
                   cursor: null,
                   limit: listBlocksLimit(1),
                 },

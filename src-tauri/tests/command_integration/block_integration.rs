@@ -702,6 +702,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -1453,6 +1454,7 @@ async fn list_blocks_top_level_returns_root_blocks() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -1485,6 +1487,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
     let resp = list_blocks_inner(
         &pool,
         Some("LP01".into()),
+        None,
         None,
         None,
         None,
@@ -1528,6 +1531,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -1544,6 +1548,7 @@ async fn list_blocks_empty_db_returns_empty_page_no_more() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
+        None,
         None,
         None,
         None,
@@ -1645,6 +1650,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             None,
             None,
             None,
+            None,
             cursor,
             Some(4),
             TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
@@ -1688,6 +1694,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
         assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
+            None,
             None,
             None,
             None,

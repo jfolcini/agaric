@@ -69,6 +69,7 @@ async fn snapshot_list_blocks_response() {
         None,
         None,
         None,
+        None,
         Some(10),
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )

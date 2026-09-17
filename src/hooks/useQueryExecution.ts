@@ -128,6 +128,7 @@ export async function fetchBacklinksQuery(
         date: null,
         dateRange: null,
         source: null,
+        excludeTodoStates: null,
         cursor: pageCursor ?? null,
         limit: listBlocksLimit(PAGE_SIZE),
       },

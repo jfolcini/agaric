@@ -564,9 +564,10 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
         .into_iter()
         .filter_map(|(op_type, payload)| {
             let key = serde_json::from_str::<Value>(&payload).ok().and_then(|p| {
-                // SetProperty payload nests under `SetProperty` (enum tag);
-                // fall back to a flat `key` field.
+                // SetProperty / DeleteProperty payloads nest under their enum
+                // tag; fall back to a flat `key` field.
                 p.get("SetProperty")
+                    .or_else(|| p.get("DeleteProperty"))
                     .and_then(|sp| sp.get("key"))
                     .or_else(|| p.get("key"))
                     .and_then(Value::as_str)

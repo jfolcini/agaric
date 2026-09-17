@@ -59,11 +59,16 @@ export interface DuePanelProps {
   excludePageId?: string | undefined
 }
 
-// #738 sub-1 — CANCELLED was absent here, so a CANCELLED block matched
-// no group (hidden from the list) yet still counted in `visibleBlocks`,
-// making the header say "3 due" while the list showed 2. Adding the
-// group keeps the header count and rendered rows in agreement and
-// matches the canonical agenda grouping and the existing DONE precedent.
+// Every state a visible block can carry needs a group here, or it would be
+// hidden from the list while still counting in `visibleBlocks` — the header
+// saying "3 due" over 2 rows that #738 sub-1 fixed by adding CANCELLED.
+//
+// DONE stays even though #5074 keeps completed tasks out of the agenda fetch
+// entirely: the header counts `visibleBlocks.length` while the rows come from
+// this list, so dropping a state here makes the two agree only for as long as
+// some filter elsewhere holds. An always-empty group costs one unused label
+// and is dropped by the `items.length > 0` filter below; a missing one brings
+// the #738 desync back silently.
 const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
 
 interface ProjectedEntryContentProps {

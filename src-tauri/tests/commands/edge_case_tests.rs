@@ -200,6 +200,7 @@ async fn f14_page_size_zero_rejected_with_validation_error() {
         None,
         None,
         None,
+        None,
         Some(0),
         TEST_SPACE_ID.into(),
     )
@@ -222,6 +223,7 @@ async fn f14_page_size_negative_rejected_with_validation_error() {
     assign_all_to_test_space(&pool).await;
     let err = list_blocks_inner(
         &pool,
+        None,
         None,
         None,
         None,
@@ -260,6 +262,7 @@ async fn f14_page_size_1000_rejected_with_validation_error() {
         None,
         None,
         None,
+        None,
         Some(1000),
         TEST_SPACE_ID.into(),
     )
@@ -282,6 +285,7 @@ async fn f14_page_size_none_uses_default() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
+        None,
         None,
         None,
         None,

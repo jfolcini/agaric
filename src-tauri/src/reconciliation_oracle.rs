@@ -1659,9 +1659,10 @@ fn date_tag_date(content: Option<&str>) -> Option<String> {
 /// re-expressed as SQL so this is an independent recomputation:
 ///
 ///   * four upstreams, in precedence order — any `block_properties` row with a
-///     non-NULL `value_date` (`property:<key>`), a `date/YYYY-MM-DD` tag on the
-///     block (`tag:<tag_id>`), then the promoted `due_date` and
-///     `scheduled_date` columns;
+///     non-NULL `value_date` (`property:<key>`) other than the lifecycle
+///     timestamps `created_at` / `completed_at` / `repeat-until` (#5074), a
+///     `date/YYYY-MM-DD` tag on the block (`tag:<tag_id>`), then the promoted
+///     `due_date` and `scheduled_date` columns;
 ///   * every arm requires the SOURCE block live, and the tag arm additionally
 ///     requires the TAG block live and `block_type = 'tag'`;
 ///   * every arm repeats the same template exclusion: a block whose OWNING PAGE
@@ -1737,6 +1738,12 @@ fn fold_agenda_cache_from_base(
         ) else {
             continue;
         };
+        if matches!(
+            property.key.as_str(),
+            "created_at" | "completed_at" | "repeat-until"
+        ) {
+            continue;
+        }
         if contributes(block) {
             push(
                 date,

@@ -3608,6 +3608,7 @@ const AG_SCHED: &str = "01AGSCHED33450000000000000";
 const AG_BOTHCOL: &str = "01AGBTHCX33450000000000000";
 const AG_DEAD: &str = "01AGDEAD334500000000000000";
 const AG_TCHILD: &str = "01AGTCHD334500000000000000";
+const AG_LIFE: &str = "01AGLIFE507400000000000000";
 const AG_TAG_D3: &str = "01AGTAGD333450000000000000";
 const AG_TAG_D4: &str = "01AGTAGD433450000000000000";
 const AG_TAG_DEAD: &str = "01AGTAGDEAD334500000000000";
@@ -3731,6 +3732,12 @@ async fn ag_fixture() -> (sqlx::SqlitePool, TempDir) {
     bl_insert_content(&pool, AG_TCHILD, AG_TPAGE, None, "tchild").await;
     ag_set_columns(&pool, AG_TCHILD, Some("2026-03-11"), None).await;
 
+    // Lifecycle timestamps (#5074) → nothing, from arm 0.
+    bl_insert_content(&pool, AG_LIFE, AG_PAGE, None, "life").await;
+    ag_date_property(&pool, AG_LIFE, "created_at", "2026-03-12").await;
+    ag_date_property(&pool, AG_LIFE, "completed_at", "2026-03-13").await;
+    ag_date_property(&pool, AG_LIFE, "repeat-until", "2026-03-14").await;
+
     (pool, dir)
 }
 
@@ -3764,8 +3771,9 @@ async fn agenda_cache_reconciles_and_reports_a_stale_row_3345() {
             ag_key("2026-03-07", AG_BOTHCOL),
             ag_key("2026-03-09", AG_TAGGED),
         ],
-        "the deleted block (2026-03-10), the template page's child (2026-03-11) \
-         and the deleted tag's day (2026-03-08) must all be absent; got {expected:#?}"
+        "the deleted block (2026-03-10), the template page's child (2026-03-11), \
+         the deleted tag's day (2026-03-08) and the lifecycle timestamps \
+         (2026-03-12..14) must all be absent; got {expected:#?}"
     );
 
     let one = |date: &str, block: &str| -> String {
@@ -4242,8 +4250,8 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     let a_to_g = format!("{EQ_LIVE_A} -> {EQ_TAG_G}");
     let l_day1 = format!("2026-01-01 / {EQ_REPEAT_L}");
     let r_day1 = format!("2026-01-01 / {EQ_REPEAT_R}");
-    // `repeat-until` is a dated PROPERTY, so agenda arm 0 promotes it too.
-    let r_until = format!("2026-01-05 / {EQ_REPEAT_R}");
+    // `repeat-until` is a dated PROPERTY but a lifecycle one, so agenda arm 0
+    // skips it (#5074): R's 2026-01-05 is a projected occurrence only.
     let l_rows: Vec<String> = ["2026-01-02", "2026-01-03"]
         .iter()
         .map(|d| format!("{EQ_REPEAT_L} / {d} / due_date"))
@@ -4266,7 +4274,6 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
         ("tags_cache.row", EQ_TAG_G),
         ("agenda_cache.row", &l_day1),
         ("agenda_cache.row", &r_day1),
-        ("agenda_cache.row", &r_until),
     ];
     want.extend(
         l_rows
@@ -4280,7 +4287,7 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     );
     assert_eq!(
         got, want,
-        "the sweep must report exactly these twenty, in this order"
+        "the sweep must report exactly these nineteen, in this order"
     );
 
     let ownership = &divergences[0];

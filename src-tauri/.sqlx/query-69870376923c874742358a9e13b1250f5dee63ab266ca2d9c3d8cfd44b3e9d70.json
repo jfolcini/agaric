@@ -1,0 +1,52 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.todo_state,\n                  EXISTS (SELECT 1 FROM block_properties p\n                          WHERE p.block_id = b.id AND p.key = 'created_at')\n                      AS \"has_created_at!: bool\",\n                  EXISTS (SELECT 1 FROM block_properties p\n                          WHERE p.block_id = b.id AND p.key = 'completed_at')\n                      AS \"has_completed_at!: bool\"\n           FROM blocks b\n           WHERE b.id IN (SELECT value FROM json_each(?)) AND b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "todo_state"
+          }
+        }
+      },
+      {
+        "name": "has_created_at!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "has_completed_at!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "69870376923c874742358a9e13b1250f5dee63ab266ca2d9c3d8cfd44b3e9d70"
+}

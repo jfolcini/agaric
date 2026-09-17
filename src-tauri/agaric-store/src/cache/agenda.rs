@@ -81,7 +81,14 @@ async fn apply_agenda_diff(
 /// Sources, in order (first-wins on PK `(date, block_id)` after
 /// the sort-merge dedup pass — M-19b):
 /// 1. `block_properties` rows with a non-null `value_date` →
-///    `source = 'property:<key>'`, `prio = 0`.
+///    `source = 'property:<key>'`, `prio = 0`. The lifecycle timestamps
+///    `created_at` / `completed_at` / `repeat-until` are excluded (#5074):
+///    they record when a task changed state, not when it is due, and
+///    projecting them pinned every task to its creation and completion
+///    days. The set is the LIFECYCLE keys only, spelled as a literal because
+///    the SQL is a `&str` constant. It is not "the date-valued builtins":
+///    `due_date` and `scheduled_date` are date-valued builtins too, and they
+///    are the agenda's two real sources — adding them here empties it.
 /// 2. `block_tags` referencing tag blocks whose name matches
 ///    `date/YYYY-MM-DD` (exactly 15 chars) →
 ///    `source = 'tag:<tag_id>'`, `prio = 1`.
@@ -131,6 +138,7 @@ const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
             WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+              AND bp.key NOT IN ('created_at', 'completed_at', 'repeat-until')
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
@@ -393,12 +401,9 @@ async fn flush_pending_agenda_diff(
 /// 3. Walks the two streams in lockstep (M-19b sort-merge), batching
 ///    DELETEs and INSERTs in `O(STREAM_BATCH)` chunks.
 ///
-/// Two data sources:
-/// 1. `block_properties` rows with a non-null `value_date` -> source = `property:<key>`
-/// 2. `block_tags` referencing tag blocks whose name matches `date/YYYY-MM-DD`
-///    (exactly 15 chars) -> source = `tag:<tag_id>`
-/// 3. `blocks.due_date` column -> source = `column:due_date`
-/// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
+/// The four sources are `DESIRED_AGENDA_SQL`'s, which is the single place
+/// they are defined — including the #5074 exclusion of the lifecycle
+/// timestamps (`created_at` / `completed_at` / `repeat-until`) from source 1.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await
@@ -647,6 +652,31 @@ mod tests {
         assert_eq!(
             actual, expected,
             "sort-merge output must match the canonical desired set"
+        );
+    }
+
+    /// #5074: a task's lifecycle timestamps are not agenda dates. One block
+    /// carrying every date-valued lifecycle key plus a real `due` property
+    /// projects exactly the `due` row; only that key reaches the cache.
+    #[tokio::test]
+    async fn lifecycle_timestamps_are_not_agenda_sources_5074() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "LIFE01", "content", "task").await;
+        set_property(&pool, "LIFE01", "created_at", "2026-04-15").await;
+        set_property(&pool, "LIFE01", "completed_at", "2026-04-20").await;
+        set_property(&pool, "LIFE01", "repeat-until", "2026-12-31").await;
+        set_property(&pool, "LIFE01", "due", "2026-05-01").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![(
+                "2026-05-01".to_owned(),
+                "LIFE01".to_owned(),
+                "property:due".to_owned()
+            )],
+            "created_at / completed_at / repeat-until must not project"
         );
     }
 

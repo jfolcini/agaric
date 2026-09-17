@@ -528,7 +528,7 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
 // `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
 // in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
 // inside `pagination::list_agenda[_range]`. This manifest only models the
-// top-level `filter_count` chain, so a single query step with ANY
+// top-level exclusive-filter chain, so a single query step with ANY
 // `agenda_source` value will credit the WHOLE arm the moment it gets a query
 // step — exactly the branch-invisible-coverage shape #3878 exists to catch,
 // one level down. `agenda_range_page_1`/`_2` pass no `source` (the "no
@@ -784,8 +784,9 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  * diverge exactly when a command's `_inner` dispatches on which of several
  * MUTUALLY EXCLUSIVE optional request fields is set: `list_blocks_inner`
  * rejects more than one of `parent_id` / `block_type` / `tag_id` /
- * `agenda_date` / `agenda_date_start`+`agenda_date_end` being set (its
- * `filter_count` guard), then runs exactly one of five arms. Before this
+ * `agenda_date` / `agenda_date_start`+`agenda_date_end` being set (the
+ * `exclusive_filters` arity check in `validate_list_blocks_filters`), then
+ * runs exactly one of five arms. Before this
  * manifest existed, `list_blocks` read as fully covered off the `tagId` /
  * `blockType` / `parentId` arms alone — the two `agenda_date*` arms had (and
  * still have, see `READ_QUERY_BRANCH_ALLOWLIST`) ZERO query steps anywhere in
@@ -852,7 +853,7 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  * Two cross-check tests below parse the dispatch out of the Rust itself and
  * fail LOUD when the two sides diverge:
  *
- *   - `list_blocks …` parses `list_blocks_inner`'s `filter_count` array
+ *   - `list_blocks …` parses `list_blocks_inner`'s `exclusive_filters` array
  *     literal out of `blocks/queries.rs` (guards the SET, order-insensitively).
  *   - `filtered_blocks_query …` parses BOTH of that command's value-shape
  *     dispatch SITES out of `commands/queries.rs` — the exclusivity guard and
@@ -1061,7 +1062,7 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
   list_blocks: {
     dimensions: [
       {
-        name: 'filter_count exclusive chain',
+        name: 'exclusive filter chain',
         source: { kind: 'object', path: ['request'] },
         requiredArgs: ['request'],
         discriminators: [
@@ -1359,8 +1360,8 @@ function stepBranchKeys(command: string, step: QueryStepShape): string[] {
 
 const RUST_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'blocks', 'queries.rs')
 
-/** Parse the identifier list out of `list_blocks_inner`'s `filter_count`
- *  array literal (`[parent_id.is_some(), block_type.is_some(), …]`) — the
+/** Parse the identifier list out of `list_blocks_inner`'s
+ *  `exclusive_filters` array literal (`[parent_id.is_some(), …]`) — the
  *  Rust source's own statement of which params are mutually exclusive. Used
  *  only to cross-check `QUERY_STEP_BRANCH_DISCRIMINATORS` against it, not to
  *  derive the manifest (the field NAMES differ between the two — Rust
@@ -1370,11 +1371,11 @@ const RUST_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'blocks', 
  *  unnoticed). */
 function extractFilterCountIdentifiers(): string[] {
   const source = readFileSync(RUST_QUERIES_PATH, 'utf8')
-  const needle = 'let filter_count = ['
+  const needle = 'let exclusive_filters = ['
   const start = source.indexOf(needle)
   if (start < 0) {
     throw new Error(
-      `could not find "let filter_count = [" in ${RUST_QUERIES_PATH} — this guard ` +
+      `could not find "let exclusive_filters = [" in ${RUST_QUERIES_PATH} — this guard ` +
         `parses list_blocks_inner's exclusive-filter array; update the parser if the ` +
         `source moved, don't shrink the expectation.`,
     )
@@ -1398,11 +1399,11 @@ function extractFilterCountIdentifiers(): string[] {
     }
   }
   if (end < 0) {
-    throw new Error(`unterminated filter_count array in ${RUST_QUERIES_PATH}`)
+    throw new Error(`unterminated exclusive_filters array in ${RUST_QUERIES_PATH}`)
   }
   return [...source.slice(start, end).matchAll(/(\w+)(?:\.is_some\(\))?/g)]
     .map((m) => m[1] as string)
-    .filter((id) => id !== 'let' && id !== 'filter_count')
+    .filter((id) => id !== 'let' && id !== 'exclusive_filters')
 }
 
 const RUST_COMMANDS_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'queries.rs')
@@ -1426,7 +1427,8 @@ const RUST_COMMANDS_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', '
  *
  *   - `guard` — the `n_text + n_text_in + n_date + n_range > 1` exclusivity
  *     check, i.e. the Rust source's own statement of which value fields are
- *     mutually exclusive (the analogue of `list_blocks_inner`'s `filter_count`);
+ *     mutually exclusive (the analogue of `list_blocks_inner`'s
+ *     `exclusive_filters`);
  *   - `chain` — the `if let Some(…) = &pf.X { … } else if …` chain that
  *     actually selects the emitted SQL.
  *
@@ -2805,7 +2807,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   // THIS COMMAND been exercised at all?" when the question that matters is
   // "is each of its BEHAVIOURS exercised?". Those diverge exactly when a
   // command dispatches on which of several mutually exclusive request fields
-  // is set (`list_blocks_inner`'s `filter_count` chain) — a command with
+  // is set (`list_blocks_inner`'s `exclusive_filters` chain) — a command with
   // three of five arms covered read as fully green here. The requirement is
   // now expressed per coverage UNIT (`branchUnitsOf`: `${command}::${branch}`
   // for a manifested command, or just `command` — unchanged — for every
@@ -2887,14 +2889,14 @@ describe('#3083 conformance-coverage ratchet', () => {
   // that the two sides agree on the SET.
   it("list_blocks branch discriminators match the Rust dispatch's exclusive filter set", () => {
     const rustParams = extractFilterCountIdentifiers().toSorted()
-    // `parent_id` has no `else if` arm of its own — it is `filter_count`'s
+    // `parent_id` has no `else if` arm of its own — it is `exclusive_filters`'
     // fifth member but dispatches through the terminal `else`, i.e. this
     // manifest's `defaultBranch`. Every OTHER rust param must have exactly one
     // declared discriminator.
     const expected = ['agenda_date', 'block_type', 'has_agenda_range', 'parent_id', 'tag_id']
     expect(
       rustParams,
-      `list_blocks_inner's filter_count array changed to ${JSON.stringify(rustParams)} ` +
+      `list_blocks_inner's exclusive_filters array changed to ${JSON.stringify(rustParams)} ` +
         `(expected ${JSON.stringify(expected)}). QUERY_STEP_BRANCH_DISCRIMINATORS.list_blocks ` +
         `declares exactly 4 discriminators + 1 default branch mapped from these 5 Rust ` +
         `params by hand — update BOTH the manifest and this expected list together so ` +
@@ -2913,7 +2915,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   //
   //   - ORDER, not just the set. `stepBranchKeys` classifies by FIRST match,
   //     so a reordered Rust chain silently re-labels every step even though the
-  //     exclusive SET is untouched. The `filter_count` guard above compares
+  //     exclusive SET is untouched. The `exclusive_filters` guard above compares
   //     sorted arrays and cannot see that; this one compares in dispatch order.
   //   - BOTH dispatch sites, and their agreement with each other. The reserved
   //     and non-reserved routings are separate code dispatching on the same

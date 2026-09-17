@@ -15,10 +15,10 @@
  *    projected agenda), merging all of their parent-title resolutions into a
  *    single shared `pageTitles` map.
  *  - The main list is post-filtered client-side (`applySourceFilter` drops
- *    `property:`-source and empty-content rows per page), so its `totalCount`
- *    is the accumulated POST-filter count — not the backend's `total_count`
- *    that `usePaginatedQuery` exposes. Routing it through the hook would
- *    silently desync the header count from the rendered rows.
+ *    `property:`-source and empty-content rows per page), so its
+ *    `totalCount` is the accumulated POST-filter count — not the backend's
+ *    `total_count` that `usePaginatedQuery` exposes. Routing it through the
+ *    hook would silently desync the header count from the rendered rows.
  *  - `projected` uses a module-level 30s TTL cache keyed by space+date, and
  *    `overdue` / `upcoming` are single bounded queries, none of which are
  *    cursor-paginated.
@@ -86,8 +86,16 @@ export function clearProjectedCache(): void {
 /**
  * Apply the `property:` source filter (excludes blocks whose due_date or
  * scheduled_date matches the current agenda date) and drop blocks with
- * Empty or whitespace-only content. Other sourceFilter values
- * pass through unchanged except for the empty-content pass.
+ * empty or whitespace-only content. Other sourceFilter values pass through
+ * unchanged except for that second pass.
+ *
+ * The DONE exclusion (#5074 — `DonePanel` owns DONE, so a task both due and
+ * completed today must not render on both) is NOT here: it is pushed into
+ * SQL via `excludeTodoStates`. A client-side drop runs AFTER the backend's
+ * 50-row page cap, so a page that is entirely DONE returns nothing, the
+ * panel renders `null`, and `LoadMoreButton` goes with it — stranding every
+ * page behind it. That is #738 sub-2's starvation, which the overdue /
+ * upcoming fetches fixed the same way.
  */
 export function applySourceFilter(
   items: BlockRow[],
@@ -158,6 +166,10 @@ function listBlocksForAgenda(
         date,
         dateRange: null,
         source: effectiveSource,
+        // #5074 — DONE belongs to `DonePanel`. Excluded in SQL so completed
+        // tasks never occupy a slot in the bounded page (see
+        // `applySourceFilter`).
+        excludeTodoStates: ['DONE'],
         cursor: cursor ?? null,
         limit: listBlocksLimit(limit),
       },

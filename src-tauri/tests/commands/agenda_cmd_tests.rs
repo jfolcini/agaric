@@ -42,6 +42,7 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         Some("column:due_date".into()),
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -89,6 +90,7 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
         None,
         None,
         Some("column:scheduled_date".into()),
+        None,
         None,
         None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
@@ -147,6 +149,7 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
         None,
         None,
         Some("2025-08-03".into()),
+        None,
         None,
         None,
         None,
@@ -217,6 +220,7 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         Some("column:due_date".into()),
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -271,6 +275,7 @@ async fn list_blocks_with_date_range_single_day() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -300,6 +305,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -321,6 +327,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -338,6 +345,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         Some("2025-01-01".into()),
+        None,
         None,
         None,
         None,
@@ -387,6 +395,7 @@ async fn list_blocks_date_range_with_source_filter() {
         Some("column:due_date".into()),
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -411,6 +420,7 @@ async fn list_blocks_date_range_with_source_filter() {
         None,
         Some("2025-04-01".into()),
         Some("2025-04-30".into()),
+        None,
         None,
         None,
         None,
@@ -5137,4 +5147,175 @@ async fn projected_agenda_rejects_or_survives_hostile_cursors_3206() {
             "hostile cursor `{label}`: rows must stay in key order without duplicates"
         );
     }
+}
+
+// ======================================================================
+// list_blocks with exclude_todo_states (#5074)
+// ======================================================================
+
+/// Seed one agenda day: `(id, todo_state)` pairs, all on `date`, all in
+/// `TEST_SPACE_ID`, all sourced `column:due_date`.
+async fn seed_agenda_day(pool: &sqlx::SqlitePool, date: &str, rows: &[(&str, Option<&str>)]) {
+    for (id, state) in rows {
+        insert_block(pool, id, "content", "task", None, None).await;
+        if let Some(s) = state {
+            sqlx::query("UPDATE blocks SET todo_state = ? WHERE id = ?")
+                .bind(s)
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind(date)
+            .bind(id)
+            .bind("column:due_date")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    assign_all_to_test_space(pool).await;
+}
+
+/// Call `list_blocks_inner` on the agenda-date branch.
+async fn agenda_page(
+    pool: &sqlx::SqlitePool,
+    date: &str,
+    exclude: Option<Vec<String>>,
+    limit: Option<i64>,
+) -> Result<
+    agaric_store::pagination::PageResponse<agaric_store::pagination::ActiveBlockRow>,
+    agaric_core::error::AppError,
+> {
+    list_blocks_inner(
+        pool,
+        None,
+        None,
+        None,
+        Some(date.to_string()),
+        None,
+        None,
+        None,
+        exclude,
+        None,
+        limit,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+}
+
+/// A listed state is dropped; an unlisted one and a NULL state survive —
+/// the `b.todo_state IS NULL OR …` arm of the predicate.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_agenda_excludes_listed_todo_states() {
+    let (pool, _dir) = test_pool().await;
+    seed_agenda_day(
+        &pool,
+        "2025-08-05",
+        &[
+            ("XTS_A_TODO", Some("TODO")),
+            ("XTS_B_DONE", Some("DONE")),
+            ("XTS_C_CANCEL", Some("CANCELLED")),
+            ("XTS_D_NULL", None),
+        ],
+    )
+    .await;
+
+    let resp = agenda_page(&pool, "2025-08-05", Some(vec!["DONE".into()]), None)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, vec!["XTS_A_TODO", "XTS_C_CANCEL", "XTS_D_NULL"]);
+
+    // An empty exclusion list is no filter at all.
+    let unfiltered = agenda_page(&pool, "2025-08-05", Some(vec![]), None)
+        .await
+        .unwrap();
+    assert_eq!(unfiltered.items.len(), 4);
+}
+
+/// The whole point of pushing the filter into SQL: the exclusion runs
+/// BEFORE `LIMIT`, so excluded rows cannot fill a page and strand the rows
+/// behind them. A client-side drop after the page cap returns an empty page
+/// here — which is what took `LoadMoreButton` down with it (#738 sub-2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_agenda_exclusion_runs_before_the_page_limit() {
+    let (pool, _dir) = test_pool().await;
+    seed_agenda_day(
+        &pool,
+        "2025-08-06",
+        &[
+            ("XTS_P1_DONE", Some("DONE")),
+            ("XTS_P2_DONE", Some("DONE")),
+            ("XTS_P3_TODO", Some("TODO")),
+        ],
+    )
+    .await;
+
+    let resp = agenda_page(&pool, "2025-08-06", Some(vec!["DONE".into()]), Some(2))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, vec!["XTS_P3_TODO"]);
+    assert!(!resp.has_more);
+    assert!(resp.next_cursor.is_none());
+}
+
+/// Only `pagination::list_agenda` carries the predicate, so asking any other
+/// branch for it is a rejection rather than an unfiltered answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_rejects_exclude_todo_states_off_the_agenda_date_branch() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "XTS_PARENT", "page", "Home", None, None).await;
+    insert_block(
+        &pool,
+        "XTS_CHILD",
+        "content",
+        "child",
+        Some("XTS_PARENT"),
+        Some(1),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    let err = list_blocks_inner(
+        &pool,
+        Some(agaric_core::ulid::BlockId::from("XTS_PARENT")),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(vec!["DONE".into()]),
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect_err("exclude_todo_states off the agenda-date branch must be refused");
+    assert!(
+        matches!(err, agaric_core::error::AppError::Validation { .. }),
+        "expected Validation, got {err:?}"
+    );
+
+    // The same request WITHOUT the knob is served normally, so the rejection
+    // is the filter's doing and not the fixture's.
+    let ok = list_blocks_inner(
+        &pool,
+        Some(agaric_core::ulid::BlockId::from("XTS_PARENT")),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ok.items.len(), 1);
 }

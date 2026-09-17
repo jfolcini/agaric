@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_date FROM block_properties WHERE block_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_date",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a46d71e0baa027add02a77549bba6a20f29aac0751ba3b162688a5c0d093bbae"
+}

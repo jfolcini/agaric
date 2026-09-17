@@ -1169,6 +1169,7 @@ fn bench_list_blocks(c: &mut Criterion) {
             None,
             None,
             None,
+            None,
             Some(50),
             SLO_SPACE_ID.into(),
         ))
@@ -1199,6 +1200,7 @@ fn bench_list_blocks(c: &mut Criterion) {
                 for _ in 0..iters {
                     let _ = list_blocks_inner(
                         &pool,
+                        None,
                         None,
                         None,
                         None,

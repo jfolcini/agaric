@@ -73,12 +73,19 @@ export function canonicalLabelMap(canonicalOrder: ReadonlyArray<string>): Map<st
 /**
  * Canonicalize a raw mock op_log entry into a digest entry (or `null` to drop
  * it). Mirrors `RawOp::canonicalize` on the Rust side: auto-derived timestamp
- * property writes are dropped; reserved-key set_property ops collapse to their
+ * property ops are dropped; reserved-key set_property ops collapse to their
  * `set_<key>` logical name. The mock already emits dedicated op_types
  * (`set_todo_state`, …) so most entries pass through unchanged.
  */
 function canonicalizeOp(opType: string, key: string | null): Record<string, unknown> | null {
-  if (opType === 'set_property' && (key === 'created_at' || key === 'completed_at')) {
+  // Both directions: `write_todo_timestamp_transitions_in_tx` emits a
+  // DeleteProperty on the edges that CLEAR `created_at` / `completed_at`, and
+  // dropping only the writes would leave a backend-only op the mock — which
+  // models neither key — can never match (#5074).
+  if (
+    (opType === 'set_property' || opType === 'delete_property') &&
+    (key === 'created_at' || key === 'completed_at')
+  ) {
     return null
   }
   if (

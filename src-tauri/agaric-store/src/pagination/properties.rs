@@ -227,7 +227,7 @@ fn sql_operator(operator: &str) -> &'static str {
 
 /// `None` when empty, so the clause short-circuits on `?N IS NULL` instead of
 /// parsing an empty array per row.
-fn json_array(values: &[String]) -> Result<Option<String>, AppError> {
+pub(super) fn json_array(values: &[String]) -> Result<Option<String>, AppError> {
     if values.is_empty() {
         return Ok(None);
     }

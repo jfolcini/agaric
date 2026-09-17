@@ -1597,6 +1597,13 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 range_end("start"),
                 range_end("end"),
                 text("source"),
+                field("excludeTodoStates").map(|v| {
+                    v.as_array()
+                        .expect("excludeTodoStates must be an array")
+                        .iter()
+                        .map(|e| e.as_str().expect("todo state must be a string").to_owned())
+                        .collect()
+                }),
                 text("cursor"),
                 field("limit").and_then(|v| v.as_i64()),
                 space_id.as_str().to_owned(),

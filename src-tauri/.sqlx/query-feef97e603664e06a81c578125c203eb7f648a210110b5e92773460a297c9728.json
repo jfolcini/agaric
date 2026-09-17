@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.block_id AS \"id!: String\"\n           FROM block_properties p\n           JOIN blocks b ON b.id = p.block_id\n           WHERE p.key = 'completed_at'\n             AND b.deleted_at IS NULL\n             AND (b.todo_state IS NULL OR b.todo_state <> 'DONE')\n           ORDER BY p.block_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "feef97e603664e06a81c578125c203eb7f648a210110b5e92773460a297c9728"
+}

@@ -80,6 +80,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           date: null,
           dateRange: null,
           source: null,
+          excludeTodoStates: null,
           cursor: null,
           limit: null,
         },
