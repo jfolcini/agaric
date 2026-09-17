@@ -37,21 +37,40 @@ Resolve-on-demand covers the class, so the seeding was deliberately not added.
 The loop this invites is real and guarded: the store write that follows an
 answer bumps `resolveVersion`, which recomputes the pending set. An id the
 backend leaves out — another space's, or purged — would be re-requested
-forever, so a `lookedUpKeys` set records what was ASKED about and answered,
-marked before the store write so one render sees both. A rejected IPC
-deliberately leaves its ids pending: an id we never got an answer for must not
-count towards the empty state, which is the difference between "still loading"
-and the bug this fixes.
+forever, so a set records what was ASKED about and answered, marked before the
+store write so one render sees both. A rejected IPC deliberately leaves its ids
+pending: an id we never got an answer for must not count towards the empty
+state, which is the difference between "still loading" and the bug this fixes.
+
+That set has to be scoped to the space, and the first version was not. Review
+caught it: switching away flushes the space it leaves (`clearAllForSpace` in
+`useAppSpaceLifecycle`), but this section never unmounts, so a space-shared set
+outlives the cache it was a record of. Space A → B → A left the bookmark
+uncached AND already marked asked, so it was neither rendered nor pending and
+the empty state claimed the user had none — #5075's exact symptom, restored by
+its own fix, and the case the deleted `spaceResolved` guard had covered. The
+set now carries the space it was built for and is treated as empty when that
+space changes. Pinned by a round-trip test with a scope-aware `batch_resolve`
+mock, which also shows space B legitimately empty in the middle; sharing the
+set across spaces reddens it with `Unable to find role="button" and name "Brand
+New Page"`.
+
+One more from the same review, not a defect but a cost: the memo recomputes on
+every `resolveVersion` bump, and `batchSet` fires per page-picker keystroke
+with a real change (#753), so an effect depending on a fresh array identity
+cancelled the in-flight lookup and re-issued `batch_resolve` once per
+keystroke. The memo returns a joined string now and the effect splits it back,
+so an unchanged pending set is an unchanged dependency. ULIDs carry no spaces.
 
 ## Verified
 
 - `npx vitest run src/components/layout/__tests__ src/stores/__tests__/resolve.test.ts`
-  — 9 files, 251 passed.
+  — 9 files, 252 passed.
 - `npm run typecheck` — clean.
 - `npx playwright test e2e/bookmarked-pages.spec.ts` — 8 passed, against the
   pre-installed Chromium.
 
-Four tests are new, three reworked. Each was shown red before being trusted:
+Five tests are new, three reworked. Each was shown red before being trusted:
 
 - empty-state gate broken → `expected <p class="text-sm font-medium">No
   bookmarks</p> to be null`, on both the still-resolving and the failed-IPC

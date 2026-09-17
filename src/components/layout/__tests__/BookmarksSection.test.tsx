@@ -215,6 +215,51 @@ describe('BookmarksSection', () => {
     })
 
     /**
+     * A space switch flushes the space it leaves (`clearAllForSpace`), but this
+     * section never unmounts, so the record of what it has already asked about
+     * outlives the cache that record was about. Scoped per space, coming back
+     * re-asks; shared across spaces, the id is uncached AND already marked
+     * asked, so it is neither rendered nor pending and the empty state claims
+     * the user has no bookmarks — #5075's symptom, restored by its own fix.
+     */
+    it('re-asks for a bookmark after a space round trip flushed the cache', async () => {
+      writePreference(PREFERENCES.starredPages, ['NEW'])
+      // Scope-aware, as the backend is: the page lives in A, so asking under B
+      // answers with nothing.
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          batch_resolve: (args) =>
+            (args['scope'] as { space_id: string }).space_id === SPACE_A
+              ? (args['ids'] as string[]).map((id) => resolvedRow(id, 'Brand New Page'))
+              : [],
+        }),
+      )
+
+      renderSection()
+      expect(await screen.findByRole('button', { name: 'Brand New Page' })).toBeInTheDocument()
+      expect(resolveArgs()).toHaveLength(1)
+
+      // Away. The flush is what `useAppSpaceLifecycle` does on every switch;
+      // it is driven directly here because that hook is App-level.
+      await act(async () => {
+        useSpaceStore.setState({ currentSpaceId: SPACE_B })
+        useResolveStore.getState().clearAllForSpace(SPACE_A)
+      })
+      // B does not hold it, and says so, so B is legitimately empty.
+      expect(await screen.findByText(t('bookmarks.empty'))).toBeInTheDocument()
+
+      await act(async () => {
+        useSpaceStore.setState({ currentSpaceId: SPACE_A })
+      })
+
+      expect(await screen.findByRole('button', { name: 'Brand New Page' })).toBeInTheDocument()
+      expect(screen.queryByText(t('bookmarks.empty'))).not.toBeInTheDocument()
+      // Three asks: A, then B, then A again — the last because the answer A
+      // had was thrown away with the cache.
+      expect(resolveArgs()).toHaveLength(3)
+    })
+
+    /**
      * Titles arrive with the resolve cache, and a bookmark it does not hold is
      * looked up. Until that lookup answers, an empty state would tell a user
      * with plenty of bookmarks that they have none — including here, where the

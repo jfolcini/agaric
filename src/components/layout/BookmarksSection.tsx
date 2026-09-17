@@ -46,9 +46,12 @@ import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { getPageDisplayName } from '@/lib/page-display'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
-import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
+
+/** Shared empty set, so a space with nothing asked yet keeps a stable identity. */
+const EMPTY_IDS: ReadonlySet<string> = new Set()
 
 export function BookmarksSection(): ReactElement {
   const { t } = useTranslation()
@@ -60,15 +63,26 @@ export function BookmarksSection(): ReactElement {
   // space switch flushes the previous space's entries.
   const resolveVersion = useResolveStore((s) => s.version)
   /**
-   * Composite keys (`keyFor(space, id)`) this section has asked the backend
-   * about and had an answer for — whether or not the answer contained them.
+   * The bookmark ids this section has asked the backend about and had an
+   * answer for — whether or not the answer contained them — and the space they
+   * were asked in.
    *
    * An id the answer left out (another space's, or purged) belongs here so the
    * ask is not repeated: the store write that follows an answer bumps
-   * `resolveVersion`, which recomputes `pendingIds` below, which would re-fire
-   * the resolve effect for that id forever.
+   * `resolveVersion`, which recomputes the pending set below, which would
+   * re-fire the resolve effect for that id forever.
+   *
+   * Scoped to the space because switching AWAY flushes that space's cache
+   * (`clearAllForSpace`, `useAppSpaceLifecycle`) while this component stays
+   * mounted and keeps the set. Coming back, those ids are uncached AND already
+   * recorded as asked, so they would be neither rendered nor pending — the
+   * false empty state this whole change exists to remove.
    */
-  const [lookedUpKeys, setLookedUpKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const [asked, setAsked] = useState<{ space: string | null; ids: ReadonlySet<string> }>(() => ({
+    space: null,
+    ids: EMPTY_IDS,
+  }))
+  const askedIds = asked.space === currentSpaceId ? asked.ids : EMPTY_IDS
 
   /**
    * The one pass over the bookmark list: what this space can render, and what
@@ -80,19 +94,24 @@ export function BookmarksSection(): ReactElement {
    * in — or synced in from another device — is in neither list, and dropping
    * it left the section claiming the user had no bookmarks at all (#5075).
    */
-  const { bookmarks, pendingIds } = useMemo(() => {
+  const { bookmarks, pendingKey } = useMemo(() => {
     const resolve = useResolveStore.getState()
     const resolved: Array<{ pageId: string; title: string }> = []
     const pending: string[] = []
     for (const id of starredIds) {
       if (resolve.isResolved(id)) resolved.push({ pageId: id, title: resolve.resolveTitle(id) })
-      else if (!lookedUpKeys.has(keyFor(currentSpaceId, id))) pending.push(id)
+      else if (!askedIds.has(id)) pending.push(id)
     }
-    return { bookmarks: resolved, pendingIds: pending }
+    // A string, not the array: the effect below re-runs on identity, and this
+    // memo recomputes on every `resolveVersion` bump — a page-picker keystroke
+    // (#753) included. A fresh array each time would cancel an in-flight
+    // lookup and re-issue it per keystroke. ULIDs carry no spaces.
+    return { bookmarks: resolved, pendingKey: pending.join(' ') }
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the store is read imperatively so the memo does not re-run per unrelated cache write
-  }, [starredIds, resolveVersion, currentSpaceId, lookedUpKeys])
+  }, [starredIds, resolveVersion, askedIds])
 
   useEffect(() => {
+    const pendingIds = pendingKey === '' ? [] : pendingKey.split(' ')
     // Fail closed while the space store hydrates, as `preload` does: an
     // unscoped resolve would serve another space's title here.
     if (pendingIds.length === 0 || currentSpaceId == null) return
@@ -107,10 +126,10 @@ export function BookmarksSection(): ReactElement {
         )
         if (cancelled) return
         // Marked before the store write so one render sees both.
-        setLookedUpKeys((prev) => {
-          const next = new Set(prev)
-          for (const id of pendingIds) next.add(keyFor(currentSpaceId, id))
-          return next
+        setAsked((prev) => {
+          const ids = new Set(prev.space === currentSpaceId ? prev.ids : EMPTY_IDS)
+          for (const id of pendingIds) ids.add(id)
+          return { space: currentSpaceId, ids }
         })
         useResolveStore.getState().batchSet(
           rows.map((r) => ({
@@ -128,7 +147,7 @@ export function BookmarksSection(): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [pendingIds, currentSpaceId])
+  }, [pendingKey, currentSpaceId])
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -160,7 +179,7 @@ export function BookmarksSection(): ReactElement {
             // have none.
             // The dashed empty box has no icon-rail layout, and the rail
             // already hides the header that explains it.
-            pendingIds.length === 0 ? (
+            pendingKey === '' ? (
               <div className="group-data-[collapsible=icon]:hidden">
                 <EmptyState
                   compact
