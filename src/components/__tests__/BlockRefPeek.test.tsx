@@ -119,6 +119,11 @@ async function hoverOpen(
   await waitFor(() => {
     expect(within(peek).queryByText(/Loading preview/)).not.toBeInTheDocument()
   })
+  // `computePosition` is async and the peek stays `visibility: hidden` until
+  // it resolves, so a role query here races it: a hidden subtree has none.
+  await waitFor(() => {
+    expect(peek).toBeVisible()
+  })
   return peek
 }
 
