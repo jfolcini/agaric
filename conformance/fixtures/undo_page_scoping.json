@@ -1,0 +1,219 @@
+{
+  "description": "#5057 — the two-page fixture the positional undo commands had been missing. `find_positional_undo_target` and `enumerate_undo_group_in_tx` both scope through a `WITH RECURSIVE page_blocks` CTE over `parent_id`, so `undoDepth` counts ops on THAT page, not ops globally. A single-page fixture cannot tell a scoped implementation from an unscoped one: both answer the same. Here the newest op in the vault belongs to Beta while the undo names Alpha, so an unscoped depth 0 reverts the wrong page's edit and the snapshot says so.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha v1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta v2",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "depth_zero_counts_within_the_named_page",
+      "returns": ["undo_page_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "alpha_after_the_scoped_undo",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "beta_untouched_by_the_scoped_undo",
+      "rows": ["B4#parent_id=B3#page_id=B3#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "undo_page_scoping",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha v1"
+      },
+      "command": "edit_block",
+      "comment": "Alpha's first op — gives S2 a prior text row so the edit below is reversible."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha v2"
+      },
+      "command": "edit_block",
+      "comment": "Alpha's newest op, and the one the scoped undo must reach."
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "beta v1"
+      },
+      "command": "edit_block",
+      "comment": "Beta's first op."
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "beta v2"
+      },
+      "command": "edit_block",
+      "comment": "The newest op in the whole vault, and deliberately NOT on the page the undo names."
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "Depth 0 counts within ALPHA, so this reverses `alpha v2` and leaves Beta alone. Unscoped, depth 0 would be Beta's newest edit instead — the snapshot separates the two.",
+      "name": "depth_zero_counts_within_the_named_page",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "Alpha rolled back to `alpha v1`.",
+      "name": "alpha_after_the_scoped_undo"
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S3"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "Beta untouched at `beta v2` — the half an unscoped undo would have taken.",
+      "name": "beta_untouched_by_the_scoped_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha seed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "beta seed",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

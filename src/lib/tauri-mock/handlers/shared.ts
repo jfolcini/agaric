@@ -31,6 +31,7 @@ import {
 } from '@/lib/tauri-mock/link-scan'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
+  attachments,
   blocks,
   blockTagRefs,
   blockTags,
@@ -1772,7 +1773,7 @@ export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, un
   const reverseOpType = reverseOpTypeFor(effective)
   // Before the revert: see `reversePayloadFor`.
   const reversePayload = reversePayloadFor(effective)
-  applyRevertForOp(effective, blocks, { properties, blockTags })
+  applyRevertForOp(effective, blocks, { properties, blockTags, attachments })
   const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: effective }, true)
   return {
     reversed_op: { device_id: effective.device_id, seq: effective.seq },

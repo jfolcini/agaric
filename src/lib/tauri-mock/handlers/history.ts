@@ -28,6 +28,7 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
+  attachments,
   type MockOpLogEntry,
   blockTags,
   blocks,
@@ -40,10 +41,12 @@ import {
 // tests observe the same group the real backend reverts. Walks the in-memory `opLog` newest-first,
 // filtering out `is_undo` ops (#4868), seeds at index `depth`,
 // and counts consecutive same-device + within-window ops.
-function findUndoGroupSize(depth: number, windowMs: number): number {
+function findUndoGroupSize(depth: number, windowMs: number, scope: Set<string>): number {
   // Newest-first ordering on (created_at DESC, seq DESC) — see
   // `sortOpLogNewestFirst` (shared.ts).
-  const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
+  const undoableOps = sortOpLogNewestFirst(
+    opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
+  )
 
   if (depth < 0 || depth >= undoableOps.length) return 0
 
@@ -89,6 +92,55 @@ function opBlockId(entry: MockOpLogEntry): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The ids the backend's `page_blocks` CTE yields: the page row itself plus its
+ * transitive descendants over `parent_id`, bounded at depth 100 (invariant 9)
+ * and NOT filtered on `deleted_at` — a soft-deleted row stays in scope, which
+ * is what lets a rewind reverse the delete that created it.
+ *
+ * #5057 — `find_positional_undo_target`, `enumerate_undo_group_in_tx` and
+ * `select_ops_after_target` all scope through this. The mock filtered the whole
+ * op log instead, so an undo on page A could reverse page B's newest op, and a
+ * rewind of A reverted every op on B. One walk for all three: scoping one
+ * handler and leaving its siblings unscoped is the shape that produced most of
+ * #5068's divergences.
+ */
+function pageBlockIds(pageId: string): Set<string> {
+  const ids = new Set<string>([pageId])
+  const all = Array.from(blocks.values())
+  let frontier = [pageId]
+  for (let depth = 0; depth < 100 && frontier.length > 0; depth += 1) {
+    const next: string[] = []
+    for (const parentId of frontier) {
+      for (const b of all) {
+        if (((b['parent_id'] as string | null) ?? null) !== parentId) continue
+        const id = b['id'] as string
+        if (ids.has(id)) continue
+        ids.add(id)
+        next.push(id)
+      }
+    }
+    frontier = next
+  }
+  return ids
+}
+
+/**
+ * Is this op in `pageId`'s scope? `"__all__"` means unscoped, which only
+ * `restore_page_to_op` accepts — `select_ops_after_target` branches on it
+ * (history.rs) where the two undo queries have no such escape.
+ *
+ * An op with no `block_id` is OUT of a page scope, faithfully: the attachment
+ * ops carry none (`OpPayload::block_id()` answers `None`), which is exactly why
+ * the backend reaches them through a second probe over `attachments` rather
+ * than through this predicate.
+ */
+function opInPageScope(entry: MockOpLogEntry, scope: Set<string> | null): boolean {
+  if (scope === null) return true
+  const blockId = opBlockId(entry)
+  return blockId !== null && scope.has(blockId)
 }
 
 /** `AND (?N IS NULL OR ol.op_type = ?N)` — both history queries push the FE's
@@ -280,7 +332,7 @@ export const historyHandlers = {
       // cross-module lookup through the barrel's `HANDLERS`.)
       throw new Error('undo_page_group mock: missing sibling handler')
     }
-    const groupSize = findUndoGroupSize(depth, windowMs)
+    const groupSize = findUndoGroupSize(depth, windowMs, pageBlockIds(a['pageId'] as string))
     const results: unknown[] = []
     for (let i = 0; i < groupSize; i++) {
       results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))
@@ -305,7 +357,7 @@ export const historyHandlers = {
       // payload was a stash with no `from_text`, and the `edit_block` arm would
       // have WIPED the block's content.
       const reversePayload = reversePayloadFor(target)
-      applyRevertForOp(target, blocks, { properties, blockTags })
+      applyRevertForOp(target, blocks, { properties, blockTags, attachments })
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
@@ -340,7 +392,9 @@ export const historyHandlers = {
     // it `is_undo = 0`, "its effect is forward-equivalent"), so undo-after-redo
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
-    const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
+    const undoableOps = sortOpLogNewestFirst(
+      opLog.filter((o) => !o.is_undo && opInPageScope(o, pageBlockIds(a['pageId'] as string))),
+    )
     // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
     // checks the sign BEFORE the lookup and returns
     // `AppError::validation("undo_depth must be non-negative")`; folding both
@@ -377,7 +431,7 @@ export const historyHandlers = {
     // `restore_block` on the target row alone where the backend cascades the
     // cohort. Two paths with different coverage is what produced that.
     const reversePayload = reversePayloadFor(target)
-    applyRevertForOp(target, blocks, { properties, blockTags })
+    applyRevertForOp(target, blocks, { properties, blockTags, attachments })
 
     // #4868 — the GENUINE reverse op type with `is_undo`, the way the backend
     // appends it, over a genuine reverse payload (#4870) whose `block_id` is
@@ -437,7 +491,7 @@ export const historyHandlers = {
     // thing the per-type chain this replaces spelled out for five op types and
     // stayed silent on for the property and tag ones.
     const redoPayload = reversePayloadFor(undoOp)
-    applyRevertForOp(undoOp, blocks, { properties, blockTags })
+    applyRevertForOp(undoOp, blocks, { properties, blockTags, attachments })
 
     // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
     // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable.
@@ -627,7 +681,14 @@ export const historyHandlers = {
     // sweeps undo rows too — reverting one re-applies the op it reversed, the
     // same way `revert_ops` above already handles them (#4870). Filtering them
     // out under-counted `ops_reverted` and left the op-log tail short.
-    const newer = sortOpLogNewestFirst(opLog.filter((o) => o.seq > targetSeq))
+    // `select_ops_after_target` (history.rs) takes an UNSCOPED query when
+    // `page_id == "__all__"` and the page-scoped one otherwise. The only UI
+    // call site passes `__all__`, which is why an unscoped sweep looked right.
+    const pageId = a['pageId'] as string
+    const scope = pageId === '__all__' ? null : pageBlockIds(pageId)
+    const newer = sortOpLogNewestFirst(
+      opLog.filter((o) => o.seq > targetSeq && opInPageScope(o, scope)),
+    )
     // A PRE-PASS, not a check inside the loop below: the backend computes the
     // whole reverse batch before applying any of it (`compute_reverse_batch`,
     // then `revert_ops_in_tx`), so an op it cannot reverse aborts with nothing
@@ -649,7 +710,7 @@ export const historyHandlers = {
       }
       const reverseOpType = reverseOpTypeFor(op)
       const reversePayload = reversePayloadFor(op)
-      applyRevertForOp(op, blocks, { properties, blockTags })
+      applyRevertForOp(op, blocks, { properties, blockTags, attachments })
       const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: op }, true)
       results.push({
         reversed_op: { device_id: op.device_id, seq: op.seq },

@@ -135,7 +135,13 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(rowOf(A)['position']).toBe(1)
 
     dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
-    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+    // #5057 — undone from OTHER, not PAGE. The positional undo scopes through
+    // `page_blocks`, a live `parent_id` walk, and B sits under OTHER by the
+    // time the undo runs, so PAGE's scope no longer contains the move op.
+    // `undo_page_scoping.json` pins that the backend counts depth within the
+    // named page; this test is about the tombstone's rank, and the page it
+    // names was incidental until the mock started scoping too.
+    dispatch('undo_page_op', { pageId: OTHER, undoDepth: 0 })
 
     expect(rowOf(B)['parent_id']).toBe(PAGE)
     // The live target group was EMPTY (A is a tombstone), so the slot clamps to

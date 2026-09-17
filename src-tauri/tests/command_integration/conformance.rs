@@ -1413,7 +1413,14 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
     // #5057: the same idea for op-log coordinates — what an `On` label resolves
     // against. Refreshed alongside `created_ids`, so an op can only name an op an
     // EARLIER one appended.
-    let mut op_refs: Vec<(String, i64)> = Vec::new();
+    //
+    // Seeded from the LOADED op log rather than empty, because the seed loader
+    // appends real ops: it tags and sets properties through `add_tag_inner` /
+    // `set_property_inner`. Starting at zero made `On` mean different things on
+    // the two runners for a fixture's FIRST op — the mock reads its live
+    // `opLog`, which already holds those rows. `Cn` needs no such seeding:
+    // seeded blocks are raw-inserted and append nothing.
+    let mut op_refs: Vec<(String, i64)> = read_op_refs_in_op_order(&pool).await;
     let mut op_records: Vec<Value> = Vec::new();
     let mut command_op_names: BTreeSet<String> = BTreeSet::new();
     if let Some(ops) = fixture["ops"].as_array() {

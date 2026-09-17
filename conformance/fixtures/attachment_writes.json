@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — `delete_attachment` and `rename_attachment`. `attachments` is not one of the snapshot's five arrays, so the `list_attachments` step is what observes the writes. Both commands DO append an op, unlike the other outside-the-snapshot writers pinned so far, so the op-log digest moves too — which is the half a mock that mutates its map silently gets wrong. `add_attachment_with_bytes` is deliberately absent: it writes bytes to disk and answers with a stack-local `fs_path` and a real blake3 `content_hash`, neither of which the mock can reproduce, so it needs a narrower return shape than this fixture would imply.",
+  "description": "#5057 — `delete_attachment` and `rename_attachment`. `attachments` is not one of the snapshot's five arrays, so the `list_attachments` step is what observes the writes. Both commands DO append an op, unlike the other outside-the-snapshot writers pinned so far, so the op-log digest moves too — which is the half a mock that mutates its map silently gets wrong. `add_attachment_with_bytes` is deliberately absent: it writes bytes to disk and answers with a stack-local `fs_path` and a real blake3 `content_hash`, neither of which the mock can reproduce, so it needs a narrower return shape than this fixture would imply. #5057 also undoes the rename here: `applyRevertForOp` had no arm for either attachment op, so an undone rename appended a reverse row and left the filename alone. `delete_attachment` still has no arm, on purpose — its reverse rebuilds an `AddAttachmentPayload` from the original `add_attachment` op, and the mock's `add_attachment_with_bytes` appends none to rebuild from, so that arm arrives when that command is pinned.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -57,8 +57,11 @@
       }
     ],
     "op_log_digest": {
-      "count": 2,
+      "count": 3,
       "ops": [
+        {
+          "op_type": "rename_attachment"
+        },
         {
           "op_type": "rename_attachment"
         },
@@ -98,6 +101,14 @@
     {
       "code": null,
       "error": null,
+      "name": "undo_the_rename",
+      "returns": [
+        "undo_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
       "name": "delete_an_attachment",
       "returns": ["delete_attachment"]
     },
@@ -116,7 +127,7 @@
       "name": "attachments_after_writes",
       "rows": [
         "ATT4#block_id=B2#filename=early.png#mime_type=image/png#size_bytes=10#fs_path=attachments/ATT4.png#created_at=900#content_hash=blake3-of-early",
-        "ATT1#block_id=B2#filename=renamed.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
+        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
       ],
       "total_count": null
     }
@@ -168,6 +179,15 @@
     },
     {
       "args": {
+        "opRef": "O1"
+      },
+      "command": "undo_op",
+      "comment": "#5057 — undoing the rename swaps the filenames back. The reverse is computed from the op's own payload (`reverse_rename_attachment`), not from a prior row, so it needs nothing the delete reverse needs. ATT1 returns to `scan.pdf` below.",
+      "name": "undo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
         "attachmentId": "ATT2"
       },
       "command": "delete_attachment",
@@ -192,7 +212,7 @@
         "blockId": "S2"
       },
       "command": "list_attachments",
-      "comment": "The observation: ATT1 under its new name, and ATT2 gone.",
+      "comment": "The observation: ATT1 back under its ORIGINAL name after the undo, and ATT2 gone.",
       "name": "attachments_after_writes"
     }
   ],
