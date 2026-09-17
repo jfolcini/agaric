@@ -1479,25 +1479,18 @@
    (not a background swap) so it composes with every chip type's own fill and
    with the deleted/hover states.
 
-   #5076 — hairline and translucent, hugging the chip (`outline-offset` is left
-   at its initial 0; nothing else sets it on these chips). `--ring` is
-   the token `focus-visible` owns, so an opaque 2px of it read as a focus ring
-   or a validation error rather than as an anchor marker, and the 1px offset
-   around a small `rounded-md` pill drew a stray oval clear of the fill, with
-   any following punctuation landing inside the gap. This cue is permanent
-   where focus is transient, so it has to sit below focus in weight, not just
-   in thickness. */
+   #5076 — a hairline hugging the chip. An opaque 2px of `--ring` read as a
+   focus ring or a validation error: this cue is permanent where focus is
+   transient, so it has to sit below focus in weight, not just in thickness. */
 .ref-chip-anchor {
   outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent);
 }
 @media (prefers-contrast: more) {
-  /* A hairline at 55% is the first thing to vanish for the users who asked for
-     more contrast, so it goes opaque and doubles. It cannot collide with focus:
-     the shared chip rule below is `.block-link-chip:focus-visible` and friends
-     at specificity (0,2,0), so a focused chip drops its outline entirely and
-     shows the `/50` ring instead, whatever this (0,1,0) rule says. */
+  /* Opaque and doubled so the hairline does not vanish for the users who asked
+     for more contrast — in the chip's own colour, because `--ring` at full
+     opacity here is byte-for-byte what #5076 removed. */
   .ref-chip-anchor {
-    outline: 2px solid var(--ring);
+    outline: 2px solid currentColor;
   }
 }
 

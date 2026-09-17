@@ -27,29 +27,40 @@ existing `color-mix` precedent — mixing toward `transparent` in a polar space
 interpolates hue for no reason.
 
 A hairline at 55% is the first cue to vanish for users who asked for more
-contrast, so `@media (prefers-contrast: more)` takes it back to opaque and 2px.
-The override sits directly under the rule rather than in the accessibility
-section at the foot of the file, following the `--embed-surface` convention of
-keeping a token and its contrast sibling together.
+contrast, so `@media (prefers-contrast: more)` takes it back to opaque and 2px
+— in `currentColor`, not `--ring`. The override sits directly under the rule
+rather than in the accessibility section at the foot of the file, following the
+`--embed-surface` convention of keeping a token and its contrast sibling
+together.
 
-I first justified that override by saying focus still outranks it because the
-accessibility block's `:focus-visible` is 3px of `currentColor`. Review caught
-that, and driving a real keyboard focus in the browser confirmed it: the shared
+Two review rounds got it there, and the first version of this log was wrong
+about both.
+
+I originally justified the override by saying focus still outranks it because
+the accessibility block's `:focus-visible` is 3px of `currentColor`. Driving a
+real keyboard focus in the browser disproved it: the shared
 `.block-link-chip:focus-visible, .tag-ref-chip:focus-visible,
 .block-ref-chip:focus-visible` rule is specificity (0,2,0) and beats the bare
 `:focus-visible` at (0,1,0), so a focused chip computes `outline: none 0px` and
-shows a 3px `/0.5` ring by `box-shadow` instead. The `currentColor` outline
-never renders on a chip at all. The anchor rule cannot collide with focus, but
-not for the reason I gave.
+shows a 3px `/0.5` ring by `box-shadow`. The `currentColor` outline never
+renders on a chip at all.
 
-That leaves a real inversion, pre-existing and not introduced here: in
-high-contrast mode an UNfocused anchor chip is a 2px opaque outline while a
-FOCUSED one is a 3px half-alpha ring, so focus reads lighter than its absence —
-the same inversion #5076 set out to fix, one state over, and across every chip
-type rather than just anchors. Raised with the maintainer with a proposed
-one-rule patch (full-alpha `ring-ring` for those three selectors under
-`prefers-contrast: more`) rather than pushed here, since it changes focus
-appearance for all chips and is wider than this issue.
+Then the override itself was still `2px solid var(--ring)` — byte-for-byte the
+declaration this session removed for being indistinguishable from focus. So for
+a high-contrast user the fix did nothing: #5076 says the cue must not reuse
+`--ring` at full opacity, and that is exactly what it did, one media query
+over. `currentColor` costs one word and takes the anchor cue off the focus
+token in every mode rather than only the default one. Measured both:
+
+- default: `oklab(0.55001 0.219238 0.1201 / 0.55) solid 1px`
+- `prefers-contrast: more`: `lab(40.1504 58.8643 45.7701) solid 2px`, which is
+  the chip's own computed `color` exactly.
+
+What remains is #5082, filed rather than fixed here: in high-contrast mode a
+focused chip shows only a half-alpha ring, so focus reads lighter than an
+unfocused anchor chip's opaque outline. Pre-existing, and in the shared focus
+rule for all three chip types, so fixing it changes focus appearance well
+beyond this issue.
 
 ## Verified
 
