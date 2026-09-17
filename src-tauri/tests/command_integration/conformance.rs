@@ -452,10 +452,11 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
             Option<String>, // due_date
             Option<String>, // scheduled_date
             Option<String>, // page_id
+            Option<String>, // space_id
         ),
     >(
         "SELECT id, block_type, content, parent_id, position, deleted_at, \
-                todo_state, priority, due_date, scheduled_date, page_id \
+                todo_state, priority, due_date, scheduled_date, page_id, space_id \
          FROM blocks WHERE id <> ? ORDER BY id",
     )
     .bind(TEST_SPACE_ID)
@@ -476,6 +477,7 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
             due_date: r.8,
             scheduled_date: r.9,
             page_id: r.10,
+            space_id: r.11,
         })
         .collect();
 
@@ -720,12 +722,50 @@ async fn verify_fixture_engine_parity(
             _ => {}
         }
     }
-    let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let mut guard = state
-        .registry
-        .for_space(&space, DEV)
-        .expect("for_space (conformance parity)");
-    let engine = guard.engine_mut();
+    // #5057 — per BLOCK, not one space for the whole fixture. A block's engine
+    // doc is the space it belongs to (`blocks.space_id`); a block that IS a
+    // space carries no membership of its own, so its doc is keyed by its own id
+    // — which is why `ensure_test_space` leaves the harness space unstamped and
+    // why `create_space_inner` ends with `hydrate_space_block_into_own_engine`.
+    // Resolving every id against TEST_SPACE_ID alone made any fixture that
+    // created a space fail this guard on presence, which is what "outside the
+    // single-space conformance scope" actually meant.
+    //
+    // The own-id fallback applies ONLY to a block with a SQL row. A block with
+    // no row is PURGED, and `Registry::for_space` creates an engine on miss, so
+    // keying a purged id by itself would open a fresh empty doc — under which
+    // `read_block` answers `None` and the satellites below answer `[]` by
+    // construction, making the purge half of this guard vacuous. A purged
+    // block's node and satellites, if they leaked, are still in whichever doc
+    // it lived in, so search the spaces the registry ALREADY holds
+    // (`space_ids()` does not create) and answer from the first that has it.
+    let space_of = |id: &str| -> SpaceId {
+        match sql_blocks.get(id) {
+            // A block that IS a space is not a member of itself.
+            Some(block) => SpaceId::from_trusted(block.space_id.as_deref().unwrap_or(id)),
+            None => state
+                .registry
+                .space_ids()
+                .into_iter()
+                .find(|space| {
+                    state.registry.for_space(space, DEV).is_ok_and(|mut guard| {
+                        let engine = guard.engine_mut();
+                        engine.read_block(id).is_ok_and(|row| row.is_some())
+                            || engine
+                                .read_all_properties_typed(id)
+                                .is_ok_and(|p| !p.is_empty())
+                            || engine.read_tags(id).is_ok_and(|t| !t.is_empty())
+                    })
+                })
+                .unwrap_or_else(|| SpaceId::from_trusted(TEST_SPACE_ID)),
+        }
+    };
+    let engine_for = |id: &str| {
+        state
+            .registry
+            .for_space(&space_of(id), DEV)
+            .expect("for_space (conformance parity)")
+    };
 
     let fail = |detail: String| {
         Err(format!(
@@ -736,15 +776,19 @@ async fn verify_fixture_engine_parity(
 
     for id in known_ids {
         let sql = sql_blocks.get(id.as_str()).copied();
-        let loro = engine
+        let loro = engine_for(id)
+            .engine_mut()
             .read_block(id)
             .map_err(|error| format!("fixture '{fixture_name}': read Loro block {id}: {error}"))?;
         if sql.is_none() || loro.is_none() {
             if sql.is_none() && loro.is_none() {
-                let properties = engine.read_all_properties_typed(id).map_err(|error| {
-                    format!("fixture '{fixture_name}': read purged properties {id}: {error}")
-                })?;
-                let tags = engine.read_tags(id).map_err(|error| {
+                let properties = engine_for(id)
+                    .engine_mut()
+                    .read_all_properties_typed(id)
+                    .map_err(|error| {
+                        format!("fixture '{fixture_name}': read purged properties {id}: {error}")
+                    })?;
+                let tags = engine_for(id).engine_mut().read_tags(id).map_err(|error| {
                     format!("fixture '{fixture_name}': read purged tags {id}: {error}")
                 })?;
                 if !properties.is_empty() || !tags.is_empty() {
@@ -756,14 +800,16 @@ async fn verify_fixture_engine_parity(
                 continue;
             }
             return fail(format!(
-                "block {id} presence differs (SQL={}, Loro={})",
+                "block {id} presence differs (SQL={}, Loro={}); space_id={:?}",
                 sql.is_some(),
-                loro.is_some()
+                loro.is_some(),
+                sql.map(|b| b.space_id.clone())
             ));
         }
         let sql = sql.expect("SQL presence checked");
         let loro = loro.expect("Loro presence checked");
-        let loro_deleted = engine
+        let loro_deleted = engine_for(id)
+            .engine_mut()
             .read_deleted(id)
             .map_err(|error| format!("fixture '{fixture_name}': read deleted {id}: {error}"))?;
         if sql.block_type != loro.block_type
@@ -806,9 +852,12 @@ async fn verify_fixture_engine_parity(
         let sql_order: Vec<_> = sql_order.into_iter().map(|(_, id)| id).collect();
         let mut loro_order = Vec::new();
         for id in &sql_order {
-            let position = engine.read_position(id).map_err(|error| {
-                format!("fixture '{fixture_name}': read position {id}: {error}")
-            })?;
+            let position = engine_for(id)
+                .engine_mut()
+                .read_position(id)
+                .map_err(|error| {
+                    format!("fixture '{fixture_name}': read position {id}: {error}")
+                })?;
             loro_order.push((position, *id));
         }
         loro_order.sort_unstable();
@@ -840,12 +889,15 @@ async fn verify_fixture_engine_parity(
                 .values()
                 .filter(|block| block.parent_id == *parent)
             {
-                let position = engine.read_position(&block.id).map_err(|error| {
-                    format!(
-                        "fixture '{fixture_name}': read position {}: {error}",
-                        block.id
-                    )
-                })?;
+                let position = engine_for(&block.id)
+                    .engine_mut()
+                    .read_position(&block.id)
+                    .map_err(|error| {
+                        format!(
+                            "fixture '{fixture_name}': read position {}: {error}",
+                            block.id
+                        )
+                    })?;
                 if block.position != Some(position) {
                     agrees = false;
                     break;
@@ -887,7 +939,8 @@ async fn verify_fixture_engine_parity(
                 property.block_id, property.key
             ));
         };
-        let actual = engine
+        let actual = engine_for(&property.block_id)
+            .engine_mut()
             .read_all_properties_typed(&property.block_id)
             .map_err(|error| {
                 format!(
@@ -906,7 +959,8 @@ async fn verify_fixture_engine_parity(
         }
     }
     for block in sql_blocks.values() {
-        let loro_properties = engine
+        let loro_properties = engine_for(&block.id)
+            .engine_mut()
             .read_all_properties_typed(&block.id)
             .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?;
         for (key, value) in [
@@ -963,7 +1017,8 @@ async fn verify_fixture_engine_parity(
         if !known.contains(tag.block_id.as_str()) || !sql_blocks.contains_key(tag.tag_id.as_str()) {
             continue;
         }
-        let tags = engine
+        let tags = engine_for(&tag.block_id)
+            .engine_mut()
             .read_tags(&tag.block_id)
             .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
         if !tags.contains(&tag.tag_id) {
@@ -974,7 +1029,8 @@ async fn verify_fixture_engine_parity(
         }
     }
     for block in sql_blocks.values() {
-        for tag_id in engine
+        for tag_id in engine_for(&block.id)
+            .engine_mut()
             .read_tags(&block.id)
             .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?
         {
@@ -991,7 +1047,6 @@ async fn verify_fixture_engine_parity(
             }
         }
     }
-    drop(guard);
     Ok(())
 }
 

@@ -46,6 +46,7 @@ pub struct RawBlock {
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
     pub page_id: Option<String>,
+    pub space_id: Option<String>,
 }
 
 pub struct RawProperty {

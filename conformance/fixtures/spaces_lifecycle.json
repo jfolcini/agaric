@@ -1,0 +1,193 @@
+{
+  "description": "#5057 — the two space CREATORS, both previously waived as \"outside the single-space conformance snapshot scope\". They are not: the snapshot projection excludes exactly one block, the harness's own test space (`FROM blocks WHERE id <> ?`), and filters nothing by space. A space is an ordinary top-level page row in `blocks`, and its `is_space` / `accent_color` writes are ordinary rows in `properties`. The fixture therefore needs no second-space TOKEN either: it CREATES the space it then writes into and names it `C1`, the same created-block convention every other arg uses.\n\nWhat the single-space limit really was is the #891 SQL/Loro parity guard, which resolved every block against `TEST_SPACE_ID`'s engine doc. A space is not a member of itself — `ensure_test_space` leaves the harness space's `space_id` NULL and `create_space_inner` ends with `hydrate_space_block_into_own_engine` — so a created space was present in SQL and absent from the one doc the guard looked in, and the fixture failed on presence before any assertion ran. The guard now resolves each block's doc as `space_id`, or the block's own id when it is itself a space.\n\nWhat the snapshot still cannot show is the space ASSIGNMENT: `create_page_in_space` writes `blocks.space_id`, a column the projection does not carry, and the mock's mirror `space` property is skipped on the TS side for exactly that reason. So it is pinned by its RETURN plus the page block it does put in the snapshot.\n\nThe mock divergence this found: `create_space` hardcoded `position: 0`, where the backend assigns a real sibling rank.\n\nNOT pinned here, each for its own reason. `move_blocks_to_space`: writing the `space` property re-ranks the destination space's top-level group (moving `S2` into the new space renumbered it and pushed both created blocks down by one), and the mock models no per-space dense positions at all — a count-only pin would pass while the tree diverged. `list_spaces`: the two stacks' space BOOTSTRAPS differ, not their snapshots — `ensure_test_space` writes no `is_space` property, so `list_spaces_inner`'s `INNER JOIN block_properties ... key = 'is_space'` never sees the harness space, while the mock prepends a hardcoded `Personal` row that no block backs. Until one of those moves, every row either side lists is an artefact of its own bootstrap.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Personal Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Archive",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "a note",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "accent_color",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "accent_color",
+        "value": "accent-violet",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "creates_a_page_block_and_flags_it",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "creates_a_root_page_in_the_new_space",
+      "returns": ["create_page_in_space#page_id=B5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "an_existing_title_resolves_instead_of_creating",
+      "returns": ["create_page_in_space#page_id=B5"]
+    }
+  ],
+  "name": "spaces_lifecycle",
+  "ops": [
+    {
+      "args": {
+        "accentColor": "accent-violet",
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "A space is a top-level page block plus an `is_space = 'true'` property — no registry table of its own, which is why the snapshot carries all of it. `position` is where the mock was wrong: `None` means APPEND, and the seed already holds two top-level pages. The accent rides as a second property on the same block, and is `value_text` so the palette token survives verbatim.",
+      "name": "creates_a_page_block_and_flags_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Roadmap",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "Into the space the op above made, named `C1`. The page BLOCK is in the snapshot; its membership is not — that is `blocks.space_id`, which the projection does not carry. The return is what names the block, and `parentId: null` makes it a root page rather than a child.",
+      "name": "creates_a_root_page_in_the_new_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Roadmap",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The SAME title in the SAME space. #4723: a live page title is unique per space, so this resolves to the page above and writes nothing — same id returned, no second block in the snapshot, no op in the digest. A mock that minted a fresh block answers a different label here.",
+      "name": "an_existing_title_resolves_instead_of_creating",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Personal Notes",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Archive",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "a note",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

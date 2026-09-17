@@ -195,6 +195,15 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // trims to nothing, and one another page already holds, are both dropped
     // by the command and so never appear here.
     ("set_page_aliases", HEADED_ID_KEY, &["inserted"], &[]),
+    // #5057 — the two space CREATORS answer with the new block's id, which
+    // `relabel_token` maps to its canonical label like any other id-valued
+    // attribute, so the return names WHICH block was made rather than a
+    // stack-local ULID. Both also land in the snapshot (the projection excludes
+    // only the harness's own test space), so the return and the settled state
+    // pin different halves: the return says what the caller was told, the
+    // snapshot says what was written.
+    ("create_space", HEADED_ID_KEY, &["space_id"], &[]),
+    ("create_page_in_space", HEADED_ID_KEY, &["page_id"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -503,6 +512,24 @@ pub(super) async fn apply_op_via_command(
                             .to_owned()
                     })
                     .collect(),
+            )
+            .await,
+        ),
+        // A space NAME and an accent token are the caller's own text; only
+        // `spaceId` / `parentId` are labels.
+        "create_space" => to_json(
+            create_space_inner(pool, DEV, mat, req_str("name"), opt_str("accentColor")).await,
+        ),
+        "create_page_in_space" => to_json(
+            create_page_in_space_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("parentId"),
+                req_str("content"),
+                arg_label_id("spaceId").unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'spaceId'")
+                }),
             )
             .await,
         ),
@@ -867,7 +894,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 31;
+    const MUTATING_ARM_COUNT: usize = 33;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

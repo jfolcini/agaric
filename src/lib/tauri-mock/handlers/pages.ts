@@ -74,6 +74,32 @@ function nocaseCompare(x: string, y: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+/**
+ * The dense 1-based rank a block appended to `parentId`'s children takes.
+ *
+ * Two rules the backend applies and a plain `siblings.length` does not.
+ * Positions are DENSE and 1-BASED (`insertAtSlotAndRenumber`), and a
+ * SOFT-DELETED sibling keeps its slot (#4669, #419), so tombstones count.
+ *
+ * At the ROOT the group is also per SPACE, not the whole `parent_id = NULL`
+ * set: each space's tree is its own Loro doc, so two spaces each have a block
+ * at rank 1. A block's space is `blocks.space_id`, except for a block that IS a
+ * space — not a member of itself — which ranks in its own group. That is why a
+ * new space comes out at 1 and the first page created inside it at 2.
+ */
+function nextDenseRank(parentId: string | null, spaceId: string | null): number {
+  let siblings = 0
+  for (const b of blocks.values()) {
+    if ((b['parent_id'] as string | null) !== parentId) continue
+    if (parentId === null) {
+      const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
+      if (owner !== spaceId) continue
+    }
+    siblings += 1
+  }
+  return siblings + 1
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -406,10 +432,7 @@ export const pagesHandlers = {
     const existing = findLivePageByTitle(content, spaceId)
     if (existing !== null) return existing
     const id = fakeId()
-    const siblings = [...blocks.values()].filter(
-      (b) => b['parent_id'] === parentId && !b['deleted_at'],
-    )
-    const position = siblings.length
+    const position = nextDenseRank(parentId, spaceId)
     const row = {
       id,
       block_type: 'page',
@@ -467,7 +490,10 @@ export const pagesHandlers = {
       content: (a['name'] as string) ?? null,
       parent_id: null,
       page_id: id,
-      position: 0,
+      // A space is not a member of itself, so it ranks in its OWN group, which
+      // a freshly minted id cannot already have a member of — hence 1. This was
+      // hardcoded `0`, a rank no backend row carries.
+      position: 1,
       deleted_at: null,
       todo_state: null,
       priority: null,

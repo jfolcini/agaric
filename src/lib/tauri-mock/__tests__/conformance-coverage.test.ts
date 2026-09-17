@@ -247,11 +247,11 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'neither of which the mock can reproduce, so it needs a narrower return shape first',
 
   // ── Pages / spaces / property definitions ──
-  create_page_in_space:
-    'a page is a root block (create_block); space scoping outside snapshot scope; the ' +
-    '#4723 resolve-to-existing-title is pinned mock-side by page-title-unique.test.ts',
-  create_space: 'space registry outside the single-space conformance snapshot scope',
-  move_blocks_to_space: 'cross-space move outside the single-space conformance snapshot scope',
+  move_blocks_to_space:
+    "writing the `space` property RE-RANKS the destination space's root sibling group — " +
+    'positions are dense per space, not across `parent_id = NULL` — and the mock models no ' +
+    'per-space positions at all, so a count-only pin would pass while the tree diverged ' +
+    '(#5057)',
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
   // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
@@ -675,8 +675,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'add_attachment_with_bytes',
   'compact_op_log_cmd',
   'confirm_pairing',
-  'create_page_in_space',
-  'create_space',
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
