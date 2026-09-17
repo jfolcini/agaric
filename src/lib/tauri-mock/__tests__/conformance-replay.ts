@@ -321,7 +321,7 @@ export function expandOpArgs(
   createdIds: readonly string[] = [],
 ): Record<string, unknown> {
   const out = { ...args }
-  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId']) {
+  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId', 'pageId']) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry

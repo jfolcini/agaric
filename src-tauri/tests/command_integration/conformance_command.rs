@@ -68,6 +68,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // refusal declaration plus a head naming which one ran. `flush_all_drafts`
     // adds the one field a caller can see: how many rows it CONSUMED, which
     // counts a draft dropped by a guard as well as one actually flushed.
+    // #5057 — `UndoResult` carries two `OpRef`s, and the two runners' device
+    // ids differ, so the shape names only the two op_type fields. Naming them
+    // is what pins the reversal: the type of the op undone and the type of the
+    // reverse op appended in its place.
+    (
+        "undo_page_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
     ("save_draft", HEADED_ID_KEY, &[], &[]),
     ("delete_draft", HEADED_ID_KEY, &[], &[]),
     ("flush_draft", HEADED_ID_KEY, &[], &[]),
@@ -303,6 +313,23 @@ pub(super) async fn apply_op_via_command(
         "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
         // An attachment id is the fixture's own short label (`ATT1`), inserted
         // verbatim by the seed loader, so it takes no expansion.
+        // #5057 — positional undo. `pageId` is a label like any other block
+        // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
+        // page"), which is why this one is spellable where the ref-addressed
+        // undo commands are not: an `OpRef` carries a device id, and the two
+        // runners' differ.
+        "undo_page_op" => to_json(
+            undo_page_op_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("pageId").expect("undo_page_op pageId"),
+                arg("undoDepth").and_then(Value::as_i64).unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'undoDepth'")
+                }),
+            )
+            .await,
+        ),
         "delete_attachment" => to_json(
             delete_attachment_inner(
                 pool,
@@ -679,7 +706,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 23;
+    const MUTATING_ARM_COUNT: usize = 24;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

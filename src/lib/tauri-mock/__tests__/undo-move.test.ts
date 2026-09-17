@@ -210,6 +210,35 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(loadedRootOrder()).toEqual([B])
   })
 
+  it('#5057 — both positional paths report reversed_op_type', () => {
+    // `UndoResult.reversed_op_type` is what the FE turns into its toast
+    // (`undo.op.${snakeToCamel(reversed_op_type)}` in `useUndoShortcuts.ts`),
+    // so an undefined here degrades every browser-mode undo to the generic
+    // fallback. `applyUndoForTarget` — the ref-addressed path shared by
+    // `undo_op` / `undo_ops` — always set it; these two POSITIONAL handlers
+    // build their result inline and had both dropped it. The conformance
+    // fixture covers the undo half; redo is given an `OpRef`-shaped
+    // `(undoDeviceId, undoSeq)`, which no fixture can spell, so it is pinned
+    // here.
+    const A = '0000000000000000000RTYPEAA'
+    seedPage([A])
+
+    dispatch('move_block', { blockId: A, newParentId: PAGE, newIndex: 0 })
+
+    const undone = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
+      reversed_op_type: string
+      new_op_ref: { seq: number }
+    }
+    expect(undone.reversed_op_type).toBe('move_block')
+
+    const redone = dispatch('redo_page_op', {
+      pageId: PAGE,
+      undoSeq: undone.new_op_ref.seq,
+    }) as { reversed_op_type: string }
+    // Redo names the ORIGINAL op it re-applies, not the undo row it was handed.
+    expect(redone.reversed_op_type).toBe('move_block')
+  })
+
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {
     // GS-style ids; GS_3 indents under GS_2, dedents back to root, then undo
     // must re-nest it under GS_2 at the indented depth.

@@ -61,6 +61,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: ['affected_page_ids'],
   },
   purge_block: { idKey: 'block_id', attrs: ['purged_count'], lists: [] },
+  // #5057 — `UndoResult` carries two `OpRef`s, and the two runners' device ids
+  // differ, so the shape names only the two op_type fields.
+  undo_page_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
   // #3830 — the two `property_definitions` writers answer with the row, so
   // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },

@@ -327,9 +327,14 @@ export const historyHandlers = {
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
     const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
+    // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
+    // checks the sign BEFORE the lookup and returns
+    // `AppError::validation("undo_depth must be non-negative")`; folding both
+    // into NotFound made an out-of-contract argument look like an empty history.
+    if (undoDepth < 0) throw validationRejection('undo_depth must be non-negative')
     // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
     // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
-    if (undoDepth < 0 || undoDepth >= undoableOps.length) {
+    if (undoDepth >= undoableOps.length) {
       throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
     }
     const picked = undoableOps[undoDepth]
@@ -364,6 +369,12 @@ export const historyHandlers = {
     const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: target }, true)
     return {
       reversed_op: { device_id: target.device_id, seq: target.seq },
+      // #5057 — `UndoResult` declares this field and the FE builds its toast key
+      // from it (`undo.op.${snakeToCamel(reversed_op_type)}`), so omitting it
+      // silently degraded every browser-mode undo toast to the generic fallback.
+      // `applyUndoForTarget` (the ref-addressed path) always set it; these two
+      // inline returns are where the two paths had drifted.
+      reversed_op_type: target.op_type,
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: reverseOpType,
       is_redo: false,
@@ -417,6 +428,8 @@ export const historyHandlers = {
     const newOp = pushOp(redoOpType, { ...redoPayload, re_applied: originalOp }, false)
     return {
       reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
+      // See `undo_page_op` above — the same omission, the same field.
+      reversed_op_type: originalOp.op_type,
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: redoOpType,
       is_redo: true,

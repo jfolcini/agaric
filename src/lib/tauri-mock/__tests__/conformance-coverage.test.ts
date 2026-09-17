@@ -247,8 +247,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   undo_ops:
     'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
     'core it delegates to, revert.test.ts (via applyRevertForOp)',
-  undo_page_op:
-    'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-move.test.ts',
   // Was "regression-guarded by undo-op-refs.test.ts" — that file's own doc
   // scopes it to `undo_op` / `undo_ops` and it never mentions this command.
   // The tests that DO name `undo_page_group` drive the FE against a mocked IPC
@@ -737,7 +735,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'undo_op',
   'undo_ops',
   'undo_page_group',
-  'undo_page_op',
 ]
 
 /**
