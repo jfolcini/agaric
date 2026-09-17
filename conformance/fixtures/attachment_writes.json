@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — `delete_attachment` and `rename_attachment`. `attachments` is not one of the snapshot's five arrays, so the `list_attachments` step is what observes the writes. Both commands DO append an op, unlike the other outside-the-snapshot writers pinned so far, so the op-log digest moves too — which is the half a mock that mutates its map silently gets wrong. `add_attachment_with_bytes` is deliberately absent: it writes bytes to disk and answers with a stack-local `fs_path` and a real blake3 `content_hash`, neither of which the mock can reproduce, so it needs a narrower return shape than this fixture would imply.",
+  "description": "#5057 — `delete_attachment` and `rename_attachment`. `attachments` is not one of the snapshot's five arrays, so the `list_attachments` step is what observes the writes. Both commands DO append an op, unlike the other outside-the-snapshot writers pinned so far, so the op-log digest moves too — which is the half a mock that mutates its map silently gets wrong. `add_attachment_with_bytes` is deliberately absent: it writes bytes to disk and answers with a stack-local `fs_path` and a real blake3 `content_hash`, neither of which the mock can reproduce, so it needs a narrower return shape than this fixture would imply. #5057 also undoes the rename here: `applyRevertForOp` had no arm for either attachment op, so an undone rename appended a reverse row and left the filename alone. `delete_attachment` still has no arm, on purpose — its reverse rebuilds an `AddAttachmentPayload` from the original `add_attachment` op, and the mock's `add_attachment_with_bytes` appends none to rebuild from, so that arm arrives when that command is pinned.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -18,7 +18,7 @@
       },
       {
         "block_type": "content",
-        "content": "three attachments",
+        "content": "edited after the redo",
         "deleted_at": null,
         "due_date": null,
         "id": "B2",
@@ -57,8 +57,23 @@
       }
     ],
     "op_log_digest": {
-      "count": 2,
+      "count": 7,
       "ops": [
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "rename_attachment"
+        },
         {
           "op_type": "rename_attachment"
         },
@@ -94,6 +109,36 @@
       "error": "not_found",
       "name": "rename_an_unknown_attachment_is_not_found",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_rename",
+      "returns": [
+        "undo_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_the_rename",
+      "returns": [
+        "redo_page_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_again_as_the_newest_op",
+      "returns": ["rename_attachment"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "positional_undo_reaches_an_attachment_op",
+      "returns": [
+        "undo_page_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=false"
+      ]
     },
     {
       "code": null,
@@ -168,6 +213,52 @@
     },
     {
       "args": {
+        "opRef": "O1"
+      },
+      "command": "undo_op",
+      "comment": "#5057 — undoing the rename swaps the filenames back. The reverse is computed from the op's own payload (`reverse_rename_attachment`), not from a prior row, so it needs nothing the delete reverse needs. ATT1 returns to `scan.pdf` below.",
+      "name": "undo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O2"
+      },
+      "command": "redo_page_op",
+      "comment": "O2 is the reverse row the undo above appended. Redo re-applies the rename, so ATT1 is `renamed.pdf` again. Pinning the undo alone left the REDO half open — `reversePayloadFor` had no `rename_attachment` arm, so the reverse row carried no attachment_id and redo silently changed nothing.",
+      "name": "redo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "edited after the redo"
+      },
+      "command": "edit_block",
+      "comment": "A non-attachment op on the same page, OLDER than the rename below. It is what an unscoped positional undo would reach by mistake."
+    },
+    {
+      "args": {
+        "attachmentId": "ATT1",
+        "newFilename": "final.pdf"
+      },
+      "command": "rename_attachment",
+      "comment": "The NEWEST op on page S1 — and an attachment op, which carries no `block_id`.",
+      "name": "rename_again_as_the_newest_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "Depth 0 on S1 must reach the rename above. An attachment op has a NULL `block_id`, so a page scope that tests only that column drops it from every page and this undo would reverse the edit instead — leaving `final.pdf` standing and the edit gone. The backend reaches it through an EXISTS over live `attachments` joining the attachment back to its block; `attachmentOwnerBlockId` is that probe. Both the filename and S2's content separate the two outcomes.",
+      "name": "positional_undo_reaches_an_attachment_op",
+      "via": "command"
+    },
+    {
+      "args": {
         "attachmentId": "ATT2"
       },
       "command": "delete_attachment",
@@ -192,7 +283,7 @@
         "blockId": "S2"
       },
       "command": "list_attachments",
-      "comment": "The observation: ATT1 under its new name, and ATT2 gone.",
+      "comment": "The observation: ATT1 back at `renamed.pdf` — the positional undo reversed the attachment rename, not the edit beneath it.",
       "name": "attachments_after_writes"
     }
   ],
