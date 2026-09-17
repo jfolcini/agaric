@@ -249,9 +249,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Pages / spaces / property definitions ──
   move_blocks_to_space:
     "writing the `space` property RE-RANKS the destination space's root sibling group — " +
-    'positions are dense per space, not across `parent_id = NULL` — and the mock models no ' +
-    'per-space positions at all, so a count-only pin would pass while the tree diverged ' +
+    'positions are dense per space, not across `parent_id = NULL` — and the mock does not ' +
+    'MAINTAIN per-space root positions: `insertAtSlotAndRenumber(null, …)` re-flattens the ' +
+    'whole cross-space group, so any fixture mixing a root create with a space write ' +
+    'diverges, not just this command. A count-only pin would pass while the tree diverged ' +
     '(#5057)',
+
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
   // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
@@ -1824,34 +1827,17 @@ interface LoadedFixture {
   ops: Array<{ command: string; args: Record<string, unknown> }>
   seedBlocks: Array<Record<string, unknown>>
   expected: ExpectedSnapshot | null
-  /** `'S2'` → `'B2'`, and `'C1'` → the first OP-CREATED block's label.
-   *  Canonical labels are assigned in SEED ORDER by both runners
-   *  (`canonicalOrder` / `build_snapshot_with_order`), which then append the
-   *  op-created blocks in CREATE order — so both halves are positional, NOT a
-   *  numeric coincidence between the naming schemes, which a fixture is free
-   *  to break.
+  /** `'S2'` → `'B2'`, and `'C1'` → the first OP-CREATED block's label. Both
+   *  halves are positional: both runners assign labels in seed order, then
+   *  append op-created blocks in create order.
    *
-   *  The `Cn` half is what #3992 item 4 said could not exist yet. It can:
-   *  both runners resolve an op arg through `resolve_op_arg_id` /
-   *  `resolveOpArgId`, which answer the nth op-created id for `Cn` and fall
-   *  back to `seed_label_to_id`'s padding only for everything else. This map
-   *  was the last place that had not learned the convention, and until it did,
-   *  a `Cn` arg made `argLabel` answer `null` — which every `holds` predicate
-   *  reads as "this scenario is not exhibited".
+   *  `Cn` is unbounded here because both runners PANIC on an `n` past what a
+   *  fixture creates, so a bound would duplicate a check that already fails
+   *  closed and louder.
    *
-   *  `Cn` is NOT bounded by the number of blocks a fixture creates. Both
-   *  runners PANIC on an `n` past that, so a fixture carrying one cannot be in
-   *  a green corpus at all, and the bound here would only duplicate a check
-   *  that already fails closed and louder.
-   *
-   *  Anything else still answers `null`, and
-   *  `it('every fixture op arg that names a block resolves to a SEED label')`
-   *  is what keeps that from being a fail-open: `argLabel` cannot tell "the
-   *  arg is absent" from "the arg names something I cannot resolve", so a
-   *  fixture rewritten to target an unresolvable block would stop being
-   *  counted SILENTLY — loudly only in the total case the `neverTrue`
-   *  meta-guard catches, and not at all when a sibling op or a sibling fixture
-   *  keeps the predicate true. */
+   *  Anything else answers `null`, which `argLabel` cannot tell from "the arg
+   *  is absent" — so the guard below is what stops an unresolvable id from
+   *  silently dropping a fixture out of every predicate that reads it. */
   label: (id: string) => string | null
 }
 
@@ -3954,11 +3940,8 @@ describe('#3083 conformance-coverage ratchet', () => {
   // would take) left all 21 checks green — the two tag predicates kept
   // counting off the ops either side of it.
   //
-  // This is the fail-CLOSED half, and it worked: `undo_group_scope_drift`
-  // needed a `Cn` arg, this reddened, and `LoadedFixture.label` learned the
-  // convention both runners already resolved. What stays red is a reference
-  // shape NEITHER runner resolves — an id that is only padded names nothing on
-  // either stack.
+  // The fail-CLOSED half: what stays red is a reference shape NEITHER runner
+  // resolves — an id that is only padded names nothing on either stack.
   it('every fixture op arg that names a block resolves to a SEED label (#3992)', () => {
     const unresolvable: string[] = []
     for (const fx of fixtures) {

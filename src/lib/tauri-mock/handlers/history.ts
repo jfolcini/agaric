@@ -54,8 +54,10 @@ function enumerateUndoGroup(depth: number, windowMs: number, scope: Set<string>)
     opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
   )
 
+  // `undoableOps[depth]` is `undefined` for an out-of-range index, which is the
+  // only case left: the sole caller refuses a negative depth before calling.
   const seed = undoableOps[depth]
-  if (depth < 0 || !seed) return []
+  if (!seed) return []
 
   const group = [seed]
   let prevTs = new Date(seed.created_at).getTime()
@@ -661,9 +663,6 @@ export const historyHandlers = {
   // reverted newest-first, the target itself is kept (the page is rewound to
   // the state that op left), and the two op types a restore skips on sight are
   // counted rather than aborting the walk (#2020).
-  //
-  // Page scoping is not modelled, matching `undo_page_op` above, which filters
-  // the op log without one either.
   restore_page_to_op: (args) => {
     const a = args as Record<string, unknown>
     const targetDeviceId = a['targetDeviceId'] as string

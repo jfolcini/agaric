@@ -10,6 +10,7 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 
@@ -56,7 +57,10 @@ class MockIntersectionObserver {
 
 // -- Minimal renderHook (no external deps needed) -----------------------------
 
-function renderHook<T>(hookFn: () => T): {
+function renderHook<T>(
+  hookFn: () => T,
+  wrap?: (node: React.ReactElement) => React.ReactElement,
+): {
   result: { current: T }
   unmount: () => void
 } {
@@ -73,7 +77,8 @@ function renderHook<T>(hookFn: () => T): {
 
   act(() => {
     root = createRoot(container)
-    root.render(createElement(TestComponent))
+    const node = createElement(TestComponent)
+    root.render(wrap ? wrap(node) : node)
   })
 
   return {
@@ -162,7 +167,7 @@ describe('useViewportObserver', () => {
     scroller.remove()
   })
 
-  it('probes for the scroll container only until it finds one (#5066)', () => {
+  it('an unchanged answer does not rebuild the observer (#5066)', () => {
     const scroller = document.createElement('div')
     scroller.style.overflowY = 'auto'
     document.body.append(scroller)
@@ -181,12 +186,79 @@ describe('useViewportObserver', () => {
       result.current.createObserveRef('B2')(second)
     })
 
-    // No second rebuild: the container is already adopted, so the ancestor walk
-    // costs one pass per container rather than one per row.
+    // The walk runs again, the answer is the same element, so nothing rebuilds.
+    // That is what keeps the rebuild rare — not skipping the walk.
     expect(MockIntersectionObserver.instances).toHaveLength(afterFirst)
 
     unmount()
     scroller.remove()
+  })
+
+  // #5066 — the ordering that makes latching the first answer wrong. Radix's
+  // `ScrollArea` viewport renders `overflow-y: hidden` and flips to `scroll` in
+  // a passive effect, so a row attaching in that same commit walks past it and
+  // finds whatever scroller sits ABOVE. Pinned with two plain divs so the test
+  // states the mechanism rather than Radix's internals; the sibling below runs
+  // the real component.
+  it('re-derives the root when a nearer container becomes scrollable (#5066)', () => {
+    const outer = document.createElement('div')
+    outer.style.overflowY = 'auto'
+    const inner = document.createElement('div')
+    inner.style.overflowY = 'hidden'
+    outer.append(inner)
+    document.body.append(outer)
+    const first = makeEl('B1')
+    const second = makeEl('B2')
+    inner.append(first, second)
+
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    act(() => {
+      result.current.createObserveRef('B1')(first)
+    })
+    // `inner` is not scrollable yet, so the walk goes past it.
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(outer)
+
+    inner.style.overflowY = 'scroll'
+    act(() => {
+      result.current.createObserveRef('B2')(second)
+    })
+
+    // Latching the first answer would leave the observer measuring `outer`
+    // forever, with no event able to correct it.
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(inner)
+
+    unmount()
+    outer.remove()
+  })
+
+  // #5066 — the sibling above states the mechanism with plain divs; this one
+  // runs the REAL `ScrollArea`, so the walk is proven against the DOM the app
+  // actually renders (Radix's viewport, not a hand-built stand-in). jsdom does
+  // no layout, so Radix never measures an overflow and never flips
+  // `scrollbarYEnabled` on its own — the explicit style assignment here IS the
+  // inline toggle `ScrollAreaScrollbar` performs in the browser.
+  it('adopts the real ScrollArea viewport once it becomes scrollable (#5066)', () => {
+    const { result, unmount } = renderHook(
+      () => useViewportObserver(),
+      (node) => createElement(ScrollArea, null, node),
+    )
+
+    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    expect(viewport).not.toBeNull()
+    const live = viewport as HTMLElement
+
+    const el = makeEl('B1')
+    live.append(el)
+    live.style.overflowY = 'scroll'
+
+    act(() => {
+      result.current.createObserveRef('B1')(el)
+    })
+
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(live)
+
+    unmount()
   })
 
   it('disconnects the observer on unmount', () => {
