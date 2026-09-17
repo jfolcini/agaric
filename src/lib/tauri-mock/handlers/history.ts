@@ -684,15 +684,35 @@ export const historyHandlers = {
   // A hard floor at the IPC boundary — a window under seven days is refused
   // before any work, so the op log cannot be purged to the snapshot frontier
   // in one call. The mock answered success for every window, including the `0`
-  // that guard exists for. The delete itself is not modelled: `ops_deleted` is
-  // 0 for every accepted window, so the ops the status above counts as eligible
-  // survive it — and stay the `last_modified_at` stamps the seed wrote them as.
+  // that guard exists for.
+  //
+  // The purge is against the window the CALLER passed, not the default the
+  // status reports; `CompactionCard` hands back `status.retention_days`, so
+  // the two agree there and `ops_deleted` equals the `eligible_ops` it showed.
+  // `compact_op_log` bounds its DELETE by the per-device frontier it read in
+  // phase 1 as well as by the cutoff, so ops appended mid-purge survive; the
+  // mock dispatches synchronously, so there is no such op and the cutoff is
+  // the whole bound. This is the one invariant-1 exception: the op log is
+  // append-only EXCEPT compaction.
+  //
+  // Seeded ops are in scope, which is the point — the six ~90-day stamps
+  // `stampPageLastEdited` writes are what `last-edited:` and
+  // `recently-modified` read as `MAX(op_log.created_at)`, and the backend
+  // loses them to a compaction exactly this way (`COALESCE(..., 0)`,
+  // `query/engine.rs`). No fixture reaches this branch — the conformance seed
+  // has no op old enough to clear a seven-day floor — so the delete is pinned
+  // only by the mock-internal test that exercises it.
   compact_op_log_cmd: (args) => {
     const retentionDays = (args as Record<string, unknown>)['retentionDays'] as number
     if (retentionDays < MIN_RETENTION_DAYS) {
       throw validationRejection('retention_days.too_small')
     }
-    return { ops_deleted: 0 }
+    const cutoffMs = Date.now() - retentionDays * MS_PER_DAY
+    const kept = opLog.filter((op) => new Date(op.created_at).getTime() >= cutoffMs)
+    const opsDeleted = opLog.length - kept.length
+    // Spliced in place: `opLog` is a live binding other handler modules hold.
+    opLog.splice(0, opLog.length, ...kept)
+    return { ops_deleted: opsDeleted }
   },
 
   // ---------------------------------------------------------------------------

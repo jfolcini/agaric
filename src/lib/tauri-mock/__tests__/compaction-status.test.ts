@@ -1,6 +1,6 @@
 /**
- * #5057 — the two things `op_log_compaction.json` cannot project about
- * `get_compaction_status`.
+ * #5057 — what `op_log_compaction.json` cannot project about the compaction
+ * pair, which for `compact_op_log_cmd` is its entire delete path.
  *
  * `oldest_op_date` is `MIN(op_log.created_at)` in epoch ms, a clock reading
  * taken while a fixture replays, so a backend-authored expectation would bind
@@ -17,6 +17,12 @@
  * hands it to `new Date(...)`, taken at the position the first op was PUSHED
  * rather than at the minimum — and the seed pushes older ops after newer ones
  * (`stampPageLastEdited`), which is exactly the shape that separates the two.
+ *
+ * The same clock bound puts `compact_op_log_cmd`'s PURGE out of the corpus's
+ * reach: the fixture pins `ops_deleted = 0` on a log where nothing can be
+ * eligible, so the branch that deletes is pinned here or nowhere. Invariant 1
+ * names compaction as the one exception to the append-only op log, so this is
+ * the only mock path allowed to shorten `opLog`.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -70,5 +76,52 @@ describe('get_compaction_status (mock-internal)', () => {
 
     expect(status['oldest_op_date']).toBeNull()
     expect(status['total_ops']).toBe(0)
+  })
+})
+
+describe('compact_op_log_cmd (mock-internal)', () => {
+  beforeEach(() => {
+    seedBlocks()
+    opLog.length = 0
+  })
+
+  it('deletes exactly the ops past the window and keeps the rest', () => {
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(120))
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(91))
+    const fresh = pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(1))
+
+    const result = dispatch('compact_op_log_cmd', { retentionDays: 90 }) as Record<string, unknown>
+
+    expect(result['ops_deleted']).toBe(2)
+    // Re-queried, not inferred from the return value: the purge has to have
+    // reached the log the next command reads.
+    expect(opLog.map((op) => op.seq)).toEqual([fresh.seq])
+    expect(dispatch('get_compaction_status', {})).toMatchObject({
+      total_ops: 1,
+      eligible_ops: 0,
+    })
+  })
+
+  it('purges against the window it was given, not the one the status reports', () => {
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(30))
+
+    // The 90-day status counts this op as nothing to do; a 7-day compaction
+    // still takes it, which is why the cutoff reads the argument.
+    expect(dispatch('get_compaction_status', {})).toMatchObject({ eligible_ops: 0 })
+
+    const result = dispatch('compact_op_log_cmd', { retentionDays: 7 }) as Record<string, unknown>
+
+    expect(result['ops_deleted']).toBe(1)
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('leaves the log untouched when it refuses the window', () => {
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(120))
+
+    expect(() => dispatch('compact_op_log_cmd', { retentionDays: 6 })).toThrow()
+
+    // The floor is checked before any work, so the op it would otherwise have
+    // been well past the cutoff for is still there.
+    expect(opLog).toHaveLength(1)
   })
 })

@@ -85,6 +85,30 @@ describe('attachment add → undo → redo (mock-internal)', () => {
     })
   })
 
+  // `delete_attachment_inner` takes its app-data dir as `_app_data_dir` and
+  // reclaims nothing: the bytes outlive the row and the GC pass (#1993) is what
+  // frees them. So an undone delete has a file to point back at. The mock used
+  // to drop the bytes with the row, which restored a row that read as empty.
+  it('restores readable bytes when the delete is undone', () => {
+    const blockId = newPageId()
+    const added = dispatch('add_attachment_with_bytes', {
+      blockId,
+      filename: 'notes.txt',
+      mimeType: 'text/plain',
+      bytes: [104, 105],
+    }) as Record<string, unknown>
+    const attachmentId = added['id'] as string
+
+    dispatch('delete_attachment', { attachmentId })
+    const deleteOp = opLog.at(-1)
+    expect(deleteOp?.op_type).toBe('delete_attachment')
+
+    dispatch('undo_op', { opRef: { device_id: deleteOp?.device_id, seq: deleteOp?.seq } })
+
+    const restored = dispatch('read_attachment', { attachmentId }) as ArrayBuffer
+    expect([...new Uint8Array(restored)]).toEqual([104, 105])
+  })
+
   it('refuses to undo the delete of an attachment no op ever added', () => {
     const blockId = newPageId()
     const seeded = addMockAttachment(blockId, 'seeded.txt', 'text/plain', 12)

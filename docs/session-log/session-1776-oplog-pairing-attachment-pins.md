@@ -125,3 +125,42 @@ dev and e2e. That test's docblock says so.
 
 `MUTATING_ARM_COUNT` 33 → 36 and `SWEPT_ARM_COUNT` 51 → 52 move with the new
 arms, each with its sweep note.
+
+## Review round: the status fix had a second half
+
+The reviewer caught that pinning `eligible_ops` reddened `history-advanced.spec.ts`.
+The cause was the fix working: `CompactionCard` auto-expands on the first
+`eligible_ops > 0`, so the card the test clicked to OPEN was already open and the
+click closed it. The test had been encoding the stub's `0`, not asserting
+behaviour. It settles on expanded now, and its docblock no longer claims
+`eligible_ops` is hardcoded.
+
+The second half was the real finding. With the status honest and
+`compact_op_log_cmd` still returning `ops_deleted: 0`, dev and e2e advertised six
+eligible ops that compacting never removed — two halves of one command
+disagreeing, where the old pair of stubs at least agreed. `compact_op_log` bounds
+its DELETE by the phase-1 per-device frontier AND the cutoff, and the mock
+dispatches synchronously, so the cutoff is the whole bound: the purge is four
+lines. It takes the seed's six ~90-day stamps with it, which is the point —
+`last-edited:` and `recently-modified` read those as `MAX(op_log.created_at)`
+and the backend loses them to a compaction the same way (`COALESCE(..., 0)`,
+`query/engine.rs`). Invariant 1 names compaction as the one exception to the
+append-only log, so this is the only mock path allowed to shorten `opLog`.
+
+No fixture reaches that branch — every op a fixture mints is younger than the
+seven-day floor — so it is pinned in `compaction-status.test.ts` instead,
+including the arm that separates the two windows: the status counts against
+`DEFAULT_RETENTION_DAYS` while the purge uses the caller's, which is why a
+30-day-old op is ineligible at 90 and deleted at 7. The e2e test asserts the
+identity those share rather than the literal 6, because `offsetIso(-90)` steps
+back 90 CALENDAR days while the cutoff subtracts 90 exact ones and a
+spring-forward puts the stamps an hour inside the window.
+
+The third finding was a one-line divergence with a comment already describing
+the fix: `delete_attachment` dropped `attachmentBytes` two lines above a comment
+saying the bytes are left to the GC pass (#1993). The backend takes its app-data
+dir as `_app_data_dir` and reclaims nothing, so an undone delete restored a row
+whose `read_attachment` answered an empty buffer. Deleting the line made the
+comment true; `purge_block` remains the path that does reclaim them, and
+`purge-parity.test.ts` still pins that. Nothing had covered the difference, so
+`attachment-undo-redo.test.ts` gained the case.

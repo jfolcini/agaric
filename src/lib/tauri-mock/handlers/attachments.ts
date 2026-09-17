@@ -192,10 +192,12 @@ export const attachmentsHandlers = {
     const row = attachments.get(id)
     if (!row) throw notFoundRejection(`attachment '${id}'`)
     attachments.delete(id)
-    attachmentBytes.delete(id)
     // The op records what was removed so a peer can reclaim the bytes; the
-    // BYTES themselves are left to the GC pass (#1993), which is why the
-    // backend no longer needs its app-data dir here.
+    // BYTES themselves are left to the GC pass (#1993), which is why
+    // `delete_attachment_inner` takes its app-data dir as `_app_data_dir`.
+    // The mock used to drop them here, so an undone delete restored a row
+    // whose `read_attachment` answered an empty buffer where the backend
+    // still had the file. `purge_block` is the path that does reclaim them.
     pushOp('delete_attachment', {
       attachment_id: id,
       fs_path: row['fs_path'],
