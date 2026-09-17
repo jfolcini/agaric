@@ -57,7 +57,10 @@ function validateAttachmentFilename(filename: string): string {
   let hasControl = false
   for (let i = 0; i < trimmed.length; i += 1) {
     const c = trimmed.charCodeAt(i)
-    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) hasControl = true
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+      hasControl = true
+      break
+    }
   }
   if (hasControl) {
     throw validationRejection('attachment filename may not contain control characters')
