@@ -1512,6 +1512,21 @@
 .block-ref-chip:focus-visible {
   @apply outline-hidden ring-[3px] ring-ring/50;
 }
+/* #5082 — this selector out-specifies the accessibility block's
+   `:focus-visible` outline, so without re-stating it here a focused chip
+   showed only a /50 ring while an UNFOCUSED `.ref-chip-anchor` beside it wore
+   an opaque 2px outline: focus read weaker than its absence. `outline-solid`
+   readmits that outline as a second cue, because the ring is a box-shadow and
+   `forced-colors` — the same users — drops box-shadows entirely. The ring goes
+   opaque so focus stays in `--ring`'s hue, distinct from the anchor
+   outline's `currentColor`. */
+@media (prefers-contrast: more) {
+  .block-link-chip:focus-visible,
+  .tag-ref-chip:focus-visible,
+  .block-ref-chip:focus-visible {
+    @apply outline-solid ring-ring;
+  }
+}
 
 @media (pointer: coarse) {
   .block-link-chip,
