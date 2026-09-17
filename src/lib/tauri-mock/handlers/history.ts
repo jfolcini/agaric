@@ -628,6 +628,15 @@ export const historyHandlers = {
     // same way `revert_ops` above already handles them (#4870). Filtering them
     // out under-counted `ops_reverted` and left the op-log tail short.
     const newer = sortOpLogNewestFirst(opLog.filter((o) => o.seq > targetSeq))
+    // A PRE-PASS, not a check inside the loop below: the backend computes the
+    // whole reverse batch before applying any of it (`compute_reverse_batch`,
+    // then `revert_ops_in_tx`), so an op it cannot reverse aborts with nothing
+    // written. Checking per-op as the loop went would revert everything newer
+    // than the offender first and only then throw — indistinguishable while
+    // the offender is the newest op, which is exactly where a fixture that
+    // pins the refusal naturally puts it.
+    for (const op of newer) assertDeletePropertyHasPrior(op)
+
     const results: Array<Record<string, unknown>> = []
     let nonReversibleSkipped = 0
     for (const op of newer) {
@@ -638,10 +647,6 @@ export const historyHandlers = {
         nonReversibleSkipped += 1
         continue
       }
-      // A priorless `delete_property` is NotFound, not NonReversible, so the
-      // backend's batch does not skip it — it aborts the whole restore. This
-      // throws for the same reason, before anything in the sweep is applied.
-      assertDeletePropertyHasPrior(op)
       const reverseOpType = reverseOpTypeFor(op)
       const reversePayload = reversePayloadFor(op)
       applyRevertForOp(op, blocks, { properties, blockTags })

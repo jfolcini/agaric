@@ -1486,6 +1486,46 @@ export type TypedHandlers = {
 export const MOCK_LOCAL_DEVICE = 'mock-device'
 
 /**
+ * Did `(block_id, key)` hold a value immediately BEFORE this op? Mirrors
+ * `find_prior_property`: scan the op log backwards for the nearest earlier
+ * `set_property` / `delete_property` on the same pair — a set left a value, a
+ * delete left none, and nothing at all left none.
+ *
+ * #5057 — the op's own `from_value` cannot answer this, twice over. The
+ * backend's `DeletePropertyPayload` is `{block_id, key}` and carries no such
+ * field at all, and on the mock side `setReservedColumnProperty`
+ * (`handlers/properties.ts`) writes `from_value: null` unconditionally — by
+ * design, to keep the revert a no-op against the properties map. Reading it
+ * would make every reserved-key write look priorless. Shared by
+ * {@link reverseOpTypeFor} and {@link assertDeletePropertyHasPrior} so the two
+ * cannot answer the same question differently.
+ */
+function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
+  let key: unknown
+  let blockId: unknown
+  try {
+    const payload = JSON.parse(op.payload) as Record<string, unknown>
+    key = payload['key']
+    blockId = payload['block_id']
+  } catch {
+    return false // malformed payload: no prior to restore
+  }
+  for (let i = opLog.length - 1; i >= 0; i -= 1) {
+    const prior = opLog[i]
+    if (!prior || prior.seq >= op.seq) continue
+    if (prior.op_type !== 'set_property' && prior.op_type !== 'delete_property') continue
+    try {
+      const p = JSON.parse(prior.payload) as Record<string, unknown>
+      if (p['block_id'] !== blockId || p['key'] !== key) continue
+    } catch {
+      continue
+    }
+    return prior.op_type === 'set_property'
+  }
+  return false
+}
+
+/**
  * Reverse op_type stamped on the appended reverse op. Mirrors the per-type
  * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
  * the #2468 migration makes undoable by ref.
@@ -1501,37 +1541,10 @@ export const MOCK_LOCAL_DEVICE = 'mock-device'
 export function reverseOpTypeFor(op: MockOpLogEntry): string {
   const opType = op.op_type
   if (opType === 'set_property') {
-    // What `find_prior_property` does: look for the value this key held BEFORE
-    // this op, by scanning the op log for the same `(block_id, key)`. Reading
-    // the op's own `from_value` instead would be wrong for a RESERVED key —
-    // `setReservedColumnProperty` writes `from_value: null` deliberately, to
-    // keep the revert a no-op against the properties map — so a second
-    // `set_property` on `todo_state` would reverse to a delete where the
-    // backend reverses to a set.
-    let key: unknown
-    let blockId: unknown
-    try {
-      const payload = JSON.parse(op.payload) as Record<string, unknown>
-      key = payload['key']
-      blockId = payload['block_id']
-    } catch {
-      return 'delete_property' // malformed payload: no prior to restore
-    }
-    for (let i = opLog.length - 1; i >= 0; i -= 1) {
-      const prior = opLog[i]
-      if (!prior || prior.seq >= op.seq) continue
-      if (prior.op_type !== 'set_property' && prior.op_type !== 'delete_property') continue
-      try {
-        const p = JSON.parse(prior.payload) as Record<string, unknown>
-        if (p['block_id'] !== blockId || p['key'] !== key) continue
-      } catch {
-        continue
-      }
-      // The nearest prior op on this key decides: a set left a value to go
-      // back to, a delete left none.
-      return prior.op_type === 'set_property' ? 'set_property' : 'delete_property'
-    }
-    return 'delete_property'
+    // A set with a prior value reverses to a set back to it; without one, to a
+    // delete. `hasPriorPropertyValue` is what decides, for the reason its doc
+    // gives — the op's own `from_value` cannot.
+    return hasPriorPropertyValue(op) ? 'set_property' : 'delete_property'
   }
   switch (opType) {
     case 'create_block': {
@@ -1737,13 +1750,16 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
  */
 export function assertDeletePropertyHasPrior(entry: MockOpLogEntry): void {
   if (entry.op_type !== 'delete_property') return
-  const payload = JSON.parse(entry.payload) as { from_value?: unknown; key?: string }
-  if (payload.from_value == null) {
-    throw notFoundRejection(
-      `no prior set_property found for key '${payload.key ?? ''}' — ` +
-        'cannot reverse delete_property',
-    )
+  if (hasPriorPropertyValue(entry)) return
+  let key = ''
+  try {
+    key = ((JSON.parse(entry.payload) as Record<string, unknown>)['key'] as string) ?? ''
+  } catch {
+    key = ''
   }
+  throw notFoundRejection(
+    `no prior set_property found for key '${key}' — cannot reverse delete_property`,
+  )
 }
 
 /**

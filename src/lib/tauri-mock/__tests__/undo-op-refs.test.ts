@@ -168,6 +168,13 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
 
       dispatch('undo_op', { opRef: second.op_refs[0] })
       expect(opLog.at(-1)?.op_type, `reverse of a second ${key} write`).toBe('set_property')
+
+      // #5057 — the same scan answers reversibility, not just the reverse
+      // TYPE. A `delete_property` after a real prior IS reversible; keying on
+      // the op's own `from_value` said otherwise for a reserved key, because
+      // `setReservedColumnProperty` writes that field null by design.
+      const del = dispatch('delete_property', { blockId: A, key }) as WithOpsResp
+      expect(() => dispatch('undo_op', { opRef: del.op_refs[0] }), key).not.toThrow()
     }
   })
 
