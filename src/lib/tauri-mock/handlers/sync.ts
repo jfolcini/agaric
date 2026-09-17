@@ -164,14 +164,20 @@ export const syncHandlers = {
     qr_svg: '<svg></svg>',
   }),
   confirm_pairing: () => {
-    // #3469 — arms this device's local proof, exactly as the backend does,
-    // and NOTHING else observable. In particular it does not pin a peer:
-    // the real TOFU pin happens later, on the first authenticated
-    // connection, and the joiner learns about it only by re-reading
-    // `list_peer_refs`. Arming a pending reveal (rather than inserting the
-    // row here) is what keeps the mock from re-asserting the very claim
-    // #3469 deletes — see `PAIRING_PEER_REVEAL_READS`.
+    // #3469 — arms this device's local proof, exactly as the backend does.
+    // In particular it does not pin a peer: the real TOFU pin happens later,
+    // on the first authenticated connection, and the joiner learns about it
+    // only by re-reading `list_peer_refs`. Arming a pending reveal (rather
+    // than inserting the row here) is what keeps the mock from re-asserting
+    // the very claim #3469 deletes — see `PAIRING_PEER_REVEAL_READS`.
     pairingPeerReveal.readsRemaining = PAIRING_PEER_REVEAL_READS
+    // #4297/#5057 — and the one durable write anything READS:
+    // `clear_unpaired_by_peer_all` drops the "this peer says we are not
+    // paired" flag from EVERY row on a pairing act, because neither role has
+    // a peer id at this point. The mock left the flags standing, so a device
+    // list that had recorded a refusal kept prompting to re-pair after the
+    // user just did.
+    for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
   },
   cancel_pairing: () => {
     // #3493 — cancelling disarms this device's pending-pairing marker on

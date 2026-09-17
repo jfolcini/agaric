@@ -1,0 +1,297 @@
+{
+  "description": "#5057 — `add_attachment_with_bytes`, the third attachment writer. Its waiver blamed the BLOB, and that is half right: `id`, `fs_path` and `content_hash` are minted per stack (two fresh ULIDs and a real blake3) and `created_at` is `now_ms()`, so the ROW a new attachment leaves is not comparable and `ATTACHMENT_ATTRS` — which pins all four on the SEEDED rows the other fixtures use — must not be loosened to make it so. The input was never the blocker: `bytes` is a literal array both stacks upload verbatim. What this fixture pins is everything else. The return names the four fields the caller supplied and the row stores unchanged. The four refusals are validation the mock did not have AT ALL: it stored whatever it was handed, with no MIME allow-list, no filename check and no live-block check. And the undo is the observation — reversing the add mints the `delete_attachment` that takes the row away, so `list_attachments` afterwards is back to the seeded row alone, which is fully fixture-authored and therefore comparable. That undo needed the op the mock never appended, and the redo beside it needed the reverse PAYLOAD as well as the reverse TYPE — which is what finally supplied `revert.ts` with its `delete_attachment` arm, blocked until now for want of an `add_attachment` op to rebuild the row from. What still cannot be driven is undoing a REAL `delete_attachment` of an op-added attachment: naming it needs a label convention fixtures do not have, the way `Cn` names a created block.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Uploads",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "about to go",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "add_attachment"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_attachment"
+        },
+        {
+          "op_type": "add_attachment"
+        },
+        {
+          "op_type": "delete_attachment"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "add_bytes_to_a_live_block",
+      "returns": [
+        "add_attachment_with_bytes#block_id=B2#filename=notes.txt#mime_type=text/plain#size_bytes=3"
+      ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "add_refuses_a_disallowed_mime_type",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "add_refuses_an_empty_mime_subtype",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "add_refuses_a_path_separator",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "tombstone_the_target_block",
+      "returns": ["B3#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "add_refuses_a_tombstoned_block",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_add",
+      "returns": [
+        "undo_op#reversed_op_type=add_attachment#new_op_type=delete_attachment#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_the_add",
+      "returns": [
+        "redo_page_op#reversed_op_type=delete_attachment#new_op_type=add_attachment#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_redo",
+      "returns": [
+        "undo_op#reversed_op_type=add_attachment#new_op_type=delete_attachment#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "attachments_after_the_undo",
+      "rows": [
+        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "attachment_add_bytes",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "bytes": [104, 105, 10],
+        "filename": "notes.txt",
+        "mimeType": "text/plain"
+      },
+      "command": "add_attachment_with_bytes",
+      "comment": "`size_bytes` is the array's length, so the bytes are pinned by their count even though their hash is not.",
+      "name": "add_bytes_to_a_live_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "bytes": [1],
+        "filename": "payload.bin",
+        "mimeType": "application/x-evil"
+      },
+      "command": "add_attachment_with_bytes",
+      "comment": "`ALLOWED_MIME_PATTERNS` is an allow-list, checked before the filename and before any byte is written.",
+      "expect_error": "validation",
+      "name": "add_refuses_a_disallowed_mime_type",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "bytes": [1],
+        "filename": "x.png",
+        "mimeType": "image/"
+      },
+      "command": "add_attachment_with_bytes",
+      "comment": "A wildcard pattern takes a NON-EMPTY subtype, so the bare top-level type is refused rather than waved through by the `image/` prefix.",
+      "expect_error": "validation",
+      "name": "add_refuses_an_empty_mime_subtype",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "bytes": [1],
+        "filename": "../../evil.sh",
+        "mimeType": "text/plain"
+      },
+      "command": "add_attachment_with_bytes",
+      "comment": "#2989 — the same rule `rename_attachment` enforces, at the other origination point: a filename is a NAME, so a separator cannot walk the stored name out of its directory.",
+      "expect_error": "validation",
+      "name": "add_refuses_a_path_separator",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block",
+      "comment": "Tombstone S3 so the add below has a block that exists but is not live.",
+      "name": "tombstone_the_target_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "bytes": [1],
+        "filename": "orphan.txt",
+        "mimeType": "text/plain"
+      },
+      "command": "add_attachment_with_bytes",
+      "comment": "`persist_attachment` checks the block inside its own transaction, so a tombstone is NotFound — and it is checked AFTER the validation above, which is why a bad name on a dead block is a validation refusal rather than this one.",
+      "expect_error": "not_found",
+      "name": "add_refuses_a_tombstoned_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O1"
+      },
+      "command": "undo_op",
+      "comment": "O1 is the `add_attachment` the first op appended — the mock appended none, so this label used to name a different op entirely. `reverse_add_attachment` mints a `delete_attachment` from the LIVE row, and applying it removes the attachment.",
+      "name": "undo_the_add",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O3"
+      },
+      "command": "redo_page_op",
+      "comment": "O3 is the reverse row the undo above appended. Redo rebuilds the `add_attachment` from it, so the row comes back — which is what pins the reverse PAYLOAD rather than just the reverse op TYPE. Pinning the undo alone left this half open, exactly as it did for `rename_attachment` in `attachment_writes.json`: a reverse row carrying no `attachment_id` makes redo a silent no-op.",
+      "name": "redo_the_add",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O4"
+      },
+      "command": "undo_op",
+      "comment": "O4 is the redo row. Undoing a redo reverses the op it re-applied, so the attachment goes again — and the step below is comparable only because it does.",
+      "name": "undo_the_redo",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_attachments",
+      "comment": "The observation, and the reason it is comparable at all: after the undo the only row left is the SEEDED one, whose id, fs_path, created_at and content_hash are fixture-authored. A mock whose undo left the added row standing answers two rows here.",
+      "name": "attachments_after_the_undo"
+    }
+  ],
+  "seed": {
+    "attachments": [
+      {
+        "block_id": "S2",
+        "content_hash": "blake3-of-scan",
+        "created_at": 1000,
+        "filename": "scan.pdf",
+        "fs_path": "attachments/ATT1.pdf",
+        "id": "ATT1",
+        "mime_type": "application/pdf",
+        "size_bytes": 4096
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Uploads",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one attachment",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "about to go",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

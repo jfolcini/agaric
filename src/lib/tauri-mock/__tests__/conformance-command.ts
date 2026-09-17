@@ -161,6 +161,22 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // outside the snapshot's five arrays, so `list_attachments` observes them.
   delete_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   rename_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5057 — the bytes writer, whose `AttachmentRow` is HALF stack-local: `id`,
+  // `fs_path` and `content_hash` are minted per stack and `created_at` is a
+  // clock read. The shape names the four fields the caller supplied and the
+  // row stores verbatim.
+  add_attachment_with_bytes: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['block_id', 'filename', 'mime_type', 'size_bytes'],
+    lists: [],
+  },
+  // #5057 — op-log maintenance. One count, deterministically zero on this
+  // corpus: the cutoff is `now()` minus a window with a seven-day floor, and
+  // every op a fixture replays is minted during the run.
+  compact_op_log_cmd: { idKey: HEADED_ID_KEY, attrs: ['ops_deleted'], lists: [] },
+  // #5057 — the joiner half of pairing answers `()`; the `list_peer_refs` step
+  // beside it observes the `unpaired_by_peer_at_ms` clear.
+  confirm_pairing: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — `page_aliases` is outside the snapshot's five arrays too, so a
   // `get_page_aliases` step observes the table. The RETURN is its own
   // evidence: a LIST OF BARE STRINGS naming the rows actually INSERTED, which

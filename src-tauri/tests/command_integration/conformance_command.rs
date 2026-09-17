@@ -188,6 +188,19 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // `list_attachments` step is what observes them.
     ("delete_attachment", HEADED_ID_KEY, &[], &[]),
     ("rename_attachment", HEADED_ID_KEY, &[], &[]),
+    // #5057 — the bytes writer, whose `AttachmentRow` is HALF stack-local:
+    // `id`, `fs_path` and `content_hash` are minted per stack (two fresh
+    // ULIDs and a real blake3) and `created_at` is `now_ms()`. The shape names
+    // the four fields that are not — the ones the caller supplied and the row
+    // stores verbatim — so the return pins what was written without binding a
+    // value either stack invents. What stays unpinned is stated in
+    // `attachment_add_bytes.json`'s description.
+    (
+        "add_attachment_with_bytes",
+        HEADED_ID_KEY,
+        &["block_id", "filename", "mime_type", "size_bytes"],
+        &[],
+    ),
     // #5057 — `page_aliases` is outside the snapshot's five arrays too, so the
     // `get_page_aliases` step observes the table. The RETURN is its own
     // evidence: a LIST OF BARE STRINGS naming the rows the write actually
@@ -195,6 +208,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // trims to nothing, and one another page already holds, are both dropped
     // by the command and so never appear here.
     ("set_page_aliases", HEADED_ID_KEY, &["inserted"], &[]),
+    // #5057 — op-log maintenance. `CompactionResult` is one count, and on this
+    // corpus it is deterministically zero: the cutoff is `now() - retention`
+    // with a seven-day floor, and every op a fixture replays is minted during
+    // the run. What the record pins is therefore the no-op path and, through
+    // the refusals beside it, the `retention_days` floor itself.
+    ("compact_op_log_cmd", HEADED_ID_KEY, &["ops_deleted"], &[]),
+    // #5057 — the joiner half of pairing answers `()`. Its durable write that
+    // anything READS is the `unpaired_by_peer_at_ms` clear across `peer_refs`,
+    // so the `list_peer_refs` step beside it is the observation.
+    ("confirm_pairing", HEADED_ID_KEY, &[], &[]),
     // #5057 — the two space CREATORS answer with the new block's id, which
     // `relabel_token` maps to its canonical label like any other id-valued
     // attribute, so the return names WHICH block was made rather than a
@@ -490,6 +513,64 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // The BYTES are the fixture's own literal array, so the two stacks
+        // upload the same content and agree on `size_bytes` — what they cannot
+        // agree on is what each MINTS from it (see the `RETURN_SHAPE` entry).
+        // The blob lands under the fixture's `TempDir`, which is what
+        // `app_data_dir` is threaded for.
+        "add_attachment_with_bytes" => to_json(
+            add_attachment_with_bytes_inner(
+                pool,
+                DEV,
+                mat,
+                app_data_dir,
+                block_id(),
+                req_str("filename"),
+                req_str("mimeType"),
+                arg("bytes")
+                    .and_then(Value::as_array)
+                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'bytes'"))
+                    .iter()
+                    .map(|b| {
+                        u8::try_from(b.as_u64().unwrap_or(u64::MAX)).unwrap_or_else(|_| {
+                            panic!("conformance op '{command}': bytes entry is not a u8")
+                        })
+                    })
+                    .collect(),
+            )
+            .await,
+        ),
+        // `retentionDays` is the fixture's own literal, and the cutoff it
+        // derives is `now()`-relative — which is exactly why this corpus can
+        // only reach the no-op and the refusal.
+        "compact_op_log_cmd" => to_json(
+            compact_op_log_cmd_inner(
+                pool,
+                u64::try_from(req_i64("retentionDays")).unwrap_or_else(|_| {
+                    panic!("conformance op '{command}': retentionDays must be non-negative")
+                }),
+            )
+            .await,
+        ),
+        // Both of `confirm_pairing`'s non-DB collaborators are constructed
+        // here rather than faked: a joiner has no local session to begin with
+        // (the command nulls it), and the scheduler wake is an in-process
+        // notify with nothing to observe. `scanned` stays `None` — the QR
+        // candidate is published to that same scheduler and writes no row.
+        "confirm_pairing" => {
+            let pairing_state = std::sync::Mutex::new(None);
+            let scheduler = agaric_sync::sync_scheduler::SyncScheduler::new();
+            to_json(
+                confirm_pairing_inner(
+                    pool,
+                    &pairing_state,
+                    &scheduler,
+                    req_str("passphrase"),
+                    None,
+                )
+                .await,
+            )
+        }
         // An alias is the caller's own text, so `aliases` takes no label
         // expansion — the same rule `req_str` states for the scalar args.
         "set_page_aliases" => to_json(
@@ -894,7 +975,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 33;
+    const MUTATING_ARM_COUNT: usize = 36;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

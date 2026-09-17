@@ -235,16 +235,20 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Op-log time-travel (op-log rewrite) ──
-  // #5057 retired the rest of this section: all seven undo/redo/revert
-  // commands are now driven by fixtures, through the `On` op-ref label.
-  compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
+  // #5057 retired this section entirely: the seven undo/redo/revert commands
+  // are driven by fixtures through the `On` op-ref label, and
+  // `compact_op_log_cmd` by `op_log_compaction.json`. Its waiver read "op-log
+  // maintenance; rewrites history, not blocks/props/tags", which the snapshot's
+  // own `op_log_digest` contradicted — the log is what compaction acts on and
+  // what the digest compares.
 
   // ── Attachments ──
-  add_attachment_with_bytes:
-    'the BLOB is the blocker, not the scope: `attachment_writes.json` pins its two siblings ' +
-    'through `seed.attachments` + `list_attachments`, but this one writes bytes to disk and ' +
-    'answers with a stack-local `fs_path` (a fresh ULID) and a real blake3 `content_hash`, ' +
-    'neither of which the mock can reproduce, so it needs a narrower return shape first',
+  // #5057 retired this section too. `add_attachment_with_bytes` is driven by
+  // `attachment_add_bytes.json`; its waiver blamed the blob for the wrong half.
+  // The stack-local `fs_path` / `content_hash` / `id` are real, and that fixture
+  // pins none of them — it pins the four fields the caller supplies, the
+  // validation the mock had none of, and the row's removal when the add is
+  // undone, which is observable because only the seeded row is left.
 
   // ── Pages / spaces / property definitions ──
   move_blocks_to_space:
@@ -278,13 +282,13 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   start_sync: 'sync transport session; no durable domain state to snapshot',
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
   start_pairing: 'pairing transport session; no durable domain state to snapshot',
-  confirm_pairing:
-    'writes the pending-pairing marker (app_settings) and clears unpaired flags ' +
-    '(peer_refs); pairing-window plumbing, not projected block state',
+  // #5057 pinned `confirm_pairing` (`pairing_confirm.json`). Its waiver named
+  // both writes and then judged them together; they differ. The marker is
+  // unobservable, the `peer_refs` unpaired-flag clear is not.
   // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
-  // row), so this is no longer "no durable state". It stays excluded for the
-  // same reason `confirm_pairing` (which writes that row) is: the marker is
-  // pairing-window plumbing, not projected block state.
+  // row), so this is no longer "no durable state". It stays excluded because
+  // the marker is the ONLY thing it writes and nothing reads it — the
+  // distinction `confirm_pairing` coming off this list makes concrete.
   cancel_pairing:
     'nothing READS it, which is why the scope argument does not apply: its only durable ' +
     'write is the `pending_pairing` key in app_settings, and no command on the IPC surface ' +
@@ -434,7 +438,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // already compares it across the stacks — so both are now driven by
   // `query_history.json`. What stays unspellable is the entries' CONTENTS, and
   // the attachment disjunct, both stated in that fixture's description.
-  get_compaction_status: 'op-log maintenance counters, not projected block state',
+  // #5057 pinned `get_compaction_status` (`op_log_compaction.json`); its waiver
+  // read "op-log maintenance counters, not projected block state", and the
+  // snapshot's `op_log_digest` already compared the log those counters count.
   // Not "pure text diffs": both SELECT their input by an op-log coordinate the
   // two stacks generate independently, so a fixture cannot name the same op on
   // both sides. The text they diff is indeed snapshot-pinned; the ARG that
@@ -675,9 +681,6 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
  * diff — pin one and delete its line here, waive one and add it.
  */
 const NOT_YET_PINNED_MUTATING: readonly string[] = [
-  'add_attachment_with_bytes',
-  'compact_op_log_cmd',
-  'confirm_pairing',
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
@@ -688,20 +691,18 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
  * snapshot or the query harness is too narrow, which a widening fixes — and
  * each has a mutating counterpart already counted as debt above:
  * `list_spaces` against `create_space` / `create_page_in_space` /
- * `move_blocks_to_space`, `get_compaction_status` against `compact_op_log_cmd`,
- * and `export_page_markdown` against `import_markdown` / `import_bibliography`
- * (the query projection binds row sets and cannot compare a rendered `String`).
+ * `move_blocks_to_space`, and `export_page_markdown` against `import_markdown` /
+ * `import_bibliography` (the query projection binds row sets and cannot compare
+ * a rendered `String`).
  *
  * Pinning the write is most of the work for the read, so #5057 burns these down
  * by table rather than by command. Drafts came off this list that way: one
  * fixture drives all five commands, the four writers through the command leg
- * and `list_drafts` as the read that observes what they left behind.
+ * and `list_drafts` as the read that observes what they left behind. So did
+ * op-log maintenance: `op_log_compaction.json` drives `compact_op_log_cmd` and
+ * reads `get_compaction_status` afterwards.
  */
-const NOT_YET_PINNED_READ: readonly string[] = [
-  'export_page_markdown',
-  'get_compaction_status',
-  'list_spaces',
-]
+const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown', 'list_spaces']
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead
@@ -728,10 +729,6 @@ const READ_WRITE_TABLE_PAIRS: Readonly<
   spaces: {
     reads: ['list_spaces'],
     writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
-  },
-  'op-log maintenance': {
-    reads: ['get_compaction_status'],
-    writes: ['compact_op_log_cmd'],
   },
   'markdown import/export': {
     reads: ['export_page_markdown'],

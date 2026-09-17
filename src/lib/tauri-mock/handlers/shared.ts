@@ -29,7 +29,7 @@ import {
   linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
-import { applyRevertForOp } from '@/lib/tauri-mock/revert'
+import { applyRevertForOp, reconstructAddAttachment } from '@/lib/tauri-mock/revert'
 import {
   attachments,
   blocks,
@@ -1566,6 +1566,16 @@ export function reverseOpTypeFor(op: MockOpLogEntry): string {
     case 'remove_tag': {
       return 'add_tag'
     }
+    // #5057 — the attachment add/delete pair reverses into each other, which
+    // is what makes an undone add redoable. Without these arms both fell to
+    // `default:` and each reverse row claimed to be a second op of its own
+    // type, so a REDO of an undone add deleted the row it was re-adding.
+    case 'add_attachment': {
+      return 'delete_attachment'
+    }
+    case 'delete_attachment': {
+      return 'add_attachment'
+    }
     default: {
       // edit_block / move_block / the task-column setters all reverse to an op
       // of their own type. `set_property` does NOT — it short-circuits above,
@@ -1587,6 +1597,21 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
     value_date: (row['value_date'] as string | null) ?? null,
     value_ref: (row['value_ref'] as string | null) ?? null,
     value_bool: (row['value_bool'] as number | null) ?? null,
+  }
+}
+
+/**
+ * The `DeleteAttachmentPayload` that undoes an `add_attachment`, as
+ * `build_reverse_add_attachment` builds it: the LIVE row's path and name where
+ * the row still stands — a repoint or a rename since the add is what the
+ * reverse must name — and the add payload's own where it is already gone.
+ */
+function syntheticDeleteAttachment(addPayload: Record<string, unknown>): Record<string, unknown> {
+  const live = attachments.get(addPayload['attachment_id'] as string)
+  return {
+    attachment_id: addPayload['attachment_id'],
+    fs_path: live?.['fs_path'] ?? addPayload['fs_path'],
+    filename: live?.['filename'] ?? addPayload['filename'],
   }
 }
 
@@ -1656,6 +1681,12 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
         old_filename: p['new_filename'],
         new_filename: p['old_filename'],
       }
+    }
+    case 'add_attachment': {
+      return syntheticDeleteAttachment(p)
+    }
+    case 'delete_attachment': {
+      return reconstructAddAttachment(p)
     }
     case 'add_tag':
     case 'remove_tag': {

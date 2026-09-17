@@ -14,7 +14,7 @@ import {
   type TypedHandlers,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { attachmentBytes, attachments, fakeId, pushOp } from '@/lib/tauri-mock/seed'
+import { attachmentBytes, attachments, blocks, fakeId, pushOp } from '@/lib/tauri-mock/seed'
 
 /**
  * The backend's `ORDER BY created_at, id` (`list_attachments_inner` and the
@@ -38,6 +38,28 @@ function byCreatedAtThenId(a: Record<string, unknown>, b: Record<string, unknown
  * which would let a rename address something outside the attachment directory.
  */
 const MAX_ATTACHMENT_FILENAME_BYTES = 255
+
+/**
+ * `ALLOWED_MIME_PATTERNS` + `is_mime_allowed` (`commands/mod.rs`). A `*`
+ * pattern takes any NON-EMPTY subtype with no further `/`, so `image/` and
+ * `image/../x` are refused rather than waved through by the prefix.
+ */
+const ALLOWED_MIME_PATTERNS = [
+  'image/*',
+  'application/pdf',
+  'text/*',
+  'application/json',
+  'application/zip',
+  'application/x-tar',
+]
+
+function isMimeAllowed(mime: string): boolean {
+  return ALLOWED_MIME_PATTERNS.some((pattern) => {
+    if (!pattern.endsWith('/*')) return pattern === mime
+    const subtype = mime.startsWith(pattern.slice(0, -1)) ? mime.slice(pattern.length - 1) : null
+    return subtype !== null && subtype !== '' && !subtype.includes('/')
+  })
+}
 
 function validateAttachmentFilename(filename: string): string {
   const trimmed = filename.trim()
@@ -99,17 +121,35 @@ export const attachmentsHandlers = {
 
   // Bytes-over-IPC add. Stores the raw bytes so `read_attachment`
   // can round-trip them; fs_path is backend-generated under attachments/.
+  //
+  // #5057 — the handler used to store the row and nothing else: no validation
+  // of any kind, and no op. `validate_new_attachment` refuses a disallowed MIME
+  // type and every bad filename `rename_attachment` already refuses here, and
+  // `persist_attachment` refuses a block that is missing or tombstoned — in
+  // that order, so a bad name on an unknown block is the validation refusal.
+  // The op is what `reverse_add_attachment` rebuilds an undo from.
   add_attachment_with_bytes: (args) => {
     const a = args as Record<string, unknown>
     const bytes = (a['bytes'] as number[]) ?? []
+    const mimeType = a['mimeType'] as string
+    if (!isMimeAllowed(mimeType)) {
+      throw validationRejection(`MIME type '${mimeType}' is not allowed`)
+    }
+    const filename = validateAttachmentFilename(a['filename'] as string)
+    const blockId = a['blockId'] as string
+    const block = blocks.get(blockId)
+    if (!block || block['deleted_at']) {
+      throw notFoundRejection(`block '${blockId}' (not found or deleted)`)
+    }
     const id = fakeId()
+    const fsPath = `attachments/${id}`
     const row = {
       id,
-      block_id: a['blockId'] as string,
-      filename: a['filename'] as string,
-      mime_type: a['mimeType'] as string,
+      block_id: blockId,
+      filename,
+      mime_type: mimeType,
       size_bytes: bytes.length,
-      fs_path: `attachments/${id}`,
+      fs_path: fsPath,
       created_at: Date.now(),
       // The backend stores the blake3 of the bytes; the mock never hashes, and
       // `null` is the wire-legal "no hash" the row carried before migration
@@ -118,6 +158,14 @@ export const attachmentsHandlers = {
     }
     attachments.set(id, row)
     attachmentBytes.set(id, bytes)
+    pushOp('add_attachment', {
+      attachment_id: id,
+      block_id: blockId,
+      mime_type: mimeType,
+      filename,
+      size_bytes: bytes.length,
+      fs_path: fsPath,
+    })
     return row
   },
 
@@ -144,10 +192,12 @@ export const attachmentsHandlers = {
     const row = attachments.get(id)
     if (!row) throw notFoundRejection(`attachment '${id}'`)
     attachments.delete(id)
-    attachmentBytes.delete(id)
     // The op records what was removed so a peer can reclaim the bytes; the
-    // BYTES themselves are left to the GC pass (#1993), which is why the
-    // backend no longer needs its app-data dir here.
+    // BYTES themselves are left to the GC pass (#1993), which is why
+    // `delete_attachment_inner` takes its app-data dir as `_app_data_dir`.
+    // The mock used to drop them here, so an undone delete restored a row
+    // whose `read_attachment` answered an empty buffer where the backend
+    // still had the file. `purge_block` is the path that does reclaim them.
     pushOp('delete_attachment', {
       attachment_id: id,
       fs_path: row['fs_path'],

@@ -1,0 +1,113 @@
+{
+  "description": "#5057 — `confirm_pairing`, the joiner half of pairing. Waived as 'pairing-window plumbing, not projected block state', which is the scope shape the ratchet's own doctrine rejects: it makes TWO durable writes, and they differ in whether anything can see them. The `pending_pairing` marker in `app_settings` is unobservable for the reason `cancel_pairing` is permanently blocked — no command on either stack reads that key. The other is `clear_unpaired_by_peer_all`, which drops the #4297 'this peer says we are not paired' flag from EVERY `peer_refs` row, and `list_peer_refs` projects that column. So the step below is the observation, exactly as it is for the three peer writers in `peer_ref_writes.json`. Only ONE `list_peer_refs` read follows the confirm, deliberately: the mock arms a pending peer reveal that materializes a TOFU-pinned row on the THIRD read (`PAIRING_PEER_REVEAL_READS`), standing in for the first authenticated connection that this harness has no transport for.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "confirm_a_typed_passphrase",
+      "returns": ["confirm_pairing"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "peers_after_confirm",
+      "rows": [
+        "peer-flagged#last_hash=hash-desk#last_sent_hash=null#synced_at=2000#streamed_at=null#reset_count=0#last_reset_at=null#cert_hash=cert-desk#device_name=Desk#remote_device_name=null#last_address=192.168.1.5:7001#endpoint_id=null#unpaired_by_peer_at_ms=null",
+        "peer-clean#last_hash=null#last_sent_hash=null#synced_at=1000#streamed_at=null#reset_count=0#last_reset_at=null#cert_hash=null#device_name=null#remote_device_name=Phone#last_address=null#endpoint_id=null#unpaired_by_peer_at_ms=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "pairing_confirm",
+  "ops": [
+    {
+      "args": {
+        "passphrase": "abandon ability able about"
+      },
+      "command": "confirm_pairing",
+      "comment": "A joiner needs no local session and the passphrase is never compared here — it is hashed into the pending marker, and a wrong one is only discovered on the wire. So this succeeds for any input, and what it leaves behind is the flag clear below.",
+      "name": "confirm_a_typed_passphrase",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_peer_refs",
+      "comment": "The observation: `peer-flagged` has lost its unpaired stamp and every other column is untouched — the clear is scoped to one column, not to one peer, because neither pairing role knows yet which peer the passphrase resolves to.",
+      "name": "peers_after_confirm"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "peer_refs": [
+      {
+        "cert_hash": "cert-desk",
+        "device_name": "Desk",
+        "endpoint_id": null,
+        "last_address": "192.168.1.5:7001",
+        "last_hash": "hash-desk",
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-flagged",
+        "remote_device_name": null,
+        "reset_count": 0,
+        "streamed_at": null,
+        "synced_at": 2000,
+        "unpaired_by_peer_at_ms": 7000
+      },
+      {
+        "cert_hash": null,
+        "device_name": null,
+        "endpoint_id": null,
+        "last_address": null,
+        "last_hash": null,
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-clean",
+        "remote_device_name": "Phone",
+        "reset_count": 0,
+        "streamed_at": null,
+        "synced_at": 1000,
+        "unpaired_by_peer_at_ms": null
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

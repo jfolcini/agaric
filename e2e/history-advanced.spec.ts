@@ -34,12 +34,11 @@ test.describe.configure({ mode: 'serial' })
  *    since the mock always returns the full unfiltered set regardless of
  *    the filter value.
  *
- *  - `get_compaction_status`'s `eligible_ops` and `compact_op_log_cmd`'s
- *    `ops_deleted` (handlers.ts ~4574-4581) are both hardcoded to 0 /
- *    `{ ops_deleted: 0 }` — compaction never actually removes anything from
- *    the mock's `opLog`. The compaction test asserts the card renders the
- *    live `total_ops` count, opens the confirm dialog, and fires
- *    `compact_op_log_cmd` — not that `total_ops` decreases afterward.
+ *  - Compaction is modelled on both halves now (`handlers/history.ts`):
+ *    `eligible_ops` counts the ops past the retention window and
+ *    `compact_op_log_cmd` removes exactly those. Both were hardcoded to 0
+ *    until #5057, which is why the test below used to assert only that the
+ *    IPC fired. It asserts the purge itself instead.
  *
  *  - There is no separate "user vs agent" or "date range" filter control in
  *    `HistoryFilterBar` today (only the op-type Select + the "All spaces"
@@ -228,11 +227,23 @@ test.describe('HistoryView — op log compaction', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     await page.getByRole('button', { name: 'History', exact: true }).click()
-    await page.getByRole('button', { name: 'Op Log Compaction' }).click()
 
+    // `CompactionCard` auto-expands itself, once per mount, as soon as the
+    // status reports `eligible_ops > 0` — and the seed stamps six page edits
+    // ~90 days back, right on the retention boundary the mock now counts
+    // against. So whether the card is already open is not something this test
+    // can assume: clicking blindly would CLOSE it. Settle on expanded.
+    const toggle = page.getByRole('button', { name: 'Op Log Compaction' })
+    await expect(toggle).toBeVisible()
     const totalOps = page.getByTestId('compaction-total-ops')
-    await expect(totalOps).toBeVisible()
+    await expect(async () => {
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+      await expect(totalOps).toBeVisible({ timeout: 1000 })
+    }).toPass()
     await expect(totalOps).not.toHaveText('0')
+
+    const totalBefore = await totalOps.textContent()
+    const eligible = await page.getByTestId('compaction-eligible-ops').textContent()
 
     await clearInvokeCalls(page)
     await page.getByRole('button', { name: 'Compact Now' }).click()
@@ -243,9 +254,16 @@ test.describe('HistoryView — op log compaction', () => {
     await expect(activeAlertDialog(page)).not.toBeVisible()
 
     expect(await getInvokeCalls(page, 'compact_op_log_cmd')).toHaveLength(1)
-    // Mock's compact_op_log_cmd is a hardcoded stub returning
-    // ops_deleted: 0 (handlers.ts ~4581) — total_ops does NOT decrease
-    // after this call, so that is not asserted here.
-    await expect(page.getByText('Compacted 0 operations')).toBeVisible()
+
+    // The card compacts with the window its own status reported, so the purge
+    // removes precisely the ops it had just counted as eligible — asserted as
+    // that identity rather than as the literal 6 the seed produces, because
+    // `offsetIso(-90)` steps back 90 CALENDAR days while the cutoff subtracts
+    // 90 exact ones: across a spring-forward the stamps land an hour inside
+    // the window and none of them are eligible. `not '0'` keeps a run in that
+    // window honest instead of silently vacuous; CI is UTC, where it is 6.
+    expect(eligible).not.toBe('0')
+    await expect(page.getByText(`Compacted ${eligible} operations`)).toBeVisible()
+    await expect(totalOps).toHaveText(String(Number(totalBefore) - Number(eligible)))
   })
 })

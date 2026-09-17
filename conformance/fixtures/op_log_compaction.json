@@ -1,0 +1,157 @@
+{
+  "description": "#5057 — the op-log maintenance pair: `compact_op_log_cmd` and `get_compaction_status`. Both were waived as 'op-log maintenance, not projected block state', which the snapshot's own `op_log_digest` contradicts — the log IS compared across the stacks, so counters over it are comparable too. What this corpus can reach is bounded by the clock, not by the scope: the cutoff is `now()` minus a window floored at `MIN_RETENTION_DAYS = 7`, and every op a fixture replays is minted during the run, so nothing is ever eligible and `ops_deleted` is deterministically 0. That leaves the fresh-log no-op path and the `retention_days` floor, and the floor is where the mock diverged: `compact_op_log_cmd` was a constant stub that answered success for the `0` the guard exists to refuse. `get_compaction_status`'s `oldest_op_date` is NOT projected — it is `MIN(op_log.created_at)`, a clock reading taken while the fixture replays, so a recorded value would bind to the millisecond it was authored on.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Journal",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "edited once",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "compact_at_the_floor_deletes_nothing",
+      "returns": ["compact_op_log_cmd#ops_deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "compact_at_the_default_window_deletes_nothing",
+      "returns": ["compact_op_log_cmd#ops_deleted=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "compact_refuses_one_day_under_the_floor",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "compact_refuses_a_zero_window",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "status_after_the_compactions",
+      "rows": ["compaction_status#total_ops=1#eligible_ops=0#retention_days=90"],
+      "total_count": null
+    }
+  ],
+  "name": "op_log_compaction",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "edited once"
+      },
+      "command": "edit_block",
+      "comment": "The whole op log this fixture has: one op, minted now, and therefore never eligible for any legal retention window."
+    },
+    {
+      "args": {
+        "retentionDays": 7
+      },
+      "command": "compact_op_log_cmd",
+      "comment": "The floor itself, accepted. Nothing is older than seven days, so the pre-flight count is zero and the command returns before it takes the writer lock.",
+      "name": "compact_at_the_floor_deletes_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "retentionDays": 90
+      },
+      "command": "compact_op_log_cmd",
+      "comment": "`DEFAULT_RETENTION_DAYS`, the window the status below reports. Same answer, for the same reason.",
+      "name": "compact_at_the_default_window_deletes_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "retentionDays": 6
+      },
+      "command": "compact_op_log_cmd",
+      "comment": "One day under `MIN_RETENTION_DAYS`. Refused at the IPC boundary before any DB work — the mock accepted it.",
+      "expect_error": "validation",
+      "name": "compact_refuses_one_day_under_the_floor",
+      "via": "command"
+    },
+    {
+      "args": {
+        "retentionDays": 0
+      },
+      "command": "compact_op_log_cmd",
+      "comment": "The value the floor exists for: a zero window sets cutoff = now() and would purge the whole log down to the snapshot frontier in one call.",
+      "expect_error": "validation",
+      "name": "compact_refuses_a_zero_window",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "get_compaction_status",
+      "comment": "The observation: the log still holds its one op, none of it is eligible, and the reported window is the constant `DEFAULT_RETENTION_DAYS` rather than anything the calls above passed.",
+      "name": "status_after_the_compactions"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Journal",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one line",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
