@@ -280,12 +280,19 @@ async fn write_todo_timestamp_transitions_in_tx(
     // every edge into DONE, cleared on every edge out of it, whatever the
     // other end.
     //
-    // Un-tasking clears it too, even from a state that is not DONE. That is
-    // not redundant with the arm above: a block that went DONE -> CANCELLED
-    // before this invariant held still carries a stale stamp. The boot repair
-    // (`repair_completed_at`) sweeps that population, stamping and clearing;
+    // Un-tasking a block that WAS a task clears it too, even from a state that
+    // is not DONE. That is not redundant with the arm above: a block that went
+    // DONE -> CANCELLED before this invariant held still carries a stale
+    // stamp. The boot repair (`repair_completed_at`) sweeps that population;
     // this is the same self-heal on the edge the user takes, for a stamp that
     // arrives after boot. Narrowing it to `was_done` would drop it.
+    //
+    // `prev_state.is_some()` is load-bearing. Without it a bulk "clear todo
+    // state" over blocks that were never tasks emits one `DeleteProperty` per
+    // block for a key that never existed, and
+    // `build_reverse_delete_property` answers that with `NotFound` rather than
+    // a skippable non-reversible — which aborts `undo_page_group` over the
+    // whole batch.
     let was_done = prev_state == Some("DONE");
     let is_done = new_state == Some("DONE");
     if is_done && !was_done {
@@ -303,7 +310,7 @@ async fn write_todo_timestamp_transitions_in_tx(
         )
         .await?;
         tx.enqueue_background(op);
-    } else if !is_done && (was_done || new_state.is_none()) {
+    } else if !is_done && (was_done || (prev_state.is_some() && new_state.is_none())) {
         let op =
             delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
         tx.enqueue_background(op);
