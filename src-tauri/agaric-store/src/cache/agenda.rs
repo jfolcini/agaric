@@ -137,6 +137,7 @@ const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
             WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+              AND bp.key NOT IN ('created_at', 'completed_at', 'repeat-until')
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
                 WHERE tp.block_id = b.page_id AND tp.key = 'template'
