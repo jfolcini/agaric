@@ -11,10 +11,10 @@
 
 /** Walk `el`'s ancestors, returning the first whose overflow `test` accepts. */
 function nearestAncestor(
-  el: HTMLElement | null,
+  el: HTMLElement,
   test: (style: CSSStyleDeclaration) => boolean,
 ): HTMLElement | null {
-  for (let cur = el?.parentElement ?? null; cur; cur = cur.parentElement) {
+  for (let cur = el.parentElement; cur; cur = cur.parentElement) {
     if (test(window.getComputedStyle(cur))) return cur
   }
   return null
@@ -33,7 +33,7 @@ function nearestAncestor(
  * left behind is a bare placeholder, so the block the user had just edited read
  * as gone until they scrolled back.
  */
-export function scrollParentY(el: HTMLElement | null): HTMLElement | null {
+export function scrollParentY(el: HTMLElement): HTMLElement | null {
   return nearestAncestor(el, ({ overflowY }) => overflowY === 'auto' || overflowY === 'scroll')
 }
 
@@ -44,7 +44,7 @@ export function scrollParentY(el: HTMLElement | null): HTMLElement | null {
  * scroller between me and the page", to decide whether `scrollIntoView` is
  * needed at all.
  */
-export function scrollParentAny(el: HTMLElement | null): HTMLElement | null {
+export function scrollParentAny(el: HTMLElement): HTMLElement | null {
   return nearestAncestor(el, (style) =>
     /auto|scroll|overlay/.test(`${style.overflow} ${style.overflowY} ${style.overflowX}`),
   )

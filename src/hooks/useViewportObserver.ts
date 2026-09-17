@@ -225,8 +225,9 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           const found = scrollParentY(el)
           // A row that finds no scroller says nothing about the container a
           // previous row found — it may simply have mounted outside it — so an
-          // empty answer never downgrades an adopted root to the viewport.
-          if (found !== null) setRootEl((cur) => (found === cur ? cur : found))
+          // empty answer never downgrades an adopted root to the viewport. An
+          // unchanged one is React's own `Object.is` bail-out, not ours.
+          if (found !== null) setRootEl(found)
           observerRef.current?.observe(el)
         } else if (previous) {
           observerRef.current?.unobserve(previous)
