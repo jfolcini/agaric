@@ -1353,18 +1353,10 @@ jobs:
         # `vitest-coverage` job replays both with `--mergeReports`. The blob
         # name carries the shard index, so the two never collide.
         #
-        # #5058 — `--reporter=dot` alongside it, because blob is a FILE
-        # reporter and prints nothing: a red shard's log named no test, no file
-        # and no assertion, only `exit code 1`. The merge job runs only when
-        # every shard passed, so on failure the blob is uploaded and never
-        # rendered, and the only visible output was incidental stderr from
-        # PASSING tests. Diagnosing #5045 and #5055 each meant reproducing the
-        # shard locally on a cold checkout.
-        #
-        # `--outputFile` still binds to the blob with two reporters configured
-        # — verified, since that is the argument #5047 had to add when vitest 5
-        # moved the blob's default path, and a second reporter is exactly the
-        # kind of change that could have re-pointed it.
+        # #5058 — `--reporter=dot` alongside it: blob writes a file and prints
+        # nothing, so THIS job's log names no failing test. The name is still
+        # reachable — `vitest-coverage` re-reports it from the blob — but only
+        # after that job installs, downloads and builds.
         #
         # #749's coverage thresholds are DISABLED here and enforced on the
         # merged report instead. A shard sees only half the suite — measured
@@ -1377,8 +1369,8 @@ jobs:
           npx vitest run \
             --shard=${{ matrix.shard }}/2 \
             --reporter=blob \
-            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
             --reporter=dot \
+            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
             --coverage \
             --coverage.thresholds.lines=0 \
             --coverage.thresholds.functions=0 \
