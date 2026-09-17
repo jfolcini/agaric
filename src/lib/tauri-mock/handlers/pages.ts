@@ -74,6 +74,25 @@ function nocaseCompare(x: string, y: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+/**
+ * The 1-based rank a new root-level block takes in `spaceId`'s sibling group.
+ *
+ * Positions are dense WITHIN A SPACE, not across the whole `parent_id = NULL`
+ * group: two spaces each have a block at rank 1. A block's space is
+ * `blocks.space_id`, except for a block that IS a space — it is not a member of
+ * itself, so it ranks in its own group, which is why a brand-new space comes
+ * out at 1 and the first page created inside it at 2.
+ */
+function nextRootPositionInSpace(spaceId: string | null): number {
+  let siblings = 0
+  for (const b of blocks.values()) {
+    if (b['deleted_at'] != null || b['parent_id'] != null) continue
+    const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
+    if (owner === spaceId) siblings += 1
+  }
+  return siblings + 1
+}
+
 export const pagesHandlers = {
   // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
@@ -406,10 +425,12 @@ export const pagesHandlers = {
     const existing = findLivePageByTitle(content, spaceId)
     if (existing !== null) return existing
     const id = fakeId()
-    const siblings = [...blocks.values()].filter(
-      (b) => b['parent_id'] === parentId && !b['deleted_at'],
-    )
-    const position = siblings.length
+    // Root pages rank within the TARGET SPACE's group; a child still ranks
+    // among its parent's children, which no space partitions.
+    const position =
+      parentId === null
+        ? nextRootPositionInSpace(spaceId)
+        : [...blocks.values()].filter((b) => b['parent_id'] === parentId && !b['deleted_at']).length
     const row = {
       id,
       block_type: 'page',
@@ -467,7 +488,10 @@ export const pagesHandlers = {
       content: (a['name'] as string) ?? null,
       parent_id: null,
       page_id: id,
-      position: 0,
+      // A space is not a member of itself, so it ranks in its OWN group — empty
+      // until now, hence 1. This was hardcoded `0`, a rank no backend row
+      // carries.
+      position: nextRootPositionInSpace(id),
       deleted_at: null,
       todo_state: null,
       priority: null,
