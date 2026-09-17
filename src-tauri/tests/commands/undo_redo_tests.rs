@@ -8582,3 +8582,149 @@ async fn undo_op_refuses_a_replicated_foreign_delete_listed_by_history_4328() {
         "#4328: an audit-only delete must not have deleted the local block"
     );
 }
+
+/// #5074 — a bulk *Clear* over blocks that never carried `completed_at` must
+/// stay undoable.
+///
+/// `write_todo_timestamp_transitions_in_tx` clears the lifecycle stamps on the
+/// edges out of a state. Emitted unconditionally, the clear over two plain
+/// `TODO` blocks appended a `DeleteProperty(completed_at)` per block for a key
+/// neither had; `reverse_delete_property` resolves a delete's prior value from
+/// the op log, finds none, and answers `NotFound`, which is not a skippable
+/// non-reversible — so `compute_reverse_batch` aborted the WHOLE group and
+/// Ctrl+Z after the gesture restored nothing.
+///
+/// The third block is `CANCELLED`, which is a task with no `created_at` (that
+/// stamp is written only on the edges into `TODO` / `DOING`), so this covers
+/// BOTH presence guards: removing either `prior.has_completed_at` or
+/// `prior.has_created_at` turns this red at the `undo_page_group_inner` call.
+///
+/// The page and the prior states are written by `OTHER_DEV` so the same-device
+/// walk bounds the group at exactly the `DEV` clear, and the restored states
+/// are therefore the real prior ones rather than "no state".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_survives_a_bulk_clear_of_never_completed_blocks_5074() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "page".into(),
+        "Tasks".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let b = create_block_inner(
+            &pool,
+            OTHER_DEV,
+            &mat,
+            "content".into(),
+            format!("task {i}"),
+            Some(page.id.clone()),
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id);
+    }
+    settle(&mat).await;
+
+    // Prior states, written by the OTHER device so they are outside the
+    // group: two open tasks (created_at, no completed_at) and one CANCELLED
+    // (neither stamp).
+    let open = ids[..2].to_vec();
+    let cancelled = vec![ids[2].clone()];
+    set_todo_state_batch_inner(&pool, OTHER_DEV, &mat, open.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_todo_state_batch_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        cancelled.clone(),
+        Some("CANCELLED".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    for id in &ids {
+        let stamp: Option<String> = sqlx::query_scalar(
+            "SELECT value_date FROM block_properties \
+             WHERE block_id = ? AND key = 'completed_at'",
+        )
+        .bind(id.as_str())
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten();
+        assert_eq!(
+            stamp, None,
+            "fixture: {id} must never have carried a completed_at"
+        );
+    }
+    let cancelled_created_at: Option<String> = sqlx::query_scalar(
+        "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'created_at'",
+    )
+    .bind(ids[2].as_str())
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        cancelled_created_at, None,
+        "fixture: a CANCELLED block must never have carried a created_at"
+    );
+
+    // The gesture: multi-select all three, "Clear".
+    let cleared = set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(cleared, 3);
+    settle(&mat).await;
+    for id in &ids {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(id.as_str())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state, None, "fixture: {id} must be cleared before the undo");
+    }
+
+    // Ctrl+Z over the page.
+    let results = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.clone().into_string(),
+        0,
+        1_000_000,
+    )
+    .await
+    .expect("a bulk clear over never-completed blocks must stay undoable (#5074)");
+    settle(&mat).await;
+
+    assert!(
+        !results.is_empty(),
+        "the group must contain the cleared blocks' ops"
+    );
+    for (id, expected) in ids.iter().zip(["TODO", "TODO", "CANCELLED"]) {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(id.as_str())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            state.as_deref(),
+            Some(expected),
+            "{id} must be back to {expected} after the group undo"
+        );
+    }
+}

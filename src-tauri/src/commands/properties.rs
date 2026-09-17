@@ -221,20 +221,72 @@ pub async fn set_property_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
+/// What a block's row already said about its task lifecycle, read in the
+/// caller's transaction before the `todo_state` write lands.
+///
+/// The two presence flags are correctness, not an optimisation.
+/// [`write_todo_timestamp_transitions_in_tx`] clears a stamp on the edges out
+/// of a state, and `build_reverse_delete_property` resolves a
+/// `DeleteProperty`'s prior value from the op log: a clear for a key the
+/// block never carried answers `NotFound`, which is not a skippable
+/// non-reversible, so `compute_reverse_batch` aborts the whole undo group.
+/// Multi-selecting TODO blocks and hitting *Clear* is the gesture that hit it
+/// — every one of those blocks got a `DeleteProperty(completed_at)` for a key
+/// it never had, and the next Ctrl+Z restored nothing (#5074).
+#[derive(Clone, Debug, Default)]
+struct PriorTaskState {
+    todo_state: Option<String>,
+    has_created_at: bool,
+    has_completed_at: bool,
+}
+
+/// One block's [`PriorTaskState`], read on the caller's transaction by
+/// primary key. The `blocks` read [`set_todo_state_inner`] already issued,
+/// widened (#5074) to carry the two stamp-presence flags so the transition
+/// never emits a clear for a key that is not there. A missing or soft-deleted
+/// block answers the default, and `set_property_in_tx` then raises the
+/// `NotFound` that single-row path owes its caller.
+///
+/// # Errors
+/// Returns [`AppError`] if the query fails.
+async fn prior_task_state_in_tx(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<PriorTaskState, AppError> {
+    Ok(sqlx::query!(
+        r#"SELECT b.todo_state,
+                  EXISTS (SELECT 1 FROM block_properties p
+                          WHERE p.block_id = b.id AND p.key = 'created_at')
+                      AS "has_created_at!: bool",
+                  EXISTS (SELECT 1 FROM block_properties p
+                          WHERE p.block_id = b.id AND p.key = 'completed_at')
+                      AS "has_completed_at!: bool"
+           FROM blocks b
+           WHERE b.id = ? AND b.deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .map(|r| PriorTaskState {
+        todo_state: r.todo_state,
+        has_created_at: r.has_created_at,
+        has_completed_at: r.has_completed_at,
+    })
+    .unwrap_or_default())
+}
+
 /// Write the `created_at` / `completed_at` rows implied by a
 /// `todo_state` transition, on the caller's already-open transaction.
 ///
-/// Extracted from [`set_todo_state_inner`] (#4639); since #5074
-/// [`set_todo_state_batch_inner`] runs it per block too. `completed_at` is
-/// present iff `todo_state = 'DONE'` on every path that writes the state,
-/// because `DonePanel` selects on `completed_at` and the agenda excludes
-/// DONE in SQL — a batch "mark done" that skipped this dropped the blocks
-/// out of both surfaces at once.
+/// Extracted from `set_todo_state_inner` (#4639); since #5074 both batch
+/// paths run it per block too. `completed_at` is present iff
+/// `todo_state = 'DONE'` on every path that writes the state, because
+/// `DonePanel` selects on `completed_at` and the agenda excludes DONE in SQL
+/// — a batch "mark done" that skipped this dropped the blocks out of both
+/// surfaces at once.
 ///
-/// [`set_property_batch_inner`] still skips it: it generalises across four
-/// reserved keys, only one of which is `todo_state`. Recurrence is the
-/// divergence both batch paths keep — that is what
-/// [`warn_if_batch_skips_recurrence`] tells the user about and what
+/// Recurrence is the divergence both batch paths keep — that is what
+/// `warn_if_batch_skips_recurrence` tells the user about and what
 /// `scripts/bulk-equivalence-baseline.json` records.
 ///
 /// The caller owns the transaction and its commit; this helper only appends
@@ -244,9 +296,10 @@ async fn write_todo_timestamp_transitions_in_tx(
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
-    prev_state: Option<&str>,
+    prior: &PriorTaskState,
     new_state: Option<&str>,
 ) -> Result<(), AppError> {
+    let prev_state = prior.todo_state.as_deref();
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     // `created_at`: stamped when a block becomes an open task, cleared when
@@ -268,7 +321,8 @@ async fn write_todo_timestamp_transitions_in_tx(
             .await?;
             tx.enqueue_background(op);
         }
-        (Some(_), None) => {
+        // Only when the row is actually there: see [`PriorTaskState`].
+        (Some(_), None) if prior.has_created_at => {
             let op =
                 delete_property_in_tx(&mut *tx, state, device_id, block_id, "created_at").await?;
             tx.enqueue_background(op);
@@ -293,6 +347,10 @@ async fn write_todo_timestamp_transitions_in_tx(
     // `build_reverse_delete_property` answers that with `NotFound` rather than
     // a skippable non-reversible — which aborts `undo_page_group` over the
     // whole batch.
+    //
+    // `prior.has_completed_at` closes the rest of that hole: a plain TODO
+    // block cleared in bulk IS a task, so the guard above lets it through
+    // while it has no `completed_at` to delete. See [`PriorTaskState`].
     let was_done = prev_state == Some("DONE");
     let is_done = new_state == Some("DONE");
     if is_done && !was_done {
@@ -310,7 +368,10 @@ async fn write_todo_timestamp_transitions_in_tx(
         )
         .await?;
         tx.enqueue_background(op);
-    } else if !is_done && (was_done || (prev_state.is_some() && new_state.is_none())) {
+    } else if !is_done
+        && prior.has_completed_at
+        && (was_done || (prev_state.is_some() && new_state.is_none()))
+    {
         let op =
             delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
         tx.enqueue_background(op);
@@ -387,17 +448,11 @@ pub async fn set_todo_state_inner(
 
     let block_id_str = block_id.as_str();
 
-    // Fetch only `todo_state` — the full SELECT * is unnecessary here
-    // since `set_property_in_tx` (called below) issues its own SELECT.
-    // `set_property_in_tx` returns NotFound if the block is missing, so
-    // the redundant existence guard is dropped.
-    let prev_state: Option<String> = sqlx::query_scalar!(
-        "SELECT todo_state FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        block_id_str
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
+    // Just the task lifecycle — the full SELECT * is unnecessary here since
+    // `set_property_in_tx` (called below) issues its own SELECT and returns
+    // NotFound if the block is missing, so the redundant existence guard is
+    // dropped.
+    let prior = prior_task_state_in_tx(&mut tx, block_id_str).await?;
     let new_state = state.clone();
 
     let block_id_owned = block_id.into_string();
@@ -421,7 +476,7 @@ pub async fn set_todo_state_inner(
         materializer.loro_state(),
         device_id,
         &block_id_owned,
-        prev_state.as_deref(),
+        &prior,
         new_state.as_deref(),
     )
     .await?;
@@ -429,7 +484,7 @@ pub async fn set_todo_state_inner(
     // Recurrence: when transitioning to DONE, delegate to recurrence
     // module — using the in-tx form so the sibling creation rolls back
     // alongside the state change if anything below fails.
-    if new_state.as_deref() == Some("DONE") && prev_state.as_deref() != Some("DONE") {
+    if new_state.as_deref() == Some("DONE") && prior.todo_state.as_deref() != Some("DONE") {
         crate::recurrence::handle_recurrence_in_tx(
             &mut tx,
             materializer.loro_state(),
@@ -545,6 +600,53 @@ fn validate_todo_state_batch_input(
     Ok(())
 }
 
+/// Every live block in `block_ids`, with the [`PriorTaskState`] the
+/// `todo_state` batch paths need — ONE query for the whole batch, never a
+/// per-block read in the loop (#2038).
+///
+/// Missing and soft-deleted ids are simply absent from the map, which IS the
+/// batch paths' skip-on-miss contract: a row deleted between the FE selection
+/// and this call drops out cleanly.
+///
+/// #473 L3: `conn` is the caller's already-open `BEGIN IMMEDIATE`
+/// transaction, so the membership snapshot and the writes that follow sit in
+/// the same serialized window.
+///
+/// # Errors
+/// Returns [`AppError`] if the id list cannot be serialized or the query fails.
+async fn resolve_prior_task_states_batch(
+    conn: &mut sqlx::SqliteConnection,
+    block_ids: &[BlockId],
+) -> Result<HashMap<String, PriorTaskState>, AppError> {
+    let block_ids_json = serde_json::to_string(block_ids)?;
+    Ok(sqlx::query!(
+        r#"SELECT b.id, b.todo_state,
+                  EXISTS (SELECT 1 FROM block_properties p
+                          WHERE p.block_id = b.id AND p.key = 'created_at')
+                      AS "has_created_at!: bool",
+                  EXISTS (SELECT 1 FROM block_properties p
+                          WHERE p.block_id = b.id AND p.key = 'completed_at')
+                      AS "has_completed_at!: bool"
+           FROM blocks b
+           WHERE b.id IN (SELECT value FROM json_each(?)) AND b.deleted_at IS NULL"#,
+        block_ids_json
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| {
+        (
+            r.id,
+            PriorTaskState {
+                todo_state: r.todo_state,
+                has_created_at: r.has_created_at,
+                has_completed_at: r.has_completed_at,
+            },
+        )
+    })
+    .collect())
+}
+
 /// Batch variant of [`set_todo_state_inner`].
 ///
 /// Replaces the per-row IMMEDIATE-tx loop the FE used to drive on
@@ -569,7 +671,7 @@ fn validate_todo_state_batch_input(
 /// errors, not data drift.
 ///
 /// The `created_at`/`completed_at` transitions DO run here, per block,
-/// through the same [`write_todo_timestamp_transitions_in_tx`] the
+/// through the same `write_todo_timestamp_transitions_in_tx` the
 /// single-row path uses (#5074): `completed_at` is what `DonePanel`
 /// selects on and what the agenda's DONE exclusion assumes, so a batch
 /// that skipped it dropped the blocks out of both surfaces at once.
@@ -579,7 +681,7 @@ fn validate_todo_state_batch_input(
 /// todo on these N blocks" — and propagating recurrence per item under one
 /// IMMEDIATE lock would defeat the latency win. Callers that need the
 /// next-occurrence sibling fall through to the single-row path;
-/// [`warn_if_batch_skips_recurrence`] logs when a `repeat` carrier rides
+/// `warn_if_batch_skips_recurrence` logs when a `repeat` carrier rides
 /// in the batch.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_todo_state_batch_inner(
@@ -622,29 +724,14 @@ pub async fn set_todo_state_batch_inner(
         )?;
     }
 
-    // #2038: resolve which target blocks are live in ONE membership query
-    // instead of a per-block existence SELECT inside the loop (N+1). Skip-on-
-    // miss semantics are preserved: a row deleted between the FE selection and
-    // this call is absent from `alive` and cleanly skipped.
-    // #5074 — the one membership query also carries each survivor's CURRENT
-    // `todo_state`: the per-block timestamp transition needs to know which
-    // edge it is on, and a second read per block would be the N+1 this query
-    // exists to avoid.
-    let block_ids_json = serde_json::to_string(&block_ids)?;
-    let alive: std::collections::HashMap<String, Option<String>> = sqlx::query!(
-        r#"SELECT id, todo_state FROM blocks
-           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
-        block_ids_json
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .map(|r| (r.id, r.todo_state))
-    .collect();
+    // #2038 / #5074: one membership query for the whole batch, carrying each
+    // survivor's prior lifecycle state. See
+    // [`resolve_prior_task_states_batch`].
+    let alive = resolve_prior_task_states_batch(&mut tx, &block_ids).await?;
 
     let mut updated: i64 = 0;
     for block_id in block_ids {
-        let Some(prev_state) = alive.get(block_id.as_str()).cloned() else {
+        let Some(prior) = alive.get(block_id.as_str()).cloned() else {
             continue;
         };
 
@@ -676,7 +763,7 @@ pub async fn set_todo_state_batch_inner(
             materializer.loro_state(),
             device_id,
             &block_id,
-            prev_state.as_deref(),
+            &prior,
             state.as_deref(),
         )
         .await?;
@@ -688,17 +775,52 @@ pub async fn set_todo_state_batch_inner(
     Ok(updated)
 }
 
-/// Pre-transaction value-shape check for [`set_property_batch_inner`]: the
-/// 1-50 character bound on the two text keys, the ISO `YYYY-MM-DD` bound on
-/// the two date keys.
+/// The pre-transaction caller-shape rejections [`set_property_batch_inner`]
+/// makes before it opens a transaction: a key outside
+/// [`SET_PROPERTY_BATCH_ALLOWED_KEYS`], an empty list, an oversize list, then
+/// the 1-50 character bound on the two text keys and the ISO `YYYY-MM-DD`
+/// bound on the two date keys. Pure, so it needs no pool.
 ///
-/// Split out of that command (#4639). Private to the BATCH root on purpose:
-/// the single-row inners (`set_todo_state_inner`, `set_priority_inner`,
-/// `set_due_date_inner`, `set_scheduled_date_inner`) each carry their own
-/// wording for their own key, and routing them through one shared check
-/// would flatten four messages into one and quietly extend the batch
-/// allowlist's shape to a path that has none.
-fn validate_set_property_batch_value_shape(key: &str, value: Option<&str>) -> Result<(), AppError> {
+/// The allowlist guard runs FIRST and is the security boundary the command's
+/// own doc names: a key that must never reach a typed `blocks` column is
+/// refused before the list is even sized.
+///
+/// Split out of that command (#4639 for the value shape, #5074 for the three
+/// guards above it, to keep the command under `clippy::too_many_lines` once
+/// the `completed_at` transition moved in). Private to the BATCH root on
+/// purpose: the single-row inners (`set_todo_state_inner`,
+/// `set_priority_inner`, `set_due_date_inner`, `set_scheduled_date_inner`)
+/// each carry their own wording for their own key, and routing them through
+/// one shared check would flatten four messages into one and quietly extend
+/// the batch allowlist's shape to a path that has none.
+///
+/// The reserved-key option-list fallback is NOT here — it reads
+/// `property_definitions` and so belongs inside the command's transaction
+/// (`validate_set_property_batch_text_key`).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — a non-allowlisted `key`, empty `block_ids`,
+///   more than `MAX_BATCH_BLOCK_IDS` of them, or a `value` of the wrong shape
+///   for `key`.
+fn validate_set_property_batch_input(
+    block_ids: &[BlockId],
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), AppError> {
+    if !SET_PROPERTY_BATCH_ALLOWED_KEYS.contains(&key) {
+        return Err(AppError::validation(format!(
+            "set_property_batch: key '{key}' is not settable in batch; \
+             allowed keys: {}",
+            SET_PROPERTY_BATCH_ALLOWED_KEYS.join(", ")
+        )));
+    }
+    if block_ids.is_empty() {
+        return Err(AppError::validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     match key {
         "todo_state" | "priority" => {
             if let Some(v) = value
@@ -795,10 +917,13 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// `repeat`-carrying pages leaves a diagnostic in the daily log instead of
 /// nothing.
 ///
-/// It also does not run the `created_at` / `completed_at` transitions, which
-/// #5074 gave the todo batch: this command generalises across four reserved
-/// keys and only one of them is `todo_state`, so the transition would have to
-/// be gated on the key here rather than being what the command does.
+/// The `created_at` / `completed_at` transitions #5074 gave the todo batch DO
+/// run here, gated on `key == "todo_state"` exactly as the recurrence warning
+/// above is — the other three keys pay nothing. *Set property → Todo state →
+/// DONE* in `PageBrowserBatchToolbar` routes to THIS command, not to
+/// `set_todo_state_batch`, so skipping the stamp here dropped a bulk-completed
+/// page out of the agenda (which excludes DONE in SQL) and out of `DonePanel`
+/// (which selects on `completed_at`) at the same time.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,
@@ -808,28 +933,11 @@ pub async fn set_property_batch_inner(
     key: String,
     value: Option<String>,
 ) -> Result<i64, AppError> {
-    // Security boundary: reject any key outside the reserved column-backed
-    // allowlist BEFORE opening the tx, so a bad key writes nothing.
-    if !SET_PROPERTY_BATCH_ALLOWED_KEYS.contains(&key.as_str()) {
-        return Err(AppError::validation(format!(
-            "set_property_batch: key '{key}' is not settable in batch; \
-             allowed keys: {}",
-            SET_PROPERTY_BATCH_ALLOWED_KEYS.join(", ")
-        )));
-    }
-
-    if block_ids.is_empty() {
-        return Err(AppError::validation(
-            "block_ids list cannot be empty".into(),
-        ));
-    }
-    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
-
-    // Pre-tx value-shape validation, mirroring the single-row inners
-    // (`set_todo_state_inner` / `set_priority_inner` length check;
-    // `set_due_date_inner` / `set_scheduled_date_inner` ISO-date check).
+    // Pre-tx caller-shape validation: the allowlist security boundary, the
+    // list guards, and the per-key value shape — all BEFORE the tx opens, so
+    // a rejected call writes nothing.
+    validate_set_property_batch_input(&block_ids, &key, value.as_deref())?;
     let is_text_key = matches!(key.as_str(), "todo_state" | "priority");
-    validate_set_property_batch_value_shape(&key, value.as_deref())?;
 
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every property change commits or none of them.
@@ -862,37 +970,28 @@ pub async fn set_property_batch_inner(
     let value_text = if is_text_key { value.clone() } else { None };
     let value_date = if is_text_key { None } else { value.clone() };
 
-    // Resolve which target blocks are live in ONE membership query (no
-    // per-block existence SELECT in the loop). Skip-on-miss semantics: a row
-    // deleted between the FE selection and this call is absent from `alive`
-    // and cleanly skipped.
-    let block_ids_json = serde_json::to_string(&block_ids)?;
-    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
-        r#"SELECT id FROM blocks
-           WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
-        block_ids_json
-    )
-    .fetch_all(&mut **tx)
-    .await?
-    .into_iter()
-    .collect();
+    // The same one membership query the todo batch runs, for the same two
+    // reasons: skip-on-miss without a per-block existence SELECT, and the
+    // prior lifecycle state the `todo_state` transition below needs.
+    let alive = resolve_prior_task_states_batch(&mut tx, &block_ids).await?;
 
     let mut updated: i64 = 0;
     for block_id in block_ids {
-        if !alive.contains(block_id.as_str()) {
+        let Some(prior) = alive.get(block_id.as_str()).cloned() else {
             continue;
-        }
+        };
 
         // Reuse the canonical per-row helper so reserved-key validation,
         // op_log append, and the materialised `blocks` column write all
         // share the single source of truth. Discard the returned row (the
         // batch wrapper surfaces no per-block payload) and queue the op
         // record for post-commit dispatch.
+        let block_id = block_id.into_string();
         let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
             &mut tx,
             materializer.loro_state(),
             device_id,
-            block_id.into_string(),
+            block_id.clone(),
             &key,
             value_text.clone(),
             None,
@@ -902,6 +1001,20 @@ pub async fn set_property_batch_inner(
         )
         .await?;
         tx.enqueue_background(op_record);
+        // #5074 — same tx as the state change, so the stamp commits or rolls
+        // back with it. Gated on the KEY, like the recurrence probe above:
+        // `todo_state` is the only allowlisted key these timestamps track.
+        if key == "todo_state" {
+            write_todo_timestamp_transitions_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                &block_id,
+                &prior,
+                value.as_deref(),
+            )
+            .await?;
+        }
         updated += 1;
     }
 

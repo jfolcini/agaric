@@ -401,12 +401,9 @@ async fn flush_pending_agenda_diff(
 /// 3. Walks the two streams in lockstep (M-19b sort-merge), batching
 ///    DELETEs and INSERTs in `O(STREAM_BATCH)` chunks.
 ///
-/// Two data sources:
-/// 1. `block_properties` rows with a non-null `value_date` -> source = `property:<key>`
-/// 2. `block_tags` referencing tag blocks whose name matches `date/YYYY-MM-DD`
-///    (exactly 15 chars) -> source = `tag:<tag_id>`
-/// 3. `blocks.due_date` column -> source = `column:due_date`
-/// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
+/// The four sources are `DESIRED_AGENDA_SQL`'s, which is the single place
+/// they are defined — including the #5074 exclusion of the lifecycle
+/// timestamps (`created_at` / `completed_at` / `repeat-until`) from source 1.
 #[tracing::instrument(skip(pool), err)]
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("agenda", || rebuild_agenda_cache_impl(pool)).await

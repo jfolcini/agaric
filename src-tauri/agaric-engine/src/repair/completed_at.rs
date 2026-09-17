@@ -86,19 +86,24 @@ async fn select_candidates(
 }
 
 /// Live blocks that are not DONE but carry a `completed_at`, in id order.
+///
+/// Driven from `block_properties`, not from `blocks`: `todo_state IS NULL OR
+/// <> 'DONE'` matches nearly every block in the vault and cannot use the
+/// partial `idx_blocks_todo`, so starting there scanned the whole table under
+/// the boot `BEGIN IMMEDIATE`. `key = 'completed_at'` is the covering prefix
+/// of `idx_block_props_key(key, block_id)`, and the rows it yields are at most
+/// the tasks ever completed — same result set, walked from the small side.
 async fn select_stale_stamps(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<Vec<String>, AppError> {
     Ok(sqlx::query_scalar!(
-        r#"SELECT b.id AS "id!: String"
-           FROM blocks b
-           WHERE (b.todo_state IS NULL OR b.todo_state <> 'DONE')
+        r#"SELECT p.block_id AS "id!: String"
+           FROM block_properties p
+           JOIN blocks b ON b.id = p.block_id
+           WHERE p.key = 'completed_at'
              AND b.deleted_at IS NULL
-             AND EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id AND p.key = 'completed_at'
-             )
-           ORDER BY b.id"#,
+             AND (b.todo_state IS NULL OR b.todo_state <> 'DONE')
+           ORDER BY p.block_id"#,
     )
     .fetch_all(&mut **tx)
     .await?)
