@@ -36,9 +36,9 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve as resolvePath } from 'node:path'
 
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { useRef } from 'react'
+import { createElement, useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedSearchBlocks = vi.hoisted(() => vi.fn())
@@ -81,10 +81,13 @@ vi.mock('@/lib/logger', () => ({
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { BookmarksSection } from '@/components/layout/BookmarksSection'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -281,6 +284,12 @@ interface Writer {
   supports: readonly BlockType[]
   /** Shapes this writer cannot be driven with, and why. */
   skip?: Partial<Record<BlockType, readonly string[]>>
+  /**
+   * This writer asks only about ids the store does not already hold, so
+   * seeding it for an id a sibling already wrote is a no-op. See the
+   * cross-writer convergence block for what that costs there.
+   */
+  cacheGated?: true
   seed: (id: string, blockType: BlockType, content: string | null) => Promise<void>
 }
 
@@ -334,6 +343,7 @@ const WRITERS: readonly Writer[] = [
     name: 'useBacklinkResolution.storeTitle',
     source: 'src/hooks/useBacklinkResolution.ts',
     supports: BLOCK_TYPES,
+    cacheGated: true,
     seed: async (id, blockType, content) => {
       mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
       const token = blockType === 'tag' ? `#[${id}]` : `[[${id}]]`
@@ -416,6 +426,20 @@ const WRITERS: readonly Writer[] = [
       })
     },
   },
+  {
+    name: 'BookmarksSection on-demand lookup',
+    source: 'src/components/layout/BookmarksSection.tsx',
+    // The bookmark list is the `starred-pages` preference, which holds PAGE
+    // ids only, so a page row is the only thing `batch_resolve` answers with.
+    supports: ['page'],
+    cacheGated: true,
+    seed: async (id, blockType, content) => {
+      writePreference(PREFERENCES.starredPages, [id])
+      mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
+      render(createElement(SidebarProvider, null, createElement(BookmarksSection)))
+      await waitFor(() => expect(mockedBatchResolve).toHaveBeenCalled())
+    },
+  },
 ] as const
 
 beforeEach(() => {
@@ -483,24 +507,29 @@ describe('resolve-store title matrix — {every writer} × {content, page, tag} 
  *
  * The set is DERIVED from `supports` rather than hand-listed, so a fifth
  * writer joins this check by existing — the hand-picked pair is precisely how
- * a drifted writer stayed outside the net three reviews running.
+ * a drifted writer stayed outside the net three reviews running. The one
+ * exception is a cache-gated writer, for the reason spelled out at the filter
+ * below.
  */
 describe('cross-writer convergence — every writer for a type agrees, byte for byte', () => {
   for (const blockType of BLOCK_TYPES) {
     for (const shape of SHAPES) {
-      // Ordered so the CACHE-GATED writer goes first. `useBacklinkResolution`
-      // resolves only ids the store does not already hold (`!store.has(id)`),
-      // so seeding it after any sibling makes it a silent no-op and the
+      // A cache-gated writer resolves only ids the store does not already
+      // hold, so seeding it after any sibling makes it a silent no-op and the
       // assertion vacuous — the exact shape of false green this file exists to
-      // avoid. It leads, and the other three are compared against what it
-      // wrote; which is also the right direction for #4238, since it is the
-      // writer that used to disagree.
-      const runnable = WRITERS.filter(
+      // avoid. Exactly one of them can take part, so it LEADS and the rest sit
+      // this out. That costs nothing: their matrix rows above pin the value
+      // they store against the same literal the leader is checked against, and
+      // a writer that declines to write cannot churn `version`. Leading is
+      // also the right direction for #4238, since `useBacklinkResolution` is
+      // the writer that used to disagree.
+      const candidates = WRITERS.filter(
         (w) => w.supports.includes(blockType) && !w.skip?.[blockType]?.includes(shape.name),
-      ).toSorted(
-        (a, b) =>
-          Number(b.name.startsWith('useBacklink')) - Number(a.name.startsWith('useBacklink')),
       )
+      const runnable = [
+        ...candidates.filter((w) => w.cacheGated).slice(0, 1),
+        ...candidates.filter((w) => !w.cacheGated),
+      ]
       it(`${blockType} × ${shape.name}: ${runnable.length} writers, one version bump`, async () => {
         const id = nextUlid()
         // Guard the guard: a convergence assertion over ONE writer is
@@ -657,6 +686,22 @@ const DECLARED_WRITERS: Record<
  */
 const STORE_INTERNAL_WRITER = 'src/stores/resolve.ts'
 
+/**
+ * Seed writers with no row in {@link WRITERS} — the gap, named.
+ *
+ * The counted gate check below proves the `resolveStoreTitle` CALL is there;
+ * only a matrix row proves the VALUE that reaches the store is the agreed one.
+ * These three have never been driven, so the call is all that pins them.
+ * Listed rather than simply absent, because the enumeration guard's failure
+ * message promises a matrix row, and a silent omission is exactly how the
+ * newest seed writer got in without one.
+ */
+const SEED_WRITERS_WITHOUT_MATRIX_ROW: ReadonlySet<string> = new Set([
+  'src/components/TrashView.tsx',
+  'src/components/backlinks/UnlinkedReferences.tsx',
+  'src/components/editor/embed/use-embed-target.ts',
+])
+
 const SRC_ROOT = resolvePath(process.cwd(), 'src')
 
 /** Every non-test `.ts` / `.tsx` under `src/`, as repo-relative paths. */
@@ -719,7 +764,7 @@ describe('writer enumeration — the denominator, checked', () => {
     const undeclared = [...found.keys()].filter((f) => !(f in DECLARED_WRITERS)).toSorted()
     expect(
       undeclared,
-      "A new resolve-store title writer appeared. Add it to DECLARED_WRITERS with its `kind`; if it is a `seed` (its title comes from a fetched row) it must call `resolveStoreTitle` from `@/lib/block-title` AND get a row in WRITERS above. See `@/lib/block-title`'s docblock.",
+      "A new resolve-store title writer appeared. Add it to DECLARED_WRITERS with its `kind`; if it is a `seed` (its title comes from a fetched row) it must call `resolveStoreTitle` from `@/lib/block-title` AND get a row in WRITERS above, or be named in SEED_WRITERS_WITHOUT_MATRIX_ROW. See `@/lib/block-title`'s docblock.",
     ).toEqual([])
   })
 
@@ -776,6 +821,19 @@ describe('writer enumeration — the denominator, checked', () => {
   it('keeps the store itself on the gate too', () => {
     // `runPreloadScan` is the one writer the scan structurally cannot see.
     expect(readFileSync(STORE_INTERNAL_WRITER, 'utf8')).toContain('resolveStoreTitle')
+  })
+
+  it('gives every declared SEED writer a matrix row, or names it as a known gap', () => {
+    const matrixSources = new Set(WRITERS.map((w) => w.source))
+    const unpinned = Object.entries(DECLARED_WRITERS)
+      .filter(([file, d]) => d.kind === 'seed' && !matrixSources.has(file))
+      .map(([file]) => file)
+      .filter((file) => !SEED_WRITERS_WITHOUT_MATRIX_ROW.has(file))
+      .toSorted()
+    expect(
+      unpinned,
+      'A seed writer has no row in WRITERS, so nothing pins the VALUE it stores — only that it calls the gate. Give it a matrix row, or list it in SEED_WRITERS_WITHOUT_MATRIX_ROW, whose docblock says what that leaves uncovered.',
+    ).toEqual([])
   })
 
   it('gives every matrix writer a declared source file', () => {

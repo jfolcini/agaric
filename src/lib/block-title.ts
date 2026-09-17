@@ -7,9 +7,9 @@
  * to compute the same string, or the last writer wins, `version` bumps, and
  * every version-subscribed consumer re-renders — for a value that did not
  * really change. Three successive reviews of #4239 each found one more
- * writer that had drifted, so the enumeration is written down here and
- * pinned by a test (`resolve-store-title-seed-parity.test.ts`, which reads
- * this source tree and fails on an unregistered writer).
+ * writer that had drifted, so the enumeration is pinned by a test
+ * (`resolve-store-title-seed-parity.test.ts`, which reads this source tree
+ * and fails on an unregistered writer).
  *
  * ## The invariant
  *
@@ -33,18 +33,13 @@
  * one. And `preload` writes page/tag titles verbatim under the same key, so
  * any capping or splitting writer churns against it on every sync.
  *
- * ## The writers (all of them)
+ * ## The writers
  *
- * Seed writers — title comes from a FETCHED row, so the gate applies:
- *   1. `searchBlockRefs`      `@/components/block-tree/use-block-resolve.ts`
- *   2. `fetchAndCacheLinks`   `@/components/block-tree/use-block-link-resolve.ts`
- *   3. `handleNavigate`       `@/components/block-tree/use-block-navigate-to-link.ts`
- *   4. `storeTitle`           `@/hooks/useBacklinkResolution.ts`
- *   5. `runPreloadScan`       `@/stores/resolve.ts` — pages + tags only
- *   6. `populatePageResolveCache` / the `searchTags` fill
- *                             `@/components/block-tree/use-block-resolve.ts` — pages / tags
- *   7. the unlinked-refs pre-warm `@/components/backlinks/UnlinkedReferences.tsx` — pages
- *   8. the trash restore hint `@/components/TrashView.tsx` — pages + tags
+ * Seed writers — title comes from a FETCHED row, so the gate applies. They
+ * are listed in `DECLARED_WRITERS`
+ * (`resolve-store-title-seed-parity.test.ts`), which is checked against the
+ * source tree. A second copy here read as pinned and was not, and drifted
+ * twice (#4550, #5075) before it was deleted.
  *
  * Echo writers — the title is a value the caller just WROTE to the backend
  * (create / rename / delete), not a value it read back, so there is nothing
@@ -59,7 +54,7 @@
  *
  * ## The blank cells, and where the cache-miss signal lives now (#4238)
  *
- * Until #4238 the enumeration above had an exception: `useBacklinkResolution`
+ * Until #4238 one seed writer was an exception: `useBacklinkResolution`
  * wrote `[[<id>...]]` (or `#<id>...` for a tag) instead of "Untitled" for a
  * row the backend RETURNED with a `null`/empty title. That was not sloppiness
  * — the `[[id…]]` shape was a SIGNAL. `resolveBlockDisplay`
@@ -72,7 +67,7 @@
  *
  * So the second job moved off the string. `ResolveEntry` (`@/stores/resolve`)
  * now carries a `resolved` boolean alongside `deleted`, and the title is
- * PURELY presentational: every seed writer above normalises unconditionally,
+ * PURELY presentational: every seed writer normalises unconditionally,
  * blank included, so all four writers that can reach a `content` id
  * (`searchBlockRefs`, `fetchAndCacheLinks`, `handleNavigate`, the
  * `useBacklinkResolution` seed) produce byte-identical bytes for the same row.
