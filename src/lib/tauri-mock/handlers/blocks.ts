@@ -504,6 +504,17 @@ export const blocksHandlers = {
     const active = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
     const source = (req['source'] as string | null) ?? null
 
+    // #5074 — `exclude_todo_states` is a predicate on `pagination::list_agenda`
+    // ALONE; `list_blocks_inner` rejects it on every other branch rather than
+    // dropping it, because a filter the caller believes is applied but is not
+    // answers the wrong SET. Checked AHEAD of the dispatch chain, where the
+    // backend checks it, so the rejection does not depend on which branch the
+    // request would have taken.
+    const excludeTodoStates = (req['excludeTodoStates'] as string[] | null | undefined) ?? []
+    if (excludeTodoStates.length > 0 && req['date'] == null) {
+      throw validationRejection('exclude_todo_states applies to the `date` agenda filter only')
+    }
+
     // `has_agenda_range` — the backend treats the range as present only when
     // BOTH ends are, and rejects a half-open one; the FE DTO carries them as a
     // single `{ start, end }` object, so presence of the object IS both ends.
@@ -535,9 +546,17 @@ export const blocksHandlers = {
     if (date != null) {
       // `list_agenda` — `ORDER BY b.id ASC`.
       const items = active.filter((b) => {
-        if (source === 'column:due_date') return b['due_date'] === date
-        if (source === 'column:scheduled_date') return b['scheduled_date'] === date
-        return b['due_date'] === date || b['scheduled_date'] === date
+        const onDate =
+          source === 'column:due_date'
+            ? b['due_date'] === date
+            : source === 'column:scheduled_date'
+              ? b['scheduled_date'] === date
+              : b['due_date'] === date || b['scheduled_date'] === date
+        if (!onDate) return false
+        // `b.todo_state IS NULL OR b.todo_state NOT IN (…)` — a block carrying
+        // an agenda date but no state survives the exclusion.
+        const todoState = (b['todo_state'] as string | null) ?? null
+        return todoState === null || !excludeTodoStates.includes(todoState)
       })
       // `list_agenda` mints `Cursor::for_id` — the id alone.
       return paginateKeyset(items, idKey, limit, cursor, null, [])

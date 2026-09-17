@@ -979,6 +979,7 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
         None,                           // agenda_date_start
         None,                           // agenda_date_end
         None,                           // agenda_source
+        None,                           // exclude_todo_states
         None,                           // cursor
         Some(50),                       // limit
         SPACE_PERSONAL_ULID.to_owned(), // space_id
@@ -1013,6 +1014,7 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
         &pool,
         None,
         Some("page".into()),
+        None,
         None,
         None,
         None,
@@ -1504,6 +1506,7 @@ async fn a_moved_page_keeps_its_task_dates_on_its_peer_4801() {
         None,
         &agaric_store::pagination::PageRequest::new(None, None).unwrap(),
         None,
+        &[],
     )
     .await
     .unwrap()

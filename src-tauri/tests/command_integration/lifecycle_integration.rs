@@ -372,6 +372,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             None,
             None,
+            None,
             cursor,
             Some(PAGE_SIZE),
             TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
@@ -456,6 +457,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -488,6 +490,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
         None,
         None,
         Some("2099-12-31".into()),
+        None,
         None,
         None,
         None,
@@ -571,6 +574,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -602,6 +606,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         Some(tag.id.clone().into_string()),
+        None,
         None,
         None,
         None,
@@ -775,6 +780,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -790,6 +796,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("abcd-ef-gh".into()),
+        None,
         None,
         None,
         None,
@@ -815,6 +822,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -830,6 +838,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("2025-01-00".into()),
+        None,
         None,
         None,
         None,
@@ -855,6 +864,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -875,6 +885,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -890,6 +901,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("2025/01/15".into()),
+        None,
         None,
         None,
         None,
@@ -922,6 +934,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -942,6 +955,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -957,6 +971,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         Some("2025-12-31".into()),
+        None,
         None,
         None,
         None,

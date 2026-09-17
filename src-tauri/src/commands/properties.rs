@@ -224,13 +224,18 @@ pub async fn set_property_inner(
 /// Write the `created_at` / `completed_at` rows implied by a
 /// `todo_state` transition, on the caller's already-open transaction.
 ///
-/// SINGLE-ROW PATH ONLY — extracted from [`set_todo_state_inner`] (#4639).
-/// [`set_todo_state_batch_inner`] and [`set_property_batch_inner`]
-/// deliberately skip these transitions; that divergence is the recorded
-/// product decision (`scripts/bulk-equivalence-baseline.json`) and
-/// [`warn_if_batch_skips_recurrence`] is what tells the user about it. Calling
-/// this from a batch path would silently undo the decision, so it stays
-/// private to the single-row root.
+/// Extracted from [`set_todo_state_inner`] (#4639); since #5074
+/// [`set_todo_state_batch_inner`] runs it per block too. `completed_at` is
+/// present iff `todo_state = 'DONE'` on every path that writes the state,
+/// because `DonePanel` selects on `completed_at` and the agenda excludes
+/// DONE in SQL — a batch "mark done" that skipped this dropped the blocks
+/// out of both surfaces at once.
+///
+/// [`set_property_batch_inner`] still skips it: it generalises across four
+/// reserved keys, only one of which is `todo_state`. Recurrence is the
+/// divergence both batch paths keep — that is what
+/// [`warn_if_batch_skips_recurrence`] tells the user about and what
+/// `scripts/bulk-equivalence-baseline.json` records.
 ///
 /// The caller owns the transaction and its commit; this helper only appends
 /// writes to it.
@@ -273,8 +278,14 @@ async fn write_todo_timestamp_transitions_in_tx(
 
     // `completed_at` is present iff `todo_state = 'DONE'` (#5074): written on
     // every edge into DONE, cleared on every edge out of it, whatever the
-    // other end. `repair::completed_at` backfills the rows written before
-    // this held, and relies on it holding from here on.
+    // other end.
+    //
+    // Un-tasking clears it too, even from a state that is not DONE. That is
+    // not redundant with the arm above: a block that went DONE -> CANCELLED
+    // before this invariant held still carries a stale stamp. The boot repair
+    // (`repair_completed_at`) sweeps that population, stamping and clearing;
+    // this is the same self-heal on the edge the user takes, for a stamp that
+    // arrives after boot. Narrowing it to `was_done` would drop it.
     let was_done = prev_state == Some("DONE");
     let is_done = new_state == Some("DONE");
     if is_done && !was_done {
@@ -292,7 +303,7 @@ async fn write_todo_timestamp_transitions_in_tx(
         )
         .await?;
         tx.enqueue_background(op);
-    } else if was_done && !is_done {
+    } else if !is_done && (was_done || new_state.is_none()) {
         let op =
             delete_property_in_tx(&mut *tx, state, device_id, block_id, "completed_at").await?;
         tx.enqueue_background(op);
@@ -485,12 +496,44 @@ async fn warn_if_batch_skips_recurrence(
             command = command,
             repeat_carrier_count = repeat_carriers.len(),
             example_block_id = %repeat_carriers.first().map_or("", String::as_str),
-            "{} skips the per-block recurrence advance + completion-timestamp \
-             side-effects that the single-row path runs; {} block(s) in this \
-             batch carry `repeat` and will NOT roll forward",
+            "{} skips the per-block recurrence advance that the single-row \
+             path runs; {} block(s) in this batch carry `repeat` and will NOT \
+             roll forward",
             command,
             repeat_carriers.len(),
         );
+    }
+    Ok(())
+}
+
+/// The caller-shape rejections [`set_todo_state_batch_inner`] makes before it
+/// opens a transaction: an empty list, an oversize list, a `state` outside
+/// 1-50 characters. Split out (#5074) to keep that command under
+/// `clippy::too_many_lines`; pure, so it needs no pool.
+///
+/// The option-list fallback check is NOT here — it reads
+/// `property_definitions` and so belongs inside the command's transaction.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — empty `block_ids`, more than
+///   `MAX_BATCH_BLOCK_IDS` of them, or a `state` of the wrong length.
+fn validate_todo_state_batch_input(
+    block_ids: &[BlockId],
+    state: Option<&str>,
+) -> Result<(), AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
+    if let Some(s) = state
+        && (s.is_empty() || s.len() > 50)
+    {
+        return Err(AppError::validation(
+            "Todo state must be 1-50 characters".into(),
+        ));
     }
     Ok(())
 }
@@ -518,14 +561,19 @@ async fn warn_if_batch_skips_recurrence(
 /// list, invalid `state`) still abort the whole tx — those are caller
 /// errors, not data drift.
 ///
-/// Recurrence + `created_at`/`completed_at` timestamp transitions
-/// (which the single-row path performs in the same tx) are NOT
-/// applied here. The batch is a bulk multi-select reflex — the
-/// expected gesture is "mark these N blocks DONE" or "clear todo on
-/// these N blocks" — and propagating recurrence per item under one
-/// IMMEDIATE lock would defeat the latency win. Callers that need
-/// recurrence + timestamp transitions should fall through to the
-/// single-row path.
+/// The `created_at`/`completed_at` transitions DO run here, per block,
+/// through the same [`write_todo_timestamp_transitions_in_tx`] the
+/// single-row path uses (#5074): `completed_at` is what `DonePanel`
+/// selects on and what the agenda's DONE exclusion assumes, so a batch
+/// that skipped it dropped the blocks out of both surfaces at once.
+///
+/// Recurrence is still NOT applied. The batch is a bulk multi-select
+/// reflex — the expected gesture is "mark these N blocks DONE" or "clear
+/// todo on these N blocks" — and propagating recurrence per item under one
+/// IMMEDIATE lock would defeat the latency win. Callers that need the
+/// next-occurrence sibling fall through to the single-row path;
+/// [`warn_if_batch_skips_recurrence`] logs when a `repeat` carrier rides
+/// in the batch.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_todo_state_batch_inner(
     pool: &SqlitePool,
@@ -534,19 +582,7 @@ pub async fn set_todo_state_batch_inner(
     block_ids: Vec<BlockId>,
     state: Option<String>,
 ) -> Result<i64, AppError> {
-    if block_ids.is_empty() {
-        return Err(AppError::validation(
-            "block_ids list cannot be empty".into(),
-        ));
-    }
-    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
-    if let Some(ref s) = state
-        && (s.is_empty() || s.len() > 50)
-    {
-        return Err(AppError::validation(
-            "Todo state must be 1-50 characters".into(),
-        ));
-    }
+    validate_todo_state_batch_input(&block_ids, state.as_deref())?;
 
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every state change commits or none of them.
@@ -554,9 +590,10 @@ pub async fn set_todo_state_batch_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // SQL-review this batch path skips the timestamp + recurrence
-    // side-effects that the single-row `set_todo_state_inner` performs.
-    // #3264: the probe + `warn!` now live in the shared
+    // SQL-review this batch path skips the per-block recurrence advance
+    // that the single-row `set_todo_state_inner` performs; since #5074 it no
+    // longer skips the timestamp transitions (see the loop below).
+    // #3264: the probe + `warn!` live in the shared
     // [`warn_if_batch_skips_recurrence`] so `set_property_batch_inner` — which
     // skips recurrence in exactly the same way — emits the same diagnostic
     // instead of nothing.
@@ -582,22 +619,27 @@ pub async fn set_todo_state_batch_inner(
     // instead of a per-block existence SELECT inside the loop (N+1). Skip-on-
     // miss semantics are preserved: a row deleted between the FE selection and
     // this call is absent from `alive` and cleanly skipped.
+    // #5074 — the one membership query also carries each survivor's CURRENT
+    // `todo_state`: the per-block timestamp transition needs to know which
+    // edge it is on, and a second read per block would be the N+1 this query
+    // exists to avoid.
     let block_ids_json = serde_json::to_string(&block_ids)?;
-    let alive: std::collections::HashSet<String> = sqlx::query_scalar!(
-        r#"SELECT id FROM blocks
+    let alive: std::collections::HashMap<String, Option<String>> = sqlx::query!(
+        r#"SELECT id, todo_state FROM blocks
            WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL"#,
         block_ids_json
     )
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
+    .map(|r| (r.id, r.todo_state))
     .collect();
 
     let mut updated: i64 = 0;
     for block_id in block_ids {
-        if !alive.contains(block_id.as_str()) {
+        let Some(prev_state) = alive.get(block_id.as_str()).cloned() else {
             continue;
-        }
+        };
 
         // Reuse the canonical per-row helper so reserved-key validation,
         // op_log append, and the `blocks.todo_state` materialised write
@@ -605,11 +647,12 @@ pub async fn set_todo_state_batch_inner(
         // OpRecord)`; we discard the row (the batch wrapper does not
         // surface per-block payloads) and queue the op record for
         // post-commit dispatch.
+        let block_id = block_id.into_string();
         let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
             &mut tx,
             materializer.loro_state(),
             device_id,
-            block_id.into_string(),
+            block_id.clone(),
             "todo_state",
             state.clone(),
             None,
@@ -619,6 +662,17 @@ pub async fn set_todo_state_batch_inner(
         )
         .await?;
         tx.enqueue_background(op_record);
+        // #5074 — same tx, so the state change and its `completed_at` row
+        // commit or roll back together, exactly as on the single-row path.
+        write_todo_timestamp_transitions_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            &block_id,
+            prev_state.as_deref(),
+            state.as_deref(),
+        )
+        .await?;
         updated += 1;
     }
 
@@ -727,12 +781,17 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// empty list, oversize list, invalid value) abort the whole tx before any
 /// write lands. Returns the number of blocks actually updated.
 ///
-/// Like the todo batch, this path deliberately does NOT run recurrence /
-/// completion-timestamp transitions — it is a bulk multi-select reflex.
-/// #3264: and, like the todo batch, it now says so — when `key` is
-/// `todo_state` it runs `warn_if_batch_skips_recurrence` inside the same
-/// IMMEDIATE tx, so a Pages-browser multi-select over `repeat`-carrying pages
-/// leaves a diagnostic in the daily log instead of nothing.
+/// Like the todo batch, this path deliberately does NOT run recurrence — it
+/// is a bulk multi-select reflex. #3264: and, like the todo batch, it says so
+/// — when `key` is `todo_state` it runs `warn_if_batch_skips_recurrence`
+/// inside the same IMMEDIATE tx, so a Pages-browser multi-select over
+/// `repeat`-carrying pages leaves a diagnostic in the daily log instead of
+/// nothing.
+///
+/// It also does not run the `created_at` / `completed_at` transitions, which
+/// #5074 gave the todo batch: this command generalises across four reserved
+/// keys and only one of them is `todo_state`, so the transition would have to
+/// be gated on the key here rather than being what the command does.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,

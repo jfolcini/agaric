@@ -85,9 +85,10 @@ async fn apply_agenda_diff(
 ///    `created_at` / `completed_at` / `repeat-until` are excluded (#5074):
 ///    they record when a task changed state, not when it is due, and
 ///    projecting them pinned every task to its creation and completion
-///    days. The set is the date-valued subset of `is_builtin_property_key`
-///    (`agaric-store/src/op.rs`), spelled as a literal because the SQL is
-///    a `&str` constant.
+///    days. The set is the LIFECYCLE keys only, spelled as a literal because
+///    the SQL is a `&str` constant. It is not "the date-valued builtins":
+///    `due_date` and `scheduled_date` are date-valued builtins too, and they
+///    are the agenda's two real sources — adding them here empties it.
 /// 2. `block_tags` referencing tag blocks whose name matches
 ///    `date/YYYY-MM-DD` (exactly 15 chars) →
 ///    `source = 'tag:<tag_id>'`, `prio = 1`.

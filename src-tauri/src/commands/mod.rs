@@ -322,6 +322,10 @@ pub struct ListBlocksRequest {
     pub date_range: Option<DateRange>,
     /// Optional agenda source filter (`due_date` / `scheduled_date`).
     pub source: Option<String>,
+    /// Drop rows whose `todo_state` is listed, in SQL rather than after the
+    /// page limit (#5074). Valid on the `date` agenda branch only — every
+    /// other branch rejects it, see [`list_blocks_inner`].
+    pub exclude_todo_states: Option<Vec<String>>,
     /// Opaque pagination cursor.
     pub cursor: Option<String>,
     /// Page size.

@@ -707,6 +707,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -727,6 +728,7 @@ async fn date_validation_short_format_returns_validation() {
         None,
         None,
         Some("2025-01".into()),
+        None,
         None,
         None,
         None,
@@ -757,6 +759,7 @@ async fn date_validation_two_digit_year_returns_validation() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -782,6 +785,7 @@ async fn date_validation_day_32_returns_validation() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -802,6 +806,7 @@ async fn date_validation_non_date_string_returns_validation() {
         None,
         None,
         Some("not-a-date".into()),
+        None,
         None,
         None,
         None,

@@ -2195,7 +2195,7 @@ async fn list_agenda_returns_blocks_for_matching_date() {
 
     let page = PageRequest::new(None, Some(10)).unwrap();
 
-    let resp = list_agenda(&pool, "2025-01-15", None, &page, None)
+    let resp = list_agenda(&pool, "2025-01-15", None, &page, None, &[])
         .await
         .unwrap();
     assert_eq!(resp.items.len(), 2, "only blocks for Jan 15");
@@ -2208,7 +2208,7 @@ async fn list_agenda_returns_blocks_for_matching_date() {
         "second agenda block for Jan 15"
     );
 
-    let resp2 = list_agenda(&pool, "2025-01-16", None, &page, None)
+    let resp2 = list_agenda(&pool, "2025-01-16", None, &page, None, &[])
         .await
         .unwrap();
     assert_eq!(resp2.items.len(), 1, "only blocks for Jan 16");
@@ -2220,7 +2220,7 @@ async fn list_agenda_returns_empty_for_date_with_no_entries() {
     let (pool, _dir) = test_pool().await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda(&pool, "2025-12-31", None, &page, None)
+    let resp = list_agenda(&pool, "2025-12-31", None, &page, None, &[])
         .await
         .unwrap();
 
@@ -2244,7 +2244,7 @@ async fn list_agenda_paginates_with_cursor() {
     assert_paginates_with_cursor(
         &pool,
         ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
-        async |pool, page| list_agenda(pool, "2025-01-15", None, &page, None).await,
+        async |pool, page| list_agenda(pool, "2025-01-15", None, &page, None, &[]).await,
     )
     .await;
 }
@@ -2264,7 +2264,7 @@ async fn list_agenda_excludes_soft_deleted() {
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_agenda(&pool, "2025-01-15", None, &page, None)
+    let resp = list_agenda(&pool, "2025-01-15", None, &page, None, &[])
         .await
         .unwrap();
 

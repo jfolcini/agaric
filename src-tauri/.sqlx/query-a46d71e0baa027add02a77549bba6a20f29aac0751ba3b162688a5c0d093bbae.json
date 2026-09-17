@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+  "query": "SELECT value_date FROM block_properties WHERE block_id = ? AND key = ?",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       true
     ]
   },
-  "hash": "fc8cfbc6ba82b8b2b07e65cc8f587eb572f4de4fa3933db2e9654361fa70dbc8"
+  "hash": "a46d71e0baa027add02a77549bba6a20f29aac0751ba3b162688a5c0d093bbae"
 }

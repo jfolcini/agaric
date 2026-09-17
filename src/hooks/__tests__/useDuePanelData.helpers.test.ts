@@ -75,9 +75,13 @@ describe('applySourceFilter', () => {
     expect(result[0]?.id).toBe('B3')
   })
 
-  // #5074 — DonePanel owns completed tasks, so DONE never reaches the agenda,
-  // whatever the source filter. CANCELLED is not completed and stays.
-  it('drops DONE blocks under every source filter, keeping CANCELLED', () => {
+  // #5074 — DonePanel owns completed tasks, but the exclusion lives in SQL
+  // (`excludeTodoStates`), NOT here. This helper runs AFTER the backend's
+  // 50-row page cap, so dropping DONE at this point empties a page that is
+  // entirely DONE: `DuePanel` then renders `null` and takes `LoadMoreButton`
+  // with it, stranding every page behind it — #738 sub-2's starvation. A
+  // todo-state predicate reappearing here reddens this test.
+  it('keeps every todo_state — the DONE exclusion is pushed into SQL', () => {
     const items = [
       makeBlock({ id: 'B1', todo_state: 'TODO' }),
       makeBlock({ id: 'B2', todo_state: 'DONE' }),
@@ -85,7 +89,12 @@ describe('applySourceFilter', () => {
       makeBlock({ id: 'B4', todo_state: null }),
     ]
     for (const filter of [null, 'property:', 'column:due_date']) {
-      expect(applySourceFilter(items, date, filter).map((b) => b.id)).toEqual(['B1', 'B3', 'B4'])
+      expect(applySourceFilter(items, date, filter).map((b) => b.id)).toEqual([
+        'B1',
+        'B2',
+        'B3',
+        'B4',
+      ])
     }
   })
 

@@ -11,10 +11,11 @@
 //!   space, minted while the journal lookup could not see a space-less page
 //!   (#4715). Their children are folded onto the oldest page and the emptied
 //!   duplicates are soft-deleted.
-//! * [`completed_at`](crate::repair::completed_at) — DONE tasks with no
-//!   `completed_at`, transitioned over an edge the timestamp writer did not
-//!   cover (#5074). They get their `created_at`, or the day their ULID was
-//!   minted.
+//! * [`completed_at`](crate::repair::completed_at) — blocks on the wrong side
+//!   of "`completed_at` present iff DONE", left there by an edge the
+//!   timestamp writer did not cover (#5074). A DONE task with no stamp gets
+//!   its `created_at`, or the day its ULID was minted; a block that is not
+//!   DONE loses the stamp it kept.
 //!
 //! # Every change is an op
 //!
@@ -37,8 +38,8 @@
 //! # Idempotent by construction
 //!
 //! No repair needs a marker: a re-homed orphan has a `page_id`, a merged
-//! duplicate is tombstoned and a backfilled task has its `completed_at`, so
-//! each selection query returns nothing the second time, and each is an
+//! duplicate is tombstoned and a task's `completed_at` matches its
+//! `todo_state`, so each selection query returns nothing the second time, and each is an
 //! indexed probe over a population that is small by construction. The app's `repair` module owns the transaction
 //! boundary and the never-boot-fatal contract.
 
@@ -69,8 +70,9 @@ pub const UNREACHABLE_PAGE_TITLE: &str = "Unreachable";
 #[derive(Debug)]
 pub enum RepairOp {
     /// `CreateBlock` / `SetProperty` for the `Unreachable` page, or the
-    /// `SetProperty(completed_at)` backfill — plain background dispatch, as
-    /// `create_page_in_space_inner` and `set_todo_state_inner` do.
+    /// `SetProperty` / `DeleteProperty` on `completed_at` — plain background
+    /// dispatch, as `create_page_in_space_inner` and `set_todo_state_inner`
+    /// do.
     Plain(OpRecord),
     /// A `MoveBlock`. Never a same-page move (the subject left a page it did
     /// not have, or a duplicate page), so the driver passes `same_page =

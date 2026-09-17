@@ -323,7 +323,7 @@
     "fn": "src-tauri/src/commands/properties.rs::set_todo_state_batch_inner",
     "kind": "mutating",
     "status": "exception",
-    "reason": "DELIBERATELY NOT EQUIVALENT to set_todo_state_inner: the batch path skips recurrence expansion and the created_at/completed_at transitions. As above, equality is the wrong invariant to encode"
+    "reason": "DELIBERATELY NOT EQUIVALENT to set_todo_state_inner: the batch path skips the recurrence advance, so a `repeat` carrier marked DONE in bulk never rolls forward and warn_if_batch_skips_recurrence says so. That remains the product decision, and equality is still the wrong invariant to encode. The created_at/completed_at transitions are NO LONGER part of the divergence: since #5074 the loop runs write_todo_timestamp_transitions_in_tx per block, on the prev todo_state the one membership query already carries, because DonePanel selects on completed_at and the agenda excludes DONE in SQL — a batch that skipped the stamp dropped the blocks out of both surfaces at once"
   },
   {
     "fn": "src-tauri/src/commands/properties.rs::validate_set_property_batch_text_key",
@@ -336,6 +336,12 @@
     "kind": "read-only",
     "status": "not-a-fan-out",
     "reason": "Not a fan-out: a pure pre-transaction shape check on the batch's SINGLE (key, value) pair — 1-50 characters for the two text keys, YYYY-MM-DD for the two date keys — split out of set_property_batch_inner (#4639). No N-key input, no I/O, nothing written. Same reason as its sibling above for keeping the `batch` segment in the name and recording a disposition instead"
+  },
+  {
+    "fn": "src-tauri/src/commands/properties.rs::validate_todo_state_batch_input",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: the pre-transaction caller-shape check for set_todo_state_batch_inner — empty list, the MAX_BATCH_BLOCK_IDS cap, the 1-50 character bound on `state` — split out of that command (#5074) to keep it under clippy::too_many_lines. It reads the block_ids only for their COUNT, never per id; it writes nothing and takes no connection. Same disposition as its two validate_set_property_batch_* siblings above, and caught by the same `batch` name segment, which names the command it belongs to"
   },
   {
     "fn": "src-tauri/src/commands/properties.rs::warn_if_batch_skips_recurrence",

@@ -722,6 +722,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         None, // agenda_date_start
         None, // agenda_date_end
         None, // agenda_source
+        None, // exclude_todo_states
         None, // cursor
         None, // limit
         agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID.to_string(),
@@ -3640,6 +3641,7 @@ async fn list_blocks_no_filters_returns_top_level() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -3675,6 +3677,7 @@ async fn list_blocks_with_block_type_filter() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
@@ -3697,6 +3700,7 @@ async fn list_blocks_with_parent_id_filter() {
     let resp = list_blocks_inner(
         &pool,
         Some("PAR".into()),
+        None,
         None,
         None,
         None,
@@ -3736,6 +3740,7 @@ async fn list_blocks_with_tag_id_filter() {
         None,
         None,
         Some("TAG_FILTER".into()),
+        None,
         None,
         None,
         None,
@@ -3804,6 +3809,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -3824,6 +3830,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
+        None,
         TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
@@ -3838,6 +3845,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         Some("P1".into()),
         Some("page".into()),
         Some("T1".into()),
+        None,
         None,
         None,
         None,
@@ -3881,6 +3889,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
+            None,
             TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
@@ -3892,6 +3901,7 @@ async fn list_blocks_single_filter_is_accepted() {
             &pool,
             None,
             Some("page".into()),
+            None,
             None,
             None,
             None,
@@ -3920,6 +3930,7 @@ async fn list_blocks_empty_db_returns_empty_page() {
     assign_all_to_test_space(&pool).await;
     let resp = list_blocks_inner(
         &pool,
+        None,
         None,
         None,
         None,

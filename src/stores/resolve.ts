@@ -461,6 +461,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
                 date: null,
                 dateRange: null,
                 source: null,
+                excludeTodoStates: null,
                 cursor: cursor ?? null,
                 limit: listBlocksLimit(100),
               },

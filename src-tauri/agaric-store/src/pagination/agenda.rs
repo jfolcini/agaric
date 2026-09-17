@@ -20,14 +20,22 @@ use agaric_core::error::AppError;
 /// `None` keeps the pre-existing behaviour (no filter). See
 /// [`crate::space_filter_canonical`]'s `SPACE_FILTER_CANONICAL` for the shared
 /// SQL fragment definition.
+///
+/// `exclude_todo_states` — #5074, the same push-down `query_by_property`
+/// carries: a row whose `todo_state` is listed is dropped in SQL, *before*
+/// the page limit, so completed tasks cannot fill a page and strand the
+/// pages behind it. An empty slice is no filter; `b.todo_state IS NULL OR`
+/// keeps blocks that carry an agenda date but no state.
 pub async fn list_agenda(
     pool: &SqlitePool,
     date: &str,
     source: Option<&str>,
     page: &PageRequest,
     space_id: Option<&str>,
+    exclude_todo_states: &[String],
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
+    let exclude_todo_states_json = super::properties::json_array(exclude_todo_states)?;
 
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
         Some(c) => (Some(1), &c.id),
@@ -51,14 +59,16 @@ pub async fn list_agenda(
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
            AND (?6 IS NULL OR b.space_id = ?6)
+           AND (?7 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?7)))
          ORDER BY b.id ASC
          LIMIT ?5"#,
-        date,        // ?1
-        source,      // ?2
-        cursor_flag, // ?3
-        cursor_id,   // ?4
-        fetch_limit, // ?5
-        space_id,    // ?6
+        date,                     // ?1
+        source,                   // ?2
+        cursor_flag,              // ?3
+        cursor_id,                // ?4
+        fetch_limit,              // ?5
+        space_id,                 // ?6
+        exclude_todo_states_json, // ?7
     )
     .fetch_all(pool)
     .await?;

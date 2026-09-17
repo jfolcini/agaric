@@ -2546,6 +2546,12 @@ export type ListBlocksRequest = {
 	dateRange: DateRange | null,
 	/**  Optional agenda source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
+	/**
+	 *  Drop rows whose `todo_state` is listed, in SQL rather than after the
+	 *  page limit (#5074). Valid on the `date` agenda branch only — every
+	 *  other branch rejects it, see [`list_blocks_inner`].
+	 */
+	excludeTodoStates: string[] | null,
 	/**  Opaque pagination cursor. */
 	cursor: string | null,
 	/**  Page size. */

@@ -6,6 +6,64 @@ use super::super::*;
 use agaric_store::pagination::{ActiveBlockRow, NULL_POSITION_SENTINEL};
 use agaric_store::space::SpaceScope;
 
+/// Every filter-shape rejection [`list_blocks_inner`] makes before it takes a
+/// connection. Split out of the dispatcher (#5074), which had grown past
+/// `clippy::too_many_lines`; being pure, it also tests without a pool.
+///
+/// `filters_present` is the exclusive chain in dispatch order — `parent_id`,
+/// `block_type`, `tag_id`, `agenda_date`, an agenda RANGE. `parent_id` is the
+/// default branch, so it only counts as a filter when set alongside another.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — more than one exclusive filter, half an agenda
+///   range, `exclude_todo_states` off the `agenda_date` branch, or a `limit`
+///   outside `[1, 100]`.
+fn validate_list_blocks_filters(
+    filters_present: [bool; 5],
+    agenda_range_halves: (bool, bool),
+    excludes_todo_states_off_agenda_date: bool,
+    limit: Option<i64>,
+) -> Result<(), AppError> {
+    if filters_present.iter().filter(|&&b| b).count() > 1 {
+        return Err(AppError::validation(
+            "conflicting filters: only one of parent_id, block_type, tag_id, agenda_date, agenda_date_start+end may be set".to_string(),
+        ));
+    }
+
+    // Half a range is a caller bug, not "no range": the dispatch treats the
+    // range as present only when both ends are.
+    if agenda_range_halves.0 != agenda_range_halves.1 {
+        return Err(AppError::validation(
+            "agenda_date_start and agenda_date_end must both be provided together".to_string(),
+        ));
+    }
+
+    // #5074 — only `pagination::list_agenda` carries the todo-state push-down.
+    // Dropping the filter on the other branches would answer a filtered
+    // question with an unfiltered set, so reject instead.
+    if excludes_todo_states_off_agenda_date {
+        return Err(AppError::validation(
+            "exclude_todo_states applies to the `date` agenda filter only".to_string(),
+        ));
+    }
+
+    // F06 / limit-clamp-followup Phase 1: reject limits outside `[1, 100]`
+    // Loudly. Silent clamp was the root: callers asking for >100
+    // got truncated to 100 with no signal.  Strict validation surfaces
+    // The contract violation at the IPC boundary so a future fails
+    // synchronously rather than as mysterious data loss months later.
+    if let Some(l) = limit
+        && !(1..=100).contains(&l)
+    {
+        return Err(AppError::validation(format!(
+            "list_blocks limit must be in [1, 100]; got {l}. \
+                 For larger result sets, use cursor pagination."
+        )));
+    }
+    Ok(())
+}
+
 /// List active blocks with pagination, applying at most one exclusive filter.
 ///
 /// Dispatches to the appropriate pagination query based on which filter
@@ -18,9 +76,15 @@ use agaric_store::space::SpaceScope;
 /// threaded through every dispatch path (agenda, tag, by-type, children)
 /// so the result set always reflects the active space.
 ///
+/// `exclude_todo_states` belongs to the `agenda_date` branch alone (#5074).
+/// The other four helpers carry no todo-state predicate, so passing it with
+/// any other filter is rejected rather than silently ignored: a filter the
+/// caller believes is applied but is not answers with the wrong SET.
+///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
+/// - [`AppError::Validation`] — multiple conflicting filters, an invalid date
+///   format, or `exclude_todo_states` outside the `agenda_date` branch
 #[allow(clippy::too_many_arguments)]
 // #2110 M1a — PII-safe query span (info level, so it passes the default
 // `agaric=info` OTel filter). Records ONLY opaque ids / enum tags / counts /
@@ -50,6 +114,7 @@ pub async fn list_blocks_inner(
     agenda_date_start: Option<String>,
     agenda_date_end: Option<String>,
     agenda_source: Option<String>,
+    exclude_todo_states: Option<Vec<String>>,
     cursor: Option<String>,
     limit: Option<i64>,
     space_id: String,
@@ -60,46 +125,23 @@ pub async fn list_blocks_inner(
     // Treat agenda_date_start/end as an agenda filter for conflict detection
     let has_agenda_range = agenda_date_start.is_some() && agenda_date_end.is_some();
 
-    // Reject conflicting filters: only one of the exclusive filter parameters
-    // may be set. `parent_id` is the default (list children) so it only
-    // counts as a filter when explicitly provided alongside another.
-    let filter_count = [
+    let exclude_todo_states = exclude_todo_states.unwrap_or_default();
+    // The exclusive-filter chain, in dispatch order. Bound rather than passed
+    // inline because `conformance-coverage.test.ts` parses this array literal
+    // to cross-check the mock's branch manifest against it.
+    let exclusive_filters = [
         parent_id.is_some(),
         block_type.is_some(),
         tag_id.is_some(),
         agenda_date.is_some(),
         has_agenda_range,
-    ]
-    .iter()
-    .filter(|&&b| b)
-    .count();
-
-    if filter_count > 1 {
-        return Err(AppError::validation(
-            "conflicting filters: only one of parent_id, block_type, tag_id, agenda_date, agenda_date_start+end may be set".to_string(),
-        ));
-    }
-
-    // Validate: if only one of start/end is provided, reject
-    if agenda_date_start.is_some() != agenda_date_end.is_some() {
-        return Err(AppError::validation(
-            "agenda_date_start and agenda_date_end must both be provided together".to_string(),
-        ));
-    }
-
-    // F06 / limit-clamp-followup Phase 1: reject limits outside `[1, 100]`
-    // Loudly. Silent clamp was the root: callers asking for >100
-    // got truncated to 100 with no signal.  Strict validation surfaces
-    // The contract violation at the IPC boundary so a future fails
-    // synchronously rather than as mysterious data loss months later.
-    if let Some(l) = limit
-        && !(1..=100).contains(&l)
-    {
-        return Err(AppError::validation(format!(
-            "list_blocks limit must be in [1, 100]; got {l}. \
-                 For larger result sets, use cursor pagination."
-        )));
-    }
+    ];
+    validate_list_blocks_filters(
+        exclusive_filters,
+        (agenda_date_start.is_some(), agenda_date_end.is_some()),
+        !exclude_todo_states.is_empty() && agenda_date.is_none(),
+        limit,
+    )?;
     let page = pagination::PageRequest::new(cursor, limit)?;
 
     // Phase 4: `space_id` is required, so every dispatch path
@@ -135,7 +177,15 @@ pub async fn list_blocks_inner(
         .await
     } else if let Some(ref d) = agenda_date {
         validate_date_format(d)?;
-        pagination::list_agenda(pool, d, agenda_source.as_deref(), &page, space_id_opt).await
+        pagination::list_agenda(
+            pool,
+            d,
+            agenda_source.as_deref(),
+            &page,
+            space_id_opt,
+            &exclude_todo_states,
+        )
+        .await
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page, space_id_opt).await
     } else if let Some(ref bt) = block_type {
@@ -383,6 +433,7 @@ pub async fn list_blocks(
         date,
         date_range,
         source,
+        exclude_todo_states,
         cursor,
         limit,
     } = request;
@@ -399,6 +450,7 @@ pub async fn list_blocks(
         agenda_date_start,
         agenda_date_end,
         agenda_source,
+        exclude_todo_states,
         cursor,
         limit,
         space_id,

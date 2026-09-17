@@ -6433,9 +6433,10 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
     .unwrap();
     assert_eq!(
         post_max - pre_max,
-        5,
-        "the 5 set_property ops must occupy a single contiguous seq \
-         range; got pre={pre_max} post={post_max}"
+        10,
+        "one contiguous seq range: per block a set_property(todo_state) and, \
+         since #5074, the set_property(completed_at) its DONE edge implies; \
+         got pre={pre_max} post={post_max}"
     );
 
     // Every block's materialised column must equal "DONE".
@@ -6621,7 +6622,11 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(ctrl_ops, 2, "control: one set_property op per block");
+    assert_eq!(
+        ctrl_ops, 4,
+        "control: per block a set_property(todo_state) plus the \
+         set_property(completed_at) its DONE edge implies (#5074)"
+    );
 
     // Reset the column back to NULL so the abort branch starts from a clean
     // slate (the control's writes are intentional, not what we assert on).
@@ -6761,6 +6766,234 @@ async fn set_todo_state_batch_clears_state() {
         .await
         .unwrap();
     assert!(v.is_none(), "todo_state must be cleared by None");
+}
+
+// ======================================================================
+// set_todo_state_batch — completed_at transitions (#5074)
+// ======================================================================
+
+/// Today, as `write_todo_timestamp_transitions_in_tx` spells it.
+fn today_stamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// The durable `completed_at` row for a block, re-queried from
+/// `block_properties` rather than read back off the command's return value.
+async fn completed_at_of(pool: &sqlx::SqlitePool, block_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+    )
+    .bind(block_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+}
+
+/// Create `n` content blocks and return their ids.
+async fn make_blocks(
+    pool: &sqlx::SqlitePool,
+    mat: &Materializer,
+    n: i64,
+) -> Vec<agaric_core::ulid::BlockId> {
+    let mut ids = Vec::new();
+    for i in 0..n {
+        let b = create_block_inner(
+            pool,
+            DEV,
+            mat,
+            "content".into(),
+            format!("task {i}"),
+            None,
+            Some(i + 1),
+        )
+        .await
+        .unwrap();
+        ids.push(b.id);
+    }
+    settle(mat).await;
+    ids
+}
+
+/// #5074 — every edge INTO `DONE` through the BATCH path stamps
+/// `completed_at`, whatever the previous state was.
+///
+/// The batch used to skip the transition entirely, so a multi-select "mark
+/// done" left the blocks with no `completed_at`: `DonePanel` selects on that
+/// column, and the agenda now excludes `DONE` in SQL, so the blocks fell out
+/// of BOTH surfaces at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_stamps_completed_at_on_every_edge_into_done() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let ids = make_blocks(&pool, &mat, 3).await;
+    let (from_null, from_todo, from_cancelled) = (&ids[0], &ids[1], &ids[2]);
+
+    // Prior states via the single-row path, which is not under test here.
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        from_todo.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        from_cancelled.as_str().into(),
+        Some("CANCELLED".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    for id in [from_null, from_todo, from_cancelled] {
+        assert_eq!(
+            completed_at_of(&pool, id.as_str()).await,
+            None,
+            "{id} must start with no completed_at"
+        );
+    }
+
+    let updated = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![from_null.clone(), from_todo.clone(), from_cancelled.clone()],
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated, 3);
+    settle(&mat).await;
+
+    let today = today_stamp();
+    for id in [from_null, from_todo, from_cancelled] {
+        assert_eq!(
+            completed_at_of(&pool, id.as_str()).await,
+            Some(today.clone()),
+            "{id} must carry today's completed_at after the batch marked it DONE"
+        );
+    }
+}
+
+/// #5074 — and every edge OUT of `DONE` clears it again, so the invariant
+/// "`completed_at` present iff `todo_state = 'DONE'`" holds on the batch path
+/// in both directions. A stale `completed_at` would keep the block in
+/// `DonePanel` for a day it was no longer completed on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_clears_completed_at_on_every_edge_out_of_done() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let ids = make_blocks(&pool, &mat, 2).await;
+    let (to_cancelled, to_todo) = (&ids[0], &ids[1]);
+
+    set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![to_cancelled.clone(), to_todo.clone()],
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let today = today_stamp();
+    for id in [to_cancelled, to_todo] {
+        assert_eq!(
+            completed_at_of(&pool, id.as_str()).await,
+            Some(today.clone()),
+            "{id} must be stamped before the edge out of DONE is exercised"
+        );
+    }
+
+    set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![to_cancelled.clone()],
+        Some("CANCELLED".into()),
+    )
+    .await
+    .unwrap();
+    set_todo_state_batch_inner(&pool, DEV, &mat, vec![to_todo.clone()], Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        completed_at_of(&pool, to_cancelled.as_str()).await,
+        None,
+        "DONE -> CANCELLED must clear completed_at"
+    );
+    assert_eq!(
+        completed_at_of(&pool, to_todo.as_str()).await,
+        None,
+        "DONE -> TODO must clear completed_at"
+    );
+}
+
+/// #5074 error path — the `completed_at` write rides the batch's one
+/// IMMEDIATE tx, so a rejected batch leaves no half-written stamp.
+///
+/// The positive control first proves the same two blocks DO get a
+/// `completed_at` from this path, so the post-abort "no row" assertion is not
+/// vacuously true.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_batch_rolls_back_completed_at_with_the_rest_of_the_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let ids = make_blocks(&pool, &mat, 2).await;
+
+    // ── POSITIVE CONTROL ──────────────────────────────────────────────
+    set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("DONE".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let today = today_stamp();
+    for id in &ids {
+        assert_eq!(
+            completed_at_of(&pool, id.as_str()).await,
+            Some(today.clone()),
+            "control: {id} must be stamped by a committing batch"
+        );
+    }
+
+    // Back to a clean slate: clear the column and the stamp the control wrote.
+    for id in &ids {
+        sqlx::query("UPDATE blocks SET todo_state = NULL WHERE id = ?")
+            .bind(id.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = 'completed_at'")
+            .bind(id.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // ── ABORT ─────────────────────────────────────────────────────────
+    // Drop the definition so the in-tx fallback validation rejects BOGUS.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let result =
+        set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("BOGUS".into())).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "invalid state must reject with Validation, got {result:?}"
+    );
+    for id in &ids {
+        assert_eq!(
+            completed_at_of(&pool, id.as_str()).await,
+            None,
+            "{id} must carry no completed_at after the batch rolled back"
+        );
+    }
 }
 
 // ======================================================================

@@ -8,11 +8,15 @@
 //! boot retries the same population. `bootstrap_spaces` is boot-fatal by
 //! design; sharing its transaction would have made a repair boot-fatal too.
 //!
+//! One `RebuildAgendaCache` follows the repairs, once per boot and whatever
+//! they found: `DESIRED_AGENDA_SQL` changed under rows already in
+//! `agenda_cache` and only a rebuild rewrites them (#5074).
+//!
 //! The engine side emits the ops and applies them in the transaction; this
 //! side owns what only the app crate can do — the post-commit dispatch that
 //! the interactive commands run: plain background dispatch for the
 //! `Unreachable` page's create + space stamp (as `create_page_in_space_inner`)
-//! and the `completed_at` backfill (as `set_todo_state_inner`), the move
+//! and the `completed_at` stamp/clear (as `set_todo_state_inner`), the move
 //! fan-out with `same_page = false` (`move_block_inner`), and for a delete the
 //! content-narrowed lifecycle rebuild plus the engine cohort fan-out
 //! (`delete_block_inner`).
@@ -22,7 +26,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::materializer::Materializer;
+use crate::materializer::{MaterializeTask, Materializer};
 use agaric_core::error::AppError;
 use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::repair::RepairOp;
@@ -69,6 +73,15 @@ pub async fn repair_unreachable_content_at_boot(
             );
         }
     }
+
+    // #5074 dropped `created_at` / `completed_at` / `repeat-until` from
+    // `DESIRED_AGENDA_SQL`, but nothing rewrites rows already in
+    // `agenda_cache`: the diff only runs when a task enqueues it. Once per
+    // boot, unconditionally — a vault whose repairs find nothing is exactly
+    // the one whose junk agenda rows would otherwise never clear.
+    if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildAgendaCache) {
+        tracing::warn!(error = %e, "failed to enqueue the agenda cache rebuild at boot (#5074)");
+    }
 }
 
 /// One repair in one transaction: emit + apply in-tx, commit + dispatch, then
@@ -102,7 +115,10 @@ async fn run(
         }
         Repair::CompletedAt => {
             let r = repair_completed_at(&mut tx, state, device_id).await?;
-            (r.ops, format!("backfilled = {}", r.backfilled))
+            (
+                r.ops,
+                format!("backfilled = {}, cleared = {}", r.backfilled, r.cleared),
+            )
         }
     };
     let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();
@@ -279,6 +295,58 @@ mod tests {
         .unwrap()
     }
 
+    /// A page in Work.
+    async fn insert_page(pool: &SqlitePool, title: &str) -> String {
+        let id = fresh_id();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', ?, NULL, 1, ?, ?)",
+        )
+        .bind(&id)
+        .bind(title)
+        .bind(&id)
+        .bind(SPACE_WORK_ULID)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    /// An open task on `page` with a `due_date` — an agenda row the rebuild
+    /// must produce.
+    async fn insert_due_task(pool: &SqlitePool, page: &str, due: &str) -> String {
+        let id = fresh_id();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id, todo_state, due_date) \
+             VALUES (?, 'content', 'due', ?, 8, ?, ?, 'TODO', ?)",
+        )
+        .bind(&id)
+        .bind(page)
+        .bind(page)
+        .bind(SPACE_WORK_ULID)
+        .bind(due)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn agenda_rows(pool: &SqlitePool) -> Vec<(String, String, String)> {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT date, block_id, source FROM agenda_cache ORDER BY date, block_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn op_log_rows(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     async fn housekeeping_ops(pool: &SqlitePool) -> i64 {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM op_log WHERE origin = 'housekeeping' \
@@ -393,5 +461,63 @@ mod tests {
             );
         }
         assert!(deleted_at(&pool, &dup).await.is_some());
+    }
+
+    /// #5074 — `DESIRED_AGENDA_SQL` stopped projecting `created_at` /
+    /// `completed_at` / `repeat-until`, but nothing rewrites the
+    /// `agenda_cache` rows the old shape left. The rebuild is enqueued once
+    /// per boot whatever the repairs found, so the vault that has NOTHING to
+    /// repair — the one that would otherwise never see the fix — still loses
+    /// the junk rows and gains the real ones.
+    #[tokio::test]
+    async fn boot_rebuilds_the_agenda_cache_with_no_repair_candidate() {
+        let (pool, _tmp) = test_pool().await;
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+        let page = insert_page(&pool, "Tasks").await;
+        // Already on the right side of the #5074 invariant — DONE and
+        // stamped — so neither direction of `repair_completed_at` has a
+        // candidate, and neither do the other two repairs.
+        let done = insert_done_task(&pool, &page).await;
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_date) \
+             VALUES (?, 'completed_at', '2026-03-03')",
+        )
+        .bind(&done)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let due = insert_due_task(&pool, &page, "2026-03-05").await;
+        // The cache as the old projection left it: the lifecycle row present,
+        // the due row not yet written.
+        sqlx::query(
+            "INSERT INTO agenda_cache (date, block_id, source) \
+             VALUES ('2026-03-03', ?, 'property:completed_at')",
+        )
+        .bind(&done)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ops_before = op_log_rows(&pool).await;
+
+        let mat = Materializer::new(pool.clone());
+        repair_unreachable_content_at_boot(&pool, DEV, &mat).await;
+        mat.flush_background().await.unwrap();
+        mat.shutdown();
+
+        assert_eq!(
+            op_log_rows(&pool).await,
+            ops_before,
+            "no repair may have found a candidate — the rebuild is what is under test"
+        );
+        assert_eq!(
+            completed_at(&pool, &done).await.as_deref(),
+            Some("2026-03-03"),
+            "the DONE task keeps its stamp"
+        );
+        assert_eq!(
+            agenda_rows(&pool).await,
+            vec![("2026-03-05".to_owned(), due, "column:due_date".to_owned())],
+            "the lifecycle row is gone and the due row is in — the rebuild ran"
+        );
     }
 }

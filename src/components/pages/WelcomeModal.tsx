@@ -115,6 +115,7 @@ async function ensureSamplePage(
           date: null,
           dateRange: null,
           source: null,
+          excludeTodoStates: null,
           cursor: null,
           limit: null,
         },
