@@ -223,7 +223,6 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     // was handed), and a self-inverse type makes the two conventions coincide,
     // so this could not tell them apart. That is exactly how an inverted redo
     // shipped past the first version of this test.
-    const P = '0000000000000000000RTYPEPP'
     seedPage([])
 
     const created = dispatch('create_block', {
@@ -233,7 +232,6 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
       index: 0,
     }) as { id: string }
     expect(created.id).toBeTruthy()
-    expect(P).toBeTruthy()
 
     const undone = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
       reversed_op_type: string
