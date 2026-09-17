@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — `restore_page_to_op`, the page-level rewind. It names its target with the same `On` label as its ref-addressed siblings, split across two positional args. Unlike them it answers a COUNT envelope rather than a bare list, and the two counts are the whole point: `ops_reverted` says how far it walked and `non_reversible_skipped` says what it stepped over without failing, which is what separates a rewind from an undo.",
+  "description": "#5057 — `restore_page_to_op`, the page-level rewind. It names its target with the same `On` label as its ref-addressed siblings, split across two positional args. Unlike them it answers a COUNT envelope rather than a bare list, and the two counts are the whole point: `ops_reverted` says how far it walked and `non_reversible_skipped` says what it stepped over without failing, which is what separates a rewind from an undo. An UNDO row sits in the sweep's path on purpose — the backend does not filter `is_undo`, so a rewind reverts one like any other op, and the count says so.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -31,8 +31,14 @@
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 7,
       "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
         {
           "op_type": "edit_block"
         },
@@ -57,8 +63,14 @@
     {
       "code": null,
       "error": null,
+      "name": "undo_the_newest_edit_first",
+      "returns": ["undo_page_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
       "name": "rewind_the_page_to_a_named_op",
-      "returns": ["restore_page_to_op#ops_reverted=2#non_reversible_skipped=0"]
+      "returns": ["restore_page_to_op#ops_reverted=3#non_reversible_skipped=0"]
     }
   ],
   "expected_queries": [
@@ -100,10 +112,20 @@
     {
       "args": {
         "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "O4 — an UNDO row, deliberately left in the rewind's path. The backend's sweep does not filter `is_undo`, so the rewind reverts this too (which re-applies O3) and counts it. A mock that skipped undo rows would answer 2 here instead of 3.",
+      "name": "undo_the_newest_edit_first",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
         "targetOp": "O1"
       },
       "command": "restore_page_to_op",
-      "comment": "Rewinds past O3 and O2 and stops AT O1, so S2 reads `v1` rather than its seed text — which is what distinguishes rewinding to an op from reverting everything.",
+      "comment": "Rewinds past the undo row O4 and the edits O3 and O2, stopping AT O1, so S2 reads `v1` rather than its seed text — which is what distinguishes rewinding to an op from reverting everything. `ops_reverted` is 3, not 2: the undo row counts.",
       "name": "rewind_the_page_to_a_named_op",
       "via": "command"
     }

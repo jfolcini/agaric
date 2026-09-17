@@ -148,7 +148,7 @@ with each runner resolving it to its own `(device_id, seq)`. Both resolvers fail
 closed, because a ref that silently resolved elsewhere would undo the wrong op
 and still look like a pass.
 
-Six fixtures turned up **nine** mock divergences, every one the same shape: two
+Six fixtures turned up **ten** mock divergences, every one the same shape: two
 paths doing the same job with different coverage, where the tested path is the
 correct one.
 
@@ -163,8 +163,16 @@ correct one.
 | `revert_ops` returned the raw op-log row | every field the contract declares was `undefined` |
 | `restore_page_to_op` was a stub returning zeros | a page rewind did nothing at all in browser and e2e mode |
 | `redo_page_op` named the op it re-applies | "Redid create" where the backend says "Redid delete" |
+| `restore_page_to_op` skipped undo rows in its sweep | `ops_reverted` short, and the op-log tail with it |
 
-The last one was mine, introduced in this sweep and caught in review. Its first
+The last two were mine, introduced in this sweep and caught in review. The
+`restore_page_to_op` one is instructive on its own: the handler was new, and I
+carried an `is_undo` filter over from its siblings without checking that
+`select_ops_after_target` has none — so a rewind past an undo row under-counted.
+Reverting an undo row re-applies the op it reversed, which `revert_ops` in the
+same file already did correctly.
+
+The redo one is worse. Its first
 test used `move_block` — the one self-inverse type where the two conventions
 coincide — so it could not redden. That is the third shape in AGENTS.md's list
 of tests that look like coverage and are not, written by someone who had spent

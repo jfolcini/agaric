@@ -621,7 +621,12 @@ export const historyHandlers = {
     // #2463 — mirrors the backend's NotFound when the target op does not exist.
     if (!target) throw notFoundRejection(`op_log (${targetDeviceId}, ${targetSeq})`)
 
-    const newer = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo && o.seq > targetSeq))
+    // NO `is_undo` filter: `select_ops_after_target` (history.rs:2147-2210)
+    // does not have one and `revert_ops_in_tx` does not add one, so a rewind
+    // sweeps undo rows too — reverting one re-applies the op it reversed, the
+    // same way `revert_ops` above already handles them (#4870). Filtering them
+    // out under-counted `ops_reverted` and left the op-log tail short.
+    const newer = sortOpLogNewestFirst(opLog.filter((o) => o.seq > targetSeq))
     const results: Array<Record<string, unknown>> = []
     let nonReversibleSkipped = 0
     for (const op of newer) {
