@@ -216,27 +216,40 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     // so an undefined here degrades every browser-mode undo to the generic
     // fallback. `applyUndoForTarget` — the ref-addressed path shared by
     // `undo_op` / `undo_ops` — always set it; these two POSITIONAL handlers
-    // build their result inline and had both dropped it. The conformance
-    // fixture covers the undo half; redo is given an `OpRef`-shaped
-    // `(undoDeviceId, undoSeq)`, which no fixture can spell, so it is pinned
-    // here.
-    const A = '0000000000000000000RTYPEAA'
-    seedPage([A])
+    // build their result inline and had both dropped it.
+    //
+    // `create_block` deliberately, NOT `move_block`: undo and redo name
+    // DIFFERENT ops (undo names the op it reversed, redo names the undo row it
+    // was handed), and a self-inverse type makes the two conventions coincide,
+    // so this could not tell them apart. That is exactly how an inverted redo
+    // shipped past the first version of this test.
+    const P = '0000000000000000000RTYPEPP'
+    seedPage([])
 
-    dispatch('move_block', { blockId: A, newParentId: PAGE, newIndex: 0 })
+    const created = dispatch('create_block', {
+      blockType: 'content',
+      content: 'made then unmade',
+      parentId: PAGE,
+      index: 0,
+    }) as { id: string }
+    expect(created.id).toBeTruthy()
+    expect(P).toBeTruthy()
 
     const undone = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
       reversed_op_type: string
       new_op_ref: { seq: number }
     }
-    expect(undone.reversed_op_type).toBe('move_block')
+    // Undo names the op it reversed: the create.
+    expect(undone.reversed_op_type).toBe('create_block')
 
     const redone = dispatch('redo_page_op', {
       pageId: PAGE,
       undoSeq: undone.new_op_ref.seq,
-    }) as { reversed_op_type: string }
-    // Redo names the ORIGINAL op it re-applies, not the undo row it was handed.
-    expect(redone.reversed_op_type).toBe('move_block')
+    }) as { reversed_op_type: string; is_redo: boolean }
+    // Redo names the UNDO ROW it was handed, which is the `delete_block` the
+    // undo appended — not the `create_block` it re-applies.
+    expect(redone.reversed_op_type).toBe('delete_block')
+    expect(redone.is_redo).toBe(true)
   })
 
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {

@@ -345,6 +345,10 @@ export const historyHandlers = {
     // `AppError::validation("undo_depth must be non-negative")`; folding both
     // into NotFound made an out-of-contract argument look like an empty history.
     if (undoDepth < 0) throw validationRejection('undo_depth must be non-negative')
+    // The upper bound sits right beside the sign check in
+    // `undo_page_op_inner` and is Validation too, so a depth past it must not
+    // fall through to the NotFound an in-range overrun gives.
+    if (undoDepth > 1000) throw validationRejection('undo_depth exceeds maximum of 1000')
     // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
     // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
     if (undoDepth >= undoableOps.length) {
@@ -439,10 +443,16 @@ export const historyHandlers = {
     // `re_applied` rides along for `resolveUndoTarget`'s hop back to the
     // original.
     const newOp = pushOp(redoOpType, { ...redoPayload, re_applied: originalOp }, false)
+    // #5057 — BOTH identity fields name the UNDO row this call was handed, not
+    // the original op it re-applies. `redo_page_op_inner` reads
+    // `reversed_op_type` off `undo_row.op_type` and answers `undo_ref`
+    // (history.rs:2554, 2605), and `UndoResult`'s own doc says as much: "the
+    // original op for undo, the undo-op for redo". Naming the original here
+    // made the FE toast say "Redid create" where the backend says "Redid
+    // delete" — visible for every op type whose reverse is not itself.
     return {
-      reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
-      // See `undo_page_op` above — the same omission, the same field.
-      reversed_op_type: originalOp.op_type,
+      reversed_op: { device_id: undoOp.device_id, seq: undoOp.seq },
+      reversed_op_type: undoOp.op_type,
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: redoOpType,
       is_redo: true,

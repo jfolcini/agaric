@@ -68,9 +68,9 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
     lists: [],
   },
-  // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in the
-  // order the group reversed them.
-  // #5057 — the ref-addressed undo answers the same `UndoResult`.
+  // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
+  // they share one shape. On a redo, `reversed_op_type` names the UNDO ROW it
+  // was handed rather than the op it re-applies.
   undo_op: {
     idKey: HEADED_ID_KEY,
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
@@ -98,6 +98,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['ops_reverted', 'non_reversible_skipped'],
     lists: [],
   },
+  // A LIST of the same shape: one headed row per `UndoResult`, in the order
+  // the group reversed them.
   undo_page_group: {
     idKey: HEADED_ID_KEY,
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],

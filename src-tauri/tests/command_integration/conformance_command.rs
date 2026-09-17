@@ -83,18 +83,18 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // the order the group reversed them. That ORDER is the point — a group
     // undo that reversed the right ops in the wrong sequence would pass a
     // set-wise check and fail this one.
-    // #5057 — the ref-addressed undo answers the same `UndoResult`, so the
-    // same shape: the `OpRef`s it carries are dropped for the device-id
-    // reason, and the two op_type fields are what is left to pin.
+    // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
+    // they share one shape: the `OpRef`s it carries are dropped because the two
+    // runners' device ids differ, leaving the two op_type fields and `is_redo`.
+    // `is_redo` is what tells a redo's result from an undo's; on a redo,
+    // `reversed_op_type` names the UNDO ROW it was handed, not the op it
+    // re-applies.
     (
         "undo_op",
         HEADED_ID_KEY,
         &["reversed_op_type", "new_op_type", "is_redo"],
         &[],
     ),
-    // The list forms of the same result. `redo_page_op` answers a single
-    // `UndoResult` like `undo_op`; `is_redo` is `true` on it, which is the one
-    // field that tells the two apart.
     (
         "undo_ops",
         HEADED_ID_KEY,

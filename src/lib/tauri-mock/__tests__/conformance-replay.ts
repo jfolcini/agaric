@@ -279,6 +279,12 @@ export function loadSeed(fixture: Fixture): void {
     const tagId = seedLabelToId(t['tag_id'] as string)
     if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
     blockTags.get(blockId)?.add(tagId)
+    // The backend's seed loader tags through `add_tag_inner`, the real command,
+    // which appends an op. Writing `blockTags` alone left the digest one op
+    // short per seeded tag — the same gap the property half above had. No
+    // fixture seeds tags today, so this is latent rather than red, and the
+    // first one that did would have inherited a confusing digest diff.
+    pushOp('add_tag', { block_id: blockId, tag_id: tagId })
   }
 }
 

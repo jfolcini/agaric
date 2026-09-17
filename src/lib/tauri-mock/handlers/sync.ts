@@ -247,7 +247,10 @@ export const syncHandlers = {
     // `u16::from_str` on the backend, which is stricter than `Number`: it takes
     // DIGITS only, so `80.0`, ` 80`, `0x50` and `1e3` are refused there and
     // would all parse here without the digits test.
-    const port = /^\d+$/.test(rawPort) ? Number(rawPort) : Number.NaN
+    // `+?`: `u16::from_str` accepts a leading plus, so `host:+80` parses to 80
+    // on the backend. A digits-only test refused it — the same divergence class
+    // this guard exists to close, pointing the other way.
+    const port = /^\+?\d+$/.test(rawPort) ? Number(rawPort) : Number.NaN
     if (host === '' || !Number.isInteger(port) || port <= 0 || port > 65535) {
       throw validationRejection(`invalid peer address '${address}': expected host:port`)
     }

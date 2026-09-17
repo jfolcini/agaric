@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — the three remaining ref-addressed reversal commands that answer a list: `undo_ops`, `revert_ops` and `redo_page_op`. All three name their target with the `On` label the sibling `undo_op_by_ref` fixture introduces. `redo_page_op` is the one that takes the coordinate SPLIT across two positional args rather than as an `OpRef`, and its `is_redo` is `true`, which is the only field distinguishing its result from an undo's.",
+  "description": "#5057 — the three remaining ref-addressed reversal commands that answer a list: `undo_ops`, `revert_ops` and `redo_page_op`. All three name their target with the `On` label the sibling `undo_op_by_ref` fixture introduces. `redo_page_op` is the one that takes the coordinate SPLIT across two positional args rather than as an `OpRef`. It is redone from the `set_property` undo on purpose: a redo names the UNDO ROW it was handed rather than the op it re-applies, and on a self-inverse op type the two conventions coincide and the difference is invisible.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -31,7 +31,7 @@
       },
       {
         "block_type": "content",
-        "content": "beta v2",
+        "content": "beta v1",
         "deleted_at": null,
         "due_date": null,
         "id": "B3",
@@ -69,7 +69,8 @@
           "op_type": "delete_property"
         },
         {
-          "op_type": "edit_block"
+          "key": "status",
+          "op_type": "set_property"
         },
         {
           "op_type": "edit_block"
@@ -77,7 +78,14 @@
       ]
     },
     "page_links": [],
-    "properties": []
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "draft",
+        "value_type": "Text"
+      }
+    ]
   },
   "expected_ops": [
     {
@@ -93,7 +101,9 @@
       "code": null,
       "error": null,
       "name": "redo_one_of_the_two_undos",
-      "returns": ["redo_page_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=true"]
+      "returns": [
+        "redo_page_op#reversed_op_type=delete_property#new_op_type=set_property#is_redo=true"
+      ]
     },
     {
       "code": null,
@@ -175,10 +185,10 @@
     },
     {
       "args": {
-        "undoOp": "O6"
+        "undoOp": "O7"
       },
       "command": "redo_page_op",
-      "comment": "O6 is the undo op that reversed O5. Redo re-applies the op that undo reversed, so S3 returns to `beta v2` and `is_redo` is true — the field that tells a redo result from an undo one. This is the command whose coordinate arrives SPLIT across two positional args rather than as an OpRef.",
+      "comment": "O7 is the undo row that reversed O4, so its own op_type is `delete_property`. Redo re-applies what that undo reversed — S2's `status` property comes back — but it NAMES the undo row it was handed, not the op it re-applies: `reversed_op_type` is `delete_property`, not `set_property`. O6 would not have shown that, because reversing an `edit_block` appends another `edit_block` and the two conventions coincide on a self-inverse type. This is also the one command whose coordinate arrives SPLIT across two positional args.",
       "name": "redo_one_of_the_two_undos",
       "via": "command"
     },
@@ -205,7 +215,7 @@
         }
       },
       "command": "list_blocks",
-      "comment": "The observation: S2 back at `alpha v0` with its property cleared, S3 redone to `beta v2`.",
+      "comment": "The observation: S2 back at `alpha v0` from the explicit revert but with its `status` property restored by the redo, and S3 left at `beta v1` where the undo put it.",
       "name": "blocks_after_the_list_reversals"
     }
   ],

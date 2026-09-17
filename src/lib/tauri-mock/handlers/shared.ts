@@ -1501,16 +1501,37 @@ export const MOCK_LOCAL_DEVICE = 'mock-device'
 export function reverseOpTypeFor(op: MockOpLogEntry): string {
   const opType = op.op_type
   if (opType === 'set_property') {
-    // The op records the value the key held BEFORE it wrote, which is what
-    // the backend's `find_prior_property` goes looking for. No prior means
-    // the reverse is a delete, not a set back to nothing.
-    let priorValue: unknown = null
+    // What `find_prior_property` does: look for the value this key held BEFORE
+    // this op, by scanning the op log for the same `(block_id, key)`. Reading
+    // the op's own `from_value` instead would be wrong for a RESERVED key —
+    // `setReservedColumnProperty` writes `from_value: null` deliberately, to
+    // keep the revert a no-op against the properties map — so a second
+    // `set_property` on `todo_state` would reverse to a delete where the
+    // backend reverses to a set.
+    let key: unknown
+    let blockId: unknown
     try {
-      priorValue = (JSON.parse(op.payload) as Record<string, unknown>)['from_value'] ?? null
+      const payload = JSON.parse(op.payload) as Record<string, unknown>
+      key = payload['key']
+      blockId = payload['block_id']
     } catch {
-      priorValue = null // malformed payload: no prior to restore
+      return 'delete_property' // malformed payload: no prior to restore
     }
-    return priorValue === null ? 'delete_property' : 'set_property'
+    for (let i = opLog.length - 1; i >= 0; i -= 1) {
+      const prior = opLog[i]
+      if (!prior || prior.seq >= op.seq) continue
+      if (prior.op_type !== 'set_property' && prior.op_type !== 'delete_property') continue
+      try {
+        const p = JSON.parse(prior.payload) as Record<string, unknown>
+        if (p['block_id'] !== blockId || p['key'] !== key) continue
+      } catch {
+        continue
+      }
+      // The nearest prior op on this key decides: a set left a value to go
+      // back to, a delete left none.
+      return prior.op_type === 'set_property' ? 'set_property' : 'delete_property'
+    }
+    return 'delete_property'
   }
   switch (opType) {
     case 'create_block': {

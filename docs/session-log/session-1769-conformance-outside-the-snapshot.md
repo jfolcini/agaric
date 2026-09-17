@@ -19,10 +19,11 @@ those tables has a reader that already carries a query step, over a seed section
 that already exists, and `runQuerySteps` runs after the replay — so an
 ops-then-query fixture pins the write by what the read answers afterwards.
 
-Debt 29 → 24, via `delete_peer_ref`, `update_peer_name`, `set_peer_address`,
-`set_reminder_settings` and `delete_property_def`. The same route covers most of
-the remainder, which is why this is worth stating once rather than rediscovering
-per cluster.
+Debt 29 → 12 across this session, starting with `delete_peer_ref`,
+`update_peer_name`, `set_peer_address`, `set_reminder_settings` and
+`delete_property_def`. The same route then carried the attachments pair and the
+whole undo cluster, which is why it is worth stating once rather than
+rediscovering per cluster.
 
 The honest corollary: the snapshot leg of such a fixture is genuinely inert, and
 the #3966 guard says so. Both new fixtures declare it in `SNAPSHOT_OPS_INERT`
@@ -88,7 +89,8 @@ response was *not* a scalar) and a waiver header that outlived its last entry.
 
 ## What was verified
 
-Ten mutations, ten reds, each against a copy and restored byte-identically:
+Every fix below was falsified against a copy and restored byte-identically.
+The first ten:
 
 | Mutation | Result |
 | --- | --- |
@@ -113,24 +115,70 @@ npm run typecheck / npx knip        clean
 
 ## Where #5057 stands
 
-24 mutating + 3 read. The remaining work is three different things, which the
-issue's single list obscures and a comment now records:
+12 mutating + 3 read, down from 42 at the start of the sweep. Three of the 12
+are not work at all: they are permanently blocked by their INPUT and now sit in
+`PINNING_BLOCKED_MUTATING` rather than misrepresenting themselves in the debt
+list — `fetch_link_metadata` (network, plus `now_ms` in the row and a wall-clock
+freshness check), `quick_capture_block` (`chrono::Local::now()`, and the journal
+page's content *is* the date, so it lands in `blocks[].content`), and
+`cancel_pairing` (writes a key nothing reads on either stack). That bucket is
+added here, and it needed no guard of its own: every name in it is also waived
+in `NO_FIXTURE_ALLOWLIST`, which the #4667 orphan test enforces, so the
+allowlist's existing `nowCovered` check reddens the moment a fixture drives one.
 
-- **pinnable the same way** — the attachments pair, `set_page_aliases` (needs a
-  scalar-list return shape), `confirm_pairing` (needs `PairingSession` +
-  `SyncScheduler` wiring, both allocation-only);
-- **permanently blocked by their INPUT** — `fetch_link_metadata` (network, plus
-  `now_ms` in the row and a wall-clock freshness check), `quick_capture_block`
-  (`chrono::Local::now()`, and the journal page's content *is* the date, so it
-  lands in `blocks[].content`), `cancel_pairing` (writes a key nothing reads on
-  either stack). There is no `PINNING_BLOCKED_MUTATING` bucket to hold them —
-  only the read-side twin exists — so they sit in the debt list misrepresenting
-  themselves. Adding that bucket with its guard is the next structural change;
-- **genuinely expensive** — `export_page_markdown` cannot use the existing
-  single-value token, because that token asserts the rendered text contains no
-  `#` and a markdown export always opens `# Title`. New grammar plus a
-  TypeScript reimplementation of `render_page_markdown`. Probably its own issue.
+The rest:
 
-Undo/redo (7 commands) is the last group still uncosted.
+- **pinnable the same way** — `set_page_aliases` (needs a scalar-list return
+  shape), `confirm_pairing` (needs `PairingSession` + `SyncScheduler` wiring,
+  both allocation-only), `add_attachment_with_bytes` (needs a narrower return
+  shape), `compact_op_log_cmd` (a refusal arm);
+- **genuinely expensive** — import/export. `export_page_markdown` cannot use the
+  existing single-value token, because that token asserts the rendered text
+  contains no `#` and a markdown export always opens `# Title`. New grammar plus
+  a TypeScript reimplementation of `render_page_markdown`. Probably its own
+  issue;
+- **blocked** — the spaces cluster, on the per-space Loro registry, unchanged.
 
-The spaces cluster remains blocked on the per-space Loro registry, unchanged.
+## The undo cluster, and what it cost the mock
+
+All seven are pinned. The five ref-addressed ones were never expensive: they
+were waiting on a convention. `On` names the n-th op the fixture has appended,
+the `OpRef` analogue of the `Cn` that already names the n-th op-created block,
+with each runner resolving it to its own `(device_id, seq)`. Both resolvers fail
+closed, because a ref that silently resolved elsewhere would undo the wrong op
+and still look like a pass.
+
+Six fixtures turned up **nine** mock divergences, every one the same shape: two
+paths doing the same job with different coverage, where the tested path is the
+correct one.
+
+| Divergence | Consequence |
+| --- | --- |
+| negative `undo_depth` → `NotFound`, not `Validation` | an out-of-contract arg read as an empty history |
+| `undo_depth > 1000` unguarded | same, at the other bound |
+| `reversed_op_type` missing on both positional handlers | every browser-mode undo toast fell back to a generic "Undone" |
+| `undo_page_group` had no sign guards at all | success where the backend refuses |
+| `reverseOpTypeFor` mapped `set_property` to itself | wrong type on a row the op-log digest compares |
+| ...and read `from_value`, which reserved keys null deliberately | the other half of the same pair |
+| `revert_ops` returned the raw op-log row | every field the contract declares was `undefined` |
+| `restore_page_to_op` was a stub returning zeros | a page rewind did nothing at all in browser and e2e mode |
+| `redo_page_op` named the op it re-applies | "Redid create" where the backend says "Redid delete" |
+
+The last one was mine, introduced in this sweep and caught in review. Its first
+test used `move_block` — the one self-inverse type where the two conventions
+coincide — so it could not redden. That is the third shape in AGENTS.md's list
+of tests that look like coverage and are not, written by someone who had spent
+the session citing it. The replacement uses `create_block`, whose undo appends a
+`delete_block`, and the conformance fixture was repointed from an `edit_block`
+undo to a `set_property` one for the same reason.
+
+The mock's own tests could not catch any of the nine, because the mock is what
+they assert against. That is the argument for the conformance harness in one
+paragraph, and it is worth remembering when the remaining clusters get costed as
+"just coverage".
+
+Page scoping is deliberately still not modelled in `restore_page_to_op`,
+matching `undo_page_op`, which filters the op log without one either. Making it
+faithful is a separate change that no fixture pins today; adding it on one path
+and leaving the sibling as it was is the asymmetry that produced half the table
+above.
