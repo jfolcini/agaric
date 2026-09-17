@@ -234,62 +234,17 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  * later gains a fixture (delete the redundant entry) or leaves `bindings.ts`.
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
-  // ── Batch / bulk variants (per-item logic pinned by the single-op fixture) ──
-
-  // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
-  // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
-  // conformance runner replays raw `OpPayload`s, so no fixture can drive an
-  // undo/revert command, and the mock unit tests below hand-write their own
-  // expectations. Reading these as coverage is what let the cohort divergence
-  // ship. Keep the wording honest until a fixture can drive a reversal.
-  // #3964 — the four corrections the citation guard below forced. Each of
-  // these reasons used to name a file that does not mention the command it
-  // waives; nothing checked, so the waiver read as coverage it did not have.
-  undo_op: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-op-refs.test.ts',
-  undo_ops:
-    'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
-    'core it delegates to, revert.test.ts (via applyRevertForOp)',
-  undo_page_op:
-    'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-move.test.ts',
-  // Was "regression-guarded by undo-op-refs.test.ts" — that file's own doc
-  // scopes it to `undo_op` / `undo_ops` and it never mentions this command.
-  // The tests that DO name `undo_page_group` drive the FE against a mocked IPC
-  // layer, so none of them reaches this handler: the mock's `undo_page_group`
-  // has no mock-level regression test at all.
-  //
-  // #3992 item 3 — this reason used to say PageHeader.test.tsx was "the only
-  // test naming undo_page_group". It is not: `stores/__tests__/undo.test.ts`
-  // names it too, in a `'undo_page_group failed'` log assertion. The waiver's
-  // CONCLUSION survived (that test mocks the hand-written helpers, so it
-  // reaches the handler no more than the other does) but the claim itself was
-  // an unchecked universal — "no OTHER test exists" is not something a
-  // citation can carry, and nothing in this guard could have contradicted it.
-  // Both files are named instead, which is a claim the citation check above
-  // actually verifies: each must exist and must mention `undo_page_group` as a
-  // whole word.
-  undo_page_group:
-    'NOT cross-checked, and not mock-level guarded either: the tests naming ' +
-    'undo_page_group — components/pages/__tests__/PageHeader.test.tsx (mocked invoke) and ' +
-    'stores/__tests__/undo.test.ts (mocked bindings) — assert the FE issues ' +
-    'the IPC and neither reaches this handler (#3964, #3992)',
-  redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
-  revert_ops:
-    'NOT cross-checked; regression-guarded by revert-cohort.test.ts and, for the ' +
-    'per-op reversal it loops, revert.test.ts (via applyRevertForOp)',
-  // Was "regression-guarded by revert.test.ts". revert.test.ts pins
-  // `applyRevertForOp`, which this handler never calls — the mock's
-  // `restore_page_to_op` is a CONSTANT STUB returning `{ops_reverted: 0,
-  // non_reversible_skipped: 0, results: []}` (handlers/history.ts). There is
-  // no behaviour to regression-guard, and the old citation implied there was.
-  restore_page_to_op:
-    'NOT cross-checked; the mock handler is a CONSTANT STUB returning zeroed counters ' +
-    '(handlers/history.ts), so no mock-level test guards a behaviour it does not have (#3964)',
+  // ── Op-log time-travel (op-log rewrite) ──
+  // #5057 retired the rest of this section: all seven undo/redo/revert
+  // commands are now driven by fixtures, through the `On` op-ref label.
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
-  // ── Attachments (blob store, outside the conformance snapshot scope) ──
-  add_attachment_with_bytes: 'attachments blob store outside the conformance snapshot scope',
-  delete_attachment: 'attachments blob store outside the conformance snapshot scope',
-  rename_attachment: 'attachments blob store outside the conformance snapshot scope',
+  // ── Attachments ──
+  add_attachment_with_bytes:
+    'the BLOB is the blocker, not the scope: `attachment_writes.json` pins its two siblings ' +
+    'through `seed.attachments` + `list_attachments`, but this one writes bytes to disk and ' +
+    'answers with a stack-local `fs_path` (a fresh ULID) and a real blake3 `content_hash`, ' +
+    'neither of which the mock can reproduce, so it needs a narrower return shape first',
 
   // ── Pages / spaces / property definitions ──
   create_page_in_space:
@@ -301,9 +256,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
     'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
     'write; none does yet',
-  delete_property_def:
-    "returns `Result<(), AppError>`; the command leg's `RETURN_SHAPE` assumes an id-bearing " +
-    'response on both stacks, so it needs a unit-return shape first (#3830)',
 
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
@@ -319,7 +271,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   import_bibliography: 'covered by import-bibliography.test.ts',
   import_markdown:
     'composes create_block/edit_block (block_crud_basic.json); parsing covered by e2e',
-  quick_capture_block: 'composes create_block into the daily journal (block_crud_basic.json)',
+  quick_capture_block:
+    'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
+    'page, so the date lands in `blocks[].content` and a backend-authored `expected` binds ' +
+    'to the day it was generated on',
 
   // ── Sync / pairing / peer registry (transient transport / device metadata) ──
   start_sync: 'sync transport session; no durable domain state to snapshot',
@@ -332,14 +287,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // row), so this is no longer "no durable state". It stays excluded for the
   // same reason `confirm_pairing` (which writes that row) is: the marker is
   // pairing-window plumbing, not projected block state.
-  cancel_pairing: 'pending-pairing marker (app_settings), not projected block state',
-  // #4998 put `peer_refs` and `app_settings` on both stacks and pinned
-  // `list_peer_refs` / `get_reminder_settings` with query steps, so these four
-  // are debt, not scope.
-  set_peer_address: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  update_peer_name: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  delete_peer_ref: 'fixture candidate: ops-then-query over `seed.peer_refs` (#4998)',
-  set_reminder_settings: 'fixture candidate: ops-then-query over `seed.app_settings` (#4998)',
+  cancel_pairing:
+    'nothing READS it, which is why the scope argument does not apply: its only durable ' +
+    'write is the `pending_pairing` key in app_settings, and no command on the IPC surface ' +
+    'reads that key on either stack, so no query step can observe the clear',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
@@ -672,6 +623,49 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * #5057 — the MUTATING twin of {@link PINNING_BLOCKED_READ}: a write no fixture
+ * can drive, because it cannot spell the INPUT. Until this existed the three
+ * below sat in the ratchet, where they read as work someone had not got to.
+ *
+ * The line is the same one, and just as easy to get wrong: "outside the
+ * conformance snapshot scope" does NOT belong here. That says the snapshot is
+ * too narrow, and #5064/#5065/#5067/#5068 pinned twenty commands whose tables
+ * the snapshot never captured — through the read that observes them, not by
+ * widening it. A table nothing captures is debt; an input nothing can name is
+ * a blocker.
+ *
+ * The mechanical check, applied before adding a name: could a fixture spell
+ * what this command is GIVEN? If yes it is debt, whatever its table.
+ *
+ * The claim is falsifiable without a guard of its own: every name here is also
+ * waived in `NO_FIXTURE_ALLOWLIST` (the #4667 orphan test enforces that), so
+ * the moment a fixture drives one, the allowlist's `nowCovered` check reddens
+ * and the name has to move back.
+ */
+const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
+  // The input is an HTTP response. Three independent sources of
+  // nondeterminism, any one fatal to a static fixture: the round trip itself,
+  // `fetched_at: now_ms()` landing in the row, and a seven-day freshness check
+  // against `now_ms()` that makes even the cache-HIT path wall-clock relative.
+  // `shared_client()` is a private `OnceLock`, so there is no transport seam.
+  'fetch_link_metadata',
+  // The input is today's local date: `chrono::Local::now()` names the journal
+  // page, so the page's CONTENT is the date and lands in `blocks[].content`. A
+  // backend-authored `expected` binds to the day and timezone it was generated
+  // on — the same reason `compute_reconciliation_report` sits in the read
+  // bucket. Seeding the page is no escape: `seed.blocks[].content` is a
+  // literal, and the harness has no clock seam.
+  'quick_capture_block',
+  // Not an input problem but an observation one, and permanent for a different
+  // reason than its neighbours: its only durable write is the `pending_pairing`
+  // row in `app_settings`, and NO command in `bindings.ts` reads that key on
+  // either stack. Unobservable because nothing reads it, not because the
+  // snapshot is narrow — #4998 deliberately pulled the other `app_settings`
+  // writers out of the permanent half, so the distinction matters.
+  'cancel_pairing',
+])
+
+/**
  * The shrink-only ratchet (#4667), mirroring the retired
  * `tauri-import-baseline` one (#2927): these are the waived commands that
  * COULD be pinned and are not yet.
@@ -684,31 +678,14 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
  */
 const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'add_attachment_with_bytes',
-  'cancel_pairing',
   'compact_op_log_cmd',
   'confirm_pairing',
   'create_page_in_space',
   'create_space',
-  'delete_attachment',
-  'delete_peer_ref',
-  'delete_property_def',
-  'fetch_link_metadata',
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
-  'quick_capture_block',
-  'redo_page_op',
-  'rename_attachment',
-  'restore_page_to_op',
-  'revert_ops',
   'set_page_aliases',
-  'set_peer_address',
-  'set_reminder_settings',
-  'undo_op',
-  'undo_ops',
-  'undo_page_group',
-  'undo_page_op',
-  'update_peer_name',
 ]
 
 /**
@@ -2757,10 +2734,14 @@ describe('#3083 conformance-coverage ratchet', () => {
     const orphanBlockedRead = [...PINNING_BLOCKED_READ].filter(
       (c) => !(c in READ_NO_QUERY_ALLOWLIST),
     )
-    expect({ orphanMutating, orphanRead, orphanBlockedRead }).toEqual({
+    const orphanBlockedMutating = [...PINNING_BLOCKED_MUTATING].filter(
+      (c) => !(c in NO_FIXTURE_ALLOWLIST),
+    )
+    expect({ orphanMutating, orphanRead, orphanBlockedRead, orphanBlockedMutating }).toEqual({
       orphanMutating: [],
       orphanRead: [],
       orphanBlockedRead: [],
+      orphanBlockedMutating: [],
     })
   })
 
@@ -2769,9 +2750,10 @@ describe('#3083 conformance-coverage ratchet', () => {
       'not-yet-pinned changed. FIX: pin a command and DELETE its line from the ' +
       'list below, or justify a new waiver and add it where a reviewer sees it.'
 
-    expect(notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING), message).toEqual(
-      NOT_YET_PINNED_MUTATING,
-    )
+    expect(
+      notYetPinned(NO_FIXTURE_ALLOWLIST, NO_DOMAIN_STATE_MUTATING, PINNING_BLOCKED_MUTATING),
+      message,
+    ).toEqual(NOT_YET_PINNED_MUTATING)
     expect(
       notYetPinned(READ_NO_QUERY_ALLOWLIST, NO_DOMAIN_STATE_READ, PINNING_BLOCKED_READ),
       message,

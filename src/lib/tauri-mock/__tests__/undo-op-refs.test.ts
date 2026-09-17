@@ -137,6 +137,47 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(setProp.op_refs).toEqual([{ device_id: 'mock-device', seq: opLog.at(-1)?.seq }])
   })
 
+  it('#5057 — a second set_property reverses to a set, on a reserved key too', () => {
+    // `reverse_set_property` answers `DeleteProperty` only when the key had NO
+    // prior value; with one it answers `SetProperty` back to that prior. The
+    // reverse-type table used to say `set_property` unconditionally, which got
+    // the first-set case wrong.
+    //
+    // The RESERVED half is why this reads the op log rather than the op's own
+    // `from_value`: `setReservedColumnProperty` writes `from_value: null`
+    // deliberately, so a second `todo_state` write would look priorless and
+    // reverse to a delete, where the backend finds the earlier op and reverses
+    // to a set.
+    for (const [key, value] of [
+      ['effort', { value_text: '2h' }],
+      ['todo_state', { value_text: 'TODO' }],
+    ] as const) {
+      const base = {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }
+      dispatch('set_property', { blockId: A, key, value: { ...base, ...value } })
+      const second = dispatch('set_property', {
+        blockId: A,
+        key,
+        value: { ...base, value_text: key === 'todo_state' ? 'DONE' : '4h' },
+      }) as WithOpsResp
+
+      dispatch('undo_op', { opRef: second.op_refs[0] })
+      expect(opLog.at(-1)?.op_type, `reverse of a second ${key} write`).toBe('set_property')
+
+      // #5057 — the same scan answers reversibility, not just the reverse
+      // TYPE. A `delete_property` after a real prior IS reversible; keying on
+      // the op's own `from_value` said otherwise for a reserved key, because
+      // `setReservedColumnProperty` writes that field null by design.
+      const del = dispatch('delete_property', { blockId: A, key }) as WithOpsResp
+      expect(() => dispatch('undo_op', { opRef: del.op_refs[0] }), key).not.toThrow()
+    }
+  })
+
   it('delete_property echoes (block_id, key) + op_refs; a no-prior delete still surfaces its ref but is not undoable', () => {
     dispatch('set_property', {
       blockId: A,

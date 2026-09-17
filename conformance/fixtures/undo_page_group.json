@@ -1,0 +1,200 @@
+{
+  "description": "#5057 — `undo_page_group`, the grouped positional undo. Like `undo_page_op` its `depth` is an ordinal and `windowMs` is the fixture's own literal, so the group is deterministic where an `OpRef`-addressed undo would not be. The group deliberately holds ops of two DIFFERENT types: the return is a LIST of `UndoResult`, one headed row per element, and two identical rows would pin the count while leaving the order free. Reversed newest-first, the rows read `set_property` then `create_block`, so a group that reversed the right ops in the wrong sequence fails here even though the settled snapshot would be identical.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Grouped undo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "keeps its row, loses its property",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "created then undone",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_both_ops_as_one_group",
+      "returns": [
+        "undo_page_group#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false",
+        "undo_page_group#reversed_op_type=create_block#new_op_type=delete_block#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_negative_depth_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_negative_window_is_refused",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_group_undo",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "undo_page_group",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "created then undone",
+        "index": 1,
+        "parentId": "S1"
+      },
+      "command": "create_block",
+      "comment": "The older op in the group. Undoing a create is always reversible, unlike an edit, which needs a prior text row in the op log."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_bool": null,
+          "value_date": null,
+          "value_number": null,
+          "value_ref": null,
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "The newer op, and a different type from the one above so the two returned rows are distinguishable."
+    },
+    {
+      "args": {
+        "depth": 0,
+        "pageId": "S1",
+        "windowMs": 60000
+      },
+      "command": "undo_page_group",
+      "comment": "A window wide enough to swallow both ops, which run back to back in the harness. The property clears and the created block becomes a tombstone — so the settled state differs from the seed in a way a no-op could not produce.",
+      "name": "undo_both_ops_as_one_group",
+      "via": "command"
+    },
+    {
+      "args": {
+        "depth": -1,
+        "pageId": "S1",
+        "windowMs": 60000
+      },
+      "command": "undo_page_group",
+      "comment": "`depth must be non-negative` — checked before the lookup, so this is Validation rather than the NotFound an overrun gives.",
+      "expect_error": "validation",
+      "name": "a_negative_depth_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "depth": 0,
+        "pageId": "S1",
+        "windowMs": -1
+      },
+      "command": "undo_page_group",
+      "comment": "The second arg carries its own sign guard, so a negative window is refused rather than silently sizing an empty group.",
+      "expect_error": "validation",
+      "name": "a_negative_window_is_refused",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: the created block is gone and S2 is still here — the group reversed both of its ops.",
+      "name": "blocks_after_the_group_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Grouped undo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "keeps its row, loses its property",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

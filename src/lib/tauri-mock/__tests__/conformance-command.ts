@@ -61,6 +61,50 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: ['affected_page_ids'],
   },
   purge_block: { idKey: 'block_id', attrs: ['purged_count'], lists: [] },
+  // #5057 — `UndoResult` carries two `OpRef`s, and the two runners' device ids
+  // differ, so the shape names only the two op_type fields.
+  undo_page_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
+  // they share one shape. On a redo, `reversed_op_type` names the UNDO ROW it
+  // was handed rather than the op it re-applies.
+  undo_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  undo_ops: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  revert_ops: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  redo_page_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  // #5057 — a COUNT envelope over a list; the per-op detail rides in
+  // `results`, which the snapshot and the two counts pin between them.
+  restore_page_to_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['ops_reverted', 'non_reversible_skipped'],
+    lists: [],
+  },
+  // A LIST of the same shape: one headed row per `UndoResult`, in the order
+  // the group reversed them.
+  undo_page_group: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
   // #3830 — the two `property_definitions` writers answer with the row, so
   // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
@@ -104,6 +148,19 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['new_parent_id', 'new_position'],
     lists: [],
   },
+  // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
+  // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
+  // pinned by the read that follows them in the same fixture rather than by the
+  // settled state. Each answers with `()`.
+  delete_peer_ref: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  update_peer_name: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  set_peer_address: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  set_reminder_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5057 — the two attachment writers that need no blob. `attachments` is
+  // outside the snapshot's five arrays, so `list_attachments` observes them.
+  delete_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  rename_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
@@ -115,29 +172,36 @@ export function projectReturn(command: string, response: unknown): string[] {
         `and the matching arm in conformance_command.rs)`,
     )
   }
+  // A headed shape has no id column: the head is the command name and the
+  // attributes are read off the row beside it. Applied PER ROW rather than to
+  // the response as a whole, because a list return of headed rows
+  // (`undo_page_group`) needs the head on each element — `idToken` reads
+  // `row[idKey]` and renders a missing-id token for a row that has none.
+  // A row that is not an object has no such field — `null` (a `()` return)
+  // declares no attributes and renders as the bare head, while a bare COUNT is
+  // the whole return value, so the shape's single attribute names it.
+  const headRow = (value: unknown): Record<string, unknown> => {
+    const isObject = value !== null && typeof value === 'object'
+    if (!isObject && shape.attrs.length > 1) {
+      throw new Error(
+        `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
+          `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,
+      )
+    }
+    const raw: Record<string, unknown> = isObject
+      ? (value as Record<string, unknown>)
+      : shape.attrs[0] !== undefined
+        ? { [shape.attrs[0]]: value }
+        : {}
+    return shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
+  }
+
   // A LIST return is a list of ROWS: one row token per element, in the order
   // the command returned them.
   if (Array.isArray(response)) {
-    return response.map((row) => idToken(row as Record<string, unknown>, shape.idKey, shape.attrs))
+    return response.map((row) => idToken(headRow(row), shape.idKey, shape.attrs))
   }
-  // A headed shape has no id column: the head is the command name and the
-  // attributes are read off the response beside it. A response that is not an
-  // object has no such field — `null` (a `()` return) declares no attributes
-  // and renders as the bare head, while a bare COUNT is the whole return
-  // value, so the shape's single attribute names it.
-  const scalar = response !== null && typeof response === 'object'
-  const raw: Record<string, unknown> = scalar
-    ? (response as Record<string, unknown>)
-    : shape.attrs[0] !== undefined
-      ? { [shape.attrs[0]]: response }
-      : {}
-  if (!scalar && shape.attrs.length > 1) {
-    throw new Error(
-      `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
-        `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,
-    )
-  }
-  const row = shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
+  const row = headRow(response)
   const out = [idToken(row, shape.idKey, shape.attrs)]
   for (const field of shape.lists) {
     const ids = row[field]

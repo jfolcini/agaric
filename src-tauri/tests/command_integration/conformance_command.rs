@@ -30,9 +30,10 @@
 //! see [`check_declaration`].
 
 use super::common::*;
-use super::conformance::resolve_op_arg_id;
+use super::conformance::{resolve_op_arg_id, resolve_op_ref_label};
 use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
-use agaric_core::ulid::BlockId;
+use agaric_core::ulid::{AttachmentId, BlockId};
+use agaric_store::op::OpRef;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -62,6 +63,61 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         "update_property_def_options",
         "key",
         PROPERTY_DEF_ATTRS,
+        &[],
+    ),
+    // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
+    // they share one shape: the `OpRef`s it carries are dropped because the two
+    // runners' device ids differ, leaving the two op_type fields and `is_redo`.
+    // `is_redo` is what tells a redo's result from an undo's; on a redo,
+    // `reversed_op_type` names the UNDO ROW it was handed, not the op it
+    // re-applies.
+    (
+        "undo_page_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "undo_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "undo_ops",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "revert_ops",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "redo_page_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    // #5057 — a COUNT envelope over a list. The per-op detail rides in
+    // `results`, which the snapshot and the two counts already pin between
+    // them, so the shape names the counts rather than re-projecting the list.
+    (
+        "restore_page_to_op",
+        HEADED_ID_KEY,
+        &["ops_reverted", "non_reversible_skipped"],
+        &[],
+    ),
+    // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in
+    // the order the group reversed them. That ORDER is the point — a group
+    // undo that reversed the right ops in the wrong sequence would pass a
+    // set-wise check and fail this one.
+    (
+        "undo_page_group",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
         &[],
     ),
     // #5057 — the draft writers answer with `()`, so their whole record is the
@@ -117,6 +173,21 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["new_parent_id", "new_position"],
         &[],
     ),
+    // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
+    // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
+    // is pinned by the read that follows them in the same fixture rather than
+    // by the settled state. Each answers with `()`, so the record is the
+    // refusal declaration plus a head naming which one ran.
+    ("delete_peer_ref", HEADED_ID_KEY, &[], &[]),
+    ("update_peer_name", HEADED_ID_KEY, &[], &[]),
+    ("set_peer_address", HEADED_ID_KEY, &[], &[]),
+    ("set_reminder_settings", HEADED_ID_KEY, &[], &[]),
+    ("delete_property_def", HEADED_ID_KEY, &[], &[]),
+    // #5057 — the two attachment writers that need no blob. Both answer `()`,
+    // and `attachments` is outside the snapshot's five arrays, so the
+    // `list_attachments` step is what observes them.
+    ("delete_attachment", HEADED_ID_KEY, &[], &[]),
+    ("rename_attachment", HEADED_ID_KEY, &[], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -129,8 +200,15 @@ fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError
 pub(super) async fn apply_op_via_command(
     pool: &SqlitePool,
     mat: &Materializer,
+    // The fixture's own `TempDir`. Threaded rather than faked because the
+    // attachment commands take it by signature; `delete_attachment_inner`
+    // ignores it (#1993 moved byte reclamation to the GC pass) but
+    // `add_attachment_with_bytes_inner` writes into it, so a placeholder here
+    // would work today and silently write somewhere real tomorrow.
+    app_data_dir: &std::path::Path,
     op: &Value,
     created_ids: &[String],
+    op_refs: &[(String, i64)],
 ) -> Result<Value, AppError> {
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
@@ -192,6 +270,45 @@ pub(super) async fn apply_op_via_command(
     let req_str = |k: &str| {
         opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
     };
+    // #5057 — an `OpRef` arg is an `On` label, never a literal: the two
+    // runners mint their own `(device_id, seq)`. Mirrors `block_id()` above.
+    let op_ref = |k: &str| {
+        let label = arg(k)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
+        let (device_id, seq) = resolve_op_ref_label(label, op_refs);
+        OpRef { device_id, seq }
+    };
+    // The list form of the above: `ops` is an array of `On` labels, expanded
+    // exactly as `blockIds` expands the scalar `blockId`.
+    let op_ref_list = |k: &str| {
+        arg(k)
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+            .iter()
+            .map(|label| {
+                let label = label.as_str().unwrap_or_else(|| {
+                    panic!("conformance op '{command}': '{k}' entry is not a string")
+                });
+                let (device_id, seq) = resolve_op_ref_label(label, op_refs);
+                OpRef { device_id, seq }
+            })
+            .collect::<Vec<_>>()
+    };
+    // The SPLIT form: two commands take an op coordinate as two positional
+    // args rather than an `OpRef`. The fixture still spells one `On` label —
+    // splitting it here keeps a single convention across all five.
+    let op_ref_split = |k: &str| {
+        let label = arg(k)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
+        resolve_op_ref_label(label, op_refs)
+    };
+    let req_i64 = |k: &str| {
+        arg(k)
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+    };
 
     match command {
         "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
@@ -252,6 +369,111 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        "delete_peer_ref" => to_json(delete_peer_ref_inner(pool, req_str("peerId")).await),
+        "update_peer_name" => {
+            to_json(update_peer_name_inner(pool, req_str("peerId"), opt_str("deviceName")).await)
+        }
+        "set_peer_address" => {
+            to_json(set_peer_address_inner(pool, req_str("peerId"), req_str("address")).await)
+        }
+        // No `*_inner`: the wrapper is the thin layer over this directly.
+        "set_reminder_settings" => to_json(
+            agaric_lib::reminders::set_settings(
+                pool,
+                // The IPC arg is the whole `ReminderSettings` under `settings`,
+                // so the fixture spells it nested exactly as a caller does.
+                &agaric_lib::reminders::ReminderSettings {
+                    enabled: args["settings"]["enabled"].as_bool().unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'settings.enabled'")
+                    }),
+                    time: args["settings"]["time"]
+                        .as_str()
+                        .unwrap_or_else(|| {
+                            panic!("conformance op '{command}' is missing arg 'settings.time'")
+                        })
+                        .to_owned(),
+                },
+            )
+            .await,
+        ),
+        "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
+        // #5057 — positional undo. `pageId` is a label like any other block
+        // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
+        // page"), which is why this one is spellable where the ref-addressed
+        // undo commands are not: an `OpRef` carries a device id, and the two
+        // runners' differ.
+        "undo_page_op" => to_json(
+            undo_page_op_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("pageId").expect("undo_page_op pageId"),
+                req_i64("undoDepth"),
+            )
+            .await,
+        ),
+        // #5057 — the grouped positional undo. Same ordinal `depth` as
+        // `undo_page_op`, plus a `windowMs` that decides how many ops around
+        // that depth are reversed together. Both are the fixture's own
+        // literals, so the group is deterministic.
+        "undo_page_group" => to_json(
+            undo_page_group_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("pageId").expect("undo_page_group pageId"),
+                req_i64("depth"),
+                req_i64("windowMs"),
+            )
+            .await,
+        ),
+        // #5057 — the first of the ref-addressed undo commands, and the one
+        // that proves the `On` convention: the fixture names the op it wants
+        // undone by position in its own op list, and each runner resolves that
+        // to its own coordinate.
+        "undo_op" => to_json(undo_op_inner(pool, DEV, mat, op_ref("opRef")).await),
+        "undo_ops" => to_json(undo_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
+        "revert_ops" => to_json(revert_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
+        "redo_page_op" => {
+            let (device_id, seq) = op_ref_split("undoOp");
+            to_json(redo_page_op_inner(pool, DEV, mat, device_id, seq).await)
+        }
+        "restore_page_to_op" => {
+            let (device_id, seq) = op_ref_split("targetOp");
+            to_json(
+                restore_page_to_op_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    arg_label_id("pageId").expect("restore_page_to_op pageId"),
+                    device_id,
+                    seq,
+                )
+                .await,
+            )
+        }
+        // An attachment id is the fixture's own short label (`ATT1`), inserted
+        // verbatim by the seed loader, so it takes no expansion.
+        "delete_attachment" => to_json(
+            delete_attachment_inner(
+                pool,
+                DEV,
+                mat,
+                app_data_dir,
+                AttachmentId::from(req_str("attachmentId").as_str()),
+            )
+            .await,
+        ),
+        "rename_attachment" => to_json(
+            rename_attachment_inner(
+                pool,
+                DEV,
+                mat,
+                AttachmentId::from(req_str("attachmentId").as_str()),
+                req_str("newFilename"),
+            )
+            .await,
+        ),
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
@@ -281,23 +503,19 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         .find(|(c, ..)| *c == command)
         .unwrap_or_else(|| panic!("conformance op '{command}' has no RETURN_SHAPE entry"));
     // A headed shape has no id column: the head is the command name and the
-    // attributes are read off the response beside it.
-    // A LIST return is a list of ROWS: one row token per element, in the order
-    // the command returned them. Distinct from `tuple_token`, which reads a
-    // JSON array POSITIONALLY as a single row.
-    if let Some(rows) = response.as_array() {
-        return rows
-            .iter()
-            .map(|row| row_token(row, id_key, attrs))
-            .collect();
-    }
-    let headed;
-    let row = if *id_key == HEADED_ID_KEY {
-        // A response that is not an object has no field for an attribute to
-        // name. `()` serializes to `null` and declares no attributes, so it
-        // renders as the bare head; a bare COUNT is the whole return value, so
-        // the shape's single attribute names it.
-        let mut obj = if let Some(fields) = response.as_object() {
+    // attributes are read off the row beside it. Applied PER ROW rather than
+    // to the response as a whole, because a list return of headed rows
+    // (`undo_page_group`) needs the head on each element — `row_token` reads
+    // `row[id_key]` and renders `<missing-id>` for a row that has none.
+    let head_row = |row: &Value| -> Value {
+        if *id_key != HEADED_ID_KEY {
+            return row.clone();
+        }
+        // A row that is not an object has no field for an attribute to name.
+        // `()` serializes to `null` and declares no attributes, so it renders
+        // as the bare head; a bare COUNT is the whole return value, so the
+        // shape's single attribute names it.
+        let mut obj = if let Some(fields) = row.as_object() {
             fields.clone()
         } else {
             assert!(
@@ -307,17 +525,25 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
             );
             let mut fields = serde_json::Map::new();
             if let Some(name) = attrs.first() {
-                fields.insert((*name).to_owned(), response.clone());
+                fields.insert((*name).to_owned(), row.clone());
             }
             fields
         };
         obj.insert(HEADED_ID_KEY.to_owned(), json!(command));
-        headed = Value::Object(obj);
-        &headed
-    } else {
-        response
+        Value::Object(obj)
     };
-    let mut out = vec![row_token(row, id_key, attrs)];
+
+    // A LIST return is a list of ROWS: one row token per element, in the order
+    // the command returned them. Distinct from `tuple_token`, which reads a
+    // JSON array POSITIONALLY as a single row.
+    if let Some(rows) = response.as_array() {
+        return rows
+            .iter()
+            .map(|row| row_token(&head_row(row), id_key, attrs))
+            .collect();
+    }
+    let row = head_row(response);
+    let mut out = vec![row_token(&row, id_key, attrs)];
     for field in *lists {
         for id in response
             .get(*field)
@@ -398,9 +624,11 @@ pub(super) fn check_declaration(
 pub(super) async fn run_command_op(
     pool: &SqlitePool,
     mat: &Materializer,
+    app_data_dir: &std::path::Path,
     fixture_name: &str,
     op: &Value,
     created_ids: &[String],
+    op_refs: &[(String, i64)],
 ) -> Value {
     let command = op["command"].as_str().expect("op command");
     let name = op["name"].as_str().unwrap_or_else(|| {
@@ -410,18 +638,19 @@ pub(super) async fn run_command_op(
         )
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
-    let (returns, error, code) = match apply_op_via_command(pool, mat, op, created_ids).await {
-        Ok(response) => (
-            PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
-            Value::Null,
-            Value::Null,
-        ),
-        Err(e) => (
-            Vec::new(),
-            serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
-            serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
-        ),
-    };
+    let (returns, error, code) =
+        match apply_op_via_command(pool, mat, app_data_dir, op, created_ids, op_refs).await {
+            Ok(response) => (
+                PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
+                Value::Null,
+                Value::Null,
+            ),
+            Err(e) => (
+                Vec::new(),
+                serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
+                serde_json::to_value(e.validation_code()).expect("serialize ValidationCode"),
+            ),
+        };
     check_declaration(
         &at,
         declared(&at, op, "expect_error").as_deref(),
@@ -606,7 +835,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 16;
+    const MUTATING_ARM_COUNT: usize = 30;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

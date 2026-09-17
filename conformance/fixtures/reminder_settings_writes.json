@@ -1,0 +1,165 @@
+{
+  "description": "#5057 — `set_reminder_settings` writes two `app_settings` rows, a table outside the snapshot's five arrays, so `get_reminder_settings` is the observation. The command has no `*_inner`: its wrapper is the thin layer over `reminders::set_settings`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Reminders",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "accepts_an_unpadded_hour",
+      "returns": ["set_reminder_settings"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "set_a_valid_time",
+      "returns": ["set_reminder_settings"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "disable_keeps_the_time",
+      "returns": ["set_reminder_settings"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "rejects_an_out_of_range_hour",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "rejects_a_non_time",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "reminder_settings_after_writes",
+      "rows": ["reminder_settings#enabled=false#time=21:15"],
+      "total_count": null
+    }
+  ],
+  "name": "reminder_settings_writes",
+  "ops": [
+    {
+      "args": {
+        "settings": {
+          "enabled": true,
+          "time": "7:30"
+        }
+      },
+      "command": "set_reminder_settings",
+      "comment": "The backend parses `%H:%M` with chrono, which ACCEPTS a single-digit hour. A stricter `^([01]\\d|2[0-3]):[0-5]\\d$` regex would refuse it, so this op is the arm that separates a real parse from a shape check — it is not a typo.",
+      "name": "accepts_an_unpadded_hour",
+      "via": "command"
+    },
+    {
+      "args": {
+        "settings": {
+          "enabled": true,
+          "time": "21:15"
+        }
+      },
+      "command": "set_reminder_settings",
+      "comment": "Overwrites both seeded rows.",
+      "name": "set_a_valid_time",
+      "via": "command"
+    },
+    {
+      "args": {
+        "settings": {
+          "enabled": false,
+          "time": "21:15"
+        }
+      },
+      "command": "set_reminder_settings",
+      "comment": "`enabled` stores '0' rather than deleting the row, so the chosen time survives being switched off and comes back on re-enable.",
+      "name": "disable_keeps_the_time",
+      "via": "command"
+    },
+    {
+      "args": {
+        "settings": {
+          "enabled": true,
+          "time": "99:99"
+        }
+      },
+      "command": "set_reminder_settings",
+      "comment": "Hour 99 is not a wall-clock hour; nothing is written.",
+      "expect_error": "validation",
+      "name": "rejects_an_out_of_range_hour",
+      "via": "command"
+    },
+    {
+      "args": {
+        "settings": {
+          "enabled": true,
+          "time": "not-a-time"
+        }
+      },
+      "command": "set_reminder_settings",
+      "comment": "Nothing resembling HH:MM at all.",
+      "expect_error": "validation",
+      "name": "rejects_a_non_time",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "get_reminder_settings",
+      "comment": "Disabled, and still holding 21:15 — the two refusals above changed nothing.",
+      "name": "reminder_settings_after_writes"
+    }
+  ],
+  "seed": {
+    "app_settings": [
+      {
+        "key": "reminders.enabled",
+        "value": "1"
+      },
+      {
+        "key": "reminders.time",
+        "value": "07:30"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Reminders",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

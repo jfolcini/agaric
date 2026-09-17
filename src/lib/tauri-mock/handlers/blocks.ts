@@ -1037,10 +1037,14 @@ export const blocksHandlers = {
         throw invalidOperationRejection(`block '${id}' is not deleted`)
       }
     }
+    // Resolve the roots FIRST, as the purge path below does. Restoring one
+    // root can revive another listed id through its cohort, and a second pass
+    // that re-reads `deleted_at` would then skip that id and append no op for
+    // it — where the backend resolves every soft-deleted root up front and
+    // appends exactly one op per root, overlap or not.
+    const restoreRoots = ids.filter((id) => blocks.get(id)?.['deleted_at'])
     let count = 0
-    for (const id of ids) {
-      const b = blocks.get(id)
-      if (!b?.['deleted_at']) continue
+    for (const id of restoreRoots) {
       // The SAME cohort restore the single-block handler runs: back down the
       // exact cohort the delete tombstoned, then up the tombstoned ancestor
       // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor

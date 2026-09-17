@@ -328,12 +328,16 @@ test.describe('Property definitions view', () => {
 
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
 
-    // Hover over the "context" row and click the delete button
-    const contextRow = settingsPanel.locator('ul > li', { hasText: 'context' })
-    await expect(contextRow).toBeVisible()
-    await contextRow.hover()
+    // #5057 — deletes `reviewer`, the seeded definition no block uses.
+    // `delete_property_def` refuses a key that any `block_properties` row still
+    // references, and both `context` and `project` are carried by seeded
+    // blocks. This spec used to delete `context` and passed only because the
+    // mock had no such guard; against the real backend that flow refuses.
+    const reviewerRow = settingsPanel.locator('ul > li', { hasText: 'reviewer' })
+    await expect(reviewerRow).toBeVisible()
+    await reviewerRow.hover()
 
-    const deleteBtn = contextRow.getByRole('button', { name: 'Delete property context' })
+    const deleteBtn = reviewerRow.getByRole('button', { name: 'Delete property reviewer' })
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
@@ -346,11 +350,12 @@ test.describe('Property definitions view', () => {
     // Confirm deletion
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
 
-    // "context" should no longer be in the list
-    await expect(settingsPanel.locator('ul > li', { hasText: 'context' })).not.toBeVisible()
+    // "reviewer" should no longer be in the list
+    await expect(settingsPanel.locator('ul > li', { hasText: 'reviewer' })).not.toBeVisible()
 
-    // "project" should still be there
+    // the in-use definitions are untouched
     await expect(page.locator('ul > li', { hasText: 'project' })).toBeVisible()
+    await expect(page.locator('ul > li', { hasText: 'context' })).toBeVisible()
   })
 
   test('select-type property shows Edit options button', async ({ page }) => {

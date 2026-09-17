@@ -1,0 +1,294 @@
+{
+  "description": "#5057 — the three `peer_refs` writers: `delete_peer_ref`, `update_peer_name`, `set_peer_address`. `peer_refs` is NOT one of the snapshot's five arrays, so nothing these write is visible in `expected`; they are pinned by the `list_peer_refs` step that follows them, which projects every non-id column. That is the route for every command whose table sits outside the snapshot — the read is the observation, not the settled state.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "name_a_peer",
+      "returns": ["update_peer_name"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "clear_a_peer_name",
+      "returns": ["update_peer_name"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "address_a_peer",
+      "returns": ["set_peer_address"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "address_rejects_a_portless_host",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "address_rejects_a_zero_port",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "address_rejects_an_empty_host",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "address_rejects_a_non_digit_port",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "delete_a_peer",
+      "returns": ["delete_peer_ref"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "delete_an_unknown_peer_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "name_an_unknown_peer_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "address_an_unknown_peer_is_not_found",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "peers_after_writes",
+      "rows": [
+        "peer-new#last_hash=hash-new#last_sent_hash=null#synced_at=2000#streamed_at=1500#reset_count=0#last_reset_at=null#cert_hash=null#device_name=Desk#remote_device_name=Phone#last_address=192.168.1.7:4433#endpoint_id=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210#unpaired_by_peer_at_ms=null",
+        "peer-old#last_hash=hash-old#last_sent_hash=sent-old#synced_at=1000#streamed_at=null#reset_count=2#last_reset_at=900#cert_hash=cert-old#device_name=null#remote_device_name=null#last_address=192.168.1.5:7001#endpoint_id=null#unpaired_by_peer_at_ms=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "peer_ref_writes",
+  "ops": [
+    {
+      "args": {
+        "deviceName": "Desk",
+        "peerId": "peer-new"
+      },
+      "command": "update_peer_name",
+      "comment": "Sets the LOCAL override. `remote_device_name` is what the peer calls itself and must survive untouched — the two columns are deliberately separate.",
+      "name": "name_a_peer",
+      "via": "command"
+    },
+    {
+      "args": {
+        "deviceName": null,
+        "peerId": "peer-old"
+      },
+      "command": "update_peer_name",
+      "comment": "`peer-old` carries the override `Laptop`. A null name CLEARS it rather than storing an empty string. The op above is the other half: `peer-new` GAINS an override while its remote-supplied `Phone` survives untouched — the two columns are deliberately separate.",
+      "name": "clear_a_peer_name",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": "192.168.1.7:4433",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "`last_address` is opaque to the command — it validates the host:port SHAPE and stores the string; nothing resolves it here.",
+      "name": "address_a_peer",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": "nohost",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "No colon, so no port. Refused before the row is touched.",
+      "expect_error": "validation",
+      "name": "address_rejects_a_portless_host",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": "host:0",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "Port 0 is not a usable port; the parse is a non-zero u16.",
+      "expect_error": "validation",
+      "name": "address_rejects_a_zero_port",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": ":4433",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "A port with no host.",
+      "expect_error": "validation",
+      "name": "address_rejects_an_empty_host",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": "192.168.1.7:80.0",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "The port is parsed by `u16::from_str`, which takes DIGITS only. `80.0`, ` 80`, `0x50` and `1e3` all coerce to a number in JS, so a mock using `Number` alone stores four addresses the backend refuses.",
+      "expect_error": "validation",
+      "name": "address_rejects_a_non_digit_port",
+      "via": "command"
+    },
+    {
+      "args": {
+        "peerId": "peer-never"
+      },
+      "command": "delete_peer_ref",
+      "comment": "Removes the row outright — `peer_refs` carries no tombstone.",
+      "name": "delete_a_peer",
+      "via": "command"
+    },
+    {
+      "args": {
+        "peerId": "peer-ghost"
+      },
+      "command": "delete_peer_ref",
+      "comment": "A missing peer is NotFound, not a silent no-op: the three writers agree on that.",
+      "expect_error": "not_found",
+      "name": "delete_an_unknown_peer_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "deviceName": "X",
+        "peerId": "peer-ghost"
+      },
+      "command": "update_peer_name",
+      "comment": "Same rule on the rename path.",
+      "expect_error": "not_found",
+      "name": "name_an_unknown_peer_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "address": "h:1",
+        "peerId": "peer-ghost"
+      },
+      "command": "set_peer_address",
+      "comment": "Same rule on the address path — and note it is checked AFTER the shape validation above, so a bad address on an unknown peer is a validation refusal, not this one.",
+      "expect_error": "not_found",
+      "name": "address_an_unknown_peer_is_not_found",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {},
+      "command": "list_peer_refs",
+      "comment": "The observation. `peer-new` carries both writes and keeps the `Phone` its peer supplied, `peer-old` has its local override cleared, and `peer-never` is gone.",
+      "name": "peers_after_writes"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "peer_refs": [
+      {
+        "cert_hash": null,
+        "device_name": null,
+        "endpoint_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "last_address": null,
+        "last_hash": null,
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-never",
+        "remote_device_name": "Tablet",
+        "reset_count": 0,
+        "streamed_at": 5000,
+        "synced_at": null,
+        "unpaired_by_peer_at_ms": 7000
+      },
+      {
+        "cert_hash": "cert-old",
+        "device_name": "Laptop",
+        "endpoint_id": null,
+        "last_address": "192.168.1.5:7001",
+        "last_hash": "hash-old",
+        "last_reset_at": 900,
+        "last_sent_hash": "sent-old",
+        "peer_id": "peer-old",
+        "remote_device_name": null,
+        "reset_count": 2,
+        "streamed_at": null,
+        "synced_at": 1000,
+        "unpaired_by_peer_at_ms": null
+      },
+      {
+        "cert_hash": null,
+        "device_name": null,
+        "endpoint_id": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "last_address": null,
+        "last_hash": "hash-new",
+        "last_reset_at": null,
+        "last_sent_hash": null,
+        "peer_id": "peer-new",
+        "remote_device_name": "Phone",
+        "reset_count": 0,
+        "streamed_at": 1500,
+        "synced_at": 2000,
+        "unpaired_by_peer_at_ms": null
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

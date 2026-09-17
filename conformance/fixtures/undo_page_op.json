@@ -1,0 +1,191 @@
+{
+  "description": "#5057 — `undo_page_op`, the positional (depth-addressed) undo. This is the one member of the undo cluster a static fixture can spell today: `undoDepth` is an ORDINAL (\"the newest undoable op on this page\"), where every other member is given an `OpRef { device_id, seq }` and the two runners' device ids differ. The seed row is edited TWICE because undoing an edit reconstructs the prior text from the op log: a block whose history starts at its seed row has no prior and the undo refuses with `non_reversible`. The return shape names only the two op_type fields for that same reason — `reversed_op_type` is what says WHICH op was undone, and it is the field the frontend turns into its toast (`useUndoShortcuts.ts` builds `undo.op.${snakeToCamel(reversed_op_type)}`).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Undo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first edit",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "untouched",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_newest_op",
+      "returns": ["undo_page_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_depth_past_the_end_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_negative_depth_is_refused",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_undo",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "undo_page_op",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "first edit"
+      },
+      "command": "edit_block",
+      "comment": "S2's FIRST op. Undoing an edit reconstructs the prior text from the op log, so a block whose history starts at the seed row has nothing to restore and the undo would refuse with `non_reversible` — this op is what gives the edit below a prior to go back to."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "second edit"
+      },
+      "command": "edit_block",
+      "comment": "The forward op the undo below reverses."
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "Depth 0 is the NEWEST undoable op, so this targets the second edit and S2 goes back to `first edit` — the PRIOR text, not the seed content, which is what separates a real reversal from a reset. `reversed_op_type` is `edit_block` (the op undone) and `new_op_type` the reverse op appended in its place.",
+      "name": "undo_the_newest_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 99
+      },
+      "command": "undo_page_op",
+      "comment": "#2463 — a depth past the end of the page's undoable history is NotFound, not a silent no-op.",
+      "expect_error": "not_found",
+      "name": "a_depth_past_the_end_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": -1
+      },
+      "command": "undo_page_op",
+      "comment": "A negative depth is refused before the lookup, so it is Validation where the overrun above is NotFound.",
+      "expect_error": "validation",
+      "name": "a_negative_depth_is_refused",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 is back to `first edit` and S3 never moved.",
+      "name": "blocks_after_the_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Undo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "original",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "untouched",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -47,6 +47,7 @@ import {
   peerRefs,
   properties,
   propertyDefs,
+  pushOp,
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
 
@@ -194,6 +195,13 @@ function loadSeedProperty(p: Record<string, unknown>): void {
     value_ref: v['value_ref'] == null ? null : seedLabelToId(v['value_ref'] as string),
     value_bool: v['value_bool'] == null ? null : (v['value_bool'] as boolean) ? 1 : 0,
   })
+  // #5057 — a seeded PROPERTY is not a raw insert on the backend: its seed
+  // loader calls `set_property_inner`, the real command, which appends an op.
+  // Seeded BLOCKS are inserted raw and append nothing, which is why the two
+  // halves of this loader differ. Without this the mock starts every fixture
+  // that seeds a property one op behind, and `property_def_writes` is the
+  // first fixture that ever did.
+  pushOp('set_property', { block_id: blockId, key, from_value: null })
 }
 
 /** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
@@ -271,6 +279,12 @@ export function loadSeed(fixture: Fixture): void {
     const tagId = seedLabelToId(t['tag_id'] as string)
     if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
     blockTags.get(blockId)?.add(tagId)
+    // The backend's seed loader tags through `add_tag_inner`, the real command,
+    // which appends an op. Writing `blockTags` alone left the digest one op
+    // short per seeded tag — the same gap the property half above had. No
+    // fixture seeds tags today, so this is latent rather than red, and the
+    // first one that did would have inherited a confusing digest diff.
+    pushOp('add_tag', { block_id: blockId, tag_id: tagId })
   }
 }
 
@@ -303,6 +317,46 @@ function resolveOpArgId(label: string, createdIds: readonly string[]): string {
   return id
 }
 
+/** Every op this fixture has appended, in `seq` order — what an `On` label
+ *  resolves against. Local rows only, mirroring `read_op_refs_in_op_order`;
+ *  the mock has no replicated rows, so the filter is the device id alone. */
+function opRefsInOpOrder(): Array<{ device_id: string; seq: number }> {
+  return opLog.map((entry) => ({ device_id: entry.device_id, seq: entry.seq }))
+}
+
+/**
+ * Resolve an `On` fixture op arg into the op-log coordinate it names.
+ *
+ * `On` (#5057) is the **n-th op the fixture has appended so far**, 1-based —
+ * the `OpRef` analogue of `Cn`, and for the same reason. An `OpRef` is
+ * `(device_id, seq)` and the two runners' device ids differ, so a fixture
+ * cannot spell one literally.
+ *
+ * Fails CLOSED: an out-of-range `On` throws, because a silently wrong ref
+ * would undo the wrong op and still look like a pass.
+ *
+ * Rust twin: `resolve_op_ref_label` in `conformance.rs`.
+ */
+function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
+  const m = /^O(\d{1,6})$/.exec(label)
+  if (!m) {
+    throw new Error(
+      `conformance op ref '${label}' is not an \`On\` label; an OpRef arg cannot be spelled ` +
+        `literally, because the two runners' device ids differ`,
+    )
+  }
+  const refs = opRefsInOpOrder()
+  const n = Number(m[1])
+  const ref = n >= 1 ? refs[n - 1] : undefined
+  if (ref == null) {
+    throw new Error(
+      `conformance op ref '${label}' names the ${n}th op this fixture appended, but only ` +
+        `${refs.length} have been appended at this point in the op list`,
+    )
+  }
+  return ref
+}
+
 /**
  * Rewrite an op's args for the mock: labels referenced by id-shaped arg keys
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
@@ -313,7 +367,7 @@ export function expandOpArgs(
   createdIds: readonly string[] = [],
 ): Record<string, unknown> {
   const out = { ...args }
-  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId']) {
+  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId', 'pageId']) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
@@ -338,6 +392,27 @@ export function expandOpArgs(
     out['blockIds'] = out['blockIds'].map((label) =>
       typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
     )
+  }
+  // #5057 — an `OpRef` arg is an `On` label, never a literal.
+  if (typeof out['opRef'] === 'string') out['opRef'] = resolveOpRefLabel(out['opRef'])
+  // The list form, mirroring `blockIds`.
+  if (Array.isArray(out['ops'])) {
+    out['ops'] = out['ops'].map((label) =>
+      typeof label === 'string' ? resolveOpRefLabel(label) : label,
+    )
+  }
+  // The SPLIT form: two commands take the coordinate as two positional args.
+  // The fixture spells one `On` label either way; the split happens here, so
+  // the convention stays single across all five ref-addressed commands.
+  for (const [label, device, seq] of [
+    ['undoOp', 'undoDeviceId', 'undoSeq'],
+    ['targetOp', 'targetDeviceId', 'targetSeq'],
+  ] as const) {
+    if (typeof out[label] !== 'string') continue
+    const ref = resolveOpRefLabel(out[label])
+    delete out[label]
+    out[device] = ref.device_id
+    out[seq] = ref.seq
   }
   if (out['value'] != null && typeof out['value'] === 'object') {
     const v = { ...(out['value'] as Record<string, unknown>) }

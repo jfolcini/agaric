@@ -210,6 +210,46 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     expect(loadedRootOrder()).toEqual([B])
   })
 
+  it('#5057 — both positional paths report reversed_op_type', () => {
+    // `UndoResult.reversed_op_type` is what the FE turns into its toast
+    // (`undo.op.${snakeToCamel(reversed_op_type)}` in `useUndoShortcuts.ts`),
+    // so an undefined here degrades every browser-mode undo to the generic
+    // fallback. `applyUndoForTarget` — the ref-addressed path shared by
+    // `undo_op` / `undo_ops` — always set it; these two POSITIONAL handlers
+    // build their result inline and had both dropped it.
+    //
+    // `create_block` deliberately, NOT `move_block`: undo and redo name
+    // DIFFERENT ops (undo names the op it reversed, redo names the undo row it
+    // was handed), and a self-inverse type makes the two conventions coincide,
+    // so this could not tell them apart. That is exactly how an inverted redo
+    // shipped past the first version of this test.
+    seedPage([])
+
+    const created = dispatch('create_block', {
+      blockType: 'content',
+      content: 'made then unmade',
+      parentId: PAGE,
+      index: 0,
+    }) as { id: string }
+    expect(created.id).toBeTruthy()
+
+    const undone = dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 }) as {
+      reversed_op_type: string
+      new_op_ref: { seq: number }
+    }
+    // Undo names the op it reversed: the create.
+    expect(undone.reversed_op_type).toBe('create_block')
+
+    const redone = dispatch('redo_page_op', {
+      pageId: PAGE,
+      undoSeq: undone.new_op_ref.seq,
+    }) as { reversed_op_type: string; is_redo: boolean }
+    // Redo names the UNDO ROW it was handed, which is the `delete_block` the
+    // undo appended — not the `create_block` it re-applies.
+    expect(redone.reversed_op_type).toBe('delete_block')
+    expect(redone.is_redo).toBe(true)
+  })
+
   it('reverts a reparent (indent then dedent then undo) so the block re-nests', () => {
     // GS-style ids; GS_3 indents under GS_2, dedents back to root, then undo
     // must re-nest it under GS_2 at the indented depth.

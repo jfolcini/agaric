@@ -1,0 +1,209 @@
+{
+  "description": "#5057 — `restore_page_to_op`, the page-level rewind. It names its target with the same `On` label as its ref-addressed siblings, split across two positional args. Unlike them it answers a COUNT envelope rather than a bare list, and the two counts are the whole point: `ops_reverted` says how far it walked and `non_reversible_skipped` says what it stepped over without failing, which is what separates a rewind from an undo. Two things sit in the sweep's path on purpose. An UNDO row — the backend does not filter `is_undo`, so a rewind reverts one like any other op, and the count says so. The second rewind pins the other half of that contract: a priorless `delete_property` is NotFound rather than NonReversible, so it is not skipped and not counted — it aborts the whole restore.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Rewind",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "written after the unreversible op",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_newest_edit_first",
+      "returns": ["undo_page_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rewind_the_page_to_a_named_op",
+      "returns": ["restore_page_to_op#ops_reverted=3#non_reversible_skipped=0"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_priorless_delete_property_aborts_the_whole_rewind",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_rewind",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "restore_page_to_op",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v1"
+      },
+      "command": "edit_block",
+      "comment": "O1 — the target. The page is rewound to the state this op left, so O1 itself is NOT reverted."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v2"
+      },
+      "command": "edit_block",
+      "comment": "O2 — reverted by the rewind."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v3"
+      },
+      "command": "edit_block",
+      "comment": "O3 — reverted by the rewind."
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "O4 — an UNDO row, deliberately left in the rewind's path. The backend's sweep does not filter `is_undo`, so the rewind reverts this too (which re-applies O3) and counts it. A mock that skipped undo rows would answer 2 here instead of 3.",
+      "name": "undo_the_newest_edit_first",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "targetOp": "O1"
+      },
+      "command": "restore_page_to_op",
+      "comment": "Rewinds past the undo row O4 and the edits O3 and O2, stopping AT O1, so S2 reads `v1` rather than its seed text — which is what distinguishes rewinding to an op from reverting everything. `ops_reverted` is 3, not 2: the undo row counts.",
+      "name": "rewind_the_page_to_a_named_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "nosuchkey"
+      },
+      "command": "delete_property",
+      "comment": "Deleting a key that was never set still APPENDS an op — the backend does not refuse it. That op is the one the rewind below cannot reverse."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "written after the unreversible op"
+      },
+      "command": "edit_block",
+      "comment": "NEWER than the priorless delete below it in the sweep, and that ordering is the point: a mock that checked reversibility op-by-op would revert THIS edit first and only then refuse, leaving S2 changed by a command that failed. The backend computes the whole reverse batch before applying any of it, so the refusal writes nothing and S2 keeps this text."
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "targetOp": "O1"
+      },
+      "command": "restore_page_to_op",
+      "comment": "The same rewind again, but the sweep now contains the priorless `delete_property`. `build_reverse_delete_property` raises NotFound, and `is_skippable_non_reversible` matches only `NonReversible` — so this is NOT one of the two op types a restore steps over. It aborts the WHOLE restore rather than counting it as skipped, and because the batch is computed before it is applied, the edit above survives untouched.",
+      "expect_error": "not_found",
+      "name": "a_priorless_delete_property_aborts_the_whole_rewind",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 carries the text written after the unreversible op, proving the refused rewind rolled nothing back.",
+      "name": "blocks_after_the_rewind"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Rewind",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "seed text",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

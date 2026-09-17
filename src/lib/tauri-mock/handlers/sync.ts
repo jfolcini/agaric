@@ -9,7 +9,13 @@
  * store.
  */
 
-import { type TypedHandlers, returnNull, returnUndefined } from '@/lib/tauri-mock/handlers/shared'
+import {
+  type TypedHandlers,
+  notFoundRejection,
+  returnNull,
+  returnUndefined,
+  validationRejection,
+} from '@/lib/tauri-mock/handlers/shared'
 import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 
 // #3469 (review) — how many `list_peer_refs` reads must elapse after a
@@ -144,7 +150,12 @@ export const syncHandlers = {
   },
   delete_peer_ref: (args) => {
     const a = args as Record<string, unknown>
-    peerRefs.delete(a['peerId'] as string)
+    const peerId = a['peerId'] as string
+    // `peer_refs` carries no tombstone, so the row goes outright — but an
+    // unknown peer is NotFound rather than a silent no-op. All three writers
+    // agree on that.
+    if (!peerRefs.has(peerId)) throw notFoundRejection(`peer_refs (${peerId})`)
+    peerRefs.delete(peerId)
   },
   get_device_id: () => 'mock-device-id-0000',
 
@@ -209,13 +220,44 @@ export const syncHandlers = {
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
 
-  update_peer_name: returnUndefined,
+  update_peer_name: (args) => {
+    const a = args as Record<string, unknown>
+    const peerId = a['peerId'] as string
+    const row = peerRefs.get(peerId)
+    if (!row) throw notFoundRejection(`peer_refs (${peerId})`)
+    // The LOCAL override only. `remote_device_name` is what the peer calls
+    // itself and is deliberately left alone; a null name CLEARS the override
+    // rather than storing an empty string.
+    row['device_name'] = (a['deviceName'] as string | null | undefined) ?? null
+  },
 
   // ---------------------------------------------------------------------------
   // Page alias commands
   // ---------------------------------------------------------------------------
 
-  set_peer_address: returnNull,
+  set_peer_address: (args) => {
+    const a = args as Record<string, unknown>
+    const peerId = a['peerId'] as string
+    const address = a['address'] as string
+    // Shape only — nothing resolves the host here. `rsplit_once(':')` on the
+    // backend, so the host must be non-empty and the port a non-zero u16.
+    const cut = address.lastIndexOf(':')
+    const host = cut === -1 ? '' : address.slice(0, cut)
+    const rawPort = cut === -1 ? '' : address.slice(cut + 1)
+    // `u16::from_str` on the backend, which is stricter than `Number`: it takes
+    // DIGITS only, so `80.0`, ` 80`, `0x50` and `1e3` are refused there and
+    // would all parse here without the digits test.
+    // `+?`: `u16::from_str` accepts a leading plus, so `host:+80` parses to 80
+    // on the backend. A digits-only test refused it — the same divergence class
+    // this guard exists to close, pointing the other way.
+    const port = /^\+?\d+$/.test(rawPort) ? Number(rawPort) : Number.NaN
+    if (host === '' || !Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw validationRejection(`invalid peer address '${address}': expected host:port`)
+    }
+    const row = peerRefs.get(peerId)
+    if (!row) throw notFoundRejection(`peer_refs (${peerId})`)
+    row['last_address'] = address
+  },
 
   // ---------------------------------------------------------------------------
   // Page links for graph view (F-33)

@@ -1486,11 +1486,66 @@ export type TypedHandlers = {
 export const MOCK_LOCAL_DEVICE = 'mock-device'
 
 /**
+ * Did `(block_id, key)` hold a value immediately BEFORE this op? Mirrors
+ * `find_prior_property`: scan the op log backwards for the nearest earlier
+ * `set_property` / `delete_property` on the same pair — a set left a value, a
+ * delete left none, and nothing at all left none.
+ *
+ * #5057 — the op's own `from_value` cannot answer this, twice over. The
+ * backend's `DeletePropertyPayload` is `{block_id, key}` and carries no such
+ * field at all, and on the mock side `setReservedColumnProperty`
+ * (`handlers/properties.ts`) writes `from_value: null` unconditionally — by
+ * design, to keep the revert a no-op against the properties map. Reading it
+ * would make every reserved-key write look priorless. Shared by
+ * {@link reverseOpTypeFor} and {@link assertDeletePropertyHasPrior} so the two
+ * cannot answer the same question differently.
+ */
+function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
+  let key: unknown
+  let blockId: unknown
+  try {
+    const payload = JSON.parse(op.payload) as Record<string, unknown>
+    key = payload['key']
+    blockId = payload['block_id']
+  } catch {
+    return false // malformed payload: no prior to restore
+  }
+  for (let i = opLog.length - 1; i >= 0; i -= 1) {
+    const prior = opLog[i]
+    if (!prior || prior.seq >= op.seq) continue
+    if (prior.op_type !== 'set_property' && prior.op_type !== 'delete_property') continue
+    try {
+      const p = JSON.parse(prior.payload) as Record<string, unknown>
+      if (p['block_id'] !== blockId || p['key'] !== key) continue
+    } catch {
+      continue
+    }
+    return prior.op_type === 'set_property'
+  }
+  return false
+}
+
+/**
  * Reverse op_type stamped on the appended reverse op. Mirrors the per-type
  * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
  * the #2468 migration makes undoable by ref.
+ *
+ * #5057 — takes the OP, not just its type, because `set_property` is the one
+ * case the type alone cannot decide: `reverse_set_property` answers
+ * `DeleteProperty` when the key had no prior value and `SetProperty` (back to
+ * that prior) when it did. A static table always said `set_property`, so
+ * undoing a freshly-set key stamped the wrong type on a row the op-log digest
+ * compares — the inverse half of `delete_property -> set_property`, which was
+ * already here.
  */
-export function reverseOpTypeFor(opType: string): string {
+export function reverseOpTypeFor(op: MockOpLogEntry): string {
+  const opType = op.op_type
+  if (opType === 'set_property') {
+    // A set with a prior value reverses to a set back to it; without one, to a
+    // delete. `hasPriorPropertyValue` is what decides, for the reason its doc
+    // gives — the op's own `from_value` cannot.
+    return hasPriorPropertyValue(op) ? 'set_property' : 'delete_property'
+  }
   switch (opType) {
     case 'create_block': {
       return 'delete_block'
@@ -1511,8 +1566,10 @@ export function reverseOpTypeFor(opType: string): string {
       return 'add_tag'
     }
     default: {
-      // edit_block / move_block / set_property / the task-column setters all
-      // reverse to an op of their own type.
+      // edit_block / move_block / the task-column setters all reverse to an op
+      // of their own type. `set_property` does NOT — it short-circuits above,
+      // because whether its reverse is a set or a delete depends on the prior
+      // value, not on the type.
       return opType
     }
   }
@@ -1533,7 +1590,7 @@ function currentPropertyValue(blockId: string, key: string): Record<string, unkn
 }
 
 /**
- * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target.op_type)`:
+ * #4870 — the FORWARD payload of {@link reverseOpTypeFor}`(target)`:
  * what the backend's reverse row carries, in place of the bookkeeping stash
  * (`{ reversed }` / `{ re_applied }` / `{ reverted }`) the mock used to write.
  * The stash rides along on top of it — `redo_page_op` and
@@ -1675,21 +1732,34 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
         'refusing to undo it twice',
     )
   }
-  // Backend parity: the real command appends a `delete_property` op even when
-  // the property never existed, but reversing that op is impossible — there
-  // is no prior `set_property` to restore. `build_reverse_delete_property`
-  // surfaces that as NotFound during the (pre-apply, batch-aborting) reverse
-  // computation; mirror it here so the FE sees the same failure shape.
-  if (effective.op_type === 'delete_property') {
-    const payload = JSON.parse(effective.payload) as { from_value?: unknown; key?: string }
-    if (payload.from_value == null) {
-      throw notFoundRejection(
-        `no prior set_property found for key '${payload.key ?? ''}' — ` +
-          'cannot reverse delete_property',
-      )
-    }
-  }
+  assertDeletePropertyHasPrior(effective)
   return effective
+}
+
+/**
+ * Backend parity: the real command appends a `delete_property` op even when
+ * the property never existed, but reversing that op is impossible — there is
+ * no prior `set_property` to restore. `build_reverse_delete_property`
+ * (agaric-engine `reverse/batch.rs`) surfaces that as `NotFound`, and
+ * `is_skippable_non_reversible` matches only `NonReversible`, so it is NOT
+ * skipped: it aborts the whole batch.
+ *
+ * #5057 — shared by the ref-addressed undo path and `restore_page_to_op`'s
+ * sweep. Written once because the sweep having its own idea of reversibility
+ * is exactly the two-paths-different-coverage shape this cluster kept finding.
+ */
+export function assertDeletePropertyHasPrior(entry: MockOpLogEntry): void {
+  if (entry.op_type !== 'delete_property') return
+  if (hasPriorPropertyValue(entry)) return
+  let key = ''
+  try {
+    key = ((JSON.parse(entry.payload) as Record<string, unknown>)['key'] as string) ?? ''
+  } catch {
+    key = ''
+  }
+  throw notFoundRejection(
+    `no prior set_property found for key '${key}' — cannot reverse delete_property`,
+  )
 }
 
 /**
@@ -1699,7 +1769,7 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
  * `redo_page_op` looks up riding along.
  */
 export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, unknown> {
-  const reverseOpType = reverseOpTypeFor(effective.op_type)
+  const reverseOpType = reverseOpTypeFor(effective)
   // Before the revert: see `reversePayloadFor`.
   const reversePayload = reversePayloadFor(effective)
   applyRevertForOp(effective, blocks, { properties, blockTags })

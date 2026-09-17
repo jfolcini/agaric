@@ -9,8 +9,12 @@
  * store.
  */
 
-import { notFoundRejection, type TypedHandlers } from '@/lib/tauri-mock/handlers/shared'
-import { attachmentBytes, attachments, fakeId } from '@/lib/tauri-mock/seed'
+import {
+  notFoundRejection,
+  type TypedHandlers,
+  validationRejection,
+} from '@/lib/tauri-mock/handlers/shared'
+import { attachmentBytes, attachments, fakeId, pushOp } from '@/lib/tauri-mock/seed'
 
 /**
  * The backend's `ORDER BY created_at, id` (`list_attachments_inner` and the
@@ -25,6 +29,45 @@ function byCreatedAtThenId(a: Record<string, unknown>, b: Record<string, unknown
   const ia = a['id'] as string
   const ib = b['id'] as string
   return ia < ib ? -1 : ia > ib ? 1 : 0
+}
+
+/**
+ * `validate_attachment_filename` (#2989): a filename is a NAME, not a path.
+ * Trimmed first, then refused when empty, over the byte cap, carrying a path
+ * separator or a control character, or consisting solely of dots — each of
+ * which would let a rename address something outside the attachment directory.
+ */
+const MAX_ATTACHMENT_FILENAME_BYTES = 255
+
+function validateAttachmentFilename(filename: string): string {
+  const trimmed = filename.trim()
+  if (trimmed === '') throw validationRejection('attachment filename may not be empty')
+  if (new TextEncoder().encode(trimmed).length > MAX_ATTACHMENT_FILENAME_BYTES) {
+    throw validationRejection('attachment filename is too long')
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    throw validationRejection('attachment filename may not contain a path separator')
+  }
+  // `char::is_control` on the Rust side, which is Unicode's definition: C0
+  // (U+0000-U+001F), DEL, and C1 (U+0080-U+009F). Indexed rather than spread or
+  // a regex: every control character is below the surrogate range, so UTF-16
+  // units decide this correctly, and neither `no-misused-spread` nor
+  // `no-control-regex` has to be suppressed to say it.
+  let hasControl = false
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed.charCodeAt(i)
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+      hasControl = true
+      break
+    }
+  }
+  if (hasControl) {
+    throw validationRejection('attachment filename may not contain control characters')
+  }
+  if (/^\.+$/.test(trimmed)) {
+    throw validationRejection('attachment filename may not consist solely of dots')
+  }
+  return trimmed
 }
 
 export const attachmentsHandlers = {
@@ -98,8 +141,18 @@ export const attachmentsHandlers = {
   delete_attachment: (args) => {
     const a = args as Record<string, unknown>
     const id = a['attachmentId'] as string
+    const row = attachments.get(id)
+    if (!row) throw notFoundRejection(`attachment '${id}'`)
     attachments.delete(id)
     attachmentBytes.delete(id)
+    // The op records what was removed so a peer can reclaim the bytes; the
+    // BYTES themselves are left to the GC pass (#1993), which is why the
+    // backend no longer needs its app-data dir here.
+    pushOp('delete_attachment', {
+      attachment_id: id,
+      fs_path: row['fs_path'],
+      filename: row['filename'],
+    })
     return null
   },
 
@@ -107,7 +160,17 @@ export const attachmentsHandlers = {
     const a = args as Record<string, unknown>
     const id = a['attachmentId'] as string
     const row = attachments.get(id)
-    if (row) row['filename'] = a['newFilename'] as string
+    // NotFound is checked BEFORE the filename, so an unknown id with a bad
+    // name is this refusal rather than that one.
+    if (!row) throw notFoundRejection(`attachment '${id}'`)
+    const oldFilename = row['filename'] as string
+    const newFilename = validateAttachmentFilename(a['newFilename'] as string)
+    row['filename'] = newFilename
+    pushOp('rename_attachment', {
+      attachment_id: id,
+      old_filename: oldFilename,
+      new_filename: newFilename,
+    })
     return null
   },
 

@@ -17,6 +17,7 @@ import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-m
 import {
   type TypedHandlers,
   applyUndoForTarget,
+  assertDeletePropertyHasPrior,
   notFoundRejection,
   pageRequestLimit,
   resolveUndoTarget,
@@ -262,6 +263,13 @@ export const historyHandlers = {
     const a = (args ?? {}) as Record<string, unknown>
     const depth = (a['depth'] as number) ?? 0
     const windowMs = (a['windowMs'] as number) ?? 0
+    // #5057 — `undo_page_group_inner` refuses BOTH args' negative sign before
+    // it opens its transaction. The mock had neither guard, so a negative
+    // depth walked `depth + i` from a negative index and a negative window
+    // sized an empty group — both returning success where the backend
+    // refuses. Two separate checks because they name different args.
+    if (depth < 0) throw validationRejection('depth must be non-negative')
+    if (windowMs < 0) throw validationRejection('window_ms must be non-negative')
     const undoOp = historyHandlers['undo_page_op']
     if (!undoOp) {
       // mock-internal invariant (#2463) — `historyHandlers` is malformed if
@@ -301,12 +309,18 @@ export const historyHandlers = {
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
-      const newOp = pushOp(
-        reverseOpTypeFor(target.op_type),
-        { ...reversePayload, reverted: target },
-        true,
-      )
-      results.push(newOp)
+      const reverseOpType = reverseOpTypeFor(target)
+      const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: target }, true)
+      // #5057 — an `UndoResult`, not the raw op-log row. `revert_ops_inner`
+      // answers `Vec<UndoResult>` like its undo siblings; pushing the entry
+      // left every field the contract declares undefined on this path alone.
+      results.push({
+        reversed_op: { device_id: target.device_id, seq: target.seq },
+        reversed_op_type: target.op_type,
+        new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+        new_op_type: reverseOpType,
+        is_redo: false,
+      })
     }
 
     return results
@@ -327,9 +341,18 @@ export const historyHandlers = {
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
     const undoableOps = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo))
+    // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
+    // checks the sign BEFORE the lookup and returns
+    // `AppError::validation("undo_depth must be non-negative")`; folding both
+    // into NotFound made an out-of-contract argument look like an empty history.
+    if (undoDepth < 0) throw validationRejection('undo_depth must be non-negative')
+    // The upper bound sits right beside the sign check in
+    // `undo_page_op_inner` and is Validation too, so a depth past it must not
+    // fall through to the NotFound an in-range overrun gives.
+    if (undoDepth > 1000) throw validationRejection('undo_depth exceeds maximum of 1000')
     // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
     // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
-    if (undoDepth < 0 || undoDepth >= undoableOps.length) {
+    if (undoDepth >= undoableOps.length) {
       throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
     }
     const picked = undoableOps[undoDepth]
@@ -347,7 +370,7 @@ export const historyHandlers = {
     // `remove_tag` op stamped `edit_block` on the reverse row. Since #4868 that
     // row is one History displays and the #763 op-log digest compares, so the
     // wrong type is now observable rather than inert.
-    const reverseOpType = reverseOpTypeFor(target.op_type)
+    const reverseOpType = reverseOpTypeFor(target)
     // #4870 — the shared reversal core, not a second per-type chain. This arm
     // owned an if/else covering the five block-row types only, so it stamped a
     // `remove_tag` reverse row while `blockTags` kept the tag, and reversed
@@ -364,6 +387,12 @@ export const historyHandlers = {
     const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: target }, true)
     return {
       reversed_op: { device_id: target.device_id, seq: target.seq },
+      // #5057 — `UndoResult` declares this field and the FE builds its toast key
+      // from it (`undo.op.${snakeToCamel(reversed_op_type)}`), so omitting it
+      // silently degraded every browser-mode undo toast to the generic fallback.
+      // `applyUndoForTarget` (the ref-addressed path) always set it; these two
+      // inline returns are where the two paths had drifted.
+      reversed_op_type: target.op_type,
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: reverseOpType,
       is_redo: false,
@@ -399,7 +428,7 @@ export const historyHandlers = {
     // call via `reverse::compute_reverse`, it never stores it).
     if (!originalOp) throw new Error('undo op carries no reversed payload')
 
-    const redoOpType = reverseOpTypeFor(undoOp.op_type)
+    const redoOpType = reverseOpTypeFor(undoOp)
     // #4870 — a redo is the REVERSE OF THE UNDO, which is exactly what the
     // backend computes: `redo_page_op` builds `compute_reverse(undo_op)` and
     // runs it through `apply_reverse_in_tx`
@@ -415,8 +444,16 @@ export const historyHandlers = {
     // `re_applied` rides along for `resolveUndoTarget`'s hop back to the
     // original.
     const newOp = pushOp(redoOpType, { ...redoPayload, re_applied: originalOp }, false)
+    // #5057 — BOTH identity fields name the UNDO row this call was handed, not
+    // the original op it re-applies. `redo_page_op_inner` reads
+    // `reversed_op_type` off `undo_row.op_type` and answers `undo_ref`
+    // (history.rs:2554, 2605), and `UndoResult`'s own doc says as much: "the
+    // original op for undo, the undo-op for redo". Naming the original here
+    // made the FE toast say "Redid create" where the backend says "Redid
+    // delete" — visible for every op type whose reverse is not itself.
     return {
-      reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
+      reversed_op: { device_id: undoOp.device_id, seq: undoOp.seq },
+      reversed_op_type: undoOp.op_type,
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: redoOpType,
       is_redo: true,
@@ -568,11 +605,66 @@ export const historyHandlers = {
   // Point-in-time restore
   // ---------------------------------------------------------------------------
 
-  restore_page_to_op: () => ({
-    ops_reverted: 0,
-    non_reversible_skipped: 0,
-    results: [],
-  }),
+  // #5057 — was a STUB returning zeros, so a page rewind did nothing at all in
+  // browser and e2e mode while the backend walked the op log. Mirrors
+  // `restore_page_to_op_inner`: every undoable op NEWER than the target is
+  // reverted newest-first, the target itself is kept (the page is rewound to
+  // the state that op left), and the two op types a restore skips on sight are
+  // counted rather than aborting the walk (#2020).
+  //
+  // Page scoping is not modelled, matching `undo_page_op` above, which filters
+  // the op log without one either.
+  restore_page_to_op: (args) => {
+    const a = args as Record<string, unknown>
+    const targetDeviceId = a['targetDeviceId'] as string
+    const targetSeq = a['targetSeq'] as number
+    const target = opLog.find((o) => o.device_id === targetDeviceId && o.seq === targetSeq)
+    // #2463 — mirrors the backend's NotFound when the target op does not exist.
+    if (!target) throw notFoundRejection(`op_log (${targetDeviceId}, ${targetSeq})`)
+
+    // NO `is_undo` filter: `select_ops_after_target` (history.rs:2147-2210)
+    // does not have one and `revert_ops_in_tx` does not add one, so a rewind
+    // sweeps undo rows too — reverting one re-applies the op it reversed, the
+    // same way `revert_ops` above already handles them (#4870). Filtering them
+    // out under-counted `ops_reverted` and left the op-log tail short.
+    const newer = sortOpLogNewestFirst(opLog.filter((o) => o.seq > targetSeq))
+    // A PRE-PASS, not a check inside the loop below: the backend computes the
+    // whole reverse batch before applying any of it (`compute_reverse_batch`,
+    // then `revert_ops_in_tx`), so an op it cannot reverse aborts with nothing
+    // written. Checking per-op as the loop went would revert everything newer
+    // than the offender first and only then throw — indistinguishable while
+    // the offender is the newest op, which is exactly where a fixture that
+    // pins the refusal naturally puts it.
+    for (const op of newer) assertDeletePropertyHasPrior(op)
+
+    const results: Array<Record<string, unknown>> = []
+    let nonReversibleSkipped = 0
+    for (const op of newer) {
+      // `STATIC_NON_REVERSIBLE_OP_TYPES` (agaric-engine reverse/batch.rs):
+      // skipped on sight, `delete_attachment` even where an inverse could be
+      // reconstructed, which is the established restore behaviour.
+      if (op.op_type === 'purge_block' || op.op_type === 'delete_attachment') {
+        nonReversibleSkipped += 1
+        continue
+      }
+      const reverseOpType = reverseOpTypeFor(op)
+      const reversePayload = reversePayloadFor(op)
+      applyRevertForOp(op, blocks, { properties, blockTags })
+      const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: op }, true)
+      results.push({
+        reversed_op: { device_id: op.device_id, seq: op.seq },
+        reversed_op_type: op.op_type,
+        new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+        new_op_type: reverseOpType,
+        is_redo: false,
+      })
+    }
+    return {
+      ops_reverted: results.length,
+      non_reversible_skipped: nonReversibleSkipped,
+      results,
+    }
+  },
 
   // ---------------------------------------------------------------------------
   // Link metadata

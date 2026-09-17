@@ -1,0 +1,167 @@
+{
+  "description": "#5057 — `undo_op`, the ref-addressed undo, and the fixture that proves the `On` convention. An `OpRef` is `(device_id, seq)` and the two runners mint their own device ids, so until now no fixture could name one and the five ref-addressed undo commands were all unaddressable. `On` resolves to the n-th op the fixture has appended, 1-based, exactly as `Cn` names the n-th op-created block. The point of the ref form over the positional one is that it survives a newer op landing after the target (#2446), which is what the second edit here is for: a depth-0 positional undo would take it instead.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Ref undo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "target v1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bystander edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_named_op_not_the_newest",
+      "returns": ["undo_op#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_ref_undo",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "undo_op_by_ref",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "target v1"
+      },
+      "command": "edit_block",
+      "comment": "O1 — gives S2 a prior text row, without which reversing the edit below is `non_reversible`."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "target v2"
+      },
+      "command": "edit_block",
+      "comment": "O2 — the op the undo names by ref."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "bystander edited"
+      },
+      "command": "edit_block",
+      "comment": "O3 — lands AFTER the target. This is what separates the ref form from the positional one: at this point depth 0 is this op, not the target."
+    },
+    {
+      "args": {
+        "opRef": "O2"
+      },
+      "command": "undo_op",
+      "comment": "Reverses O2 specifically, so S2 goes back to `target v1` while S3 keeps its later edit — a positional depth-0 undo would have taken S3's instead.",
+      "name": "undo_the_named_op_not_the_newest",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 is back to `target v1` and S3 still reads `bystander edited`.",
+      "name": "blocks_after_the_ref_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Ref undo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "target",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "bystander",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

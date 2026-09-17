@@ -25,14 +25,6 @@ test.describe.configure({ mode: 'serial' })
  *
  * Mock-blocked flows (documented here, NOT faked as passing coverage):
  *
- *  - `restore_page_to_op` (src/lib/tauri-mock/handlers.ts ~4587) is a
- *    hardcoded stub: `() => ({ ops_reverted: 0, non_reversible_skipped: 0,
- *    results: [] })`. It ignores its arguments entirely and never mutates
- *    `blocks` / `opLog`. The tests below assert the confirmation dialog,
- *    the cancel path, and the exact wire args of the `restore_page_to_op`
- *    IPC call — but cannot assert that page content rolls back to the
- *    historical snapshot, since the mock has no such behavior to exercise.
- *
  *  - `list_page_history` (handlers.ts ~2554-2595) reads `args.scope` (space
  *    scoping) but never reads `args.opTypeFilter` — op-type filtering is
  *    NOT applied mock-side, only real-backend-side
@@ -118,9 +110,10 @@ test.describe('HistoryView — restore to here', () => {
     expect(calls[0]?.['targetSeq']).toBe(expectedSeq)
     expect(typeof calls[0]?.['targetDeviceId']).toBe('string')
 
-    // Mock's restore_page_to_op is a hardcoded stub returning
-    // ops_reverted: 0 (handlers.ts ~4587) — the toast reflects that,
-    // not a real rollback count.
+    // Zero is the REAL count here, not a stub's: #5057 made the mock revert
+    // for real, and this restores to the NEWEST entry, so the sweep finds no
+    // op newer than its target and reverts nothing. The rollback path itself
+    // is pinned by `restore_page_to_op.json`, which targets an older op.
     await expect(page.getByText('0 operations reverted successfully')).toBeVisible()
   })
 })

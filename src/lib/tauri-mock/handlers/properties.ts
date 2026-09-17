@@ -9,6 +9,7 @@
  * store.
  */
 
+import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -676,6 +677,18 @@ export const propertiesHandlers = {
   delete_property_def: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
+    // A built-in reserved key is not the user's to remove.
+    if (NON_DELETABLE_PROPERTIES.has(key)) {
+      throw validationRejection(`property key '${key}' is built in and cannot be deleted`)
+    }
+    // A definition still referenced by a live `block_properties` row is
+    // refused rather than orphaning the rows.
+    for (const perBlock of properties.values()) {
+      if (perBlock.has(key)) {
+        throw validationRejection(`property key '${key}' is still in use and cannot be deleted`)
+      }
+    }
+    if (!propertyDefs.has(key)) throw notFoundRejection(`property_definitions ('${key}')`)
     propertyDefs.delete(key)
     return undefined
   },
@@ -721,9 +734,14 @@ export const propertiesHandlers = {
     const a = args as { settings?: { enabled?: unknown; time?: unknown } }
     const enabled = a.settings?.enabled === true
     const time = typeof a.settings?.time === 'string' ? a.settings.time : ''
-    // Range-checked like `NaiveTime::parse_from_str(_, "%H:%M")`: `99:99` is
-    // rejected by the backend, so the mock must reject it too.
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    // `NaiveTime::parse_from_str(_, "%H:%M")`, which takes ONE OR TWO digits
+    // per field: the backend accepts `7:30` as readily as `07:30`, so a
+    // zero-padded-only shape check would refuse input the backend stores.
+    // `99:99` is still out — the fields are range-checked, not just counted.
+    const hhmm = /^(\d{1,2}):(\d{1,2})$/.exec(time)
+    const hour = hhmm ? Number(hhmm[1]) : Number.NaN
+    const minute = hhmm ? Number(hhmm[2]) : Number.NaN
+    if (!hhmm || hour > 23 || minute > 59) {
       throw appErrorRejection({
         kind: 'validation',
         message: `reminder time must be HH:MM, got ${JSON.stringify(time)}`,

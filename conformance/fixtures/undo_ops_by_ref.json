@@ -1,0 +1,249 @@
+{
+  "description": "#5057 — the three remaining ref-addressed reversal commands that answer a list: `undo_ops`, `revert_ops` and `redo_page_op`. All three name their target with the `On` label the sibling `undo_op_by_ref` fixture introduces. `redo_page_op` is the one that takes the coordinate SPLIT across two positional args rather than as an `OpRef`. It is redone from the `set_property` undo on purpose: a redo names the UNDO ROW it was handed rather than the op it re-applies, and on a self-inverse op type the two conventions coincide and the difference is invisible.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Ref undo, list forms",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha v0",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta v1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "draft",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_two_ops_by_ref",
+      "returns": [
+        "undo_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false",
+        "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_one_of_the_two_undos",
+      "returns": [
+        "redo_page_op#reversed_op_type=delete_property#new_op_type=set_property#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "revert_an_older_op_by_ref",
+      "returns": ["revert_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_list_reversals",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "undo_ops_by_ref",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha v0"
+      },
+      "command": "edit_block",
+      "comment": "O1 — S2's first op, so it has no prior text and is itself non-reversible. It exists to give O3 one."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "beta v1"
+      },
+      "command": "edit_block",
+      "comment": "O2 — the same for S3."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha v1"
+      },
+      "command": "edit_block",
+      "comment": "O3 — reverted by ref at the end, long after newer ops have landed on S2."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_bool": null,
+          "value_date": null,
+          "value_number": null,
+          "value_ref": null,
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "O4 — a DIFFERENT op type from O5 on purpose. The pair below reverses both, and two identical rows would pin the count while leaving the order free."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "beta v2"
+      },
+      "command": "edit_block",
+      "comment": "O5 — the other half."
+    },
+    {
+      "args": {
+        "ops": ["O5", "O4"]
+      },
+      "command": "undo_ops",
+      "comment": "Two refs in ONE call, so both go back. Listed newest-first, and the two results differ — `edit_block` for O5, `set_property` for O4, whose reverse is a `delete_property` because the key had no prior value — so the returned ORDER is pinned, not just the count. The call appends two reverse ops: O6 reverses O5, O7 reverses O4.",
+      "name": "undo_two_ops_by_ref",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O7"
+      },
+      "command": "redo_page_op",
+      "comment": "O7 is the undo row that reversed O4, so its own op_type is `delete_property`. Redo re-applies what that undo reversed — S2's `status` property comes back — but it NAMES the undo row it was handed, not the op it re-applies: `reversed_op_type` is `delete_property`, not `set_property`. O6 would not have shown that, because reversing an `edit_block` appends another `edit_block` and the two conventions coincide on a self-inverse type. This is also the one command whose coordinate arrives SPLIT across two positional args.",
+      "name": "redo_one_of_the_two_undos",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O3"]
+      },
+      "command": "revert_ops",
+      "comment": "The sanctioned explicit revert, not the implicit undo stack: it reaches O3 directly even though several newer ops have landed on S2 since. S2 goes back to `alpha v0`.",
+      "name": "revert_an_older_op_by_ref",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 back at `alpha v0` from the explicit revert but with its `status` property restored by the redo, and S3 left at `beta v1` where the undo put it.",
+      "name": "blocks_after_the_list_reversals"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Ref undo, list forms",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "beta",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
