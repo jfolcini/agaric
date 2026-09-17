@@ -18,7 +18,7 @@
       },
       {
         "block_type": "content",
-        "content": "three attachments",
+        "content": "edited after the redo",
         "deleted_at": null,
         "due_date": null,
         "id": "B2",
@@ -57,8 +57,20 @@
       }
     ],
     "op_log_digest": {
-      "count": 3,
+      "count": 7,
       "ops": [
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "rename_attachment"
+        },
+        {
+          "op_type": "edit_block"
+        },
         {
           "op_type": "rename_attachment"
         },
@@ -109,6 +121,28 @@
     {
       "code": null,
       "error": null,
+      "name": "redo_the_rename",
+      "returns": [
+        "redo_page_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "rename_again_as_the_newest_op",
+      "returns": ["rename_attachment"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "positional_undo_reaches_an_attachment_op",
+      "returns": [
+        "undo_page_op#reversed_op_type=rename_attachment#new_op_type=rename_attachment#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
       "name": "delete_an_attachment",
       "returns": ["delete_attachment"]
     },
@@ -127,7 +161,7 @@
       "name": "attachments_after_writes",
       "rows": [
         "ATT4#block_id=B2#filename=early.png#mime_type=image/png#size_bytes=10#fs_path=attachments/ATT4.png#created_at=900#content_hash=blake3-of-early",
-        "ATT1#block_id=B2#filename=scan.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
+        "ATT1#block_id=B2#filename=renamed.pdf#mime_type=application/pdf#size_bytes=4096#fs_path=attachments/ATT1.pdf#created_at=1000#content_hash=blake3-of-scan"
       ],
       "total_count": null
     }
@@ -188,6 +222,43 @@
     },
     {
       "args": {
+        "undoOp": "O2"
+      },
+      "command": "redo_page_op",
+      "comment": "O2 is the reverse row the undo above appended. Redo re-applies the rename, so ATT1 is `renamed.pdf` again. Pinning the undo alone left the REDO half open — `reversePayloadFor` had no `rename_attachment` arm, so the reverse row carried no attachment_id and redo silently changed nothing.",
+      "name": "redo_the_rename",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "edited after the redo"
+      },
+      "command": "edit_block",
+      "comment": "A non-attachment op on the same page, OLDER than the rename below. It is what an unscoped positional undo would reach by mistake."
+    },
+    {
+      "args": {
+        "attachmentId": "ATT1",
+        "newFilename": "final.pdf"
+      },
+      "command": "rename_attachment",
+      "comment": "The NEWEST op on page S1 — and an attachment op, which carries no `block_id`.",
+      "name": "rename_again_as_the_newest_op",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "undoDepth": 0
+      },
+      "command": "undo_page_op",
+      "comment": "Depth 0 on S1 must reach the rename above. An attachment op has a NULL `block_id`, so a page scope that tests only that column drops it from every page and this undo would reverse the edit instead — leaving `final.pdf` standing and the edit gone. The backend reaches it through an EXISTS over live `attachments` joining the attachment back to its block; `attachmentOwnerBlockId` is that probe. Both the filename and S2's content separate the two outcomes.",
+      "name": "positional_undo_reaches_an_attachment_op",
+      "via": "command"
+    },
+    {
+      "args": {
         "attachmentId": "ATT2"
       },
       "command": "delete_attachment",
@@ -212,7 +283,7 @@
         "blockId": "S2"
       },
       "command": "list_attachments",
-      "comment": "The observation: ATT1 back under its ORIGINAL name after the undo, and ATT2 gone.",
+      "comment": "The observation: ATT1 back at `renamed.pdf` — the positional undo reversed the attachment rename, not the edit beneath it.",
       "name": "attachments_after_writes"
     }
   ],

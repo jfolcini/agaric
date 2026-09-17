@@ -95,52 +95,37 @@ function opBlockId(entry: MockOpLogEntry): string | null {
 }
 
 /**
- * The ids the backend's `page_blocks` CTE yields: the page row itself plus its
- * transitive descendants over `parent_id`, bounded at depth 100 (invariant 9)
- * and NOT filtered on `deleted_at` — a soft-deleted row stays in scope, which
- * is what lets a rewind reverse the delete that created it.
- *
- * #5057 — `find_positional_undo_target`, `enumerate_undo_group_in_tx` and
- * `select_ops_after_target` all scope through this. The mock filtered the whole
- * op log instead, so an undo on page A could reverse page B's newest op, and a
- * rewind of A reverted every op on B. One walk for all three: scoping one
- * handler and leaving its siblings unscoped is the shape that produced most of
- * #5068's divergences.
- */
-function pageBlockIds(pageId: string): Set<string> {
-  const ids = new Set<string>([pageId])
-  const all = Array.from(blocks.values())
-  let frontier = [pageId]
-  for (let depth = 0; depth < 100 && frontier.length > 0; depth += 1) {
-    const next: string[] = []
-    for (const parentId of frontier) {
-      for (const b of all) {
-        if (((b['parent_id'] as string | null) ?? null) !== parentId) continue
-        const id = b['id'] as string
-        if (ids.has(id)) continue
-        ids.add(id)
-        next.push(id)
-      }
-    }
-    frontier = next
-  }
-  return ids
-}
-
-/**
  * Is this op in `pageId`'s scope? `"__all__"` means unscoped, which only
  * `restore_page_to_op` accepts — `select_ops_after_target` branches on it
  * (history.rs) where the two undo queries have no such escape.
  *
- * An op with no `block_id` is OUT of a page scope, faithfully: the attachment
- * ops carry none (`OpPayload::block_id()` answers `None`), which is exactly why
- * the backend reaches them through a second probe over `attachments` rather
- * than through this predicate.
+ * An attachment op carries no `block_id` (`OpPayload::block_id()` answers
+ * `None` for both), so the indexed column is NULL and the `block_id IN
+ * (page_blocks)` arm can never match one. That is precisely why the backend's
+ * queries carry a second disjunct: an `EXISTS` over live `attachments` joining
+ * `payload.attachment_id` back to a block in the page (history.rs). Resolving
+ * the owning block here is that same probe — without it these ops fall out of
+ * EVERY page, and a positional undo silently skips a rename the backend
+ * reverses, which is the wrong-target class #4247 closed.
  */
 function opInPageScope(entry: MockOpLogEntry, scope: Set<string> | null): boolean {
   if (scope === null) return true
-  const blockId = opBlockId(entry)
+  const blockId = opBlockId(entry) ?? attachmentOwnerBlockId(entry)
   return blockId !== null && scope.has(blockId)
+}
+
+/** The block an attachment op's target hangs off, or `null` when the op is not
+ *  an attachment one or its row is gone — the backend's `EXISTS` over live
+ *  `attachments` misses a reclaimed row the same way. */
+function attachmentOwnerBlockId(entry: MockOpLogEntry): string | null {
+  if (entry.op_type !== 'rename_attachment' && entry.op_type !== 'delete_attachment') return null
+  try {
+    const id = (JSON.parse(entry.payload) as Record<string, unknown>)['attachment_id']
+    if (typeof id !== 'string') return null
+    return (attachments.get(id)?.['block_id'] as string | undefined) ?? null
+  } catch {
+    return null
+  }
 }
 
 /** `AND (?N IS NULL OR ol.op_type = ?N)` — both history queries push the FE's
@@ -240,11 +225,14 @@ export const historyHandlers = {
   // every argument it takes was ignored and no test could tell a working
   // handler from a broken one.
   //
-  // NOT modelled, and unreachable rather than skipped: the backend's
-  // `delete_attachment` / `rename_attachment` disjunct. The mock's attachment
-  // handlers (`handlers/attachments.ts`) append NO op-log rows at all, so the
-  // mock op log contains no attachment op of any kind for the disjunct to
-  // admit — mirroring it here would be a branch nothing can enter.
+  // NOT modelled: the backend's `delete_attachment` / `rename_attachment`
+  // disjunct, an `EXISTS` over live `attachments` that reaches ops whose
+  // `block_id` column is NULL. It is no longer UNREACHABLE — #5057 gave both
+  // writers op-log rows — so this is a real gap rather than a branch nothing
+  // can enter. `attachmentOwnerBlockId` above is the same probe, applied to
+  // the positional-undo scope; these two listings want it too, with the
+  // pagination arithmetic that entails, so they get it with the fixture that
+  // pins them.
   get_block_history: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
     const blockId = (a['blockId'] as string | undefined) ?? null
@@ -332,7 +320,7 @@ export const historyHandlers = {
       // cross-module lookup through the barrel's `HANDLERS`.)
       throw new Error('undo_page_group mock: missing sibling handler')
     }
-    const groupSize = findUndoGroupSize(depth, windowMs, pageBlockIds(a['pageId'] as string))
+    const groupSize = findUndoGroupSize(depth, windowMs, pageSubtreeIds(a['pageId'] as string))
     const results: unknown[] = []
     for (let i = 0; i < groupSize; i++) {
       results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))
@@ -393,7 +381,7 @@ export const historyHandlers = {
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
     const undoableOps = sortOpLogNewestFirst(
-      opLog.filter((o) => !o.is_undo && opInPageScope(o, pageBlockIds(a['pageId'] as string))),
+      opLog.filter((o) => !o.is_undo && opInPageScope(o, pageSubtreeIds(a['pageId'] as string))),
     )
     // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
     // checks the sign BEFORE the lookup and returns
@@ -685,7 +673,7 @@ export const historyHandlers = {
     // `page_id == "__all__"` and the page-scoped one otherwise. The only UI
     // call site passes `__all__`, which is why an unscoped sweep looked right.
     const pageId = a['pageId'] as string
-    const scope = pageId === '__all__' ? null : pageBlockIds(pageId)
+    const scope = pageId === '__all__' ? null : pageSubtreeIds(pageId)
     const newer = sortOpLogNewestFirst(
       opLog.filter((o) => o.seq > targetSeq && opInPageScope(o, scope)),
     )
