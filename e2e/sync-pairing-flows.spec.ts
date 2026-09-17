@@ -319,13 +319,19 @@ test.describe('Sync pairing flows', () => {
   // above asserts it renders in DeviceManagement. `delete_peer_ref` is
   // backed by the store too, so unpair is drivable here.
   //
-  // Rename and manual address are NOT: `update_peer_name` and
-  // `set_peer_address` remain no-op stubs that never touch `peerRefs`, so
-  // the row's name/address can't change no matter what the UI submits.
-  // Kept skipped as one unit rather than split, since the remaining gap is
-  // a mock gap and not a coverage decision — all three are covered at the
-  // unit layer (DeviceManagement.test.tsx:249/829, PeerListItem.test.tsx:155).
+  // #5057 — rename and manual address were the remaining half: `update_peer_name`
+  // and `set_peer_address` were no-op stubs that never touched `peerRefs`, so
+  // the row's name/address could not change whatever the UI submitted. Both are
+  // real now (they write the row, refuse an unknown peer with `NotFound`, and
+  // `set_peer_address` validates host:port), so the mock gap this skip rested on
+  // is gone and all three flows are drivable here.
+  //
+  // It stays skipped only because the body was never written — that is now a
+  // coverage decision rather than a harness limit, which is the opposite of what
+  // this comment used to say. The commands themselves are pinned against the
+  // backend by `peer_ref_writes.json`, and the UI is covered at the unit layer
+  // (DeviceManagement.test.tsx:249/829, PeerListItem.test.tsx:155).
   test.skip('peer management (unpair / rename / manual address)', () => {
-    // Rename/address are unobservable on the web+mock harness — see file header.
+    // Writable now; see the note above for what changed.
   })
 })

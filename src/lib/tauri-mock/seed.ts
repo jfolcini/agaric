@@ -701,6 +701,17 @@ export function seedBlocks(): void {
     options: JSON.stringify(['alpha', 'beta', 'gamma']),
     created_at: new Date().toISOString(),
   })
+  // #5057 — a definition NO block uses. `context` and `project` are both
+  // carried by seeded blocks, and `delete_property_def` refuses a key with any
+  // `block_properties` row referencing it, so without an unused definition the
+  // delete flow cannot be exercised against a faithful mock at all. The e2e
+  // spec that covers it deletes this one.
+  propertyDefs.set('reviewer', {
+    key: 'reviewer',
+    value_type: 'text',
+    options: null,
+    created_at: new Date().toISOString(),
+  })
 
   // -- Seed page aliases --
   pageAliases.set(SEED_IDS.PAGE_GETTING_STARTED, ['gs', 'getting-started'])

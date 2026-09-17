@@ -2938,9 +2938,23 @@ describe('add_attachment_with_bytes', () => {
 })
 
 describe('delete_attachment', () => {
-  it('returns null', () => {
-    const result = invoke('delete_attachment', { attachmentId: 'any-id' })
-    expect(result).toBeNull()
+  it('removes the row and refuses an attachment it cannot find', () => {
+    const blockId = SEED_IDS.BLOCK_MTG_1
+    const added = invoke('add_attachment_with_bytes', {
+      blockId,
+      filename: 'doomed.txt',
+      mimeType: 'text/plain',
+      bytes: [1, 2, 3],
+    }) as Record<string, unknown>
+    const id = added['id'] as string
+
+    invoke('delete_attachment', { attachmentId: id })
+    const after = invoke('list_attachments', { blockId }) as Array<Record<string, unknown>>
+    expect(after.map((a) => a['id'])).not.toContain(id)
+
+    // #5057 — the durable effect, not the return. A second delete finds
+    // nothing, and an unknown id is NotFound rather than a silent success.
+    expect(() => invoke('delete_attachment', { attachmentId: id })).toThrow(/attachment/)
   })
 })
 

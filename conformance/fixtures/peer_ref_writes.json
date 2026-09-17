@@ -63,6 +63,12 @@
     },
     {
       "code": null,
+      "error": "validation",
+      "name": "address_rejects_a_non_digit_port",
+      "returns": []
+    },
+    {
+      "code": null,
       "error": null,
       "name": "delete_a_peer",
       "returns": ["delete_peer_ref"]
@@ -166,6 +172,17 @@
     },
     {
       "args": {
+        "address": "192.168.1.7:80.0",
+        "peerId": "peer-new"
+      },
+      "command": "set_peer_address",
+      "comment": "The port is parsed by `u16::from_str`, which takes DIGITS only. `80.0`, ` 80`, `0x50` and `1e3` all coerce to a number in JS, so a mock using `Number` alone stores four addresses the backend refuses.",
+      "expect_error": "validation",
+      "name": "address_rejects_a_non_digit_port",
+      "via": "command"
+    },
+    {
+      "args": {
         "peerId": "peer-never"
       },
       "command": "delete_peer_ref",
@@ -210,7 +227,7 @@
     {
       "args": {},
       "command": "list_peer_refs",
-      "comment": "The observation. `peer-new` carries both writes, `peer-synced` has its override cleared with `remote_device_name` intact, and `peer-never` is gone.",
+      "comment": "The observation. `peer-new` carries both writes and keeps the `Phone` its peer supplied, `peer-old` has its local override cleared, and `peer-never` is gone.",
       "name": "peers_after_writes"
     }
   ],

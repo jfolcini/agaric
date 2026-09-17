@@ -1045,8 +1045,6 @@ export const blocksHandlers = {
     const restoreRoots = ids.filter((id) => blocks.get(id)?.['deleted_at'])
     let count = 0
     for (const id of restoreRoots) {
-      const b = blocks.get(id)
-      if (!b) continue
       // The SAME cohort restore the single-block handler runs: back down the
       // exact cohort the delete tombstoned, then up the tombstoned ancestor
       // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor

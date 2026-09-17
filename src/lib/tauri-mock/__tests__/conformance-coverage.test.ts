@@ -330,9 +330,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // same reason `confirm_pairing` (which writes that row) is: the marker is
   // pairing-window plumbing, not projected block state.
   cancel_pairing: 'pending-pairing marker (app_settings), not projected block state',
-  // #4998 put `peer_refs` and `app_settings` on both stacks and pinned
-  // `list_peer_refs` / `get_reminder_settings` with query steps, so these four
-  // are debt, not scope.
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',

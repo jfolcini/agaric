@@ -243,7 +243,11 @@ export const syncHandlers = {
     // backend, so the host must be non-empty and the port a non-zero u16.
     const cut = address.lastIndexOf(':')
     const host = cut === -1 ? '' : address.slice(0, cut)
-    const port = cut === -1 ? Number.NaN : Number(address.slice(cut + 1))
+    const rawPort = cut === -1 ? '' : address.slice(cut + 1)
+    // `u16::from_str` on the backend, which is stricter than `Number`: it takes
+    // DIGITS only, so `80.0`, ` 80`, `0x50` and `1e3` are refused there and
+    // would all parse here without the digits test.
+    const port = /^\d+$/.test(rawPort) ? Number(rawPort) : Number.NaN
     if (host === '' || !Number.isInteger(port) || port <= 0 || port > 65535) {
       throw validationRejection(`invalid peer address '${address}': expected host:port`)
     }
