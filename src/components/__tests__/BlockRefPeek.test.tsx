@@ -119,6 +119,14 @@ async function hoverOpen(
   await waitFor(() => {
     expect(within(peek).queryByText(/Loading preview/)).not.toBeInTheDocument()
   })
+  // `computePosition` is async, and the peek renders `visibility: hidden`
+  // until it resolves. A hidden subtree has no accessible roles, so a
+  // synchronous `getByRole` here races the promise: it passed only because
+  // the payload wait above usually outlasted it, and reddened on `main` once
+  // coverage instrumentation shifted the timing.
+  await waitFor(() => {
+    expect(peek.style.visibility).not.toBe('hidden')
+  })
   return peek
 }
 
