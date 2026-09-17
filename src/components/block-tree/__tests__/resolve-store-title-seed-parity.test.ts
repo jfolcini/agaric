@@ -609,6 +609,11 @@ const DECLARED_WRITERS: Record<
     kind: 'seed',
     note: 'populatePageResolveCache + searchTags fill + searchBlockRefs (matrix rows), plus onCreatePage / onCreateTag echoes',
   },
+  'src/components/layout/BookmarksSection.tsx': {
+    writes: 1,
+    kind: 'seed',
+    note: '#5075 — a bookmark the resolve cache has never held is looked up on demand, so its title is a fetched row and goes through the gate',
+  },
   'src/hooks/useAppKeyboardShortcuts.ts': {
     writes: 1,
     kind: 'echo',
