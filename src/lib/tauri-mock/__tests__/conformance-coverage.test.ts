@@ -243,7 +243,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3964 — the four corrections the citation guard below forced. Each of
   // these reasons used to name a file that does not mention the command it
   // waives; nothing checked, so the waiver read as coverage it did not have.
-  undo_op: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-op-refs.test.ts',
   undo_ops:
     'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
     'core it delegates to, revert.test.ts (via applyRevertForOp)',
@@ -711,7 +710,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'restore_page_to_op',
   'revert_ops',
   'set_page_aliases',
-  'undo_op',
   'undo_ops',
 ]
 

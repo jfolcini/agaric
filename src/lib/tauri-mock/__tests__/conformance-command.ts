@@ -70,6 +70,12 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   },
   // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in the
   // order the group reversed them.
+  // #5057 — the ref-addressed undo answers the same `UndoResult`.
+  undo_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
   undo_page_group: {
     idKey: HEADED_ID_KEY,
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],

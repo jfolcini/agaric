@@ -30,9 +30,10 @@
 //! see [`check_declaration`].
 
 use super::common::*;
-use super::conformance::resolve_op_arg_id;
+use super::conformance::{resolve_op_arg_id, resolve_op_ref_label};
 use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
 use agaric_core::ulid::{AttachmentId, BlockId};
+use agaric_store::op::OpRef;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -82,6 +83,15 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // the order the group reversed them. That ORDER is the point — a group
     // undo that reversed the right ops in the wrong sequence would pass a
     // set-wise check and fail this one.
+    // #5057 — the ref-addressed undo answers the same `UndoResult`, so the
+    // same shape: the `OpRef`s it carries are dropped for the device-id
+    // reason, and the two op_type fields are what is left to pin.
+    (
+        "undo_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
     (
         "undo_page_group",
         HEADED_ID_KEY,
@@ -172,6 +182,7 @@ pub(super) async fn apply_op_via_command(
     app_data_dir: &std::path::Path,
     op: &Value,
     created_ids: &[String],
+    op_refs: &[(String, i64)],
 ) -> Result<Value, AppError> {
     let command = op["command"].as_str().expect("op command");
     let args = &op["args"];
@@ -232,6 +243,15 @@ pub(super) async fn apply_op_via_command(
     let opt_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
     let req_str = |k: &str| {
         opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+    };
+    // #5057 — an `OpRef` arg is an `On` label, never a literal: the two
+    // runners mint their own `(device_id, seq)`. Mirrors `block_id()` above.
+    let op_ref = |k: &str| {
+        let label = arg(k)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
+        let (device_id, seq) = resolve_op_ref_label(label, op_refs);
+        OpRef { device_id, seq }
     };
     let req_i64 = |k: &str| {
         arg(k)
@@ -358,6 +378,11 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // #5057 — the first of the ref-addressed undo commands, and the one
+        // that proves the `On` convention: the fixture names the op it wants
+        // undone by position in its own op list, and each runner resolves that
+        // to its own coordinate.
+        "undo_op" => to_json(undo_op_inner(pool, DEV, mat, op_ref("opRef")).await),
         "delete_attachment" => to_json(
             delete_attachment_inner(
                 pool,
@@ -532,6 +557,7 @@ pub(super) async fn run_command_op(
     fixture_name: &str,
     op: &Value,
     created_ids: &[String],
+    op_refs: &[(String, i64)],
 ) -> Value {
     let command = op["command"].as_str().expect("op command");
     let name = op["name"].as_str().unwrap_or_else(|| {
@@ -542,7 +568,7 @@ pub(super) async fn run_command_op(
     });
     let at = format!("fixture '{fixture_name}' op '{name}' (command '{command}')");
     let (returns, error, code) =
-        match apply_op_via_command(pool, mat, app_data_dir, op, created_ids).await {
+        match apply_op_via_command(pool, mat, app_data_dir, op, created_ids, op_refs).await {
             Ok(response) => (
                 PROJECTING_STEP.sync_scope(at.clone(), || project_return(command, &response)),
                 Value::Null,
@@ -738,7 +764,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 25;
+    const MUTATING_ARM_COUNT: usize = 26;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

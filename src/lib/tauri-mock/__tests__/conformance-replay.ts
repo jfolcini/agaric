@@ -311,6 +311,46 @@ function resolveOpArgId(label: string, createdIds: readonly string[]): string {
   return id
 }
 
+/** Every op this fixture has appended, in `seq` order — what an `On` label
+ *  resolves against. Local rows only, mirroring `read_op_refs_in_op_order`;
+ *  the mock has no replicated rows, so the filter is the device id alone. */
+function opRefsInOpOrder(): Array<{ device_id: string; seq: number }> {
+  return opLog.map((entry) => ({ device_id: entry.device_id, seq: entry.seq }))
+}
+
+/**
+ * Resolve an `On` fixture op arg into the op-log coordinate it names.
+ *
+ * `On` (#5057) is the **n-th op the fixture has appended so far**, 1-based —
+ * the `OpRef` analogue of `Cn`, and for the same reason. An `OpRef` is
+ * `(device_id, seq)` and the two runners' device ids differ, so a fixture
+ * cannot spell one literally.
+ *
+ * Fails CLOSED: an out-of-range `On` throws, because a silently wrong ref
+ * would undo the wrong op and still look like a pass.
+ *
+ * Rust twin: `resolve_op_ref_label` in `conformance.rs`.
+ */
+function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
+  const m = /^O(\d{1,6})$/.exec(label)
+  if (!m) {
+    throw new Error(
+      `conformance op ref '${label}' is not an \`On\` label; an OpRef arg cannot be spelled ` +
+        `literally, because the two runners' device ids differ`,
+    )
+  }
+  const refs = opRefsInOpOrder()
+  const n = Number(m[1])
+  const ref = n >= 1 ? refs[n - 1] : undefined
+  if (ref == null) {
+    throw new Error(
+      `conformance op ref '${label}' names the ${n}th op this fixture appended, but only ` +
+        `${refs.length} have been appended at this point in the op list`,
+    )
+  }
+  return ref
+}
+
 /**
  * Rewrite an op's args for the mock: labels referenced by id-shaped arg keys
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
@@ -347,6 +387,8 @@ export function expandOpArgs(
       typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,
     )
   }
+  // #5057 — an `OpRef` arg is an `On` label, never a literal.
+  if (typeof out['opRef'] === 'string') out['opRef'] = resolveOpRefLabel(out['opRef'])
   if (out['value'] != null && typeof out['value'] === 'object') {
     const v = { ...(out['value'] as Record<string, unknown>) }
     if (typeof v['value_ref'] === 'string') {

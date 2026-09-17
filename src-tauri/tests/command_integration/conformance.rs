@@ -146,6 +146,42 @@ pub fn resolve_op_arg_id(label: &str, created_ids: &[String]) -> String {
         .clone()
 }
 
+/// Resolve an `On` fixture op arg into the op-log coordinate it names.
+///
+/// `On` (#5057) names the **n-th op this fixture has appended so far**,
+/// 1-based, read from the op log in `seq` order — the `OpRef` analogue of
+/// `Cn`, and for the same reason. An `OpRef` is `(device_id, seq)` and the two
+/// runners' device ids differ, so a fixture cannot spell one literally; the
+/// undo/redo/revert commands that take one were unaddressable without this.
+///
+/// Fails CLOSED: an out-of-range `On` panics rather than resolving to
+/// something, because a silently wrong ref would undo the wrong op and still
+/// look like a pass.
+///
+/// TS twin: `resolveOpRefLabel` in `conformance-replay.ts`.
+pub fn resolve_op_ref_label(label: &str, op_refs: &[(String, i64)]) -> (String, i64) {
+    let digits = label.strip_prefix('O').filter(|rest| {
+        !rest.is_empty() && rest.len() <= 6 && rest.bytes().all(|b| b.is_ascii_digit())
+    });
+    let digits = digits.unwrap_or_else(|| {
+        panic!(
+            "conformance op ref '{label}' is not an `On` label; an OpRef arg cannot be spelled \
+             literally, because the two runners' device ids differ"
+        )
+    });
+    let n: usize = digits.parse().expect("digits parse");
+    op_refs
+        .get(n.wrapping_sub(1))
+        .unwrap_or_else(|| {
+            panic!(
+                "conformance op ref '{label}' names the {n}th op this fixture appended, but only \
+                 {} have been appended at this point in the op list",
+                op_refs.len()
+            )
+        })
+        .clone()
+}
+
 /// List the fixture files, sorted by name for deterministic test order.
 fn fixture_paths() -> Vec<PathBuf> {
     // CARGO_MANIFEST_DIR == <repo>/src-tauri; fixtures live at <repo>/conformance.
@@ -559,6 +595,19 @@ async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec<String> {
     .await
     .unwrap();
     rows.into_iter().filter_map(|r| r.0).collect()
+}
+
+/// Every op this fixture has appended, in `seq` order — what an `On` op-arg
+/// label resolves against. Local rows only: a replicated audit row is never a
+/// legitimate undo target, so it must not shift the numbering either.
+async fn read_op_refs_in_op_order(pool: &SqlitePool) -> Vec<(String, i64)> {
+    sqlx::query_as::<_, (String, i64)>(
+        "SELECT device_id, seq FROM op_log WHERE device_id = ? AND is_replicated = 0 ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,6 +1410,10 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
     // `Cn` op-arg label resolves against. Refreshed after every op, so an op
     // can only name a block an EARLIER op created.
     let mut created_ids: Vec<String> = Vec::new();
+    // #5057: the same idea for op-log coordinates — what an `On` label resolves
+    // against. Refreshed alongside `created_ids`, so an op can only name an op an
+    // EARLIER one appended.
+    let mut op_refs: Vec<(String, i64)> = Vec::new();
     let mut op_records: Vec<Value> = Vec::new();
     let mut command_op_names: BTreeSet<String> = BTreeSet::new();
     if let Some(ops) = fixture["ops"].as_array() {
@@ -1403,9 +1456,16 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
             // op that ran; the engine-parity guard after them stays
             // unconditional, which is what proves the refusal was atomic.
             let applied = if via_command {
-                let record =
-                    run_command_op(&pool, &mat, app_data_dir.path(), &name, &op, &created_ids)
-                        .await;
+                let record = run_command_op(
+                    &pool,
+                    &mat,
+                    app_data_dir.path(),
+                    &name,
+                    &op,
+                    &created_ids,
+                    &op_refs,
+                )
+                .await;
                 settle(&mat).await;
                 let op_name = record["name"].as_str().expect("record name").to_owned();
                 assert!(
@@ -1444,6 +1504,7 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                     .unwrap_or_else(|message| panic!("{message}"));
             }
             created_ids = read_created_block_ids_in_op_order(&pool).await;
+            op_refs = read_op_refs_in_op_order(&pool).await;
             for created in &created_ids {
                 if !canonical_order.contains(created) {
                     canonical_order.push(created.clone());
