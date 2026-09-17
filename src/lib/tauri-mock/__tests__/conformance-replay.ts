@@ -389,6 +389,25 @@ export function expandOpArgs(
   }
   // #5057 — an `OpRef` arg is an `On` label, never a literal.
   if (typeof out['opRef'] === 'string') out['opRef'] = resolveOpRefLabel(out['opRef'])
+  // The list form, mirroring `blockIds`.
+  if (Array.isArray(out['ops'])) {
+    out['ops'] = out['ops'].map((label) =>
+      typeof label === 'string' ? resolveOpRefLabel(label) : label,
+    )
+  }
+  // The SPLIT form: two commands take the coordinate as two positional args.
+  // The fixture spells one `On` label either way; the split happens here, so
+  // the convention stays single across all five ref-addressed commands.
+  for (const [label, device, seq] of [
+    ['undoOp', 'undoDeviceId', 'undoSeq'],
+    ['targetOp', 'targetDeviceId', 'targetSeq'],
+  ] as const) {
+    if (typeof out[label] !== 'string') continue
+    const ref = resolveOpRefLabel(out[label])
+    delete out[label]
+    out[device] = ref.device_id
+    out[seq] = ref.seq
+  }
   if (out['value'] != null && typeof out['value'] === 'object') {
     const v = { ...(out['value'] as Record<string, unknown>) }
     if (typeof v['value_ref'] === 'string') {

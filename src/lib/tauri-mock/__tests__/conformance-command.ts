@@ -76,6 +76,28 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
     lists: [],
   },
+  undo_ops: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  revert_ops: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  redo_page_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
+  // #5057 — a COUNT envelope over a list; the per-op detail rides in
+  // `results`, which the snapshot and the two counts pin between them.
+  restore_page_to_op: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['ops_reverted', 'non_reversible_skipped'],
+    lists: [],
+  },
   undo_page_group: {
     idKey: HEADED_ID_KEY,
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],

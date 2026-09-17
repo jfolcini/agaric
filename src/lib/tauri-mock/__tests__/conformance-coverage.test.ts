@@ -243,21 +243,11 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3964 — the four corrections the citation guard below forced. Each of
   // these reasons used to name a file that does not mention the command it
   // waives; nothing checked, so the waiver read as coverage it did not have.
-  undo_ops:
-    'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
-    'core it delegates to, revert.test.ts (via applyRevertForOp)',
-  redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
-  revert_ops:
-    'NOT cross-checked; regression-guarded by revert-cohort.test.ts and, for the ' +
-    'per-op reversal it loops, revert.test.ts (via applyRevertForOp)',
   // Was "regression-guarded by revert.test.ts". revert.test.ts pins
   // `applyRevertForOp`, which this handler never calls — the mock's
   // `restore_page_to_op` is a CONSTANT STUB returning `{ops_reverted: 0,
   // non_reversible_skipped: 0, results: []}` (handlers/history.ts). There is
   // no behaviour to regression-guard, and the old citation implied there was.
-  restore_page_to_op:
-    'NOT cross-checked; the mock handler is a CONSTANT STUB returning zeroed counters ' +
-    '(handlers/history.ts), so no mock-level test guards a behaviour it does not have (#3964)',
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
   // ── Attachments ──
@@ -706,11 +696,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
-  'redo_page_op',
-  'restore_page_to_op',
-  'revert_ops',
   'set_page_aliases',
-  'undo_ops',
 ]
 
 /**

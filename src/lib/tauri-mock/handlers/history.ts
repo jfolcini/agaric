@@ -308,8 +308,18 @@ export const historyHandlers = {
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
-      const newOp = pushOp(reverseOpTypeFor(target), { ...reversePayload, reverted: target }, true)
-      results.push(newOp)
+      const reverseOpType = reverseOpTypeFor(target)
+      const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: target }, true)
+      // #5057 — an `UndoResult`, not the raw op-log row. `revert_ops_inner`
+      // answers `Vec<UndoResult>` like its undo siblings; pushing the entry
+      // left every field the contract declares undefined on this path alone.
+      results.push({
+        reversed_op: { device_id: target.device_id, seq: target.seq },
+        reversed_op_type: target.op_type,
+        new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+        new_op_type: reverseOpType,
+        is_redo: false,
+      })
     }
 
     return results
@@ -584,11 +594,52 @@ export const historyHandlers = {
   // Point-in-time restore
   // ---------------------------------------------------------------------------
 
-  restore_page_to_op: () => ({
-    ops_reverted: 0,
-    non_reversible_skipped: 0,
-    results: [],
-  }),
+  // #5057 — was a STUB returning zeros, so a page rewind did nothing at all in
+  // browser and e2e mode while the backend walked the op log. Mirrors
+  // `restore_page_to_op_inner`: every undoable op NEWER than the target is
+  // reverted newest-first, the target itself is kept (the page is rewound to
+  // the state that op left), and the two op types a restore skips on sight are
+  // counted rather than aborting the walk (#2020).
+  //
+  // Page scoping is not modelled, matching `undo_page_op` above, which filters
+  // the op log without one either.
+  restore_page_to_op: (args) => {
+    const a = args as Record<string, unknown>
+    const targetDeviceId = a['targetDeviceId'] as string
+    const targetSeq = a['targetSeq'] as number
+    const target = opLog.find((o) => o.device_id === targetDeviceId && o.seq === targetSeq)
+    // #2463 — mirrors the backend's NotFound when the target op does not exist.
+    if (!target) throw notFoundRejection(`op_log (${targetDeviceId}, ${targetSeq})`)
+
+    const newer = sortOpLogNewestFirst(opLog.filter((o) => !o.is_undo && o.seq > targetSeq))
+    const results: Array<Record<string, unknown>> = []
+    let nonReversibleSkipped = 0
+    for (const op of newer) {
+      // `STATIC_NON_REVERSIBLE_OP_TYPES` (agaric-engine reverse/batch.rs):
+      // skipped on sight, `delete_attachment` even where an inverse could be
+      // reconstructed, which is the established restore behaviour.
+      if (op.op_type === 'purge_block' || op.op_type === 'delete_attachment') {
+        nonReversibleSkipped += 1
+        continue
+      }
+      const reverseOpType = reverseOpTypeFor(op)
+      const reversePayload = reversePayloadFor(op)
+      applyRevertForOp(op, blocks, { properties, blockTags })
+      const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: op }, true)
+      results.push({
+        reversed_op: { device_id: op.device_id, seq: op.seq },
+        reversed_op_type: op.op_type,
+        new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+        new_op_type: reverseOpType,
+        is_redo: false,
+      })
+    }
+    return {
+      ops_reverted: results.length,
+      non_reversible_skipped: nonReversibleSkipped,
+      results,
+    }
+  },
 
   // ---------------------------------------------------------------------------
   // Link metadata

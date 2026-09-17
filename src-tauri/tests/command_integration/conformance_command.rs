@@ -92,6 +92,36 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["reversed_op_type", "new_op_type", "is_redo"],
         &[],
     ),
+    // The list forms of the same result. `redo_page_op` answers a single
+    // `UndoResult` like `undo_op`; `is_redo` is `true` on it, which is the one
+    // field that tells the two apart.
+    (
+        "undo_ops",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "revert_ops",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    (
+        "redo_page_op",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
+    // #5057 — a COUNT envelope over a list. The per-op detail rides in
+    // `results`, which the snapshot and the two counts already pin between
+    // them, so the shape names the counts rather than re-projecting the list.
+    (
+        "restore_page_to_op",
+        HEADED_ID_KEY,
+        &["ops_reverted", "non_reversible_skipped"],
+        &[],
+    ),
     (
         "undo_page_group",
         HEADED_ID_KEY,
@@ -253,6 +283,31 @@ pub(super) async fn apply_op_via_command(
         let (device_id, seq) = resolve_op_ref_label(label, op_refs);
         OpRef { device_id, seq }
     };
+    // The list form of the above: `ops` is an array of `On` labels, expanded
+    // exactly as `blockIds` expands the scalar `blockId`.
+    let op_ref_list = |k: &str| {
+        arg(k)
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+            .iter()
+            .map(|label| {
+                let label = label.as_str().unwrap_or_else(|| {
+                    panic!("conformance op '{command}': '{k}' entry is not a string")
+                });
+                let (device_id, seq) = resolve_op_ref_label(label, op_refs);
+                OpRef { device_id, seq }
+            })
+            .collect::<Vec<_>>()
+    };
+    // The SPLIT form: two commands take an op coordinate as two positional
+    // args rather than an `OpRef`. The fixture still spells one `On` label —
+    // splitting it here keeps a single convention across all five.
+    let op_ref_split = |k: &str| {
+        let label = arg(k)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"));
+        resolve_op_ref_label(label, op_refs)
+    };
     let req_i64 = |k: &str| {
         arg(k)
             .and_then(Value::as_i64)
@@ -383,6 +438,26 @@ pub(super) async fn apply_op_via_command(
         // undone by position in its own op list, and each runner resolves that
         // to its own coordinate.
         "undo_op" => to_json(undo_op_inner(pool, DEV, mat, op_ref("opRef")).await),
+        "undo_ops" => to_json(undo_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
+        "revert_ops" => to_json(revert_ops_inner(pool, DEV, mat, op_ref_list("ops")).await),
+        "redo_page_op" => {
+            let (device_id, seq) = op_ref_split("undoOp");
+            to_json(redo_page_op_inner(pool, DEV, mat, device_id, seq).await)
+        }
+        "restore_page_to_op" => {
+            let (device_id, seq) = op_ref_split("targetOp");
+            to_json(
+                restore_page_to_op_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    arg_label_id("pageId").expect("restore_page_to_op pageId"),
+                    device_id,
+                    seq,
+                )
+                .await,
+            )
+        }
         "delete_attachment" => to_json(
             delete_attachment_inner(
                 pool,
@@ -764,7 +839,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 26;
+    const MUTATING_ARM_COUNT: usize = 30;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

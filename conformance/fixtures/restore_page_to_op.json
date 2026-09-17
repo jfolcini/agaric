@@ -1,0 +1,148 @@
+{
+  "description": "#5057 — `restore_page_to_op`, the page-level rewind. It names its target with the same `On` label as its ref-addressed siblings, split across two positional args. Unlike them it answers a COUNT envelope rather than a bare list, and the two counts are the whole point: `ops_reverted` says how far it walked and `non_reversible_skipped` says what it stepped over without failing, which is what separates a rewind from an undo.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Rewind",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "v1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "rewind_the_page_to_a_named_op",
+      "returns": ["restore_page_to_op#ops_reverted=2#non_reversible_skipped=0"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "blocks_after_the_rewind",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "restore_page_to_op",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v1"
+      },
+      "command": "edit_block",
+      "comment": "O1 — the target. The page is rewound to the state this op left, so O1 itself is NOT reverted."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v2"
+      },
+      "command": "edit_block",
+      "comment": "O2 — reverted by the rewind."
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "v3"
+      },
+      "command": "edit_block",
+      "comment": "O3 — reverted by the rewind."
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "targetOp": "O1"
+      },
+      "command": "restore_page_to_op",
+      "comment": "Rewinds past O3 and O2 and stops AT O1, so S2 reads `v1` rather than its seed text — which is what distinguishes rewinding to an op from reverting everything.",
+      "name": "rewind_the_page_to_a_named_op",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 sits at `v1`, the state the target op left.",
+      "name": "blocks_after_the_rewind"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Rewind",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "seed text",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
