@@ -28,11 +28,28 @@ interpolates hue for no reason.
 
 A hairline at 55% is the first cue to vanish for users who asked for more
 contrast, so `@media (prefers-contrast: more)` takes it back to opaque and 2px.
-Focus stays above it there: that block's `:focus-visible` override is 3px of
-`currentColor`, a different colour as well as a heavier one. The override sits
-directly under the rule rather than in the accessibility section at the foot of
-the file, following the `--embed-surface` convention of keeping a token and its
-contrast sibling together.
+The override sits directly under the rule rather than in the accessibility
+section at the foot of the file, following the `--embed-surface` convention of
+keeping a token and its contrast sibling together.
+
+I first justified that override by saying focus still outranks it because the
+accessibility block's `:focus-visible` is 3px of `currentColor`. Review caught
+that, and driving a real keyboard focus in the browser confirmed it: the shared
+`.block-link-chip:focus-visible, .tag-ref-chip:focus-visible,
+.block-ref-chip:focus-visible` rule is specificity (0,2,0) and beats the bare
+`:focus-visible` at (0,1,0), so a focused chip computes `outline: none 0px` and
+shows a 3px `/0.5` ring by `box-shadow` instead. The `currentColor` outline
+never renders on a chip at all. The anchor rule cannot collide with focus, but
+not for the reason I gave.
+
+That leaves a real inversion, pre-existing and not introduced here: in
+high-contrast mode an UNfocused anchor chip is a 2px opaque outline while a
+FOCUSED one is a 3px half-alpha ring, so focus reads lighter than its absence —
+the same inversion #5076 set out to fix, one state over, and across every chip
+type rather than just anchors. Raised with the maintainer with a proposed
+one-rule patch (full-alpha `ring-ring` for those three selectors under
+`prefers-contrast: more`) rather than pushed here, since it changes focus
+appearance for all chips and is wider than this issue.
 
 ## Verified
 
