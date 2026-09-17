@@ -78,6 +78,16 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["reversed_op_type", "new_op_type", "is_redo"],
         &[],
     ),
+    // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in
+    // the order the group reversed them. That ORDER is the point — a group
+    // undo that reversed the right ops in the wrong sequence would pass a
+    // set-wise check and fail this one.
+    (
+        "undo_page_group",
+        HEADED_ID_KEY,
+        &["reversed_op_type", "new_op_type", "is_redo"],
+        &[],
+    ),
     ("save_draft", HEADED_ID_KEY, &[], &[]),
     ("delete_draft", HEADED_ID_KEY, &[], &[]),
     ("flush_draft", HEADED_ID_KEY, &[], &[]),
@@ -223,6 +233,11 @@ pub(super) async fn apply_op_via_command(
     let req_str = |k: &str| {
         opt_str(k).unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
     };
+    let req_i64 = |k: &str| {
+        arg(k)
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
+    };
 
     match command {
         "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
@@ -324,9 +339,22 @@ pub(super) async fn apply_op_via_command(
                 DEV,
                 mat,
                 arg_label_id("pageId").expect("undo_page_op pageId"),
-                arg("undoDepth").and_then(Value::as_i64).unwrap_or_else(|| {
-                    panic!("conformance op '{command}' is missing arg 'undoDepth'")
-                }),
+                req_i64("undoDepth"),
+            )
+            .await,
+        ),
+        // #5057 — the grouped positional undo. Same ordinal `depth` as
+        // `undo_page_op`, plus a `windowMs` that decides how many ops around
+        // that depth are reversed together. Both are the fixture's own
+        // literals, so the group is deterministic.
+        "undo_page_group" => to_json(
+            undo_page_group_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("pageId").expect("undo_page_group pageId"),
+                req_i64("depth"),
+                req_i64("windowMs"),
             )
             .await,
         ),
@@ -379,23 +407,19 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
         .find(|(c, ..)| *c == command)
         .unwrap_or_else(|| panic!("conformance op '{command}' has no RETURN_SHAPE entry"));
     // A headed shape has no id column: the head is the command name and the
-    // attributes are read off the response beside it.
-    // A LIST return is a list of ROWS: one row token per element, in the order
-    // the command returned them. Distinct from `tuple_token`, which reads a
-    // JSON array POSITIONALLY as a single row.
-    if let Some(rows) = response.as_array() {
-        return rows
-            .iter()
-            .map(|row| row_token(row, id_key, attrs))
-            .collect();
-    }
-    let headed;
-    let row = if *id_key == HEADED_ID_KEY {
-        // A response that is not an object has no field for an attribute to
-        // name. `()` serializes to `null` and declares no attributes, so it
-        // renders as the bare head; a bare COUNT is the whole return value, so
-        // the shape's single attribute names it.
-        let mut obj = if let Some(fields) = response.as_object() {
+    // attributes are read off the row beside it. Applied PER ROW rather than
+    // to the response as a whole, because a list return of headed rows
+    // (`undo_page_group`) needs the head on each element — `row_token` reads
+    // `row[id_key]` and renders `<missing-id>` for a row that has none.
+    let head_row = |row: &Value| -> Value {
+        if *id_key != HEADED_ID_KEY {
+            return row.clone();
+        }
+        // A row that is not an object has no field for an attribute to name.
+        // `()` serializes to `null` and declares no attributes, so it renders
+        // as the bare head; a bare COUNT is the whole return value, so the
+        // shape's single attribute names it.
+        let mut obj = if let Some(fields) = row.as_object() {
             fields.clone()
         } else {
             assert!(
@@ -405,17 +429,25 @@ pub(super) fn project_return(command: &str, response: &Value) -> Vec<String> {
             );
             let mut fields = serde_json::Map::new();
             if let Some(name) = attrs.first() {
-                fields.insert((*name).to_owned(), response.clone());
+                fields.insert((*name).to_owned(), row.clone());
             }
             fields
         };
         obj.insert(HEADED_ID_KEY.to_owned(), json!(command));
-        headed = Value::Object(obj);
-        &headed
-    } else {
-        response
+        Value::Object(obj)
     };
-    let mut out = vec![row_token(row, id_key, attrs)];
+
+    // A LIST return is a list of ROWS: one row token per element, in the order
+    // the command returned them. Distinct from `tuple_token`, which reads a
+    // JSON array POSITIONALLY as a single row.
+    if let Some(rows) = response.as_array() {
+        return rows
+            .iter()
+            .map(|row| row_token(&head_row(row), id_key, attrs))
+            .collect();
+    }
+    let row = head_row(response);
+    let mut out = vec![row_token(&row, id_key, attrs)];
     for field in *lists {
         for id in response
             .get(*field)
@@ -706,7 +738,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 24;
+    const MUTATING_ARM_COUNT: usize = 25;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

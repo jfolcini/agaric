@@ -1489,8 +1489,29 @@ export const MOCK_LOCAL_DEVICE = 'mock-device'
  * Reverse op_type stamped on the appended reverse op. Mirrors the per-type
  * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
  * the #2468 migration makes undoable by ref.
+ *
+ * #5057 — takes the OP, not just its type, because `set_property` is the one
+ * case the type alone cannot decide: `reverse_set_property` answers
+ * `DeleteProperty` when the key had no prior value and `SetProperty` (back to
+ * that prior) when it did. A static table always said `set_property`, so
+ * undoing a freshly-set key stamped the wrong type on a row the op-log digest
+ * compares — the inverse half of `delete_property -> set_property`, which was
+ * already here.
  */
-export function reverseOpTypeFor(opType: string): string {
+export function reverseOpTypeFor(op: MockOpLogEntry): string {
+  const opType = op.op_type
+  if (opType === 'set_property') {
+    // The op records the value the key held BEFORE it wrote, which is what
+    // the backend's `find_prior_property` goes looking for. No prior means
+    // the reverse is a delete, not a set back to nothing.
+    let priorValue: unknown = null
+    try {
+      priorValue = (JSON.parse(op.payload) as Record<string, unknown>)['from_value'] ?? null
+    } catch {
+      priorValue = null // malformed payload: no prior to restore
+    }
+    return priorValue === null ? 'delete_property' : 'set_property'
+  }
   switch (opType) {
     case 'create_block': {
       return 'delete_block'
@@ -1699,7 +1720,7 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
  * `redo_page_op` looks up riding along.
  */
 export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, unknown> {
-  const reverseOpType = reverseOpTypeFor(effective.op_type)
+  const reverseOpType = reverseOpTypeFor(effective)
   // Before the revert: see `reversePayloadFor`.
   const reversePayload = reversePayloadFor(effective)
   applyRevertForOp(effective, blocks, { properties, blockTags })

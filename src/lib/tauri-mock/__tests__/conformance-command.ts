@@ -68,6 +68,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
     lists: [],
   },
+  // #5057 — a LIST of the same shape: one headed row per `UndoResult`, in the
+  // order the group reversed them.
+  undo_page_group: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['reversed_op_type', 'new_op_type', 'is_redo'],
+    lists: [],
+  },
   // #3830 — the two `property_definitions` writers answer with the row, so
   // their shape is `PROPERTY_DEF_TOKEN`'s attributes read off a response.
   create_property_def: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
@@ -135,29 +142,36 @@ export function projectReturn(command: string, response: unknown): string[] {
         `and the matching arm in conformance_command.rs)`,
     )
   }
+  // A headed shape has no id column: the head is the command name and the
+  // attributes are read off the row beside it. Applied PER ROW rather than to
+  // the response as a whole, because a list return of headed rows
+  // (`undo_page_group`) needs the head on each element — `idToken` reads
+  // `row[idKey]` and renders a missing-id token for a row that has none.
+  // A row that is not an object has no such field — `null` (a `()` return)
+  // declares no attributes and renders as the bare head, while a bare COUNT is
+  // the whole return value, so the shape's single attribute names it.
+  const headRow = (value: unknown): Record<string, unknown> => {
+    const isObject = value !== null && typeof value === 'object'
+    if (!isObject && shape.attrs.length > 1) {
+      throw new Error(
+        `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
+          `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,
+      )
+    }
+    const raw: Record<string, unknown> = isObject
+      ? (value as Record<string, unknown>)
+      : shape.attrs[0] !== undefined
+        ? { [shape.attrs[0]]: value }
+        : {}
+    return shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
+  }
+
   // A LIST return is a list of ROWS: one row token per element, in the order
   // the command returned them.
   if (Array.isArray(response)) {
-    return response.map((row) => idToken(row as Record<string, unknown>, shape.idKey, shape.attrs))
+    return response.map((row) => idToken(headRow(row), shape.idKey, shape.attrs))
   }
-  // A headed shape has no id column: the head is the command name and the
-  // attributes are read off the response beside it. A response that is not an
-  // object has no such field — `null` (a `()` return) declares no attributes
-  // and renders as the bare head, while a bare COUNT is the whole return
-  // value, so the shape's single attribute names it.
-  const isObject = response !== null && typeof response === 'object'
-  const raw: Record<string, unknown> = isObject
-    ? (response as Record<string, unknown>)
-    : shape.attrs[0] !== undefined
-      ? { [shape.attrs[0]]: response }
-      : {}
-  if (!isObject && shape.attrs.length > 1) {
-    throw new Error(
-      `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
-        `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,
-    )
-  }
-  const row = shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
+  const row = headRow(response)
   const out = [idToken(row, shape.idKey, shape.attrs)]
   for (const field of shape.lists) {
     const ids = row[field]

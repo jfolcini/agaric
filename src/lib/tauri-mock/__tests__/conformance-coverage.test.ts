@@ -247,27 +247,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   undo_ops:
     'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
     'core it delegates to, revert.test.ts (via applyRevertForOp)',
-  // Was "regression-guarded by undo-op-refs.test.ts" — that file's own doc
-  // scopes it to `undo_op` / `undo_ops` and it never mentions this command.
-  // The tests that DO name `undo_page_group` drive the FE against a mocked IPC
-  // layer, so none of them reaches this handler: the mock's `undo_page_group`
-  // has no mock-level regression test at all.
-  //
-  // #3992 item 3 — this reason used to say PageHeader.test.tsx was "the only
-  // test naming undo_page_group". It is not: `stores/__tests__/undo.test.ts`
-  // names it too, in a `'undo_page_group failed'` log assertion. The waiver's
-  // CONCLUSION survived (that test mocks the hand-written helpers, so it
-  // reaches the handler no more than the other does) but the claim itself was
-  // an unchecked universal — "no OTHER test exists" is not something a
-  // citation can carry, and nothing in this guard could have contradicted it.
-  // Both files are named instead, which is a claim the citation check above
-  // actually verifies: each must exist and must mention `undo_page_group` as a
-  // whole word.
-  undo_page_group:
-    'NOT cross-checked, and not mock-level guarded either: the tests naming ' +
-    'undo_page_group — components/pages/__tests__/PageHeader.test.tsx (mocked invoke) and ' +
-    'stores/__tests__/undo.test.ts (mocked bindings) — assert the FE issues ' +
-    'the IPC and neither reaches this handler (#3964, #3992)',
   redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
   revert_ops:
     'NOT cross-checked; regression-guarded by revert-cohort.test.ts and, for the ' +
@@ -734,7 +713,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'set_page_aliases',
   'undo_op',
   'undo_ops',
-  'undo_page_group',
 ]
 
 /**

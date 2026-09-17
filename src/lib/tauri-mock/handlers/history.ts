@@ -262,6 +262,13 @@ export const historyHandlers = {
     const a = (args ?? {}) as Record<string, unknown>
     const depth = (a['depth'] as number) ?? 0
     const windowMs = (a['windowMs'] as number) ?? 0
+    // #5057 — `undo_page_group_inner` refuses BOTH args' negative sign before
+    // it opens its transaction. The mock had neither guard, so a negative
+    // depth walked `depth + i` from a negative index and a negative window
+    // sized an empty group — both returning success where the backend
+    // refuses. Two separate checks because they name different args.
+    if (depth < 0) throw validationRejection('depth must be non-negative')
+    if (windowMs < 0) throw validationRejection('window_ms must be non-negative')
     const undoOp = historyHandlers['undo_page_op']
     if (!undoOp) {
       // mock-internal invariant (#2463) — `historyHandlers` is malformed if
@@ -301,11 +308,7 @@ export const historyHandlers = {
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
-      const newOp = pushOp(
-        reverseOpTypeFor(target.op_type),
-        { ...reversePayload, reverted: target },
-        true,
-      )
+      const newOp = pushOp(reverseOpTypeFor(target), { ...reversePayload, reverted: target }, true)
       results.push(newOp)
     }
 
@@ -352,7 +355,7 @@ export const historyHandlers = {
     // `remove_tag` op stamped `edit_block` on the reverse row. Since #4868 that
     // row is one History displays and the #763 op-log digest compares, so the
     // wrong type is now observable rather than inert.
-    const reverseOpType = reverseOpTypeFor(target.op_type)
+    const reverseOpType = reverseOpTypeFor(target)
     // #4870 — the shared reversal core, not a second per-type chain. This arm
     // owned an if/else covering the five block-row types only, so it stamped a
     // `remove_tag` reverse row while `blockTags` kept the tag, and reversed
@@ -410,7 +413,7 @@ export const historyHandlers = {
     // call via `reverse::compute_reverse`, it never stores it).
     if (!originalOp) throw new Error('undo op carries no reversed payload')
 
-    const redoOpType = reverseOpTypeFor(undoOp.op_type)
+    const redoOpType = reverseOpTypeFor(undoOp)
     // #4870 — a redo is the REVERSE OF THE UNDO, which is exactly what the
     // backend computes: `redo_page_op` builds `compute_reverse(undo_op)` and
     // runs it through `apply_reverse_in_tx`
