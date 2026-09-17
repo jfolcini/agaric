@@ -11,7 +11,10 @@
  * Titles come from the app-wide resolve cache rather than from the bookmark
  * entry, so a rename is reflected without rewriting storage. That cache is
  * keyed by `(space, id)`, which is also the space filter: a bookmark from
- * another space does not resolve under the active one and is left out.
+ * another space does not resolve under the active one and is left out. A
+ * bookmark the cache has never held — a page created or synced in since the
+ * last preload — is resolved on demand, space-scoped, rather than dropped
+ * (#5075).
  *
  * Bookmarks are device-local (`localStorage`), so they do not sync. Moving
  * them into the DB is the follow-up #4713 defers.
@@ -22,7 +25,7 @@
  */
 
 import { Bookmark, BookmarkX } from 'lucide-react'
-import { type ReactElement, useMemo } from 'react'
+import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -37,6 +40,10 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import { resolveStoreTitle } from '@/lib/block-title'
+import { logger } from '@/lib/logger'
 import { getPageDisplayName } from '@/lib/page-display'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -52,30 +59,76 @@ export function BookmarksSection(): ReactElement {
   // Re-resolve when the cache lands new titles, a rename edits one, or a
   // space switch flushes the previous space's entries.
   const resolveVersion = useResolveStore((s) => s.version)
-  const bookmarks = useMemo(() => {
-    const resolve = useResolveStore.getState()
-    return [...starredIds]
-      .filter((id) => resolve.isResolved(id))
-      .map((id) => ({ pageId: id, title: resolve.resolveTitle(id) }))
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the store is read imperatively so the memo does not re-run per unrelated cache write
-  }, [starredIds, resolveVersion])
+  /**
+   * Composite keys (`keyFor(space, id)`) this section has asked the backend
+   * about and had an answer for — whether or not the answer contained them.
+   *
+   * An id the answer left out (another space's, or purged) belongs here so the
+   * ask is not repeated: the store write that follows an answer bumps
+   * `resolveVersion`, which recomputes `pendingIds` below, which would re-fire
+   * the resolve effect for that id forever.
+   */
+  const [lookedUpKeys, setLookedUpKeys] = useState<ReadonlySet<string>>(() => new Set())
 
   /**
-   * Has the resolve cache produced anything for the active space yet?
+   * The one pass over the bookmark list: what this space can render, and what
+   * it still has to ask about.
    *
-   * This is what separates "you have no bookmarks here" from "they have not
-   * loaded yet". Nothing cached for this space means the scan has not landed —
-   * cold boot, or a space switch that flushed it — and claiming emptiness then
-   * is wrong. One cached entry is enough, so the loop exits on the first hit.
+   * `pendingIds` are the starred ids the cache does not hold and that have not
+   * been looked up. `preload` scans on boot, on a space switch and on
+   * `sync:complete` only, so a page bookmarked in the session it was created
+   * in — or synced in from another device — is in neither list, and dropping
+   * it left the section claiming the user had no bookmarks at all (#5075).
    */
-  const spaceResolved = useMemo(() => {
-    const prefix = keyFor(currentSpaceId, '')
-    for (const key of useResolveStore.getState().cache.keys()) {
-      if (key.startsWith(prefix)) return true
+  const { bookmarks, pendingIds } = useMemo(() => {
+    const resolve = useResolveStore.getState()
+    const resolved: Array<{ pageId: string; title: string }> = []
+    const pending: string[] = []
+    for (const id of starredIds) {
+      if (resolve.isResolved(id)) resolved.push({ pageId: id, title: resolve.resolveTitle(id) })
+      else if (!lookedUpKeys.has(keyFor(currentSpaceId, id))) pending.push(id)
     }
-    return false
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the cache is read imperatively
-  }, [currentSpaceId, resolveVersion])
+    return { bookmarks: resolved, pendingIds: pending }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `resolveVersion` IS the dependency; the store is read imperatively so the memo does not re-run per unrelated cache write
+  }, [starredIds, resolveVersion, currentSpaceId, lookedUpKeys])
+
+  useEffect(() => {
+    // Fail closed while the space store hydrates, as `preload` does: an
+    // unscoped resolve would serve another space's title here.
+    if (pendingIds.length === 0 || currentSpaceId == null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        // Space-scoped, so a bookmark from another space drops out of the
+        // response and stays hidden — the barrier the cache lookup gives the
+        // already-resolved ids.
+        const rows = unwrap(
+          await commands.batchResolve(pendingIds, { kind: 'active', space_id: currentSpaceId }),
+        )
+        if (cancelled) return
+        // Marked before the store write so one render sees both.
+        setLookedUpKeys((prev) => {
+          const next = new Set(prev)
+          for (const id of pendingIds) next.add(keyFor(currentSpaceId, id))
+          return next
+        })
+        useResolveStore.getState().batchSet(
+          rows.map((r) => ({
+            id: r.id,
+            title: resolveStoreTitle(r.block_type, r.title),
+            deleted: r.deleted,
+          })),
+        )
+      } catch (err) {
+        // Deliberately still pending: an id we never got an answer for must not
+        // count towards the empty state.
+        logger.warn('BookmarksSection', 'Failed to resolve bookmarked pages', undefined, err)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [pendingIds, currentSpaceId])
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const { isMobile, setOpenMobile } = useSidebar()
@@ -101,14 +154,13 @@ export function BookmarksSection(): ReactElement {
       {!collapsed && (
         <SidebarGroupContent>
           {bookmarks.length === 0 ? (
-            // Claim emptiness only when it is true: either there are no
-            // bookmarks at all, or this space's titles have loaded and none of
-            // them are here. Before that scan lands — cold boot, or a space
-            // switch that flushed the cache — every bookmark looks unresolved,
-            // and this would tell a user with plenty that they have none.
+            // Claim emptiness only when it is true: every bookmark has been
+            // looked up, and none of them belong to this space. While one is
+            // still pending this would tell a user with bookmarks that they
+            // have none.
             // The dashed empty box has no icon-rail layout, and the rail
             // already hides the header that explains it.
-            starredIds.size === 0 || spaceResolved ? (
+            pendingIds.length === 0 ? (
               <div className="group-data-[collapsible=icon]:hidden">
                 <EmptyState
                   compact
