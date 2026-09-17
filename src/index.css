@@ -1477,12 +1477,21 @@
    names the block the panel is listing references TO. A row can carry several
    chips, and only this one explains why the row is in the list. An outline
    (not a background swap) so it composes with every chip type's own fill and
-   with the deleted/hover states, and `outline-offset` keeps it clear of the
-   chip's rounded edge. `--ring` is the same accent `focus-visible` uses, one
-   step down in weight so a focused anchor chip still reads as focused. */
+   with the deleted/hover states.
+
+   #5076 — a hairline hugging the chip. An opaque 2px of `--ring` read as a
+   focus ring or a validation error: this cue is permanent where focus is
+   transient, so it has to sit below focus in weight, not just in thickness. */
 .ref-chip-anchor {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
+  outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent);
+}
+@media (prefers-contrast: more) {
+  /* Opaque and doubled so the hairline does not vanish for the users who asked
+     for more contrast — in the chip's own colour, because `--ring` at full
+     opacity here is byte-for-byte what #5076 removed. */
+  .ref-chip-anchor {
+    outline: 2px solid currentColor;
+  }
 }
 
 /* #4551 — the peek's content pane. A hard cap, not a scroll container: the

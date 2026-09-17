@@ -156,6 +156,28 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
+  /**
+   * #5075 — the sidebar Bookmarks section renders the same list. A page
+   * created during the session is in no resolve-cache scan (`preload` runs on
+   * boot, on a space switch and on `sync:complete`), and the section used to
+   * drop every bookmark it could not resolve — then claim, to a user whose
+   * only bookmark this was, that they had none.
+   */
+  test('the sidebar lists a page bookmarked in the session it was created in', async ({ page }) => {
+    await openPagesView(page)
+    await page.getByPlaceholder('New page name...').fill('Brand New Page')
+    // Scoped to the view header: the sidebar has a "New Page" button too.
+    await page
+      .getByTestId('view-header-outlet')
+      .getByRole('button', { name: /New Page/i })
+      .click()
+
+    await openPagesView(page)
+    await page.locator('[data-page-item]:has-text("Brand New Page") .star-toggle').click()
+
+    await expect(page.getByTestId('sidebar-bookmarks')).toContainText('Brand New Page')
+  })
+
   test('namespaced pages and bookmarks coexist in the unified layout', async ({ page }) => {
     await openPagesView(page)
 
