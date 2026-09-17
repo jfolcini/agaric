@@ -191,9 +191,11 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
   }, [anchorRect, peekRef, data])
 
   // A keyboard open moves focus INTO the peek; Escape puts it back on the chip.
+  // Gated on a resolved `position`: until `computePosition` lands the peek
+  // renders `visibility: hidden`, and a hidden element refuses focus.
   useEffect(() => {
-    if (refId !== null && fromKeyboard) peekRef.current?.focus()
-  }, [refId, fromKeyboard, peekRef])
+    if (refId !== null && fromKeyboard && position !== null) peekRef.current?.focus()
+  }, [refId, fromKeyboard, peekRef, position])
 
   if (refId === null || anchorRect === null) return null
 
