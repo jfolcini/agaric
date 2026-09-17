@@ -14,12 +14,19 @@
  * `reverse_delete_attachment` is what the backend runs, and the shape this
  * asserts is read off it: the immutable half from the original `add_attachment`
  * op, `fs_path` / `filename` adopted from the delete.
+ *
+ * Its other answer is pinned below. With no original `add_attachment` op there
+ * is nothing to rebuild from and the backend returns `NonReversible`
+ * (`reverse_delete_attachment_returns_non_reversible_error`, agaric-engine
+ * `tests/reverse_tests.rs`); a seeded attachment is exactly that case, since
+ * `addMockAttachment` sets the row without an op.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { isAppError } from '@/lib/app-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { opLog, seedBlocks } from '@/lib/tauri-mock/seed'
+import { addMockAttachment, opLog, seedBlocks } from '@/lib/tauri-mock/seed'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -76,5 +83,54 @@ describe('attachment add → undo → redo (mock-internal)', () => {
       size_bytes: 2,
       fs_path: added['fs_path'],
     })
+  })
+
+  it('refuses to undo the delete of an attachment no op ever added', () => {
+    const blockId = newPageId()
+    const seeded = addMockAttachment(blockId, 'seeded.txt', 'text/plain', 12)
+    dispatch('delete_attachment', { attachmentId: seeded['id'] })
+    const deleteOp = opLog.at(-1)
+    expect(deleteOp?.op_type).toBe('delete_attachment')
+    const opsBefore = opLog.length
+
+    let thrown: unknown
+    try {
+      dispatch('undo_op', { opRef: { device_id: deleteOp?.device_id, seq: deleteOp?.seq } })
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(isAppError(thrown)).toBe(true)
+    expect(isAppError(thrown) && thrown.kind).toBe('non_reversible')
+    // The reverse is computed before it is applied, so the refusal leaves both
+    // the row and the op log exactly as the delete left them.
+    expect(dispatch('list_attachments', { blockId })).toEqual([])
+    expect(opLog.length).toBe(opsBefore)
+  })
+
+  // The other arm of that refusal: `restore_page_to_op` skips every
+  // `STATIC_NON_REVERSIBLE_OP_TYPES` op ON SIGHT (agaric-engine
+  // `reverse/batch.rs`) and counts it, even here — where the add op is right
+  // there and the inverse could be computed. The rewind must keep counting
+  // where the undo above rejects.
+  it('counts rather than rejects the same op under a page rewind', () => {
+    const blockId = newPageId()
+    const createOp = opLog.at(-1)
+    const added = dispatch('add_attachment_with_bytes', {
+      blockId,
+      filename: 'notes.txt',
+      mimeType: 'text/plain',
+      bytes: [104, 105],
+    }) as Record<string, unknown>
+    dispatch('delete_attachment', { attachmentId: added['id'] })
+
+    const restored = dispatch('restore_page_to_op', {
+      pageId: '__all__',
+      targetDeviceId: createOp?.device_id,
+      targetSeq: createOp?.seq,
+    }) as Record<string, unknown>
+
+    expect(restored['non_reversible_skipped']).toBe(1)
+    expect(restored['ops_reverted']).toBe(1)
   })
 })

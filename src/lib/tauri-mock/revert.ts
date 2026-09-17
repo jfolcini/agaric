@@ -12,6 +12,7 @@
  * effects matching what the real `revert_ops` command would produce.
  */
 
+import type { AppError } from '@/lib/bindings'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
 
@@ -310,32 +311,66 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
 }
 
 /**
- * Put back the row a `delete_attachment` took away, as
- * `reverse_delete_attachment` does: the immutable half
- * (`block_id`, `mime_type`, `size_bytes`) is rebuilt from the original
- * `add_attachment` op, and `fs_path` / `filename` are adopted from the DELETE
- * payload, which captured them live — the two fields a repoint or a rename can
- * have moved since the add.
- *
- * No original op means nothing to rebuild from and the reverse is a no-op,
- * which is where a seeded attachment lands: it was never added by an op.
+ * Mirrors `AppError::NonReversible` (#2463 kind-parity rule). Spelled out here
+ * rather than built from `appErrorRejection`, which lives in
+ * `handlers/shared.ts` — that module imports this one.
  */
-function revertDeleteAttachment(payload: Record<string, unknown>, state: RevertState): void {
-  const attachmentId = payload['attachment_id'] as string
+function nonReversibleRejection(opType: string): Error & AppError {
+  const message = `Non-reversible operation: ${opType} cannot be undone`
+  return Object.assign(new Error(message), { kind: 'non_reversible' as const, message })
+}
+
+/**
+ * The `AddAttachmentPayload` that undoes a `delete_attachment`, as
+ * `reverse_delete_attachment` (agaric-engine `reverse/attachment_ops.rs`)
+ * builds it: the immutable half (`block_id`, `mime_type`, `size_bytes`) from
+ * the original `add_attachment` op, and `fs_path` / `filename` adopted from the
+ * DELETE payload, which captured them live — the two fields a repoint or a
+ * rename can have moved since the add.
+ *
+ * #5057 — the op row (`reversePayloadFor`, `handlers/shared.ts`) and the
+ * attachment row ({@link revertDeleteAttachment}) are rebuilt from the same two
+ * sources, so they read them once, here: the adoption living twice is the drift
+ * `adopt_delete_time_state` exists to prevent on the Rust side. It sits in this
+ * module because `handlers/shared.ts` already imports it.
+ *
+ * No original `add_attachment` op means there is nothing to rebuild from and
+ * the backend answers `NonReversible`. Both callers compute the reverse BEFORE
+ * applying it, so the refusal leaves state untouched. A seeded attachment is
+ * exactly that case: `addMockAttachment` (`seed.ts`) sets the row with no op.
+ */
+export function reconstructAddAttachment(
+  deletePayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const attachmentId = deletePayload['attachment_id'] as string
   const original = opLog.find(
     (o) =>
       o.op_type === 'add_attachment' &&
       (JSON.parse(o.payload) as Record<string, unknown>)['attachment_id'] === attachmentId,
   )
-  if (!original) return
+  if (!original) throw nonReversibleRejection('delete_attachment')
   const add = JSON.parse(original.payload) as Record<string, unknown>
-  state.attachments?.set(attachmentId, {
-    id: attachmentId,
+  return {
+    attachment_id: attachmentId,
     block_id: add['block_id'],
     mime_type: add['mime_type'],
-    filename: payload['filename'] ?? add['filename'],
+    filename: deletePayload['filename'] ?? add['filename'],
     size_bytes: add['size_bytes'],
-    fs_path: payload['fs_path'] ?? add['fs_path'],
+    fs_path: deletePayload['fs_path'] ?? add['fs_path'],
+  }
+}
+
+/** Put back the row a `delete_attachment` took away, from the payload
+ *  {@link reconstructAddAttachment} reconstructs. */
+function revertDeleteAttachment(payload: Record<string, unknown>, state: RevertState): void {
+  const add = reconstructAddAttachment(payload)
+  state.attachments?.set(add['attachment_id'] as string, {
+    id: add['attachment_id'],
+    block_id: add['block_id'],
+    mime_type: add['mime_type'],
+    filename: add['filename'],
+    size_bytes: add['size_bytes'],
+    fs_path: add['fs_path'],
     created_at: Date.now(),
     content_hash: null,
   })

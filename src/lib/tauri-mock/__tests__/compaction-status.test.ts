@@ -1,12 +1,15 @@
 /**
- * #5057 — the one field of `get_compaction_status` that
- * `op_log_compaction.json` cannot project.
+ * #5057 — the two things `op_log_compaction.json` cannot project about
+ * `get_compaction_status`.
  *
  * `oldest_op_date` is `MIN(op_log.created_at)` in epoch ms, a clock reading
  * taken while a fixture replays, so a backend-authored expectation would bind
- * to the millisecond it was written on. The other three counters are pinned
- * there; this one is pinned here, against the backend's SQL rather than against
- * the backend itself.
+ * to the millisecond it was written on. `eligible_ops` is pinned there, but
+ * only at zero: every op a fixture replays is minted during the run, so the
+ * arm that COUNTS — an op older than `now() - DEFAULT_RETENTION_DAYS` — is out
+ * of that corpus's reach, and pinning one arm of the pair is the half-cover
+ * AGENTS.md names. Both are pinned here instead, against the backend's SQL
+ * rather than against the backend itself.
  *
  * Two things were wrong and only the second is visible from a single op: the
  * mock answered `opLog[0].created_at`, an ISO STRING where
@@ -28,6 +31,12 @@ vi.mock('@/lib/logger', () => ({
 const NEWER = '2025-06-01T00:00:00.000Z'
 const OLDER = '2024-01-01T00:00:00.000Z'
 
+/** Exact 24-hour days back from now, the way the backend's cutoff is built
+ *  (`chrono::Duration::days`) — not the seed's calendar-day `offsetIso`. */
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
 describe('get_compaction_status (mock-internal)', () => {
   beforeEach(() => {
     seedBlocks()
@@ -42,6 +51,18 @@ describe('get_compaction_status (mock-internal)', () => {
 
     expect(status['oldest_op_date']).toBe(Date.parse(OLDER))
     expect(status['total_ops']).toBe(2)
+  })
+
+  it('counts an op past the retention window as eligible and a fresh one as not', () => {
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(91))
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(89))
+    pushOpAt('edit_block', { block_id: 'B1' }, isoDaysAgo(0))
+
+    const status = dispatch('get_compaction_status', {}) as Record<string, unknown>
+
+    expect(status['eligible_ops']).toBe(1)
+    expect(status['total_ops']).toBe(3)
+    expect(status['retention_days']).toBe(90)
   })
 
   it('reports no oldest op for an empty log', () => {

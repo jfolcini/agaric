@@ -90,6 +90,12 @@ const GLOBAL_HISTORY_PAGE_ID = '__all__'
  *  `compact_op_log_cmd` accepts. */
 const MIN_RETENTION_DAYS = 7
 
+/** `agaric_sync::snapshot::DEFAULT_RETENTION_DAYS` — the window
+ *  `get_compaction_status_inner` both reports and counts against. */
+const DEFAULT_RETENTION_DAYS = 90
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
 /**
  * The `op_log.block_id` COLUMN the backend fills from `OpPayload::block_id()`
  * (migration 0030). The mock has no such column, so it reads the same value
@@ -658,21 +664,29 @@ export const historyHandlers = {
   // minimum. `CompactionStatus.oldest_op_date` is `number | null`, which
   // `CompactionCard` hands to `new Date(...)`.
   //
-  // `eligible_ops` and the compaction below stay zero: the cutoff is `now()`
-  // minus a window floored at seven days, and nothing here mints an op at a
-  // date the mock's own clock has not reached.
-  get_compaction_status: () => ({
-    total_ops: opLog.length,
-    oldest_op_date:
-      opLog.length > 0 ? Math.min(...opLog.map((op) => new Date(op.created_at).getTime())) : null,
-    eligible_ops: 0,
-    retention_days: 90,
-  }),
+  // `eligible_ops` is `COUNT(*) WHERE created_at < now() - DEFAULT_RETENTION_DAYS`,
+  // the cutoff `get_compaction_status_inner` computes per call. The seed mints
+  // ops old enough to clear it — `stampPageLastEdited` writes a real
+  // `edit_block` op ≈90 days back for each canonical page — so the hard-coded
+  // `0` told `CompactionCard` there was nothing to compact where the backend
+  // counts one per stamp.
+  get_compaction_status: () => {
+    const createdAtMs = opLog.map((op) => new Date(op.created_at).getTime())
+    const cutoffMs = Date.now() - DEFAULT_RETENTION_DAYS * MS_PER_DAY
+    return {
+      total_ops: opLog.length,
+      oldest_op_date: createdAtMs.length > 0 ? Math.min(...createdAtMs) : null,
+      eligible_ops: createdAtMs.filter((ms) => ms < cutoffMs).length,
+      retention_days: DEFAULT_RETENTION_DAYS,
+    }
+  },
 
   // A hard floor at the IPC boundary — a window under seven days is refused
   // before any work, so the op log cannot be purged to the snapshot frontier
   // in one call. The mock answered success for every window, including the `0`
-  // that guard exists for.
+  // that guard exists for. The delete itself is not modelled: `ops_deleted` is
+  // 0 for every accepted window, so the ops the status above counts as eligible
+  // survive it — and stay the `last_modified_at` stamps the seed wrote them as.
   compact_op_log_cmd: (args) => {
     const retentionDays = (args as Record<string, unknown>)['retentionDays'] as number
     if (retentionDays < MIN_RETENTION_DAYS) {
