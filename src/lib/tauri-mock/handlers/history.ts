@@ -37,35 +37,47 @@ import {
   pushOp,
 } from '@/lib/tauri-mock/seed'
 
-// Mirror `undo_page_group_inner`'s group sizing so browser-mode FE
-// tests observe the same group the real backend reverts. Walks the in-memory `opLog` newest-first,
-// filtering out `is_undo` ops (#4868), seeds at index `depth`,
-// and counts consecutive same-device + within-window ops.
-function findUndoGroupSize(depth: number, windowMs: number, scope: Set<string>): number {
+// Mirror `enumerate_undo_group_in_tx`: walk the in-memory `opLog` newest-first,
+// filtering out `is_undo` ops (#4868), seed at index `depth`, and take
+// consecutive same-device + within-window ops.
+//
+// The OPS, not a count. `undo_page_group` used to size the group here and then
+// issue `groupSize` offset-addressed undos, which is the drift the backend's
+// own doc-block names (history.rs): the list is a live `parent_id` walk, so
+// reverting a `move_block` that had pulled a block INTO the named page sends it
+// back out mid-group, and `depth + i` stops indexing the ops this walk counted.
+// The backend enumerates once inside its write transaction for that reason.
+function enumerateUndoGroup(depth: number, windowMs: number, scope: Set<string>): MockOpLogEntry[] {
   // Newest-first ordering on (created_at DESC, seq DESC) — see
   // `sortOpLogNewestFirst` (shared.ts).
   const undoableOps = sortOpLogNewestFirst(
     opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
   )
 
-  if (depth < 0 || depth >= undoableOps.length) return 0
+  const seed = undoableOps[depth]
+  if (depth < 0 || !seed) return []
 
-  const seed = undoableOps[depth] as (typeof undoableOps)[number]
-  let count = 1
+  const group = [seed]
   let prevTs = new Date(seed.created_at).getTime()
-  let prevDevice = seed.device_id
+  const device = seed.device_id
 
-  for (let i = depth + 1; i < undoableOps.length && count < 1000; i++) {
+  for (let i = depth + 1; i < undoableOps.length && group.length < 1000; i++) {
     const op = undoableOps[i] as (typeof undoableOps)[number]
     const ts = new Date(op.created_at).getTime()
-    if (op.device_id !== prevDevice) break
+    if (op.device_id !== device) break
     if (Math.abs(prevTs - ts) > windowMs) break
-    count += 1
+    group.push(op)
     prevTs = ts
-    prevDevice = op.device_id
   }
 
-  return count
+  return group
+}
+
+/** A REDO op is `is_undo = 0` and so undoable, and undoing it means reversing
+ *  the op it re-applied — the hop `resolveUndoTarget` makes for the
+ *  ref-addressed path, over the `re_applied` stash `redo_page_op` writes. */
+function effectiveUndoTarget(entry: MockOpLogEntry): MockOpLogEntry {
+  return (JSON.parse(entry.payload) as { re_applied?: MockOpLogEntry }).re_applied ?? entry
 }
 
 /** The sentinel `page_id` that asks `list_page_history` for the WHOLE op log
@@ -114,11 +126,21 @@ function opInPageScope(entry: MockOpLogEntry, scope: Set<string> | null): boolea
   return blockId !== null && scope.has(blockId)
 }
 
-/** The block an attachment op's target hangs off, or `null` when the op is not
- *  an attachment one or its row is gone — the backend's `EXISTS` over live
- *  `attachments` misses a reclaimed row the same way. */
+/**
+ * The block a `rename_attachment` op's target hangs off, or `null` when its row
+ * is gone — the backend's `EXISTS` over live `attachments` misses a reclaimed
+ * row the same way.
+ *
+ * `delete_attachment` is NOT resolvable here, and the backend does not resolve
+ * it this way either: `delete_attachment_inner` hard-DELETEs the row in the
+ * transaction that appends the op, so the live-`attachments` probe is false
+ * from that instant. Its second disjunct reaches the owner through the paired
+ * `add_attachment` op-log row (history.rs, #4247), and the mock's
+ * `add_attachment_with_bytes` appends no op to pair with — the same gap that
+ * defers the `delete_attachment` revert arm.
+ */
 function attachmentOwnerBlockId(entry: MockOpLogEntry): string | null {
-  if (entry.op_type !== 'rename_attachment' && entry.op_type !== 'delete_attachment') return null
+  if (entry.op_type !== 'rename_attachment') return null
   try {
     const id = (JSON.parse(entry.payload) as Record<string, unknown>)['attachment_id']
     if (typeof id !== 'string') return null
@@ -229,10 +251,11 @@ export const historyHandlers = {
   // disjunct, an `EXISTS` over live `attachments` that reaches ops whose
   // `block_id` column is NULL. It is no longer UNREACHABLE — #5057 gave both
   // writers op-log rows — so this is a real gap rather than a branch nothing
-  // can enter. `attachmentOwnerBlockId` above is the same probe, applied to
-  // the positional-undo scope; these two listings want it too, with the
-  // pagination arithmetic that entails, so they get it with the fixture that
-  // pins them.
+  // can enter. `attachmentOwnerBlockId` above is that probe for a RENAME,
+  // applied to the positional-undo scope; these two listings want it too, with
+  // the pagination arithmetic that entails, so they get it with the fixture
+  // that pins them. A DELETE needs the paired-`add_attachment` disjunct
+  // instead, which no mock op-log row can serve yet — see that function.
   get_block_history: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
     const blockId = (a['blockId'] as string | undefined) ?? null
@@ -260,7 +283,7 @@ export const historyHandlers = {
   // global history and every page was the first page. The same shape #3870
   // found in `list_blocks` and #4849 in `get_backlinks`.
   //
-  // The attachment disjunct is unreachable here for the reason
+  // The attachment disjunct is NOT modelled here either, for the reason
   // `get_block_history` above gives.
   list_page_history: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
@@ -292,13 +315,11 @@ export const historyHandlers = {
     )
   },
 
-  // #2190 — batched group-undo. Mirrors `undo_page_group_inner`: size the
-  // consecutive same-device, within-window group with `findUndoGroupSize`,
-  // then apply the per-op reverse newest-first, returning
-  // one UndoResult per reverted op. Reuses the sibling handlers so the reverse
-  // effects stay identical to the single-op path. Reverse ops carry `is_undo`
-  // (#4868) and are filtered out of the undoable set, so `depth + i` walks the
-  // same ops the group spans across the loop.
+  // #2190 — batched group-undo. Mirrors `undo_page_group_inner`: enumerate the
+  // consecutive same-device, within-window group, then apply the per-op reverse
+  // newest-first, returning one UndoResult per reverted op. Shares
+  // `applyUndoForTarget` with the ref-addressed path so the reverse effects
+  // stay identical to the single-op one.
   undo_page_group: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
     const depth = (a['depth'] as number) ?? 0
@@ -310,22 +331,11 @@ export const historyHandlers = {
     // refuses. Two separate checks because they name different args.
     if (depth < 0) throw validationRejection('depth must be non-negative')
     if (windowMs < 0) throw validationRejection('window_ms must be non-negative')
-    const undoOp = historyHandlers['undo_page_op']
-    if (!undoOp) {
-      // mock-internal invariant (#2463) — `historyHandlers` is malformed if
-      // this fires; it has no real-backend counterpart, so it stays a bare
-      // Error. (The sibling lives in this same domain module post-#2931
-      // split, so this is a same-object forward reference — resolved at
-      // call time, after `historyHandlers` is fully constructed — not a
-      // cross-module lookup through the barrel's `HANDLERS`.)
-      throw new Error('undo_page_group mock: missing sibling handler')
-    }
-    const groupSize = findUndoGroupSize(depth, windowMs, pageSubtreeIds(a['pageId'] as string))
-    const results: unknown[] = []
-    for (let i = 0; i < groupSize; i++) {
-      results.push(undoOp({ pageId: a['pageId'], undoDepth: depth + i }))
-    }
-    return results
+    // Enumerated ONCE, then reverted by ref: `applyUndoForTarget` addresses the
+    // entry itself, so the group survives its own reverts moving a block out of
+    // the page's scope. Re-entering `undo_page_op` per iteration did not.
+    const group = enumerateUndoGroup(depth, windowMs, pageSubtreeIds(a['pageId'] as string))
+    return group.map((picked) => applyUndoForTarget(effectiveUndoTarget(picked)))
   },
 
   revert_ops: (args) => {
@@ -380,8 +390,9 @@ export const historyHandlers = {
     // it `is_undo = 0`, "its effect is forward-equivalent"), so undo-after-redo
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
+    const scope = pageSubtreeIds(a['pageId'] as string)
     const undoableOps = sortOpLogNewestFirst(
-      opLog.filter((o) => !o.is_undo && opInPageScope(o, pageSubtreeIds(a['pageId'] as string))),
+      opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
     )
     // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
     // checks the sign BEFORE the lookup and returns
@@ -400,12 +411,9 @@ export const historyHandlers = {
     const picked = undoableOps[undoDepth]
     if (!picked) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
 
-    // #4868 — a REDO op is undoable (it is `is_undo = 0`), and undoing it
-    // means reversing the op it re-applied, so that the result names the
-    // original — the same hop `resolveUndoTarget` makes for the ref-addressed
-    // path.
-    const reApplied = (JSON.parse(picked.payload) as { re_applied?: MockOpLogEntry }).re_applied
-    const target = reApplied ?? picked
+    // #4868 — a REDO op is undoable, and undoing it reverses the op it
+    // re-applied, so the result names the original.
+    const target = effectiveUndoTarget(picked)
 
     // The shared table, not a local default. A `reverseOpType` local defaulted
     // to `edit_block`, so a positional undo of a `set_property` / `add_tag` /
@@ -673,7 +681,7 @@ export const historyHandlers = {
     // `page_id == "__all__"` and the page-scoped one otherwise. The only UI
     // call site passes `__all__`, which is why an unscoped sweep looked right.
     const pageId = a['pageId'] as string
-    const scope = pageId === '__all__' ? null : pageSubtreeIds(pageId)
+    const scope = pageId === GLOBAL_HISTORY_PAGE_ID ? null : pageSubtreeIds(pageId)
     const newer = sortOpLogNewestFirst(
       opLog.filter((o) => o.seq > targetSeq && opInPageScope(o, scope)),
     )

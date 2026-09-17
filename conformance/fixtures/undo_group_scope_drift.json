@@ -1,0 +1,189 @@
+{
+  "description": "#5057 — `undo_page_group` against a group whose own first revert changes the page scope it was enumerated from. The scope is a live `parent_id` walk (`page_blocks`), so an op belongs to whichever page its block sits under NOW, not the page it sat under when the op was made: C1's `create_block` and `set_property` enter Alpha's scope the moment C1 is moved there. `undo_page_group_inner` enumerates the whole group inside its `BEGIN IMMEDIATE` (`enumerate_undo_group_in_tx`) precisely so the list cannot shift under the reverts, and its doc-block names the failure by name — the old FE loop \"sized the group once and then issued N offset-based undos that could drift if the op stream shifted mid-loop\". This fixture is that scenario: reverting the move sends C1 back to Beta, at which point BOTH remaining ops leave Alpha's scope, so a re-derived list is empty and an offset-addressed second undo indexes past its end. Enumerated once, the group reverts exactly what it counted. No query steps: `properties` and `blocks` are both in the snapshot's five arrays, so the settled state is the evidence — C1 back under Beta, its property gone, and C1 itself tombstoned by the reverse of its own create. A one-page fixture cannot tell the two implementations apart, and neither can a group whose reverts do not move a block across pages — which is why every other undo fixture passes either way. `set_property` rather than `edit_block` for both members: an `EditBlockPayload` carries `prev_edit`, so a block's FIRST edit is non-reversible and would abort the whole batch with `NotFound` before the drift could show (`revert_ops_in_tx` runs the group with `skip_non_reversible = false`).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha seed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta seed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "x",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "group_reverts_what_it_enumerated",
+      "returns": [
+        "undo_page_group#reversed_op_type=move_block#new_op_type=move_block#is_redo=false",
+        "undo_page_group#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false",
+        "undo_page_group#reversed_op_type=create_block#new_op_type=delete_block#is_redo=false"
+      ]
+    }
+  ],
+  "name": "undo_group_scope_drift",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "x",
+        "index": 0,
+        "parentId": "S3"
+      },
+      "command": "create_block",
+      "comment": "C1 is born under BETA, and born from an OP carrying an `index`: a move's reverse reconstructs the prior placement from the newest earlier `move_block` / `create_block` row for that block (`find_prior_position`), and a create payload with neither `index` nor `position` is `NonReversible` rather than a guessed slot. A SEEDED block has no such row at all."
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "key": "status",
+        "value": {
+          "value_text": "wip"
+        }
+      },
+      "command": "set_property",
+      "comment": "Made while C1 is still under Beta. Reversible from the start, unlike a block's first `edit_block` (an `EditBlockPayload` carries `prev_edit`)."
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_block",
+      "comment": "C1 moves onto Alpha. From here Alpha's live subtree holds C1, so all three ops are in Alpha's scope — it is this move that put the two older ones there."
+    },
+    {
+      "args": {
+        "depth": 0,
+        "pageId": "S1",
+        "windowMs": 60000
+      },
+      "command": "undo_page_group",
+      "comment": "Three ops in Alpha's scope, so the group is three. Reverting the move (newest first) takes C1 back to Beta, and with it BOTH older ops leave Alpha's scope — an implementation that re-derives the scope per iteration then indexes a list that has shrunk to nothing, and answers one result or `NotFound` with the move already applied. Enumerated once, the group reverts all three and answers three.",
+      "name": "group_reverts_what_it_enumerated",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha seed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "beta seed",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
