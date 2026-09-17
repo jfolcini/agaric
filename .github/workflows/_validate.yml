@@ -1353,6 +1353,11 @@ jobs:
         # `vitest-coverage` job replays both with `--mergeReports`. The blob
         # name carries the shard index, so the two never collide.
         #
+        # #5058 — `--reporter=dot` alongside it: blob writes a file and prints
+        # nothing, so THIS job's log names no failing test. The name is still
+        # reachable — `vitest-coverage` re-reports it from the blob — but only
+        # after that job installs, downloads and builds.
+        #
         # #749's coverage thresholds are DISABLED here and enforced on the
         # merged report instead. A shard sees only half the suite — measured
         # locally, one shard of an 8-file subset reported 1.25% line coverage
@@ -1364,6 +1369,7 @@ jobs:
           npx vitest run \
             --shard=${{ matrix.shard }}/2 \
             --reporter=blob \
+            --reporter=dot \
             --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
             --coverage \
             --coverage.thresholds.lines=0 \

@@ -161,6 +161,11 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // outside the snapshot's five arrays, so `list_attachments` observes them.
   delete_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   rename_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5057 — `page_aliases` is outside the snapshot's five arrays too, so a
+  // `get_page_aliases` step observes the table. The RETURN is its own
+  // evidence: a LIST OF BARE STRINGS naming the rows actually INSERTED, which
+  // is narrower than what the caller passed.
+  set_page_aliases: { idKey: HEADED_ID_KEY, attrs: ['inserted'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
