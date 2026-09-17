@@ -166,12 +166,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // evidence: a LIST OF BARE STRINGS naming the rows actually INSERTED, which
   // is narrower than what the caller passed.
   set_page_aliases: { idKey: HEADED_ID_KEY, attrs: ['inserted'], lists: [] },
-  // #5057 — the spaces cluster. The two creators answer with the new block's
-  // id, which the relabel maps to its canonical label like any other id-valued
-  // attribute; `move_blocks_to_space` answers a bare count.
+  // #5057 — the two space creators answer with the new block's id, which the
+  // relabel maps to its canonical label like any other id-valued attribute.
   create_space: { idKey: HEADED_ID_KEY, attrs: ['space_id'], lists: [] },
   create_page_in_space: { idKey: HEADED_ID_KEY, attrs: ['page_id'], lists: [] },
-  move_blocks_to_space: { idKey: HEADED_ID_KEY, attrs: ['moved'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */

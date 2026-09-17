@@ -75,20 +75,27 @@ function nocaseCompare(x: string, y: string): number {
 }
 
 /**
- * The 1-based rank a new root-level block takes in `spaceId`'s sibling group.
+ * The dense 1-based rank a block appended to `parentId`'s children takes.
  *
- * Positions are dense WITHIN A SPACE, not across the whole `parent_id = NULL`
- * group: two spaces each have a block at rank 1. A block's space is
- * `blocks.space_id`, except for a block that IS a space — it is not a member of
- * itself, so it ranks in its own group, which is why a brand-new space comes
- * out at 1 and the first page created inside it at 2.
+ * Two rules the backend applies and a plain `siblings.length` does not.
+ * Positions are DENSE and 1-BASED (`insertAtSlotAndRenumber`), and a
+ * SOFT-DELETED sibling keeps its slot (#4669, #419), so tombstones count.
+ *
+ * At the ROOT the group is also per SPACE, not the whole `parent_id = NULL`
+ * set: each space's tree is its own Loro doc, so two spaces each have a block
+ * at rank 1. A block's space is `blocks.space_id`, except for a block that IS a
+ * space — not a member of itself — which ranks in its own group. That is why a
+ * new space comes out at 1 and the first page created inside it at 2.
  */
-function nextRootPositionInSpace(spaceId: string | null): number {
+function nextDenseRank(parentId: string | null, spaceId: string | null): number {
   let siblings = 0
   for (const b of blocks.values()) {
-    if (b['deleted_at'] != null || b['parent_id'] != null) continue
-    const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
-    if (owner === spaceId) siblings += 1
+    if ((b['parent_id'] as string | null) !== parentId) continue
+    if (parentId === null) {
+      const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
+      if (owner !== spaceId) continue
+    }
+    siblings += 1
   }
   return siblings + 1
 }
@@ -425,12 +432,7 @@ export const pagesHandlers = {
     const existing = findLivePageByTitle(content, spaceId)
     if (existing !== null) return existing
     const id = fakeId()
-    // Root pages rank within the TARGET SPACE's group; a child still ranks
-    // among its parent's children, which no space partitions.
-    const position =
-      parentId === null
-        ? nextRootPositionInSpace(spaceId)
-        : [...blocks.values()].filter((b) => b['parent_id'] === parentId && !b['deleted_at']).length
+    const position = nextDenseRank(parentId, spaceId)
     const row = {
       id,
       block_type: 'page',
@@ -488,10 +490,10 @@ export const pagesHandlers = {
       content: (a['name'] as string) ?? null,
       parent_id: null,
       page_id: id,
-      // A space is not a member of itself, so it ranks in its OWN group — empty
-      // until now, hence 1. This was hardcoded `0`, a rank no backend row
-      // carries.
-      position: nextRootPositionInSpace(id),
+      // A space is not a member of itself, so it ranks in its OWN group, which
+      // a freshly minted id cannot already have a member of — hence 1. This was
+      // hardcoded `0`, a rank no backend row carries.
+      position: 1,
       deleted_at: null,
       todo_state: null,
       priority: null,

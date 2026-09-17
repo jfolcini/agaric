@@ -730,14 +730,40 @@ async fn verify_fixture_engine_parity(
     // Resolving every id against TEST_SPACE_ID alone made any fixture that
     // created a space fail this guard on presence, which is what "outside the
     // single-space conformance scope" actually meant.
+    //
+    // The own-id fallback applies ONLY to a block with a SQL row. A block with
+    // no row is PURGED, and `Registry::for_space` creates an engine on miss, so
+    // keying a purged id by itself would open a fresh empty doc — under which
+    // `read_block` answers `None` and the satellites below answer `[]` by
+    // construction, making the purge half of this guard vacuous. A purged
+    // block's node and satellites, if they leaked, are still in whichever doc
+    // it lived in, so search the spaces the registry ALREADY holds
+    // (`space_ids()` does not create) and answer from the first that has it.
+    let space_of = |id: &str| -> SpaceId {
+        match sql_blocks.get(id) {
+            // A block that IS a space is not a member of itself.
+            Some(block) => SpaceId::from_trusted(block.space_id.as_deref().unwrap_or(id)),
+            None => state
+                .registry
+                .space_ids()
+                .into_iter()
+                .find(|space| {
+                    state.registry.for_space(space, DEV).is_ok_and(|mut guard| {
+                        let engine = guard.engine_mut();
+                        engine.read_block(id).is_ok_and(|row| row.is_some())
+                            || engine
+                                .read_all_properties_typed(id)
+                                .is_ok_and(|p| !p.is_empty())
+                            || engine.read_tags(id).is_ok_and(|t| !t.is_empty())
+                    })
+                })
+                .unwrap_or_else(|| SpaceId::from_trusted(TEST_SPACE_ID)),
+        }
+    };
     let engine_for = |id: &str| {
-        let space = sql_blocks
-            .get(id)
-            .and_then(|block| block.space_id.clone())
-            .unwrap_or_else(|| id.to_owned());
         state
             .registry
-            .for_space(&SpaceId::from_trusted(&space), DEV)
+            .for_space(&space_of(id), DEV)
             .expect("for_space (conformance parity)")
     };
 
