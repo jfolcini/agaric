@@ -1356,7 +1356,7 @@ jobs:
         # #5058 — `--reporter=dot` alongside it: blob writes a file and prints
         # nothing, so THIS job's log names no failing test. The name is still
         # reachable — `vitest-coverage` re-reports it from the blob — but only
-        # after that job installs, downloads and builds.
+        # after that job installs and downloads the artifacts.
         #
         # #749's coverage thresholds are DISABLED here and enforced on the
         # merged report instead. A shard sees only half the suite — measured

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { DiffSpan } from '@/lib/bindings'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
+import { scrollParentAny } from '@/lib/scroll-parent'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
@@ -20,25 +21,6 @@ interface DiffDisplayProps {
 const LARGE_DIFF_THRESHOLD = 500
 /** Number of spans shown when the diff is collapsed. */
 const COLLAPSED_SPAN_COUNT = 100
-
-/**
- * Walk up from `el`'s parent chain looking for the nearest scrollable
- * ancestor (overflow: auto | scroll | overlay on either axis). Returns
- * `null` if none is found. Used by the hunk-nav scroll-skip heuristic so
- * `scrollIntoView` is only called when the target is actually offscreen.
- */
-function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
-  let cur: HTMLElement | null = el?.parentElement ?? null
-  while (cur) {
-    const style = window.getComputedStyle(cur)
-    const overflow = `${style.overflow} ${style.overflowY} ${style.overflowX}`
-    if (/auto|scroll|overlay/.test(overflow)) {
-      return cur
-    }
-    cur = cur.parentElement
-  }
-  return null
-}
 
 /**
  * Renders a word-level diff as inline colored spans.
@@ -164,7 +146,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
       // Skip the scroll if the target is already fully visible in its
       // nearest scrollable ancestor — avoids the "I clicked but nothing
       // moved" feedback gap on short diffs that already fit on screen.
-      const ancestor = findScrollableAncestor(el)
+      const ancestor = scrollParentAny(el)
       if (ancestor) {
         const elRect = el.getBoundingClientRect()
         const ancestorRect = ancestor.getBoundingClientRect()

@@ -10,6 +10,7 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 
@@ -56,7 +57,10 @@ class MockIntersectionObserver {
 
 // -- Minimal renderHook (no external deps needed) -----------------------------
 
-function renderHook<T>(hookFn: () => T): {
+function renderHook<T>(
+  hookFn: () => T,
+  wrap?: (node: React.ReactElement) => React.ReactElement,
+): {
   result: { current: T }
   unmount: () => void
 } {
@@ -73,7 +77,8 @@ function renderHook<T>(hookFn: () => T): {
 
   act(() => {
     root = createRoot(container)
-    root.render(createElement(TestComponent))
+    const node = createElement(TestComponent)
+    root.render(wrap ? wrap(node) : node)
   })
 
   return {
@@ -162,7 +167,7 @@ describe('useViewportObserver', () => {
     scroller.remove()
   })
 
-  it('probes for the scroll container only until it finds one (#5066)', () => {
+  it('an unchanged answer does not rebuild the observer (#5066)', () => {
     const scroller = document.createElement('div')
     scroller.style.overflowY = 'auto'
     document.body.append(scroller)
@@ -181,12 +186,110 @@ describe('useViewportObserver', () => {
       result.current.createObserveRef('B2')(second)
     })
 
-    // No second rebuild: the container is already adopted, so the ancestor walk
-    // costs one pass per container rather than one per row.
+    // The walk runs again, the answer is the same element, so nothing rebuilds.
+    // That is what keeps the rebuild rare — not skipping the walk.
     expect(MockIntersectionObserver.instances).toHaveLength(afterFirst)
 
     unmount()
     scroller.remove()
+  })
+
+  // #5066 — the ordering that makes latching the first answer wrong. Radix's
+  // `ScrollArea` viewport renders `overflow-y: hidden` and flips to `scroll` in
+  // a passive effect, so a row attaching in that same commit walks past it and
+  // finds whatever scroller sits ABOVE. Pinned with two plain divs so the test
+  // states the mechanism rather than Radix's internals; the sibling below runs
+  // the real component.
+  it('re-derives the root when a nearer container becomes scrollable (#5066)', () => {
+    const outer = document.createElement('div')
+    outer.style.overflowY = 'auto'
+    const inner = document.createElement('div')
+    inner.style.overflowY = 'hidden'
+    outer.append(inner)
+    document.body.append(outer)
+    const first = makeEl('B1')
+    const second = makeEl('B2')
+    inner.append(first, second)
+
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    act(() => {
+      result.current.createObserveRef('B1')(first)
+    })
+    // `inner` is not scrollable yet, so the walk goes past it.
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(outer)
+
+    inner.style.overflowY = 'scroll'
+    act(() => {
+      result.current.createObserveRef('B2')(second)
+    })
+
+    // Latching the first answer would leave the observer measuring `outer`
+    // forever, with no event able to correct it.
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(inner)
+
+    unmount()
+    outer.remove()
+  })
+
+  // #5066 — the sibling above states the mechanism with plain divs; this one
+  // runs the REAL `ScrollArea`, so the walk is proven against the DOM the app
+  // actually renders: Radix puts a `position: relative` Root with no overflow
+  // of its own between the viewport and whatever scrolls outside it, and the
+  // walk has to pass through that without stopping.
+  //
+  // The outer scroller is what makes this falsify the latch rather than merely
+  // exercise it. Without it the first attach finds nothing, and the old code
+  // re-probed for as long as it had found nothing — so it reached the viewport
+  // on a later attach anyway. The latch only bites once a root has been
+  // adopted, so the first attach has to adopt the WRONG one.
+  //
+  // Both `overflowY` assignments are deliberate. Radix drives the viewport
+  // between `hidden` and `scroll` from `scrollbarYEnabled`, which it decides by
+  // MEASURING an overflow; jsdom does no layout, so it mounts already enabled
+  // and never moves again. `scroll-area.tsx` hardcodes `type="hover"`, so in a
+  // browser it is `ScrollAreaScrollbarHover` that enables the scrollbar on
+  // pointerenter — after mount, and reversibly on leave, which is precisely why
+  // the root cannot be decided once.
+  it('adopts the real ScrollArea viewport once it becomes scrollable (#5066)', () => {
+    const { result, unmount } = renderHook(
+      () => useViewportObserver(),
+      (node) =>
+        createElement(
+          'div',
+          { 'data-outer-scroller': '', style: { overflowY: 'auto' } },
+          createElement(ScrollArea, null, node),
+        ),
+    )
+
+    const live = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    const outer = document.querySelector<HTMLElement>('[data-outer-scroller]')
+    expect(live).not.toBeNull()
+    expect(outer).not.toBeNull()
+    // Both assertions below name a different element, so a lookup that
+    // collapsed them onto one would make the test pass for two reasons.
+    expect(outer).not.toBe(live)
+    const viewport = live as HTMLElement
+    const wrapper = outer as HTMLElement
+
+    // Pre-scrollbar: the row walks straight past the viewport to `wrapper`.
+    viewport.style.overflowY = 'hidden'
+    const first = makeEl('B1')
+    viewport.append(first)
+    act(() => {
+      result.current.createObserveRef('B1')(first)
+    })
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(wrapper)
+
+    viewport.style.overflowY = 'scroll'
+    const second = makeEl('B2')
+    viewport.append(second)
+    act(() => {
+      result.current.createObserveRef('B2')(second)
+    })
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(viewport)
+
+    unmount()
   })
 
   it('disconnects the observer on unmount', () => {
