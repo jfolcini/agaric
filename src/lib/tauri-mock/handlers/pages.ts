@@ -532,9 +532,33 @@ export const pagesHandlers = {
   set_page_aliases: (args) => {
     const a = args as Record<string, unknown>
     const pid = a['pageId'] as string
-    const aliases = a['aliases'] as string[]
-    pageAliases.set(pid, aliases)
-    return aliases
+    const page = blocks.get(pid)
+    if (!page || page['block_type'] !== 'page' || page['deleted_at'] !== null) {
+      // `set_page_aliases_inner` probes for a live page block inside its
+      // `BEGIN IMMEDIATE` and answers `NotFound` (#661).
+      throw notFoundRejection('page not found')
+    }
+    // `page_aliases.alias` is UNIQUE COLLATE NOCASE across ALL pages and the
+    // write is `INSERT OR IGNORE`, so an alias another page already holds is
+    // skipped SILENTLY and left out of the returned list. This page's own rows
+    // are excluded because the backend DELETEs them first, which is also why
+    // re-listing an alias the page already had is not a self-conflict.
+    const taken = new Set<string>()
+    for (const [owner, held] of pageAliases) {
+      if (owner === pid) continue
+      for (const alias of held) taken.add(alias.toLowerCase())
+    }
+    const kept: string[] = []
+    for (const raw of a['aliases'] as string[]) {
+      // Trimmed, and an entry that trims to nothing is skipped — so neither
+      // reaches the table nor the answer.
+      const alias = raw.trim()
+      if (alias === '' || taken.has(alias.toLowerCase())) continue
+      taken.add(alias.toLowerCase())
+      kept.push(alias)
+    }
+    pageAliases.set(pid, kept)
+    return kept
   },
 
   get_page_aliases: (args) => {

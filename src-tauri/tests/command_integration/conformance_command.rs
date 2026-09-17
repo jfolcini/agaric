@@ -188,6 +188,13 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // `list_attachments` step is what observes them.
     ("delete_attachment", HEADED_ID_KEY, &[], &[]),
     ("rename_attachment", HEADED_ID_KEY, &[], &[]),
+    // #5057 — `page_aliases` is outside the snapshot's five arrays too, so the
+    // `get_page_aliases` step observes the table. The RETURN is its own
+    // evidence: a LIST OF BARE STRINGS naming the rows the write actually
+    // INSERTED, which is narrower than what the caller passed — an entry that
+    // trims to nothing, and one another page already holds, are both dropped
+    // by the command and so never appear here.
+    ("set_page_aliases", HEADED_ID_KEY, &["inserted"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -471,6 +478,31 @@ pub(super) async fn apply_op_via_command(
                 mat,
                 AttachmentId::from(req_str("attachmentId").as_str()),
                 req_str("newFilename"),
+            )
+            .await,
+        ),
+        // An alias is the caller's own text, so `aliases` takes no label
+        // expansion — the same rule `req_str` states for the scalar args.
+        "set_page_aliases" => to_json(
+            set_page_aliases_inner(
+                pool,
+                arg_label_id("pageId")
+                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'pageId'"))
+                    .as_str(),
+                arg("aliases")
+                    .and_then(Value::as_array)
+                    .unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'aliases'")
+                    })
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .unwrap_or_else(|| {
+                                panic!("conformance op '{command}': aliases entry is not a string")
+                            })
+                            .to_owned()
+                    })
+                    .collect(),
             )
             .await,
         ),
@@ -835,7 +867,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 30;
+    const MUTATING_ARM_COUNT: usize = 31;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

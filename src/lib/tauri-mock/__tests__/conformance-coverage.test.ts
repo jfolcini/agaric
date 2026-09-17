@@ -252,11 +252,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     '#4723 resolve-to-existing-title is pinned mock-side by page-title-unique.test.ts',
   create_space: 'space registry outside the single-space conformance snapshot scope',
   move_blocks_to_space: 'cross-space move outside the single-space conformance snapshot scope',
-  set_page_aliases:
-    'fixture candidate: `seed.page_aliases` puts the table on both stacks and the three ' +
-    'alias readers have query steps (#4999), so an ops-then-query fixture can pin the ' +
-    'write; none does yet',
-
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
   // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
@@ -685,7 +680,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'import_bibliography',
   'import_markdown',
   'move_blocks_to_space',
-  'set_page_aliases',
 ]
 
 /**
