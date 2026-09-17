@@ -228,10 +228,19 @@ test.describe('HistoryView — op log compaction', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     await page.getByRole('button', { name: 'History', exact: true }).click()
-    await page.getByRole('button', { name: 'Op Log Compaction' }).click()
 
+    // `CompactionCard` auto-expands itself, once per mount, as soon as the
+    // status reports `eligible_ops > 0` — and the seed stamps six page edits
+    // ~90 days back, right on the retention boundary the mock now counts
+    // against. So whether the card is already open is not something this test
+    // can assume: clicking blindly would CLOSE it. Settle on expanded.
+    const toggle = page.getByRole('button', { name: 'Op Log Compaction' })
+    await expect(toggle).toBeVisible()
     const totalOps = page.getByTestId('compaction-total-ops')
-    await expect(totalOps).toBeVisible()
+    await expect(async () => {
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+      await expect(totalOps).toBeVisible({ timeout: 1000 })
+    }).toPass()
     await expect(totalOps).not.toHaveText('0')
 
     await clearInvokeCalls(page)
