@@ -20,6 +20,7 @@ type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionO
 class MockIntersectionObserver {
   callback: IOCallback
   rootMargin: string
+  root: Element | Document | null
   observed = new Set<Element>()
 
   static instances: MockIntersectionObserver[] = []
@@ -27,6 +28,7 @@ class MockIntersectionObserver {
   constructor(callback: IOCallback, options?: IntersectionObserverInit) {
     this.callback = callback
     this.rootMargin = options?.rootMargin ?? '0px'
+    this.root = options?.root ?? null
     MockIntersectionObserver.instances.push(this)
   }
 
@@ -124,6 +126,67 @@ describe('useViewportObserver', () => {
     expect(obs.rootMargin).toBe('100px 0px')
 
     unmount()
+  })
+
+  // #5066 — `rootMargin` expands the ROOT's rect and nothing else. With the
+  // implicit (viewport) root, an intermediate `overflow` ancestor still clips
+  // with no margin, so the documented 200px buffer did not exist for the block
+  // list inside its `ScrollArea`: a row was virtualized away the instant it
+  // crossed the container edge, leaving a bare placeholder where the block the
+  // user had just edited should be.
+  it('adopts the nearest scrollable ancestor as the observer root (#5066)', () => {
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'scroll'
+    document.body.append(scroller)
+    const el = makeEl('B1')
+    scroller.append(el)
+
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    // The first observer has no root: no row has attached yet, so there is
+    // nothing to discover a container from.
+    expect(MockIntersectionObserver.instances[0]?.root).toBeNull()
+
+    act(() => {
+      result.current.createObserveRef('B1')(el)
+    })
+
+    // Attaching the row rebuilds the observer against the real scroll
+    // container, which is what finally makes `rootMargin` mean something.
+    const latest = MockIntersectionObserver.instances.at(-1) as MockIntersectionObserver
+    expect(latest.root).toBe(scroller)
+    expect(latest.rootMargin).toBe('200px 0px')
+    expect(latest.observed.has(el)).toBe(true)
+
+    unmount()
+    scroller.remove()
+  })
+
+  it('probes for the scroll container only until it finds one (#5066)', () => {
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'auto'
+    document.body.append(scroller)
+    const first = makeEl('B1')
+    const second = makeEl('B2')
+    scroller.append(first, second)
+
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    act(() => {
+      result.current.createObserveRef('B1')(first)
+    })
+    const afterFirst = MockIntersectionObserver.instances.length
+
+    act(() => {
+      result.current.createObserveRef('B2')(second)
+    })
+
+    // No second rebuild: the container is already adopted, so the ancestor walk
+    // costs one pass per container rather than one per row.
+    expect(MockIntersectionObserver.instances).toHaveLength(afterFirst)
+
+    unmount()
+    scroller.remove()
   })
 
   it('disconnects the observer on unmount', () => {
