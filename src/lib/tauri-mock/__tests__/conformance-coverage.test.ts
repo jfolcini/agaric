@@ -234,20 +234,9 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  * later gains a fixture (delete the redundant entry) or leaves `bindings.ts`.
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
-  // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
-  // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
-  // conformance runner replays raw `OpPayload`s, so no fixture can drive an
-  // undo/revert command, and the mock unit tests below hand-write their own
-  // expectations. Reading these as coverage is what let the cohort divergence
-  // ship. Keep the wording honest until a fixture can drive a reversal.
-  // #3964 — the four corrections the citation guard below forced. Each of
-  // these reasons used to name a file that does not mention the command it
-  // waives; nothing checked, so the waiver read as coverage it did not have.
-  // Was "regression-guarded by revert.test.ts". revert.test.ts pins
-  // `applyRevertForOp`, which this handler never calls — the mock's
-  // `restore_page_to_op` is a CONSTANT STUB returning `{ops_reverted: 0,
-  // non_reversible_skipped: 0, results: []}` (handlers/history.ts). There is
-  // no behaviour to regression-guard, and the old citation implied there was.
+  // ── Op-log time-travel (op-log rewrite) ──
+  // #5057 retired the rest of this section: all seven undo/redo/revert
+  // commands are now driven by fixtures, through the `On` op-ref label.
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
   // ── Attachments ──

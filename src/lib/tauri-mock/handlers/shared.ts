@@ -1719,21 +1719,31 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
         'refusing to undo it twice',
     )
   }
-  // Backend parity: the real command appends a `delete_property` op even when
-  // the property never existed, but reversing that op is impossible — there
-  // is no prior `set_property` to restore. `build_reverse_delete_property`
-  // surfaces that as NotFound during the (pre-apply, batch-aborting) reverse
-  // computation; mirror it here so the FE sees the same failure shape.
-  if (effective.op_type === 'delete_property') {
-    const payload = JSON.parse(effective.payload) as { from_value?: unknown; key?: string }
-    if (payload.from_value == null) {
-      throw notFoundRejection(
-        `no prior set_property found for key '${payload.key ?? ''}' — ` +
-          'cannot reverse delete_property',
-      )
-    }
-  }
+  assertDeletePropertyHasPrior(effective)
   return effective
+}
+
+/**
+ * Backend parity: the real command appends a `delete_property` op even when
+ * the property never existed, but reversing that op is impossible — there is
+ * no prior `set_property` to restore. `build_reverse_delete_property`
+ * (agaric-engine `reverse/batch.rs`) surfaces that as `NotFound`, and
+ * `is_skippable_non_reversible` matches only `NonReversible`, so it is NOT
+ * skipped: it aborts the whole batch.
+ *
+ * #5057 — shared by the ref-addressed undo path and `restore_page_to_op`'s
+ * sweep. Written once because the sweep having its own idea of reversibility
+ * is exactly the two-paths-different-coverage shape this cluster kept finding.
+ */
+export function assertDeletePropertyHasPrior(entry: MockOpLogEntry): void {
+  if (entry.op_type !== 'delete_property') return
+  const payload = JSON.parse(entry.payload) as { from_value?: unknown; key?: string }
+  if (payload.from_value == null) {
+    throw notFoundRejection(
+      `no prior set_property found for key '${payload.key ?? ''}' — ` +
+        'cannot reverse delete_property',
+    )
+  }
 }
 
 /**

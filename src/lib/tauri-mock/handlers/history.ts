@@ -17,6 +17,7 @@ import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-m
 import {
   type TypedHandlers,
   applyUndoForTarget,
+  assertDeletePropertyHasPrior,
   notFoundRejection,
   pageRequestLimit,
   resolveUndoTarget,
@@ -637,6 +638,10 @@ export const historyHandlers = {
         nonReversibleSkipped += 1
         continue
       }
+      // A priorless `delete_property` is NotFound, not NonReversible, so the
+      // backend's batch does not skip it — it aborts the whole restore. This
+      // throws for the same reason, before anything in the sweep is applied.
+      assertDeletePropertyHasPrior(op)
       const reverseOpType = reverseOpTypeFor(op)
       const reversePayload = reversePayloadFor(op)
       applyRevertForOp(op, blocks, { properties, blockTags })

@@ -397,8 +397,6 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
-        // An attachment id is the fixture's own short label (`ATT1`), inserted
-        // verbatim by the seed loader, so it takes no expansion.
         // #5057 — positional undo. `pageId` is a label like any other block
         // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
         // page"), which is why this one is spellable where the ref-addressed
@@ -454,6 +452,8 @@ pub(super) async fn apply_op_via_command(
                 .await,
             )
         }
+        // An attachment id is the fixture's own short label (`ATT1`), inserted
+        // verbatim by the seed loader, so it takes no expansion.
         "delete_attachment" => to_json(
             delete_attachment_inner(
                 pool,
