@@ -572,7 +572,8 @@ fn parity_property_key(key: &str) -> bool {
     !matches!(key, "created_at" | "completed_at" | "space")
 }
 
-/// Read the pre-op `parent_id` of a structural op's target block.
+/// The parent groups a structural op will leave gapped, read BEFORE it runs —
+/// afterwards the rows may be gone. Empty for an op that gaps nothing.
 ///
 /// #3429: this was inlined in `run_fixture` as
 /// `fetch_one(…).expect("read structural op parent")`, so a fixture whose op
@@ -582,34 +583,8 @@ fn parity_property_key(key: &str) -> bool {
 /// fixture, nor the command, nor the block. That is a dead end for exactly the
 /// person it fires on: the author of a brand-new fixture. `fetch_optional`
 /// turns the absence into a diagnostic the reader can act on without opening
-/// the harness.
-/// The target's parent at this point in the op list, read BEFORE the op
-/// destroys or moves the row. The OUTER `Option` is row presence: `None` means
-/// the block has no `blocks` row. That is a fixture bug for the single-block
-/// commands, which name exactly one target, and legal for the batch purge,
-/// whose backend silently skips an id it cannot find.
-async fn read_structural_op_parent(
-    pool: &SqlitePool,
-    fixture_name: &str,
-    command: &str,
-    block_id: &str,
-) -> Result<Option<Option<String>>, String> {
-    Ok(
-        sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(block_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| {
-                format!(
-                    "fixture '{fixture_name}': read parent of {command} target {block_id}: {error}"
-                )
-            })?
-            .map(|row| row.0),
-    )
-}
-
-/// The parent groups a structural op will leave gapped, read before it runs.
-/// Empty for an op that gaps nothing.
+/// the harness — except on the batch purge, whose backend skips an id it
+/// cannot find: a missing row there destroys nothing, so it gaps no group.
 async fn read_gapped_parent_candidates(
     pool: &SqlitePool,
     fixture_name: &str,
@@ -618,12 +593,17 @@ async fn read_gapped_parent_candidates(
 ) -> Result<Vec<Option<String>>, String> {
     let mut parents = Vec::new();
     for block_id in block_ids {
-        match read_structural_op_parent(pool, fixture_name, command, block_id).await? {
-            Some(parent) => parents.push(parent),
-            // A missing id is legal only on the batch path, whose backend skips
-            // it: it destroys nothing, so it gaps no group. The single-block
-            // commands name the one block they act on, so an absent row there
-            // means the fixture's ops disagree with its seed.
+        let row = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT parent_id FROM blocks WHERE id = ?",
+        )
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| {
+            format!("fixture '{fixture_name}': read parent of {command} target {block_id}: {error}")
+        })?;
+        match row {
+            Some((parent,)) => parents.push(parent),
             None if command == "purge_blocks_by_ids" => {}
             None => {
                 return Err(format!(
@@ -1418,7 +1398,6 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                 read_gapped_parent_candidates(&pool, &name, command, &structural_targets)
                     .await
                     .unwrap_or_else(|message| panic!("{message}"));
-            let old_parent = old_parents.first().cloned().flatten();
             // #4670 — a REJECTED command changed nothing, so the structural
             // bookkeeping and the removed-value check below only apply to an
             // op that ran; the engine-parity guard after them stays
@@ -1448,6 +1427,8 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
                         purge_gapped_parents.remove(&parent);
                     }
                     "move_block" => {
+                        // One target, so `old_parents` holds its parent alone.
+                        let old_parent = old_parents.first().cloned().flatten();
                         let new_parent = resolve(op["args"]["newParentId"].as_str());
                         purge_gapped_parents.remove(&old_parent);
                         purge_gapped_parents.remove(&new_parent);

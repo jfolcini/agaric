@@ -321,6 +321,19 @@ export function expandOpArgs(
   // `block_ids()`; without it the mock is handed raw labels, matches no block,
   // and every batch op silently degenerates into a no-op that still "passes"
   // its own guards.
+  // #5057 — `create_blocks_batch` carries its labels inside a list of SPECS
+  // rather than a list of ids, so `parentId` there expands exactly as the
+  // scalar key of the same name does.
+  if (Array.isArray(out['specs'])) {
+    out['specs'] = out['specs'].map((spec) => {
+      if (spec == null || typeof spec !== 'object') return spec
+      const copy = { ...(spec as Record<string, unknown>) }
+      if (typeof copy['parentId'] === 'string') {
+        copy['parentId'] = resolveOpArgId(copy['parentId'], createdIds)
+      }
+      return copy
+    })
+  }
   if (Array.isArray(out['blockIds'])) {
     out['blockIds'] = out['blockIds'].map((label) =>
       typeof label === 'string' ? resolveOpArgId(label, createdIds) : label,

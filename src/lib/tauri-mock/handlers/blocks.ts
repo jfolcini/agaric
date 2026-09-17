@@ -728,13 +728,7 @@ export const blocksHandlers = {
     for (const spec of specs) {
       const id = fakeId()
       const parentId = (spec['parentId'] as string | null) ?? null
-      let position = spec['position'] as number | undefined
-      if (position == null) {
-        const siblings = [...blocks.values()].filter(
-          (b) => b['parent_id'] === parentId && !b['deleted_at'],
-        )
-        position = siblings.length
-      }
+      const specPosition = spec['position'] as number | undefined
       const blockType = spec['blockType'] as string
       // #763 — root-page `page_id` resolution (see `create_block` above): use
       // the parent's own `page_id`, not the immediate parent id.
@@ -753,7 +747,9 @@ export const blocksHandlers = {
         content: (spec['content'] as string) ?? null,
         parent_id: parentId,
         page_id: batchPageId,
-        position,
+        // #5057 — assigned by the renumber pass below, exactly as the
+        // single-block `create_block` does.
+        position: 0,
         deleted_at: null,
         todo_state: null,
         priority: null,
@@ -761,6 +757,18 @@ export const blocksHandlers = {
         scheduled_date: null,
       }
       blocks.set(id, row)
+      // #400 / #5057 — a spec's `position` is the 1-BASED wire rank, so it
+      // converts to the 0-based slot this helper takes; absent, the spec
+      // appends. The batch used to assign `siblings.length` directly and never
+      // renumber, which is the 0-based slot read as if it were the rank: every
+      // appended block landed one short of the backend's position, and the
+      // sibling group was left un-renumbered for the next writer to inherit.
+      insertAtSlotAndRenumber(
+        parentId,
+        id,
+        specPosition == null ? Number.MAX_SAFE_INTEGER : specPosition - 1,
+      )
+      const position = row['position'] as number
       pushOp('create_block', {
         block_id: id,
         content: row['content'],
@@ -1011,15 +1019,24 @@ export const blocksHandlers = {
     return { block_id: rootId, purged_count: cohort.length }
   },
 
-  // Single-IPC batch restore. Iterates the input ids,
-  // clears `deleted_at` on each (matches existing `restore_block` mock's
-  // per-row logic), pushes one `restore_block` op per actually-restored
-  // root (mirrors backend's one op-per-root semantic). Non-deleted /
-  // missing ids are silently skipped.
+  // Single-IPC batch restore. Restores each listed root's full delete cohort
+  // and revives the tombstoned ancestor chain above it — the same
+  // `restoreCohort` the single-block handler runs — and pushes one
+  // `restore_block` op per restored root. A missing id is skipped; a LIVE one
+  // is refused.
   restore_blocks_by_ids: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['blockIds'] as string[]) ?? []
     if (ids.length === 0) throw validationRejection('block_ids list cannot be empty')
+    // A LIVE id is REFUSED, before anything is restored; a MISSING one is
+    // skipped. The two are not the same "cannot restore this" case, and the
+    // backend splits them the same way its single-block sibling does.
+    for (const id of ids) {
+      const b = blocks.get(id)
+      if (b && !b['deleted_at']) {
+        throw invalidOperationRejection(`block '${id}' is not deleted`)
+      }
+    }
     let count = 0
     for (const id of ids) {
       const b = blocks.get(id)

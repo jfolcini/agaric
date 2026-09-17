@@ -84,6 +84,26 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   },
   restore_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
   purge_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
+  // #5057 — the three batch COUNTERS answer with a bare number, which carries
+  // no field to name it. The shape's single attribute names the scalar, so the
+  // token reads `set_property_batch#updated=3` instead of exposing a synthetic
+  // key. See `projectReturn`.
+  set_property_batch: { idKey: HEADED_ID_KEY, attrs: ['updated'], lists: [] },
+  set_todo_state_batch: { idKey: HEADED_ID_KEY, attrs: ['updated'], lists: [] },
+  add_tags_by_ids: { idKey: HEADED_ID_KEY, attrs: ['tagged'], lists: [] },
+  // #5057 — the two batch commands that answer with a LIST OF ROWS. Each
+  // element becomes its own row token in the order returned, so the returned
+  // ORDER is pinned as well as the rows.
+  create_blocks_batch: {
+    idKey: 'id',
+    attrs: ['block_type', 'content', 'parent_id', 'position'],
+    lists: [],
+  },
+  move_blocks_batch: {
+    idKey: 'block_id',
+    attrs: ['new_parent_id', 'new_position'],
+    lists: [],
+  },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */
@@ -95,9 +115,28 @@ export function projectReturn(command: string, response: unknown): string[] {
         `and the matching arm in conformance_command.rs)`,
     )
   }
+  // A LIST return is a list of ROWS: one row token per element, in the order
+  // the command returned them.
+  if (Array.isArray(response)) {
+    return response.map((row) => idToken(row as Record<string, unknown>, shape.idKey, shape.attrs))
+  }
   // A headed shape has no id column: the head is the command name and the
-  // attributes are read off the response beside it.
-  const raw = (response ?? {}) as Record<string, unknown>
+  // attributes are read off the response beside it. A response that is not an
+  // object has no such field — `null` (a `()` return) declares no attributes
+  // and renders as the bare head, while a bare COUNT is the whole return
+  // value, so the shape's single attribute names it.
+  const scalar = response !== null && typeof response === 'object'
+  const raw: Record<string, unknown> = scalar
+    ? (response as Record<string, unknown>)
+    : shape.attrs[0] !== undefined
+      ? { [shape.attrs[0]]: response }
+      : {}
+  if (!scalar && shape.attrs.length > 1) {
+    throw new Error(
+      `conformance op '${command}' returns a scalar, so at most ONE attribute can name it; ` +
+        `RETURN_SHAPE declares ${JSON.stringify(shape.attrs)}`,
+    )
+  }
   const row = shape.idKey === HEADED_ID_KEY ? { ...raw, [HEADED_ID_KEY]: command } : raw
   const out = [idToken(row, shape.idKey, shape.attrs)]
   for (const field of shape.lists) {

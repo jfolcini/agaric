@@ -235,11 +235,6 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Batch / bulk variants (per-item logic pinned by the single-op fixture) ──
-  add_tags_by_ids: 'batch of add_tag (tag_add_remove.json)',
-  create_blocks_batch: 'batch of create_block (block_crud_basic.json)',
-  move_blocks_batch: 'batch of move_block (move_multilevel_subtree.json)',
-  set_property_batch: 'batch of set_property; covered by set-property-batch.test.ts',
-  set_todo_state_batch: 'batch of set_todo_state (agenda_basic.json)',
 
   // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
   // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
@@ -689,11 +684,9 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
  */
 const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'add_attachment_with_bytes',
-  'add_tags_by_ids',
   'cancel_pairing',
   'compact_op_log_cmd',
   'confirm_pairing',
-  'create_blocks_batch',
   'create_page_in_space',
   'create_space',
   'delete_attachment',
@@ -702,7 +695,6 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'fetch_link_metadata',
   'import_bibliography',
   'import_markdown',
-  'move_blocks_batch',
   'move_blocks_to_space',
   'quick_capture_block',
   'redo_page_op',
@@ -711,9 +703,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
   'revert_ops',
   'set_page_aliases',
   'set_peer_address',
-  'set_property_batch',
   'set_reminder_settings',
-  'set_todo_state_batch',
   'undo_op',
   'undo_ops',
   'undo_page_group',
