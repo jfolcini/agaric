@@ -31,6 +31,7 @@ import {
 } from '@/lib/tauri-mock/link-scan'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
+  attachments,
   blocks,
   blockTagRefs,
   blockTags,
@@ -1643,6 +1644,19 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     case 'delete_property': {
       return { block_id: blockId, key: p['key'], from_value: null }
     }
+    // #5057 — the symmetric swap `reverse_rename_attachment` computes. Without
+    // it this fell to `default:`, which reads `block_id` — absent on an
+    // attachment payload — so the appended reverse row carried no
+    // `attachment_id` and no filenames, and REDO became a silent no-op: the
+    // revert arm looked the row up by `undefined` and changed nothing. Pinning
+    // the undo without the redo is the half-covered pair AGENTS.md names.
+    case 'rename_attachment': {
+      return {
+        attachment_id: p['attachment_id'],
+        old_filename: p['new_filename'],
+        new_filename: p['old_filename'],
+      }
+    }
     case 'add_tag':
     case 'remove_tag': {
       return { block_id: blockId, tag_id: p['tag_id'] }
@@ -1772,7 +1786,7 @@ export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, un
   const reverseOpType = reverseOpTypeFor(effective)
   // Before the revert: see `reversePayloadFor`.
   const reversePayload = reversePayloadFor(effective)
-  applyRevertForOp(effective, blocks, { properties, blockTags })
+  applyRevertForOp(effective, blocks, { properties, blockTags, attachments })
   const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: effective }, true)
   return {
     reversed_op: { device_id: effective.device_id, seq: effective.seq },

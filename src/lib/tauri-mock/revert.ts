@@ -133,6 +133,8 @@ function insertAtSlotIn(
 export interface RevertState {
   properties?: Properties
   blockTags?: BlockTags
+  /** #5057 — the attachments map, for the `rename_attachment` reverse. */
+  attachments?: Map<string, Record<string, unknown>>
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +329,22 @@ export function applyRevertForOp(
   state: RevertState = {},
 ): void {
   const payload = JSON.parse(target.payload) as Record<string, unknown>
+
+  // #5057 — `reverse_rename_attachment` swaps the two filenames back
+  // (agaric-engine `reverse/attachment_ops.rs`). Handled before the block-row
+  // lookup below because an attachment op carries no `block_id`.
+  //
+  // `delete_attachment` has no arm here on purpose: `reverse_delete_attachment`
+  // rebuilds an `AddAttachmentPayload` from the original `add_attachment` op,
+  // and the mock's `add_attachment_with_bytes` appends no op to rebuild from.
+  // Giving it one is part of pinning that command, which is still open in
+  // #5057 — so the arm arrives with it rather than guessing a row shape now.
+  if (target.op_type === 'rename_attachment') {
+    const row = state.attachments?.get(payload['attachment_id'] as string)
+    if (row) row['filename'] = payload['old_filename']
+    return
+  }
+
   const blockId = payload['block_id'] as string
 
   // Block-row reverts: silent no-op if the block is missing from the map.

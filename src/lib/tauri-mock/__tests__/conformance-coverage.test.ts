@@ -1824,34 +1824,35 @@ interface LoadedFixture {
   ops: Array<{ command: string; args: Record<string, unknown> }>
   seedBlocks: Array<Record<string, unknown>>
   expected: ExpectedSnapshot | null
-  /** `'S2'` → `'B2'`. Canonical labels are assigned in SEED ORDER by both
-   *  runners (`canonicalOrder` / `build_snapshot_with_order`), so the map is
-   *  positional — NOT a numeric coincidence between the two naming schemes,
-   *  which a fixture is free to break.
+  /** `'S2'` → `'B2'`, and `'C1'` → the first OP-CREATED block's label.
+   *  Canonical labels are assigned in SEED ORDER by both runners
+   *  (`canonicalOrder` / `build_snapshot_with_order`), which then append the
+   *  op-created blocks in CREATE order — so both halves are positional, NOT a
+   *  numeric coincidence between the naming schemes, which a fixture is free
+   *  to break.
    *
-   *  SEED IDS ONLY (#3992 item 4). Both runners then append the OP-CREATED
-   *  blocks to the same canonical order, so a created block does have a label
-   *  (`B<seedCount + nth create_block>`) — this map does not carry it, because
-   *  nothing can ASK for it: an op arg names a block by an id the fixture
-   *  author writes, and a created block's id is minted at replay time by each
-   *  stack independently. There is no placeholder for one in either runner
-   *  (both map `blockId` / `parentId` / `newParentId` / `tagId` and the nested
-   *  `value.value_ref` through `seed_label_to_id`, which only pads), so an op
-   *  cannot target a created block at all today.
+   *  The `Cn` half is what #3992 item 4 said could not exist yet. It can:
+   *  both runners resolve an op arg through `resolve_op_arg_id` /
+   *  `resolveOpArgId`, which answer the nth op-created id for `Cn` and fall
+   *  back to `seed_label_to_id`'s padding only for everything else. This map
+   *  was the last place that had not learned the convention, and until it did,
+   *  a `Cn` arg made `argLabel` answer `null` — which every `holds` predicate
+   *  reads as "this scenario is not exhibited".
    *
-   *  That is why this returning `null` was a fail-open rather than a
-   *  limitation: `argLabel` answers `null` for BOTH "the arg is absent" and
-   *  "the arg names something I cannot resolve", and every `holds` predicate
-   *  reads `null` as "this scenario is not exhibited". A fixture rewritten to
-   *  target an unresolvable block therefore stops being counted SILENTLY —
-   *  loudly only in the total case the `neverTrue` meta-guard catches, and not
-   *  at all when a sibling op or a sibling fixture keeps the predicate true.
+   *  `Cn` is NOT bounded by the number of blocks a fixture creates. Both
+   *  runners PANIC on an `n` past that, so a fixture carrying one cannot be in
+   *  a green corpus at all, and the bound here would only duplicate a check
+   *  that already fails closed and louder.
+   *
+   *  Anything else still answers `null`, and
    *  `it('every fixture op arg that names a block resolves to a SEED label')`
-   *  is what makes that case red instead: it fails on any unresolvable id-arg
-   *  anywhere in the corpus, so the day a created-ref convention is introduced
-   *  it forces this map (and `argLabel`) to learn it rather than quietly
-   *  answering "no". */
-  label: (seedId: string) => string | null
+   *  is what keeps that from being a fail-open: `argLabel` cannot tell "the
+   *  arg is absent" from "the arg names something I cannot resolve", so a
+   *  fixture rewritten to target an unresolvable block would stop being
+   *  counted SILENTLY — loudly only in the total case the `neverTrue`
+   *  meta-guard catches, and not at all when a sibling op or a sibling fixture
+   *  keeps the predicate true. */
+  label: (id: string) => string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1975,7 +1976,14 @@ function loadFixtures(): LoadedFixture[] {
         ops: raw.ops.map((o) => ({ command: o.command, args: o.args ?? {} })),
         seedBlocks,
         expected: raw.expected ?? null,
-        label: (seedId: string) => labels.get(seedLabelToId(seedId)) ?? null,
+        // The digit bound mirrors `resolve_op_arg_id`: a literal 26-char ULID
+        // may begin with `C` and digits, and must fall through to the seed map.
+        label: (id: string) => {
+          const created = /^C(\d{1,6})$/.exec(id)
+          const nth = created?.[1]
+          if (nth !== undefined) return `B${seedBlocks.length + Number(nth)}`
+          return labels.get(seedLabelToId(id)) ?? null
+        },
       }
     })
 }
@@ -3946,11 +3954,11 @@ describe('#3083 conformance-coverage ratchet', () => {
   // would take) left all 21 checks green — the two tag predicates kept
   // counting off the ops either side of it.
   //
-  // This is the fail-CLOSED half. It cannot RESOLVE a created target — neither
-  // runner has a placeholder for one, so no fixture can express it (see
-  // `LoadedFixture.label`) — but it makes the attempt loud instead of silent:
-  // the day a `blockId` stops naming a seed row, this reddens and whoever
-  // introduced the new reference shape has to teach `label` about it.
+  // This is the fail-CLOSED half, and it worked: `undo_group_scope_drift`
+  // needed a `Cn` arg, this reddened, and `LoadedFixture.label` learned the
+  // convention both runners already resolved. What stays red is a reference
+  // shape NEITHER runner resolves — an id that is only padded names nothing on
+  // either stack.
   it('every fixture op arg that names a block resolves to a SEED label (#3992)', () => {
     const unresolvable: string[] = []
     for (const fx of fixtures) {
@@ -3966,16 +3974,14 @@ describe('#3083 conformance-coverage ratchet', () => {
     }
     expect(
       unresolvable,
-      `These fixture op args name a block that is NOT in the fixture's seed ` +
-        `${JSON.stringify(unresolvable)}. Both replay runners resolve a block reference ` +
-        `by padding it (\`seed_label_to_id\`), so an id that is not a seed label names ` +
-        `nothing on either stack — and every REQUIRED_SCENARIOS predicate reads the ` +
-        `resulting unresolved label as "this scenario is not exhibited", which is a ` +
-        `SILENT loss of coverage wherever another op or another fixture keeps the ` +
-        `predicate true. FIX by pointing the arg at a seeded block; if the intent is to ` +
-        `target a block an OP created, that needs a created-reference convention in BOTH ` +
-        `runners plus resolution here (canonical labels continue past the seed as ` +
-        `\`B<seedCount + nth create_block>\`) — it is not expressible today.`,
+      `These fixture op args name a block this fixture cannot label ` +
+        `${JSON.stringify(unresolvable)} — neither a seed label (\`Sn\`) nor a created one ` +
+        `(\`Cn\`, the nth block an op in this fixture created). Both replay runners resolve ` +
+        `anything else by PADDING it (\`seed_label_to_id\`), so it names nothing on either ` +
+        `stack — and every REQUIRED_SCENARIOS predicate reads the unresolved label as ` +
+        `"this scenario is not exhibited", which is a SILENT loss of coverage wherever ` +
+        `another op or another fixture keeps the predicate true. FIX by pointing the arg ` +
+        `at a seeded or op-created block, not by loosening this check.`,
     ).toEqual([])
   })
 
