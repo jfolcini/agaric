@@ -8,12 +8,12 @@ onto an approved branch; they land here as one review round instead of four.
 
 #5072's reviewer pointed out that `useViewportObserver` LATCHED the first
 scroll container it found and never re-probed. Reading Radix's
-`ScrollAreaScrollbar` confirmed the consequence: the `ScrollArea` viewport
-renders with `overflow-y: hidden` and flips to `scroll` in a passive effect, so
-a row attaching in that same commit walks straight past the viewport and adopts
-whatever scroller sits above it — permanently, with no event able to correct
-it. Today's rows arrive in a later commit, which is the only reason #5066's fix
-worked at all.
+`ScrollAreaScrollbar` confirmed the consequence: the viewport is
+`overflow-y: hidden` whenever no scrollbar is enabled, and `scroll-area.tsx`
+hardcodes `type="hover"`, so `ScrollAreaScrollbarHover` enables it on
+pointerenter and drops it again on leave. A row attaching while it is hidden
+walks straight past the viewport and adopts whatever scroller sits above it —
+permanently, with no event able to correct it.
 
 The root is now a `useState` re-derived on every attach; only a CHANGED answer
 rebuilds the observer, so the rebuild stays rare rather than the walk. An
@@ -27,10 +27,30 @@ axis test. Two exports, `scrollParentY` and `scrollParentAny`, over one walk.
 Three tests cover it: an unchanged answer does not rebuild the observer; a
 nearer container that becomes scrollable is adopted (plain divs, stating the
 mechanism); and the same against the REAL `ScrollArea`, so the walk is proven
-against the DOM the app renders rather than a hand-built stand-in. jsdom does
-no layout, so Radix never measures an overflow — the explicit style assignment
-in that test IS the inline toggle `ScrollAreaScrollbar` performs in a browser.
-Falsified by reverting to the latch: the ScrollArea test goes red.
+against the DOM the app renders — Radix puts a `position: relative` Root with
+no overflow of its own between the viewport and whatever scrolls outside it,
+and the walk has to pass through that without stopping.
+
+The `ScrollArea` test took two attempts to make honest, both caught by review
+rather than by me. As first written it set the viewport to `scroll` before its
+only attach, so the old code's first probe found the viewport too and the test
+passed either way: the latch only bites once a root has been ADOPTED, and an
+attach that finds nothing leaves it unadopted. Reverting to the latch reddened
+only the plain-div sibling. My first correction wrapped the `ScrollArea` in an
+outer scroller so the first attach would adopt the wrong box — but located that
+wrapper with `live.closest('div[style*="overflow-y"]')`, and `closest` matches
+the element itself, so `outer` and `live` were the same node and both
+assertions were trivially true. The test now looks the wrapper up by its own
+`data-outer-scroller` attribute and asserts `outer !== live` before either
+comparison, so a lookup that collapsed them again fails loudly instead of
+passing for two reasons.
+
+Both `overflowY` assignments in it are deliberate. Radix drives the viewport
+between `hidden` and `scroll` from `scrollbarYEnabled`, which it decides by
+MEASURING an overflow; jsdom does no layout, so the viewport mounts already
+enabled and never moves — the forced `hidden` is what reproduces the
+pre-scrollbar state a browser starts in. Reverting to the latch now reddens
+both root tests.
 
 ## A false premise I had propagated
 

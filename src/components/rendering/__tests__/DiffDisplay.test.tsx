@@ -539,8 +539,8 @@ describe('DiffDisplay', () => {
         .spyOn(HTMLElement.prototype, 'scrollIntoView')
         .mockImplementation(() => {})
 
-      // Mark every ancestor as scrollable so findScrollableAncestor stops
-      // at the first parent (the <p>).
+      // Mark every ancestor as scrollable so `scrollParentAny` stops at the
+      // first parent (the <p>).
       const computedSpy = vi.spyOn(window, 'getComputedStyle').mockReturnValue({
         overflow: 'visible',
         overflowY: 'auto',

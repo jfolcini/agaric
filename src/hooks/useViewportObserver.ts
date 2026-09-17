@@ -94,13 +94,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * scroller above a mounted row, or `null` for the viewport.
    *
    * Re-derived on every attach rather than latched on the first one. Radix's
-   * `ScrollArea` viewport starts at `overflow-y: hidden` and flips to `scroll`
-   * in a passive effect, so a row attaching in that same commit walks straight
-   * past it and finds whatever scroller sits ABOVE it. Latching that answer
-   * would pin the observer to the wrong box for the rest of the session, with
-   * no event to correct it. The walk is one `getComputedStyle` pass per attach;
-   * only a CHANGED answer rebuilds the observer, which is what makes the rebuild
-   * rare rather than the walk.
+   * `ScrollArea` viewport is `overflow-y: hidden` whenever no scrollbar is
+   * enabled, and `scroll-area.tsx` hardcodes `type="hover"`, so
+   * `ScrollAreaScrollbarHover` enables it on pointerenter and drops it again on
+   * leave. A row attaching while it is hidden walks straight past it to
+   * whatever scroller sits ABOVE it, and that answer would otherwise pin the
+   * observer to the wrong box for the rest of the session with no event able to
+   * correct it. The walk is one `getComputedStyle` pass per attach; only a
+   * CHANGED answer rebuilds the observer, which is what makes the rebuild rare
+   * rather than the walk.
    */
   const [rootEl, setRootEl] = useState<HTMLElement | null>(null)
   const heightsRef = useRef<Map<string, number>>(new Map())

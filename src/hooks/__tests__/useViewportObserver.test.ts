@@ -234,29 +234,60 @@ describe('useViewportObserver', () => {
 
   // #5066 — the sibling above states the mechanism with plain divs; this one
   // runs the REAL `ScrollArea`, so the walk is proven against the DOM the app
-  // actually renders (Radix's viewport, not a hand-built stand-in). jsdom does
-  // no layout, so Radix never measures an overflow and never flips
-  // `scrollbarYEnabled` on its own — the explicit style assignment here IS the
-  // inline toggle `ScrollAreaScrollbar` performs in the browser.
+  // actually renders: Radix puts a `position: relative` Root with no overflow
+  // of its own between the viewport and whatever scrolls outside it, and the
+  // walk has to pass through that without stopping.
+  //
+  // The outer scroller is what makes this falsify the latch rather than merely
+  // exercise it. Without it the first attach finds nothing, and the old code
+  // re-probed for as long as it had found nothing — so it reached the viewport
+  // on a later attach anyway. The latch only bites once a root has been
+  // adopted, so the first attach has to adopt the WRONG one.
+  //
+  // Both `overflowY` assignments are deliberate. Radix drives the viewport
+  // between `hidden` and `scroll` from `scrollbarYEnabled`, which it decides by
+  // MEASURING an overflow; jsdom does no layout, so it mounts already enabled
+  // and never moves again. `scroll-area.tsx` hardcodes `type="hover"`, so in a
+  // browser it is `ScrollAreaScrollbarHover` that enables the scrollbar on
+  // pointerenter — after mount, and reversibly on leave, which is precisely why
+  // the root cannot be decided once.
   it('adopts the real ScrollArea viewport once it becomes scrollable (#5066)', () => {
     const { result, unmount } = renderHook(
       () => useViewportObserver(),
-      (node) => createElement(ScrollArea, null, node),
+      (node) =>
+        createElement(
+          'div',
+          { 'data-outer-scroller': '', style: { overflowY: 'auto' } },
+          createElement(ScrollArea, null, node),
+        ),
     )
 
-    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
-    expect(viewport).not.toBeNull()
-    const live = viewport as HTMLElement
+    const live = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    const outer = document.querySelector<HTMLElement>('[data-outer-scroller]')
+    expect(live).not.toBeNull()
+    expect(outer).not.toBeNull()
+    // Both assertions below name a different element, so a lookup that
+    // collapsed them onto one would make the test pass for two reasons.
+    expect(outer).not.toBe(live)
+    const viewport = live as HTMLElement
+    const wrapper = outer as HTMLElement
 
-    const el = makeEl('B1')
-    live.append(el)
-    live.style.overflowY = 'scroll'
-
+    // Pre-scrollbar: the row walks straight past the viewport to `wrapper`.
+    viewport.style.overflowY = 'hidden'
+    const first = makeEl('B1')
+    viewport.append(first)
     act(() => {
-      result.current.createObserveRef('B1')(el)
+      result.current.createObserveRef('B1')(first)
     })
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(wrapper)
 
-    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(live)
+    viewport.style.overflowY = 'scroll'
+    const second = makeEl('B2')
+    viewport.append(second)
+    act(() => {
+      result.current.createObserveRef('B2')(second)
+    })
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(viewport)
 
     unmount()
   })
