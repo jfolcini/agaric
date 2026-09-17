@@ -121,7 +121,6 @@ export const agenda: Record<string, string> = {
   'duePanel.header': '{{count}} Agenda',
   'duePanel.groupDoing': 'DOING',
   'duePanel.groupTodo': 'TODO',
-  'duePanel.groupDone': 'DONE',
   'duePanel.groupCancelled': 'CANCELLED',
   'duePanel.groupOther': 'Other',
   'duePanel.loadMore': 'Load more',

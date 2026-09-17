@@ -490,6 +490,35 @@ describe('useDuePanelData', () => {
     expect(result.current.totalCount).toBe(2)
   })
 
+  // #5074 — Agenda and Completed must never show the same block. DonePanel
+  // owns DONE, so a task both due today and completed today must leave the
+  // agenda blocks AND the post-filter `totalCount` the header renders.
+  it('drops DONE blocks from the fetched list and the count (#5074)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', todo_state: 'TODO', content: 'still open' }),
+        makeBlock({
+          id: 'B2',
+          todo_state: 'DONE',
+          content: 'due today, done today',
+          due_date: '2025-06-15',
+        }),
+        makeBlock({ id: 'B3', todo_state: 'CANCELLED', content: 'not completed, stays' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.blocks).toHaveLength(2)
+    })
+    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1', 'B3'])
+    expect(result.current.totalCount).toBe(2)
+  })
+
   it('re-fetches blocks when invalidationKey changes (B-50/F-39)', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1', todo_state: 'TODO' })],
@@ -506,10 +535,10 @@ describe('useDuePanelData', () => {
       expect(result.current.blocks).toHaveLength(1)
     })
 
-    // Clear and prepare updated response (block now DONE)
+    // Clear and prepare updated response (block now DOING)
     mockedListBlocks.mockClear()
     mockedListBlocks.mockResolvedValue({
-      items: [makeBlock({ id: 'B1', todo_state: 'DONE' })],
+      items: [makeBlock({ id: 'B1', todo_state: 'DOING' })],
       next_cursor: null,
       has_more: false,
       total_count: null,
@@ -525,7 +554,7 @@ describe('useDuePanelData', () => {
     })
 
     await waitFor(() => {
-      expect(result.current.blocks[0]?.todo_state).toBe('DONE')
+      expect(result.current.blocks[0]?.todo_state).toBe('DOING')
     })
   })
 

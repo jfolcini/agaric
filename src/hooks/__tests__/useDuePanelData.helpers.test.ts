@@ -75,6 +75,20 @@ describe('applySourceFilter', () => {
     expect(result[0]?.id).toBe('B3')
   })
 
+  // #5074 — DonePanel owns completed tasks, so DONE never reaches the agenda,
+  // whatever the source filter. CANCELLED is not completed and stays.
+  it('drops DONE blocks under every source filter, keeping CANCELLED', () => {
+    const items = [
+      makeBlock({ id: 'B1', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', todo_state: 'DONE' }),
+      makeBlock({ id: 'B3', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'B4', todo_state: null }),
+    ]
+    for (const filter of [null, 'property:', 'column:due_date']) {
+      expect(applySourceFilter(items, date, filter).map((b) => b.id)).toEqual(['B1', 'B3', 'B4'])
+    }
+  })
+
   it('returns an empty array when given an empty input', () => {
     expect(applySourceFilter([], date, 'property:')).toHaveLength(0)
     expect(applySourceFilter([], date, null)).toHaveLength(0)

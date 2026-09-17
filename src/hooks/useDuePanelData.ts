@@ -15,10 +15,10 @@
  *    projected agenda), merging all of their parent-title resolutions into a
  *    single shared `pageTitles` map.
  *  - The main list is post-filtered client-side (`applySourceFilter` drops
- *    `property:`-source and empty-content rows per page), so its `totalCount`
- *    is the accumulated POST-filter count — not the backend's `total_count`
- *    that `usePaginatedQuery` exposes. Routing it through the hook would
- *    silently desync the header count from the rendered rows.
+ *    `property:`-source, DONE, and empty-content rows per page), so its
+ *    `totalCount` is the accumulated POST-filter count — not the backend's
+ *    `total_count` that `usePaginatedQuery` exposes. Routing it through the
+ *    hook would silently desync the header count from the rendered rows.
  *  - `projected` uses a module-level 30s TTL cache keyed by space+date, and
  *    `overdue` / `upcoming` are single bounded queries, none of which are
  *    cursor-paginated.
@@ -86,8 +86,15 @@ export function clearProjectedCache(): void {
 /**
  * Apply the `property:` source filter (excludes blocks whose due_date or
  * scheduled_date matches the current agenda date) and drop blocks with
- * Empty or whitespace-only content. Other sourceFilter values
- * pass through unchanged except for the empty-content pass.
+ * Empty or whitespace-only content, plus every `DONE` block. Other
+ * sourceFilter values pass through unchanged except for those two passes.
+ *
+ * #5074 — Agenda and Completed must never show the same block. `DonePanel`
+ * owns DONE, so a task both due today and completed today used to render
+ * twice on the journal. `list_blocks` has no `excludeTodoStates` knob (only
+ * `query_by_property`, which the overdue / upcoming fetches use), so the
+ * exclusion happens here, where the post-filter `totalCount` the header
+ * shows is computed from the same rows the panel renders.
  */
 export function applySourceFilter(
   items: BlockRow[],
@@ -98,7 +105,7 @@ export function applySourceFilter(
     sourceFilter === 'property:'
       ? items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
       : items
-  return afterSource.filter((b) => b.content?.trim())
+  return afterSource.filter((b) => b.todo_state !== 'DONE' && b.content?.trim())
 }
 
 /**

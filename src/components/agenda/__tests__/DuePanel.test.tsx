@@ -4,7 +4,7 @@
  * Validates:
  *  1. Renders with items showing count header ("3 Due")
  *  2. Returns null / does not render when no items (totalCount 0)
- *  3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
+ *  3. Groups blocks by todo_state in correct order (DOING > TODO > null)
  *  4. Sorts by priority within group (1 > 2 > 3 > null)
  *  5. Shows loading spinner during fetch
  *  6. Shows source page breadcrumb from batchResolve
@@ -187,11 +187,10 @@ describe('DuePanel', () => {
     expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
   })
 
-  // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)
+  // 3. Groups blocks by todo_state in correct order (DOING > TODO > null)
   it('groups blocks by todo_state in correct order', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
-        makeBlock({ id: 'B1', todo_state: 'DONE', content: 'done block' }),
         makeBlock({ id: 'B2', todo_state: 'DOING', content: 'doing block' }),
         makeBlock({ id: 'B3', todo_state: null, content: 'other block' }),
         makeBlock({ id: 'B4', todo_state: 'TODO', content: 'todo block' }),
@@ -203,21 +202,22 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText(t('duePanel.header', { count: 4 }))
+    await screen.findByText(t('duePanel.header', { count: 3 }))
 
     // Verify group headers appear in correct order
-    const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|Other)$/)
-    expect(groupHeaders).toHaveLength(4)
+    const groupHeaders = screen.getAllByText(/^(DOING|TODO|Other)$/)
+    expect(groupHeaders).toHaveLength(3)
     expect(groupHeaders[0]).toHaveTextContent(t('duePanel.groupDoing'))
     expect(groupHeaders[1]).toHaveTextContent(t('duePanel.groupTodo'))
-    expect(groupHeaders[2]).toHaveTextContent(t('duePanel.groupDone'))
-    expect(groupHeaders[3]).toHaveTextContent(t('duePanel.groupOther'))
+    expect(groupHeaders[2]).toHaveTextContent(t('duePanel.groupOther'))
   })
 
   // #738 sub-1 — a CANCELLED block was counted in the header but matched
   // no group, so it was hidden from the list: the header said "3" while
   // the list showed 2. The CANCELLED group is now rendered so the header
-  // count and the visible rows agree.
+  // count and the visible rows agree. #5074 removes DONE from the other
+  // end — filtered out of the fetched blocks, so it leaves the header
+  // count too and the two stay in agreement.
   it('renders a CANCELLED group so the header count matches visible rows (#738)', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
@@ -232,21 +232,68 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    // Header counts all three (including the CANCELLED block).
-    await screen.findByText(t('duePanel.header', { count: 3 }))
+    // Header counts the TODO and the CANCELLED block; the DONE one is
+    // DonePanel's (#5074).
+    await screen.findByText(t('duePanel.header', { count: 2 }))
 
     // The CANCELLED group header and its row are both rendered, so the
-    // count and the list agree (3 counted, 3 visible).
+    // count and the list agree (2 counted, 2 visible).
     const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|CANCELLED|Other)$/)
     expect(groupHeaders.map((h) => h.textContent)).toEqual([
       t('duePanel.groupTodo'),
-      t('duePanel.groupDone'),
       t('duePanel.groupCancelled'),
     ])
     expect(screen.getByText('cancelled block')).toBeInTheDocument()
 
     const rows = screen.getAllByTestId('due-panel-item')
-    expect(rows).toHaveLength(3)
+    expect(rows).toHaveLength(2)
+  })
+
+  // #5074 — Agenda and Completed must never show the same block. A task
+  // both due today and completed today used to render once under a DONE
+  // agenda group and again in DonePanel below it. The DONE row now
+  // reaches neither the group list nor the header count.
+  it('renders no DONE row, group header, or count — on the first page or a loaded one (#5074)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [
+        makeBlock({ id: 'B1', todo_state: 'TODO', content: 'todo block' }),
+        makeBlock({ id: 'B2', todo_state: 'DONE', content: 'done today', due_date: '2025-06-15' }),
+      ],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: null,
+    }
+    const page2 = {
+      items: [
+        makeBlock({ id: 'B3', todo_state: 'DOING', content: 'doing block' }),
+        makeBlock({ id: 'B4', todo_state: 'DONE', content: 'done later', due_date: '2025-06-15' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    let callCount = 0
+    mockedListBlocks.mockImplementation(async () => {
+      callCount++
+      return callCount === 1 ? page1 : page2
+    })
+
+    const { container } = render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText(t('duePanel.header', { count: 1 }))
+    expect(screen.queryByText('done today')).not.toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: /load more agenda items/i }))
+
+    await screen.findByText('doing block')
+    expect(screen.getByText(t('duePanel.header', { count: 2 }))).toBeInTheDocument()
+    expect(screen.queryByText('done later')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('due-panel-item')).toHaveLength(2)
+    expect(
+      screen.getAllByText(/^(DOING|TODO|DONE|CANCELLED|Other)$/).map((h) => h.textContent),
+    ).toEqual([t('duePanel.groupDoing'), t('duePanel.groupTodo')])
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   // 4. Sorts by priority within group (1 > 2 > 3 > null)
