@@ -22,7 +22,6 @@
 //             (setup failure, job-level timeout) — derived from
 //             `--job-status`, i.e. `needs.fuzz.result`, so that a lane that
 //             dies before it can write anything is still reported.
-// A CANCELLED lane files neither of the last two (#5110): see `buildFindings`.
 //
 // State lives in the tracking issue itself (its body), not a committed
 // baseline file — the workflow only needs `issues: write`, never
@@ -432,7 +431,7 @@ export function buildIssueBody({ all, newOnes, resolvedOnes, byId, results = [],
   const intro = [
     'This issue tracks findings from the weekly `fuzz` lane in `scheduled-deep-checks.yml` (#3169) — build failures, crash reproducers, per-input timeouts, and targets that never ran. It is filed and updated automatically by `scripts/file-fuzz-findings.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
     '',
-    'A red weekly workflow is easy to miss (a compile break in this very lane survived five days, #3163), so the lane pushes here instead. Triage each finding below: fix it and remove its line from the machine-readable block — once a line is gone, the next run that still sees it will re-add it as "new". Only genuinely new findings update this issue; an unchanged failure is a silent no-op.',
+    'A red weekly workflow is easy to miss (a compile break in this very lane survived five days, #3163), so the lane pushes here instead. Triage each finding below: fix it and remove its line from the machine-readable block — once a line is gone, the next run that still sees it will re-add it as "new". Only genuinely new findings update this issue; an unchanged failure is a silent no-op, and a run in which every target passes with nothing left tracked closes it (#5110).',
     '',
   ]
 
@@ -547,6 +546,89 @@ function findTrackingIssue(repo) {
   return exact.toSorted((a, b) => b.number - a.number)[0]
 }
 
+/**
+ * Every target ran and passed — the one state in which an emptied tracked set
+ * means "clean", rather than "the artifact was lost" or "the job died before
+ * it could report". Keyed on the per-target statuses, not on `jobStatus`: a
+ * lane whose targets all passed and whose JOB then failed in a later step (the
+ * corpus save, say) has still found nothing, and that failure is
+ * `report-scheduled-failures`' to report.
+ *
+ * @param {{ status: string }[]} results
+ */
+export function allTargetsClean(results) {
+  return results.length > 0 && results.every((r) => r.status === 'ok')
+}
+
+/**
+ * Findings a clean run DISPROVES, and therefore the only ones it may clear
+ * without a human.
+ *
+ * `[not-run]` and `[lane]` are claims about the RUN — that a target never
+ * executed, that the job died before writing anything. A run in which every
+ * target executed and passed is their direct negation.
+ *
+ * Every other prefix is a claim about the CODE, and a clean run is not evidence
+ * against it: libFuzzer saves a reproducer under `artifacts/`, not into the
+ * corpus, so the next run does not re-execute it and a `[crash]` line can go
+ * quiet with the bug fully intact. Those stay for a human to remove, which is
+ * what the tracking issue's own instructions ask for.
+ *
+ * @param {string} id
+ */
+export function isRunShapeFinding(id) {
+  return id.startsWith('[not-run] ') || id.startsWith('[lane] ')
+}
+
+/**
+ * The tracked set emptied on a clean run: rewrite the body (so the marker block
+ * and the status table stop describing a run that is over) and CLOSE the issue.
+ *
+ * Without this the filer only ever wrote on a NEW finding, so a set that
+ * resolved itself left the issue asserting the opposite of the lane's current
+ * state forever (#5110: 44 minutes after seven `[not-run]` lines were filed for
+ * a cancelled run, the next run fuzzed all seven clean and logged that it was
+ * leaving the issue as it found it). Both sibling filers already close on an
+ * empty set — `file-mutation-survivors.mjs` closes the parent when its set
+ * empties, `file-scheduled-failures.mjs` when every lane is green — and a
+ * closed issue is reopened by `findTrackingIssue` the moment a finding returns.
+ *
+ * Emptying the block matters as much as the close: a finding id is the dedup
+ * key, so a stale `[not-run] fts_strip: …` line left in the block would swallow
+ * the identical id from a future run that genuinely lost that target.
+ *
+ * Scoped to the findings a clean run actually disproves (`isRunShapeFinding`);
+ * a tracked `[crash]` or `[build]` line keeps the issue open and the whole set
+ * in the block, because closing on one would announce a bug as fixed and put
+ * the record somewhere nobody re-reads.
+ */
+function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, results, runUrl }) {
+  const summary = `${resolvedOnes.length} previously-known finding(s) resolved and none remain: ${resolvedOnes.join(', ')}`
+  if (existingIssue === null || existingIssue.state === 'CLOSED') {
+    console.log(`${summary} — tracking issue already absent or closed, nothing to do`)
+    return
+  }
+  const body = buildIssueBody({ all: [], newOnes: [], resolvedOnes, byId, results, runUrl })
+  if (args.dryRun) {
+    console.log(`[dry-run] would CLOSE issue #${existingIssue.number}: ${summary}`)
+    console.log('[dry-run] --- issue body ---')
+    console.log(body)
+    return
+  }
+  if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required to close the issue')
+  withTempFile(body, (bodyFile) => {
+    execFileSync(
+      'gh',
+      ['issue', 'edit', String(existingIssue.number), '--repo', repo, '--body-file', bodyFile],
+      { stdio: 'inherit' },
+    )
+  })
+  execFileSync('gh', ['issue', 'close', String(existingIssue.number), '--repo', repo], {
+    stdio: 'inherit',
+  })
+  console.log(`closed tracking issue #${existingIssue.number} — ${summary}`)
+}
+
 function withTempFile(content, fn) {
   const dir = mkdtempSync(join(tmpdir(), 'fuzz-findings-'))
   const file = join(dir, 'body.md')
@@ -617,13 +699,12 @@ function defaultRunUrl() {
  *
  * Called AFTER `buildFindings` so the `[lane]` fallback still gets to describe
  * a lane that died outright. They fire only where that fallback does NOT: a
- * `failure` lane is the `[lane]` finding's job, and a `skipped` one never ran
- * and legitimately wrote nothing — firing on either would replace a filed
- * report with a red filer. A `cancelled` lane writes nothing by the same
- * licence, and since #5110 files nothing either: it is reported by
- * `report-scheduled-failures`, not here. What is left is `success` (the lane
- * ran to completion, so it MUST have written results) and an unknown status
- * (nothing else would report the blindness at all).
+ * `failure` lane is the `[lane]` finding's job, a `cancelled` one files nothing
+ * at all (see `buildFindings`), and a `skipped` one never ran and legitimately
+ * wrote nothing — firing on any of the three would replace a filed report with
+ * a red filer. What is left is `success` (the lane ran to completion, so it
+ * MUST have written results) and an unknown status (nothing else would report
+ * the blindness at all).
  */
 function assertLaneInputs(args, results) {
   const laneShouldHaveWritten = !args.jobStatus || args.jobStatus === 'success'
@@ -651,13 +732,6 @@ export function main(argv = process.argv.slice(2)) {
     results.length > 0 ? results.map((r) => `${r.target}=${r.status}`).join(' ') : '(none)'
   console.log(`fuzz target statuses: ${statusSummary}`)
   console.log(`fuzz findings this run: ${current.length}`)
-  if (args.jobStatus === 'cancelled') {
-    // Says the silence out loud: a reader looking at seven `not_run` statuses
-    // above and zero findings below would otherwise have to infer why (#5110).
-    console.log(
-      'fuzz lane was cancelled — targets that never ran are NOT filed as findings; the lane result is reported by report-scheduled-failures (#3359)',
-    )
-  }
 
   assertLaneInputs(args, results)
 
@@ -681,6 +755,16 @@ export function main(argv = process.argv.slice(2)) {
   const { newOnes, resolvedOnes, all, byId } = diffFindings(current, known)
 
   if (newOnes.length === 0) {
+    // No `current.length === 0` here: every target reporting `ok` already means
+    // `buildFindings` returned nothing, so the check could never fail.
+    if (
+      allTargetsClean(results) &&
+      resolvedOnes.length > 0 &&
+      resolvedOnes.every(isRunShapeFinding)
+    ) {
+      closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, results, runUrl })
+      return
+    }
     console.log('no new fuzz findings — no-op (tracking issue left untouched)')
     if (resolvedOnes.length > 0) {
       console.log(
