@@ -78,13 +78,26 @@ it is re-rendered weekly. `mutation-pr.yml` posts the same class of finding as a
 sticky comment on a contributor's own PR.
 
 So the warning had to reach where the numbers are read, not only where the
-command is documented. Four places: a `WHY` block above `MODULES` in
+command is documented. Five places: a `WHY` block above `MODULES` in
 `stryker.modules.mjs`; a line in `AGENTS.md` § "Acceptance is falsification",
 where the command is recommended, made on explicit maintainer instruction; a
 blockquote in `docs/BUILD.md` § "Mutation testing (nightly)", which is the recipe
 `AGENTS.md` sends people to and which still described a survivor as "a gap in
 assertion *strength*"; and a clause on that page's per-PR-lane paragraph, whose
-stated purpose is attribution of survivors that do not exist.
+stated purpose is attribution of survivors that do not exist; and the doc header
+of `scripts/run-mutation.mjs`, the command both of those pages name, for a
+reader who opens the script rather than the docs.
+
+The first `stryker.modules.mjs` block ran to sixteen lines and restated the
+`docs/BUILD.md` text before adding the peer-range and denominator archaeology
+this log already carries. Review called it under "Say it once" and was right:
+it is five lines now, and points at `docs/BUILD.md` for the rest.
+
+One read point is still uncovered. `mutation-pr.yml`'s sticky comment reaches a
+contributor who never opens either page, and `docs/BUILD.md`'s clause about that
+lane only helps someone already reading `docs/BUILD.md`. Covering it means
+changing `render-mutation-summary.mjs`, which is a behaviour change rather than
+documentation, so it is left with the auto-filed issues for the maintainer.
 
 Pinning vitest 4.x for the lane alone was considered and declined: it would
 score mutants against a runtime neither CI nor development uses.
