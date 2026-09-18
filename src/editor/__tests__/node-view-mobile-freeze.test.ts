@@ -13,13 +13,10 @@
  *
  * The narrowing also made the branch unobservable: its guard is now the same
  * predicate as the trailing `contentDOM.contains(target)` rule, so its `return
- * false` is only ever reachable where that rule returns `false` anyway. #5059
- * enumerated the real prototype over the (target, mutation type,
- * contentEditable, leaf/atom, UA, focused) space and found UA and focus change
- * no answer at all — which is why `ignoreReactNodeViewChrome` and the React
- * mark-view ratchet were both deleted there. Nothing below asserts that a user
- * agent changes an answer; the one test that forces a mobile UA does so to
- * enter the branch, so that a revert to the `dom`-wide check inverts it.
+ * false` is only reachable where that rule answers `false` anyway. Nothing
+ * below asserts that a user agent changes an answer; the one test that forces a
+ * mobile UA does so to enter the branch, so a revert to the `dom`-wide check
+ * inverts it.
  *
  * What this file still pins is the classification underneath, because whether
  * prosemirror-view reads a given node view's DOM at all is decided by a
@@ -38,12 +35,9 @@
  *      `@tiptap/core` bump that drops it reddens this suite rather than
  *      silently changing which mutations prosemirror re-reads. Its sibling,
  *      `if (!this.dom || !this.contentDOM) return true`, is deliberately NOT
- *      pinned: `ReactNodeView.contentDOM` returns `null` exactly when the node
- *      `isLeaf`, and a leaf `isAtom`, so the leaf/atom guard answers every
- *      input the same way. The one thing that separated them was firing above
- *      the `options.ignoreMutation` consultation, and #5059 deleted the last
- *      override there was to order against. A test for it passes with the
- *      guard reconstructed away — verified, not assumed.
+ *      pinned, and must not be: with no `options.ignoreMutation` override left
+ *      to order it against, the leaf/atom guard answers every input the same
+ *      way, so a test for it passes with the guard reconstructed away.
  *   4. The mobile branch's containment test is pinned by its TARGET: chrome is
  *      ignored, a `contentDOM` mutation is not. A revert to the `dom`-wide
  *      check reddens the first arm — which is how the 3.31.3 change was caught
@@ -110,21 +104,21 @@ const REACT_NODE_VIEWS: Record<string, NodeViewEntry> = {
     node: 'image',
     isLeaf: true,
     isAtom: true,
-    why: '`image` declares no `content` — the src/alt live in attrs — so it is a leaf atom with a null contentDOM and tiptap ignores every mutation on it.',
+    why: '`image` declares no `content`: the src/alt live in attrs.',
   },
   MathInlineNodeView: {
     file: 'src/editor/extensions/math.ts',
     node: 'math_inline',
     isLeaf: true,
     isAtom: true,
-    why: '`math_inline` declares no `content` (the LaTeX lives in an attr, edited through a plain <input>), so it is a leaf atom.',
+    why: '`math_inline` declares no `content`: the LaTeX lives in an attr, edited through a plain <input> outside any content hole.',
   },
   MathBlockNodeView: {
     file: 'src/editor/extensions/math.ts',
     node: 'math_block',
     isLeaf: true,
     isAtom: true,
-    why: '`math_block` declares no `content` (same attr-plus-<input> shape as math_inline), so it is a leaf atom.',
+    why: '`math_block` declares no `content`: same attr-plus-<input> shape as math_inline.',
   },
   MermaidCodeBlockView: {
     file: 'src/editor/use-roving-editor.ts',
@@ -190,14 +184,13 @@ interface CallSite {
 function findCallSites(files: SourceFile[]): CallSite[] {
   const sites: CallSite[] = []
   for (const { file, src } of files) {
-    const re = new RegExp(String.raw`${RENDERER}\s*(?:<[^>]*>)?\s*\(`, 'g')
+    // The name is captured OPTIONALLY: a call whose first argument is not a
+    // plain identifier must still match, so it lands in the table check with an
+    // empty name and reddens, rather than going unseen.
+    const re = new RegExp(String.raw`${RENDERER}\s*(?:<[^>]*>)?\s*\(\s*([A-Za-z_$][\w$]*)?`, 'g')
     let m: RegExpExecArray | null
     while ((m = re.exec(src)) !== null) {
-      const openParen = m.index + m[0].length - 1
-      // The component is the first identifier after the `(`, whatever follows it.
-      const rest = src.slice(openParen + 1)
-      const component = (rest.match(/^\s*([A-Za-z_$][\w$]*)/)?.[1] ?? '').trim()
-      sites.push({ component, file })
+      sites.push({ component: m[1] ?? '', file })
     }
   }
   return sites
