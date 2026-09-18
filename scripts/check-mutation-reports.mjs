@@ -79,7 +79,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       problems.push(
         `module \`${mod}\` produced no \`${jsonPath}\` — it silently dropped out of the run (a moved/renamed source or test path in \`stryker.modules.mjs\` makes Stryker fail its own "no files to mutate" check). The step summary would show it as \`_no report_\` and the job would still be green (#3330).`,
       )
-      perModule.push({ module: mod, mutants: 0, ok: false })
+      perModule.push({ module: mod, mutants: 0 })
       continue
     }
     let report
@@ -89,7 +89,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       problems.push(
         `module \`${mod}\`'s \`${jsonPath}\` is not valid JSON (${err.message}) — a partial/truncated report is a crashed run, not zero survivors (#3330).`,
       )
-      perModule.push({ module: mod, mutants: 0, ok: false })
+      perModule.push({ module: mod, mutants: 0 })
       continue
     }
     let counted = 0
@@ -106,7 +106,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       )
     }
     totalMutants += counted
-    perModule.push({ module: mod, mutants: counted, ok: killed > 0 })
+    perModule.push({ module: mod, mutants: counted })
   }
 
   if (totalMutants === 0 && problems.length === 0) {
