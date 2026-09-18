@@ -18,12 +18,8 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  asciiLowercase,
-  globToRegExp,
-  pageGlobFilterMatches,
-  prepareGlobs,
-} from '@/lib/search-query/glob-validate'
+import { globToRegExp, pageGlobFilterMatches, prepareGlobs } from '@/lib/search-query/glob-validate'
+import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 
 interface Row {
   id: string
@@ -116,7 +112,7 @@ describe('prepareGlobs pipeline shape', () => {
 
   it('folds ASCII case only, preserving non-ASCII letters (#381)', () => {
     expect(prepareGlobs(['CAFÉ'])).toEqual(['*cafÉ*'])
-    expect(asciiLowercase('CAFÉ')).toBe('cafÉ')
+    expect(foldAsciiUppercase('CAFÉ')).toBe('cafÉ')
   })
 })
 

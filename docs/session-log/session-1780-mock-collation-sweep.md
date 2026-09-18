@@ -65,24 +65,42 @@ touched. `npx oxfmt --write conformance/fixtures/` takes it back to exactly the
 intended files with no content change anywhere else. The churn is formatting,
 not corruption, and the answer is the formatter rather than a revert.
 
-## Three divergences found and left
+## Two more the review would not let stand
 
-Named here because they are real, not because they are queued.
+The first pass reported three further divergences and left all three, on the
+grounds that nothing pinned them. Review pushed back on two, each with a
+concrete failing input, which is the bar — so they are fixed here rather than
+carried.
 
-`compareSortKeys` in `blocks.ts` compares by code unit where the backend's
-`cmp_group` is a Rust byte compare. Fixing it means replacing the
-`TITLELESS_SORTS_LAST = '￿'` sentinel as well: under byte ordering no
-string sorts above every string, so the titleless group needs a null-aware
-comparator instead. That is a design call, not a one-line change.
+`textCompare`'s ordered arms in `links.ts` folded for `Contains` and
+`StartsWith` while comparing with a raw `<` four lines above, and
+`compareProperty` in `shared.ts` did the same. A stored `ア`-width katakana
+against a comparand `🍎` makes `Lt` answer the opposite of SQLite. Both
+go through `compareUtf8Bytes` now; `compareProperty` splits on type first,
+because its numeric arm must stay numeric.
 
-`textCompare`'s ordered arms in `links.ts` and `compareProperty` in `shared.ts`
-use inline `<` / `>` where SQLite compares bytes. Same astral-versus-`U+E000`
-class, on predicates nothing pins.
+`list_page_aliases_by_prefix` sorted on `x[1].length`, where SQLite's `length()`
+counts characters and JS counts UTF-16 units: an alias of three characters
+containing an astral one measures four, so it tied with a four-character alias
+instead of leading it, and the `[[` picker ordered differently in dev and e2e
+than in the app. Spreading to code points closes it. A real divergence, and not
+a collation one — the fixture deliberately uses a same-length pair so the two
+cannot be confounded.
 
-`list_page_aliases_by_prefix` sorts on `x[1].length` where SQLite's `length()`
-counts characters, not UTF-16 units, so an emoji in an alias reorders the
-picker. A real divergence, and not a collation one — the fixture uses a
-same-length pair to avoid confounding the two.
+`compareSortKeys` in `blocks.ts` stays. It compares by code unit where the
+backend's `cmp_group` is a Rust byte compare, but fixing it means replacing the
+titleless-sorts-last sentinel too: under byte ordering no string sorts above
+every string, so that group needs a null-aware comparator instead. A design
+call, not a one-line change.
+
+## And one the sweep had left behind itself
+
+`foldAsciiUppercase` in `sqlite-collation.ts` and `asciiLowercase` in
+`search-query/glob-validate.ts` were the same function, character for
+character, and `handlers/shared.ts` ended up importing both. A change whose
+whole point is deleting a second spelling of a comparator had left a second
+spelling of a fold standing. There is one now, and the test that guarded the
+deleted one — `CAFÉ` folding to `cafÉ`, ASCII only — guards the survivor.
 
 ## Verified
 
