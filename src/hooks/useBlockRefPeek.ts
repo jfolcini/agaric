@@ -30,6 +30,8 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+
 /** Both the TipTap NodeView chip and the read-only chip carry this pair. */
 const CHIP_SELECTOR = '[data-type="block-ref"][data-id]'
 
@@ -140,6 +142,25 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     dismiss(false)
   }, [dismiss])
 
+  /**
+   * Dismiss, restoring focus to the chip when the peek (or the chip) is what
+   * holds it. Returns whether it did.
+   *
+   * A dismiss key is also "exit zoom" and "blur the editor", so a peek the
+   * pointer merely opened owns neither half: restoring focus would pull the
+   * caret out of the block being typed in, and consuming the key would
+   * swallow the editor's own.
+   */
+  const dismissHoldingFocus = useCallback((): boolean => {
+    const chip = chipRef.current
+    if (chip === null) return false
+    const active = document.activeElement
+    const held =
+      active !== null && (chip.contains(active) || peekRef.current?.contains(active) === true)
+    dismiss(held)
+    return held
+  }, [dismiss])
+
   const keepOpen = useCallback(() => {
     clearCloseTimer()
   }, [clearCloseTimer])
@@ -209,17 +230,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       if (e.key === 'Escape') {
-        const chip = chipRef.current
-        if (chip === null) return
-        // Only a peek that HOLDS focus owns the key. Escape is also "exit
-        // zoom" and "blur the editor": consuming it for a peek the pointer
-        // merely opened would swallow the editor's own Escape, and restoring
-        // focus would pull the caret out of the block being typed in.
-        const active = document.activeElement
-        const held =
-          active !== null && (chip.contains(active) || peekRef.current?.contains(active) === true)
-        if (held) e.preventDefault()
-        dismiss(held)
+        if (dismissHoldingFocus()) e.preventDefault()
         return
       }
       if (e.key !== 'ArrowDown' || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
@@ -230,7 +241,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       e.preventDefault()
       open(chip, true)
     },
-    [container, dismiss, open],
+    [container, dismissHoldingFocus, open],
   )
 
   // A click on the chip itself navigates and unmounts the subtree, so neither
@@ -255,6 +266,14 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     container.addEventListener('click', handleClick, true)
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('keydown', handleKeyDown)
+    // The app's `closeOverlays` shortcut (Escape, rebindable) fires exactly
+    // when a keyboard-opened peek holds focus — outside any input — and
+    // `preventDefault`s the key, which `handleKeyDown` honours. The broadcast
+    // is therefore the only dismiss signal that peek is sure to see (#5086);
+    // it is the protocol the shortcuts sheet and the welcome modal already
+    // close on. Order against the keydown listeners does not matter: whichever
+    // fires second finds `chipRef` already null.
+    window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, dismissHoldingFocus)
 
     return () => {
       container.removeEventListener('pointerenter', handlePointerEnter, true)
@@ -262,6 +281,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       container.removeEventListener('click', handleClick, true)
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, dismissHoldingFocus)
       if (openTimerRef.current) clearTimeout(openTimerRef.current)
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
       openTimerRef.current = null
@@ -275,6 +295,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     handleClick,
     handleFocusIn,
     handleKeyDown,
+    dismissHoldingFocus,
     releaseChip,
   ])
 
