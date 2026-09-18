@@ -18,8 +18,8 @@
 
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
-import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
-import { compareNocase, compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
@@ -653,26 +653,25 @@ export function propertyValueColumn(
   }
 }
 
-/** SQLite's BINARY collation on TEXT: a code-unit compare, never `localeCompare`. */
-export function compareBinary(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0
-}
-
 /** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
  * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise. */
 export function compareProperty(op: string, a: string | number, b: string | number): boolean {
+  // TEXT compares by UTF-8 bytes in SQLite where JS `<` compares UTF-16 code
+  // units; numeric properties keep the numeric comparison.
+  const cmp =
+    typeof a === 'string' && typeof b === 'string' ? compareUtf8Bytes(a, b) : Number(a) - Number(b)
   switch (op) {
     case 'Lt': {
-      return a < b
+      return cmp < 0
     }
     case 'Gt': {
-      return a > b
+      return cmp > 0
     }
     case 'Lte': {
-      return a <= b
+      return cmp <= 0
     }
     case 'Gte': {
-      return a >= b
+      return cmp >= 0
     }
     default: {
       return false
@@ -721,9 +720,9 @@ export function propertyLikeMatches(
   const stored = prop[vc.col] ?? null
   if (stored == null) return false
   // `value_num` is excluded above, so the remaining columns are all TEXT,
-  // which is what `asciiLowercase` needs — it is a `.replace`, not a coercion.
-  const hay = asciiLowercase(stored as string)
-  const needle = asciiLowercase(String(vc.wanted))
+  // which is what the fold needs — it is a `.replace`, not a coercion.
+  const hay = foldAsciiUppercase(stored as string)
+  const needle = foldAsciiUppercase(String(vc.wanted))
   return contains ? hay.includes(needle) : hay.startsWith(needle)
 }
 
@@ -1352,12 +1351,12 @@ export function fbqPropertyFilterMatches(
 export function fbqResolvePrefixTagIds(prefixes: string[]): string[] {
   const out: string[] = []
   for (const prefix of prefixes) {
-    const lp = prefix.toLowerCase()
+    const lp = foldAsciiUppercase(prefix)
     for (const [, blk] of blocks) {
       if (
         blk['block_type'] === 'tag' &&
         !blk['deleted_at'] &&
-        ((blk['content'] as string) ?? '').toLowerCase().startsWith(lp)
+        foldAsciiUppercase((blk['content'] as string) ?? '').startsWith(lp)
       ) {
         out.push(blk['id'] as string)
       }

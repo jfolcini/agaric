@@ -10,8 +10,9 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
-import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   buildPageMetaRow,
   deriveLinkEdges,
@@ -896,9 +897,7 @@ function compareSortValue(a: SortValue, b: SortValue, desc: boolean): number {
   if (typeof a === 'number' && typeof b === 'number') {
     cmp = a - b
   } else {
-    const as = String(a)
-    const bs = String(b)
-    cmp = as < bs ? -1 : as > bs ? 1 : 0
+    cmp = compareUtf8Bytes(String(a), String(b))
   }
   return desc ? -cmp : cmp
 }
@@ -981,9 +980,7 @@ function compareCursorValue(
   if (a.t !== 'Text' && b.t !== 'Text') {
     cmp = a.v - b.v
   } else {
-    const as = String(a.v)
-    const bs = String(b.v)
-    cmp = as < bs ? -1 : as > bs ? 1 : 0
+    cmp = compareUtf8Bytes(String(a.v), String(b.v))
   }
   return desc ? -cmp : cmp
 }
@@ -1284,7 +1281,7 @@ function searchMetadataPrimitives(filter: Record<string, unknown>): Record<strin
  * Split the `none` sentinel out of a `state:` / `priority:` value list, the
  * way `prepare_metadata` does (`src-tauri/agaric-store/src/fts/metadata_filter.rs:162-196`).
  *
- * The comparison is `eq_ignore_ascii_case`, so {@link asciiLowercase} rather
+ * The comparison is `eq_ignore_ascii_case`, so {@link foldAsciiUppercase} rather
  * than `String.toLowerCase` — the latter folds beyond ASCII and would treat a
  * non-ASCII spelling as the sentinel where the backend keeps it as a literal
  * custom state.
@@ -1293,7 +1290,7 @@ function searchSplitNoneSentinel(raw: unknown): { values: string[]; isNull: bool
   const values: string[] = []
   let isNull = false
   for (const s of (raw as string[] | undefined) ?? []) {
-    if (asciiLowercase(s) === 'none') isNull = true
+    if (foldAsciiUppercase(s) === 'none') isNull = true
     else values.push(s)
   }
   return { values, isNull }

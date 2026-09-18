@@ -16,6 +16,7 @@
 // `ORDER BY id ASC` branches do (`Cursor::for_id`, `LIMIT ?limit + 1`), so it
 // reuses their paginator rather than growing a second cursor codec that would
 // be free to drift from the backend's `Cursor` shape.
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
@@ -39,22 +40,22 @@ function textCompare(op: string, lhs: string, rhs: string): boolean {
       return lhs !== rhs
     }
     case 'Lt': {
-      return lhs < rhs
+      return compareUtf8Bytes(lhs, rhs) < 0
     }
     case 'Gt': {
-      return lhs > rhs
+      return compareUtf8Bytes(lhs, rhs) > 0
     }
     case 'Lte': {
-      return lhs <= rhs
+      return compareUtf8Bytes(lhs, rhs) <= 0
     }
     case 'Gte': {
-      return lhs >= rhs
+      return compareUtf8Bytes(lhs, rhs) >= 0
     }
     case 'Contains': {
-      return lhs.toLowerCase().includes(rhs.toLowerCase())
+      return foldAsciiUppercase(lhs).includes(foldAsciiUppercase(rhs))
     }
     case 'StartsWith': {
-      return lhs.toLowerCase().startsWith(rhs.toLowerCase())
+      return foldAsciiUppercase(lhs).startsWith(foldAsciiUppercase(rhs))
     }
     default: {
       return lhs === rhs

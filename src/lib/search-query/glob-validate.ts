@@ -20,6 +20,7 @@
  */
 
 import { prefixed, ValidationCode } from '@/lib/search-query/validation-codes'
+import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 
 export interface GlobValidationError {
   /** `InvalidGlob: …` — chip display copy labelled with the shared code. */
@@ -169,11 +170,6 @@ export function expandBraces(pattern: string): string[] {
  */
 export const MAX_GLOB_LEN = 1024
 
-/** ASCII-only lowercase (A–Z → a–z), mirroring SQLite's ICU-free `LOWER()`. */
-export function asciiLowercase(input: string): string {
-  return input.replace(/[A-Z]/g, (c) => c.toLowerCase())
-}
-
 /**
  * Split one raw entry on top-level commas only — commas inside a `{…}` group
  * are brace alternatives and must NOT split the entry. Mirrors
@@ -235,7 +231,7 @@ export function prepareGlobs(entries: string[]): string[] {
       if (invalid) throw new Error(invalid.message)
       const patterns = expandBraces(trimmed)
       for (const pat of patterns) {
-        out.push(asciiLowercase(wrapSubstring(pat)))
+        out.push(foldAsciiUppercase(wrapSubstring(pat)))
       }
     }
     if (out.length > EXPANSION_CAP) {
@@ -258,7 +254,7 @@ export function prepareGlobs(entries: string[]): string[] {
  *     is itself a literal.
  * GLOB is case-SENSITIVE and whole-string-anchored; case-insensitivity is
  * obtained upstream by ASCII-lowercasing BOTH the pattern (in
- * {@link prepareGlobs}) and the title (via {@link asciiLowercase}), so the
+ * {@link prepareGlobs}) and the title (via {@link foldAsciiUppercase}), so the
  * compiled regex carries no `i` flag.
  */
 export function globToRegExp(glob: string): RegExp {
@@ -345,7 +341,7 @@ export function pageGlobFilterMatches(pattern: string, title: string, exclude: b
     return false
   }
   if (prepared.length === 0) return true
-  const hay = asciiLowercase(title)
+  const hay = foldAsciiUppercase(title)
   const hit = prepared.some((p) => globToRegExp(p).test(hay))
   return exclude ? !hit : hit
 }

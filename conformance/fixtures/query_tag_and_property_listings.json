@@ -182,10 +182,49 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "🍎",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 11,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "ｱ",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "Ärger",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 17,
+      "count": 19,
       "ops": [
         {
           "op_type": "add_tag"
@@ -244,6 +283,14 @@
         },
         {
           "op_type": "delete_block"
+        },
+        {
+          "key": "glyph",
+          "op_type": "set_property"
+        },
+        {
+          "key": "glyph",
+          "op_type": "set_property"
         }
       ]
     },
@@ -254,6 +301,12 @@
         "key": "due",
         "value": "2026-01-01",
         "value_type": "Date"
+      },
+      {
+        "block_id": "B9",
+        "key": "glyph",
+        "value": "🍎",
+        "value_type": "Text"
       },
       {
         "block_id": "B9",
@@ -277,6 +330,12 @@
         "block_id": "B10",
         "key": "status",
         "value": "closed",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B11",
+        "key": "glyph",
+        "value": "ｱ",
         "value_type": "Text"
       },
       {
@@ -306,7 +365,10 @@
         "B3#name=apple#usage_count=1",
         "B7#name=axb#usage_count=1",
         "B8#name=orphan#usage_count=0",
-        "B5#name=wip#usage_count=1"
+        "B5#name=wip#usage_count=1",
+        "B14#name=Ärger#usage_count=0",
+        "B13#name=ｱ#usage_count=0",
+        "B12#name=🍎#usage_count=0"
       ],
       "total_count": null
     },
@@ -362,7 +424,10 @@
         "B3#name=apple#usage_count=1",
         "B7#name=axb#usage_count=1",
         "B8#name=orphan#usage_count=0",
-        "B5#name=wip#usage_count=1"
+        "B5#name=wip#usage_count=1",
+        "B14#name=Ärger#usage_count=0",
+        "B13#name=ｱ#usage_count=0",
+        "B12#name=🍎#usage_count=0"
       ],
       "total_count": null
     },
@@ -387,7 +452,7 @@
       "error": null,
       "has_more": null,
       "name": "property_keys_usage_ranked_then_key_asc",
-      "rows": ["kind", "status", "due"],
+      "rows": ["kind", "status", "glyph", "due"],
       "total_count": null
     },
     {
@@ -420,6 +485,30 @@
       "has_more": null,
       "name": "property_values_unknown_key_is_empty",
       "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_like_folds_ascii_only",
+      "rows": ["B14#name=Ärger#usage_count=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_prefix_lower_umlaut_reaches_nothing",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "property_values_tiebreak_memcmps_utf8_bytes",
+      "rows": ["ｱ", "🍎"],
       "total_count": null
     }
   ],
@@ -563,6 +652,26 @@
         "blockId": "S10"
       },
       "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "key": "glyph",
+        "value": {
+          "value_text": "🍎"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "key": "glyph",
+        "value": {
+          "value_text": "ｱ"
+        }
+      },
+      "command": "set_property"
     }
   ],
   "queries": [
@@ -574,7 +683,7 @@
         }
       },
       "command": "list_all_tags_in_space",
-      "comment": "Every live tag in the space, `ORDER BY tc.name` under SQLite's BINARY collation: `WIP-1` and `Zed` sort before every lowercase name, `a_b` before `apple`. `usage_count` counts LIVE holders through `block_tags`: S10 is deleted, so `Zed` is 2 (S9, S11) and `apple` 1 (S9); `orphan` has none and is still listed (LEFT JOIN). A locale-aware or case-folding sort, or a constant usage, diverges here.",
+      "comment": "Every live tag in the space, `ORDER BY tc.name` under SQLite's BINARY collation — a UTF-8 BYTE memcmp. `WIP-1` and `Zed` sort before every lowercase name, `a_b` before `apple`, and the three added tags close the list in byte order: `Ärger` (`C3 84`), `ｱ` (`EF BD B1`), `🍎` (`F0 9F 8D 8E`). A UTF-16 code-unit compare — JS `<`, which is what the mock used — ranks the apple's leading surrogate `D83C` BELOW `FF71` and swaps the last two; they are seeded apple-first, so that wrong answer is also the seed order. `usage_count` counts LIVE holders through `block_tags`: S10 is deleted, so `Zed` is 2 (S9, S11) and `apple` 1 (S9); `orphan` and the three new tags have none and are still listed (LEFT JOIN).",
       "name": "tags_in_space_binary_name_order"
     },
     {
@@ -688,6 +797,31 @@
       "comment": "No rows, no error.",
       "expect_empty": true,
       "name": "property_values_unknown_key_is_empty"
+    },
+    {
+      "args": {
+        "prefix": "Ärg"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`name LIKE 'Ärg%'` folds `A`-`Z` and nothing else, so the capital-Ä prefix reaches `Ärger`.",
+      "name": "tags_prefix_like_folds_ascii_only"
+    },
+    {
+      "args": {
+        "prefix": "är"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "The other arm, and the one that discriminates: `LIKE 'är%'` does NOT fold `Ä` to `ä`, so it misses `Ärger`, and #1990's `normalize_tag_name` exact-match fallback needs the WHOLE name (`är` != `ärger`) so it does not rescue it either. A prefix filter that folds through `toLowerCase()` answers `Ärger` here. Empty on purpose; non-vacuous because the arm above serves a row through the same command.",
+      "expect_empty": true,
+      "name": "tags_prefix_lower_umlaut_reaches_nothing"
+    },
+    {
+      "args": {
+        "key": "glyph"
+      },
+      "command": "list_property_values",
+      "comment": "`glyph` holds one row per value, so `ORDER BY COUNT(*) DESC` ties and `value ASC` decides it under BINARY: `ｱ` (`EF BD B1`) then `🍎` (`F0 9F 8D 8E`). The apple is written first, so a UTF-16 code-unit tiebreak and a dropped sort give the same wrong answer, and both redden.",
+      "name": "property_values_tiebreak_memcmps_utf8_bytes"
     }
   ],
   "seed": {
@@ -768,6 +902,27 @@
         "id": "S11",
         "parent_id": "S1",
         "position": 10
+      },
+      {
+        "block_type": "tag",
+        "content": "🍎",
+        "id": "S12",
+        "parent_id": "S1",
+        "position": 11
+      },
+      {
+        "block_type": "tag",
+        "content": "ｱ",
+        "id": "S13",
+        "parent_id": "S1",
+        "position": 12
+      },
+      {
+        "block_type": "tag",
+        "content": "Ärger",
+        "id": "S14",
+        "parent_id": "S1",
+        "position": 13
       }
     ],
     "properties": [],

@@ -10,12 +10,12 @@
  */
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
+import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type PageMetaRow,
   type TypedHandlers,
   appErrorRejection,
   buildPageMetaRow,
-  compareBinary,
   compareMetaRows,
   deriveLinkEdges,
   encodeNextCursor,
@@ -60,19 +60,6 @@ function listPagesWithMetadataLimit(raw: unknown): number {
     )
   }
   return limit
-}
-
-/**
- * Stands in for SQLite's `NOCASE` collation on `page_aliases.alias`: fold
- * case, then compare code units. SQLite folds ASCII only; this folds all of
- * Unicode, which the alias matching around it already does, so a non-ASCII
- * case-variant pair may order differently here than in the app. Both alias
- * sorts (`ORDER BY alias`, `ORDER BY length(alias), alias`) go through it.
- */
-function nocaseCompare(x: string, y: string): number {
-  const a = x.toLowerCase()
-  const b = y.toLowerCase()
-  return a < b ? -1 : a > b ? 1 : 0
 }
 
 /**
@@ -196,10 +183,12 @@ export const pagesHandlers = {
       }
       items.push({ id: b['id'] as string, content: (b['content'] as string | null) ?? null })
     }
-    items.sort((x, y) => {
-      const c = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
-      return c !== 0 ? c : x.id.localeCompare(y.id)
-    })
+    // `ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC`
+    // (`src-tauri/src/commands/pages/listing.rs`) — NOCASE folds ASCII only and
+    // the tiebreak is plain BINARY.
+    items.sort(
+      (x, y) => compareNocase(x.content ?? '', y.content ?? '') || compareUtf8Bytes(x.id, y.id),
+    )
     return items
   },
 
@@ -391,13 +380,9 @@ export const pagesHandlers = {
   // block-backed spaces is what lets `spaces_lifecycle.json` pin this
   // command.
   //
-  // Sorted by name then id, matching the real backend's `list_spaces_inner`
-  // `ORDER BY COALESCE(content,'') ASC, id ASC` — SQLite's BINARY collation,
-  // so `compareBinary`, never `localeCompare`. The two disagree on ordinary
-  // mixed-case names, not just ties (`Banana` before `apple` binary, after it
-  // by locale), and `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` digit-hotkey contract
-  // rides this order — under `localeCompare` a digit selected a different
-  // space in dev and E2E than it does in the real app.
+  // `ORDER BY COALESCE(content,'') ASC, id ASC` (`list_spaces_inner`), and
+  // `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` hotkeys index into this order, so a
+  // wrong collation here picks a different space in dev and E2E than in the app.
   list_spaces: () => {
     const rows = [...blocks.values()]
       .filter(
@@ -414,7 +399,7 @@ export const pagesHandlers = {
             | null
             | undefined) ?? null,
       }))
-    rows.sort((x, y) => compareBinary(x.name, y.name) || compareBinary(x.id, y.id))
+    rows.sort((x, y) => compareUtf8Bytes(x.name, y.name) || compareUtf8Bytes(x.id, y.id))
     return rows
   },
 
@@ -578,15 +563,15 @@ export const pagesHandlers = {
     const taken = new Set<string>()
     for (const [owner, held] of pageAliases) {
       if (owner === pid) continue
-      for (const alias of held) taken.add(alias.toLowerCase())
+      for (const alias of held) taken.add(foldAsciiUppercase(alias))
     }
     const kept: string[] = []
     for (const raw of a['aliases'] as string[]) {
       // Trimmed, and an entry that trims to nothing is skipped — so neither
       // reaches the table nor the answer.
       const alias = raw.trim()
-      if (alias === '' || taken.has(alias.toLowerCase())) continue
-      taken.add(alias.toLowerCase())
+      if (alias === '' || taken.has(foldAsciiUppercase(alias))) continue
+      taken.add(foldAsciiUppercase(alias))
       kept.push(alias)
     }
     pageAliases.set(pid, kept)
@@ -597,12 +582,12 @@ export const pagesHandlers = {
     const a = args as Record<string, unknown>
     const pid = a['pageId'] as string
     // `ORDER BY alias` (NOCASE), not insertion order.
-    return (pageAliases.get(pid) ?? []).toSorted(nocaseCompare)
+    return (pageAliases.get(pid) ?? []).toSorted(compareNocase)
   },
 
   resolve_page_by_alias: (args) => {
     const a = args as Record<string, unknown>
-    const alias = (a['alias'] as string).toLowerCase()
+    const alias = foldAsciiUppercase(a['alias'] as string)
     // Backend now takes `scope: SpaceScope`. Mirror
     // the `list_page_aliases_by_prefix` mock (sibling below) so an
     // alias pointing at a foreign-space page does not surface when the
@@ -611,7 +596,7 @@ export const pagesHandlers = {
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     for (const [pid, aliases] of pageAliases.entries()) {
-      if (aliases.some((al) => al.toLowerCase() === alias)) {
+      if (aliases.some((al) => foldAsciiUppercase(al) === alias)) {
         const page = blocks.get(pid)
         if (!page) continue
         // `b.deleted_at IS NULL`: a soft-deleted page keeps its alias rows
@@ -637,7 +622,7 @@ export const pagesHandlers = {
   // `list_page_aliases_by_prefix_inner` shape.
   list_page_aliases_by_prefix: (args) => {
     const a = args as Record<string, unknown>
-    const query = ((a['prefix'] as string) ?? '').toLowerCase()
+    const query = foldAsciiUppercase((a['prefix'] as string) ?? '')
     const limit = (a['limit'] as number | null) ?? 50
     // Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
     // legacy `spaceId | null` shape for the active-space-scoping branch.
@@ -654,13 +639,17 @@ export const pagesHandlers = {
       if (spaceId !== null && page['space_id'] !== spaceId) continue
       const title = (page['content'] as string | null) ?? null
       for (const alias of aliases) {
-        if (alias.toLowerCase().includes(query)) {
+        if (foldAsciiUppercase(alias).includes(query)) {
           rows.push([pid, alias, title])
         }
       }
     }
-    // `ORDER BY length(pa.alias), pa.alias` — the alias column is NOCASE.
-    rows.sort((x, y) => x[1].length - y[1].length || nocaseCompare(x[1], y[1]))
+    // `ORDER BY length(pa.alias), pa.alias` — the alias column is NOCASE, and
+    // SQLite's `length()` counts CHARACTERS where `String.length` counts UTF-16
+    // units, so an astral character would otherwise measure one longer.
+    rows.sort(
+      (x, y) => Array.from(x[1]).length - Array.from(y[1]).length || compareNocase(x[1], y[1]),
+    )
     return rows.slice(0, limit)
   },
 
