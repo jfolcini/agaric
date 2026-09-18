@@ -24,7 +24,7 @@ import {
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
-  spaceRootGroup,
+  spaceRootGroupOrdered,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -1459,16 +1459,19 @@ export const blocksHandlers = {
     //
     // Two cases this does not model. An arrival whose source rank exceeds a
     // resident's creation position sorts among the residents rather than ahead of
-    // them — a destination that has already received a move is how to get there.
-    // And two arrivals that left DIFFERENT spaces holding the same rank do reach
-    // the id tiebreak.
+    // them, and that needs no prior move to reach: `reproject_dense_positions`
+    // rewrites `blocks.position` and never the Loro `FIELD_POSITION` that
+    // `legacy_slot` reads, so a space keeps its CREATION meta however often it is
+    // reprojected. A source space that has outgrown the root count at the
+    // destination's creation is enough (#5099 review). And two arrivals that left
+    // DIFFERENT spaces holding the same rank do reach the id tiebreak.
     //
     // The SOURCE group is deliberately left alone: only the destination doc is
     // hydrated, so the vacated rank stays a hole on both stacks. That hole is
     // benign at the end of a group and stale in front of a survivor (#5100);
     // the mock matches the backend either way.
     if (arrivedAtRoot.size > 0) {
-      const group = spaceRootGroup(spaceId)
+      const group = spaceRootGroupOrdered(spaceId)
       const arriving = group.filter((row) => arrivedAtRoot.has(row['id'] as string))
       const resident = group.filter((row) => !arrivedAtRoot.has(row['id'] as string))
       ;[...arriving, ...resident].forEach((row, i) => {

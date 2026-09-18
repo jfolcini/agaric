@@ -1140,13 +1140,20 @@ export function spaceRootGroup(spaceId: string | null): Array<Record<string, unk
     if (owner !== spaceId) continue
     group.push(b)
   }
-  group.sort((x, y) => {
+  return group
+}
+
+/**
+ * `spaceRootGroup` in the group's own `(position, id)` order. Separate because
+ * the other caller wants only the count and would pay for a sort it discards.
+ */
+export function spaceRootGroupOrdered(spaceId: string | null): Record<string, unknown>[] {
+  return spaceRootGroup(spaceId).toSorted((x, y) => {
     const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
     const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
     if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
+    return compareUtf8Bytes(x['id'] as string, y['id'] as string)
   })
-  return group
 }
 
 /**
