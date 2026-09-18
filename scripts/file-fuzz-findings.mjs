@@ -561,18 +561,11 @@ export function allTargetsClean(results) {
 }
 
 /**
- * Findings a clean run DISPROVES, and therefore the only ones it may clear
- * without a human.
- *
- * `[not-run]` and `[lane]` are claims about the RUN — that a target never
- * executed, that the job died before writing anything. A run in which every
- * target executed and passed is their direct negation.
- *
- * Every other prefix is a claim about the CODE, and a clean run is not evidence
- * against it: libFuzzer saves a reproducer under `artifacts/`, not into the
- * corpus, so the next run does not re-execute it and a `[crash]` line can go
- * quiet with the bug fully intact. Those stay for a human to remove, which is
- * what the tracking issue's own instructions ask for.
+ * Findings a clean run disproves: `[not-run]` and `[lane]` are claims about the
+ * run, which every target executing and passing negates. The rest are claims
+ * about the code, and a quiet run is no evidence against one — libFuzzer saves a
+ * reproducer under `artifacts/`, not into the corpus, so the next run never
+ * re-executes it and a `[crash]` can go quiet with the bug intact.
  *
  * @param {string} id
  */
@@ -604,8 +597,8 @@ export function isRunShapeFinding(id) {
  */
 function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, results, runUrl }) {
   const summary = `${resolvedOnes.length} previously-known finding(s) resolved and none remain: ${resolvedOnes.join(', ')}`
-  if (existingIssue === null || existingIssue.state === 'CLOSED') {
-    console.log(`${summary} — tracking issue already absent or closed, nothing to do`)
+  if (existingIssue.state === 'CLOSED') {
+    console.log(`${summary} — tracking issue already closed, nothing to do`)
     return
   }
   const body = buildIssueBody({ all: [], newOnes: [], resolvedOnes, byId, results, runUrl })

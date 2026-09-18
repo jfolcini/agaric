@@ -78,13 +78,22 @@ function runMain({ statuses, jobStatus, knownIds }) {
   for (const [target, status] of Object.entries(statuses)) {
     writeFileSync(join(dir, `${target}.status`), `${status}\n`)
   }
+  // An EMPTY `knownIds` writes no file at all: `--known-body-file` reads a
+  // missing path as "no tracking issue yet", which is the shape that decides
+  // whether `closeResolvedIssue` can ever see a null issue.
   const knownFile = join(dir, 'known.md')
-  writeFileSync(
-    knownFile,
-    ['<!-- fuzz-findings:begin -->', '```', ...knownIds, '```', '<!-- fuzz-findings:end -->'].join(
-      '\n',
-    ),
-  )
+  if (knownIds.length > 0) {
+    writeFileSync(
+      knownFile,
+      [
+        '<!-- fuzz-findings:begin -->',
+        '```',
+        ...knownIds,
+        '```',
+        '<!-- fuzz-findings:end -->',
+      ].join('\n'),
+    )
+  }
   const lines = []
   const original = console.log
   console.log = (...args) => lines.push(args.join(' '))
@@ -147,4 +156,16 @@ void test('only findings about the run are ones a clean run disproves', () => {
   assert.equal(isRunShapeFinding("[build] fts_strip: error[E0463]: can't find crate"), false)
   assert.equal(isRunShapeFinding('[timeout] import_parse: timeout-abc123'), false)
   assert.equal(isRunShapeFinding('[failed] deeplink_parse: exited non-zero'), false)
+})
+
+void test('a clean run with no tracking issue at all never reaches the close', () => {
+  // `closeResolvedIssue` dereferences `existingIssue.state`, which is safe only
+  // because the caller cannot reach it with a null issue: `known` is parsed from
+  // `existingIssue?.body`, so no issue means no `resolvedOnes`. Loosening that
+  // guard throws here rather than in a weekly job nobody is watching.
+  const lines = runMain({ statuses: { fts_strip: 'ok' }, jobStatus: 'success', knownIds: [] })
+  assert.ok(
+    lines.some((l) => l.startsWith('no new fuzz findings')),
+    `expected a no-op, got:\n${lines.join('\n')}`,
+  )
 })
