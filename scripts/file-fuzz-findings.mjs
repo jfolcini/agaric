@@ -19,9 +19,10 @@
 //   [failed]  the target exited non-zero for some other reason
 //   [not-run] the target never executed (the job was cut short mid-loop)
 //   [lane]    the whole job failed without producing a result artifact at all
-//             (setup failure, job-level timeout, cancellation) — derived from
+//             (setup failure, job-level timeout) — derived from
 //             `--job-status`, i.e. `needs.fuzz.result`, so that a lane that
 //             dies before it can write anything is still reported.
+// A CANCELLED lane files neither of the last two (#5110): see `buildFindings`.
 //
 // State lives in the tracking issue itself (its body), not a committed
 // baseline file — the workflow only needs `issues: write`, never
@@ -257,8 +258,20 @@ export function reproducersFor({ artifacts, log }, prefixes) {
  * at all and did not succeed, a single `[lane]` finding is synthesised — a
  * setup failure or a job-level timeout kills the upload step too, so without
  * this the most catastrophic failure mode would report nothing.
+ *
+ * A `cancelled` lane is the one result that yields no lane-shaped finding at
+ * all (#5110). Cancellation is external — a hand-stopped dispatch, a
+ * concurrency group superseding the run — so the targets it cut short found
+ * nothing, and there is no line a reader could ever "fix and remove" the way
+ * the tracking issue instructs. Filing it fanned one click out into seven
+ * unfixable findings. The lane's own result is `report-scheduled-failures`'
+ * signal (#3359), which reports it as `⚠️ cancelled` already. A job-level
+ * timeout reports `failure`, not `cancelled`, and still lands here per-target.
+ * Findings from targets that DID run (a crash, a build break) are unaffected:
+ * a cancellation does not unmake them.
  */
 export function buildFindings(results, jobStatus) {
+  const cancelled = jobStatus === 'cancelled'
   const findings = []
   for (const r of results) {
     switch (r.status) {
@@ -300,6 +313,7 @@ export function buildFindings(results, jobStatus) {
         break
       }
       case 'not_run': {
+        if (cancelled) break
         findings.push({
           id: `[not-run] ${r.target}: target never executed`,
           detail:
@@ -317,7 +331,13 @@ export function buildFindings(results, jobStatus) {
     }
   }
 
-  if (results.length === 0 && jobStatus && jobStatus !== 'success' && jobStatus !== 'skipped') {
+  if (
+    results.length === 0 &&
+    jobStatus &&
+    jobStatus !== 'success' &&
+    jobStatus !== 'skipped' &&
+    !cancelled
+  ) {
     findings.push({
       id: `[lane] fuzz job ended as "${jobStatus}" and produced no result artifact`,
       detail:
@@ -597,11 +617,13 @@ function defaultRunUrl() {
  *
  * Called AFTER `buildFindings` so the `[lane]` fallback still gets to describe
  * a lane that died outright. They fire only where that fallback does NOT: a
- * `failure`/`cancelled` lane is the `[lane]` finding's job, and a `skipped` one
- * never ran and legitimately wrote nothing — firing on either would replace a
- * filed report with a red filer. What is left is `success` (the lane ran to
- * completion, so it MUST have written results) and an unknown status (nothing
- * else would report the blindness at all).
+ * `failure` lane is the `[lane]` finding's job, and a `skipped` one never ran
+ * and legitimately wrote nothing — firing on either would replace a filed
+ * report with a red filer. A `cancelled` lane writes nothing by the same
+ * licence, and since #5110 files nothing either: it is reported by
+ * `report-scheduled-failures`, not here. What is left is `success` (the lane
+ * ran to completion, so it MUST have written results) and an unknown status
+ * (nothing else would report the blindness at all).
  */
 function assertLaneInputs(args, results) {
   const laneShouldHaveWritten = !args.jobStatus || args.jobStatus === 'success'
@@ -629,6 +651,13 @@ export function main(argv = process.argv.slice(2)) {
     results.length > 0 ? results.map((r) => `${r.target}=${r.status}`).join(' ') : '(none)'
   console.log(`fuzz target statuses: ${statusSummary}`)
   console.log(`fuzz findings this run: ${current.length}`)
+  if (args.jobStatus === 'cancelled') {
+    // Says the silence out loud: a reader looking at seven `not_run` statuses
+    // above and zero findings below would otherwise have to infer why (#5110).
+    console.log(
+      'fuzz lane was cancelled — targets that never ran are NOT filed as findings; the lane result is reported by report-scheduled-failures (#3359)',
+    )
+  }
 
   assertLaneInputs(args, results)
 
