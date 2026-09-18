@@ -65,11 +65,26 @@ Updates" pins the two Stryker packages to each other exactly, so there is no
 partial bump either.
 
 Nothing has ever gated wrongly on this: `scheduled-deep-checks.yml` wraps the
-lane in `|| true` and there is no `thresholds.break`. The cost is entirely to
-whoever reads the numbers, which is what the two notes address — a `WHY` block
-above `MODULES` in `stryker.modules.mjs`, and a line in `AGENTS.md` §
-"Acceptance is falsification", where the command is recommended. The `AGENTS.md`
-edit was made on explicit maintainer instruction.
+lane in `|| true` and there is no `thresholds.break`.
+
+The first draft said the cost falls entirely on whoever goes looking at the
+numbers. Review caught that, and it was wrong rather than merely soft.
+`scripts/file-mutation-survivors.mjs` runs once per mutants lane, the frontend
+lane among them, and keeps a rolling tracking issue plus one child per area. The
+phantom survivors are therefore *pushed* at people: **#3766** ("Mutation
+survivors — frontend: vault-import") is open right now under parent **#4691**,
+listing four survivors in `src/lib/vault-import.ts` that were never alive, and
+it is re-rendered weekly. `mutation-pr.yml` posts the same class of finding as a
+sticky comment on a contributor's own PR.
+
+So the warning had to reach where the numbers are read, not only where the
+command is documented. Four places: a `WHY` block above `MODULES` in
+`stryker.modules.mjs`; a line in `AGENTS.md` § "Acceptance is falsification",
+where the command is recommended, made on explicit maintainer instruction; a
+blockquote in `docs/BUILD.md` § "Mutation testing (nightly)", which is the recipe
+`AGENTS.md` sends people to and which still described a survivor as "a gap in
+assertion *strength*"; and a clause on that page's per-PR-lane paragraph, whose
+stated purpose is attribution of survivors that do not exist.
 
 Pinning vitest 4.x for the lane alone was considered and declined: it would
 score mutants against a runtime neither CI nor development uses.
